@@ -1,0 +1,79 @@
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/activeElement-confirm-return-null.html	FAIL
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/activeElement-confirm-return-null.html	SUBTEST	FAIL	"confirm activeElement return null when focus on the element in the outer shadow tree"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/activeElement-confirm-return-null.html	SUBTEST	FAIL	"confirm activeElement return null when there is other element in body"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/activeElement-confirm-return-null.html	SUBTEST	FAIL	"confirm activeElement return null"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/test-007.html	FAIL
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/test-007.html	SUBTEST	FAIL	"A_10_01_01_03_01_T01"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/test-011.html	FAIL
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/test-011.html	SUBTEST	FAIL	"A_10_01_01_05_01_T01"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-attributes/test-011.html	SUBTEST	FAIL	"A_10_01_01_05_01_T02"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-004.html	FAIL
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-004.html	SUBTEST	FAIL	"A_10_01_02_04_T01"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-006.html	FAIL
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-006.html	SUBTEST	FAIL	"A_10_01_02_06_01_T02"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-007.html	FAIL
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-007.html	SUBTEST	FAIL	"A_10_01_02_06_02_T01"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-007.html	SUBTEST	FAIL	"A_10_01_02_06_02_T02"
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-010.html	FAIL
+shadow-dom/untriaged/elements-and-dom-objects/shadowroot-object/shadowroot-methods/test-010.html	SUBTEST	FAIL	"A_10_01_02_09_T01"
+shadow-dom/untriaged/events/event-dispatch/test-003.html	SUBTEST	TIMEOUT	"A_05_05_03_T01"
+shadow-dom/untriaged/events/event-dispatch/test-003.html	TIMEOUT
+shadow-dom/untriaged/events/retargeting-focus-events/test-002.html	FAIL
+shadow-dom/untriaged/events/retargeting-focus-events/test-002.html	SUBTEST	FAIL	"A_05_03_02_T01"
+shadow-dom/untriaged/events/retargeting-focus-events/test-003.html	FAIL
+shadow-dom/untriaged/events/retargeting-focus-events/test-003.html	SUBTEST	FAIL	"A_05_03_03_T01"
+shadow-dom/untriaged/html-elements-in-shadow-trees/html-forms/test-003.html	SUBTEST	TIMEOUT	"A_08_02_03_T01"
+shadow-dom/untriaged/html-elements-in-shadow-trees/html-forms/test-003.html	TIMEOUT
+shadow-dom/untriaged/html-elements-in-shadow-trees/inert-html-elements/test-001.html	FAIL
+shadow-dom/untriaged/html-elements-in-shadow-trees/inert-html-elements/test-001.html	SUBTEST	FAIL	"A_08_01_01_T01"
+shadow-dom/untriaged/html-elements-in-shadow-trees/inert-html-elements/test-002.html	FAIL
+shadow-dom/untriaged/html-elements-in-shadow-trees/inert-html-elements/test-002.html	SUBTEST	FAIL	"A_08_01_02_T01"
+shadow-dom/untriaged/shadow-trees/nested-shadow-trees/nested_tree_reftest.html	SKIP	reftest: needs a reference render, not a harness result
+shadow-dom/untriaged/shadow-trees/reprojection/reprojection-001.html	SKIP	reftest: needs a reference render, not a harness result
+shadow-dom/untriaged/shadow-trees/shadow-root-001.html	SKIP	reftest: needs a reference render, not a harness result
+shadow-dom/untriaged/shadow-trees/shadow-root-002.html	SKIP	reftest: needs a reference render, not a harness result
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	FAIL
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"<head> and <body> in a shadow tree should not be accessible from owner document's \"head\" and \"body\" properties, respectively."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"all\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"anchors\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"embeds\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"forms\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"images\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"links\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"plugins\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's \"scripts\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's getElementById() method."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's getElementsByName() method."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"Elements in a shadow tree should not be accessible from owner document's getElementsByTagName() method."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/dom-tree-accessors-001.html	SUBTEST	FAIL	"The content of title element in a shadow tree should not be accessible from owner document's \"title\" attribute."
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-005.html	FAIL
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-005.html	SUBTEST	FAIL	"A_04_01_05_T01"
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-007.html	FAIL
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-007.html	SUBTEST	FAIL	"A_04_01_07_T01"
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-007.html	SUBTEST	FAIL	"A_04_01_07_T02"
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-011.html	FAIL
+shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/test-011.html	SUBTEST	FAIL	"A_04_01_11_T2"
+shadow-dom/untriaged/styles/not-apply-in-shadow-root-001.html	SKIP	reftest: needs a reference render, not a harness result
+shadow-dom/untriaged/styles/test-001.html	FAIL
+shadow-dom/untriaged/styles/test-001.html	SUBTEST	FAIL	"A_06_00_01_T01"
+shadow-dom/untriaged/styles/test-001.html	SUBTEST	FAIL	"A_06_00_01_T02"
+shadow-dom/untriaged/styles/test-003.html	FAIL
+shadow-dom/untriaged/styles/test-003.html	SUBTEST	FAIL	"A_06_00_03_T01"
+shadow-dom/untriaged/styles/test-003.html	SUBTEST	FAIL	"A_06_00_03_T02"
+shadow-dom/untriaged/styles/test-003.html	SUBTEST	FAIL	"A_06_00_03_T03"
+shadow-dom/untriaged/styles/test-005.html	FAIL
+shadow-dom/untriaged/styles/test-005.html	SUBTEST	FAIL	"A_06_00_06_T01"
+shadow-dom/untriaged/styles/test-008.html	FAIL
+shadow-dom/untriaged/styles/test-008.html	SUBTEST	FAIL	"A_06_00_09_T01"
+shadow-dom/untriaged/user-interaction/active-element/test-001.html	FAIL
+shadow-dom/untriaged/user-interaction/active-element/test-001.html	SUBTEST	FAIL	"A_07_03_01_T01"
+shadow-dom/untriaged/user-interaction/active-element/test-002.html	FAIL
+shadow-dom/untriaged/user-interaction/active-element/test-002.html	SUBTEST	FAIL	"A_07_03_02_T01"
+shadow-dom/untriaged/user-interaction/editing/inheritance-of-content-editable-001.html	FAIL
+shadow-dom/untriaged/user-interaction/editing/inheritance-of-content-editable-001.html	SUBTEST	FAIL	"contentEditable of shadow trees must be undefined when contentEditable attribute of shadow host is \"inherit\""
+shadow-dom/untriaged/user-interaction/ranges-and-selections/test-001.html	FAIL
+shadow-dom/untriaged/user-interaction/ranges-and-selections/test-001.html	SUBTEST	FAIL	"A_07_07_01_T01"
+shadow-dom/untriaged/user-interaction/ranges-and-selections/test-001.html	SUBTEST	FAIL	"A_07_07_01_T02"
+shadow-dom/untriaged/user-interaction/ranges-and-selections/test-002.html	FAIL
+shadow-dom/untriaged/user-interaction/ranges-and-selections/test-002.html	SUBTEST	FAIL	"A_07_01_02_T01"
+shadow-dom/untriaged/user-interaction/ranges-and-selections/test-002.html	SUBTEST	FAIL	"A_07_07_02_T02"

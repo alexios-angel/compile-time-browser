@@ -1,0 +1,3 @@
+selection/textcontrols/click-input-after-iframe-focus.html	SKIP	testdriver: needs WebDriver input injection
+selection/textcontrols/focus.html	SKIP	testdriver: needs WebDriver input injection
+selection/textcontrols/initial-selection-during-focus-event-propagation.html	SKIP	variant: the driver opens a file and has no query string

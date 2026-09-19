@@ -7,6 +7,7 @@
 # them share.
 add_library(ctbrowser-shell)
 ctbrowser_subsystem_sources(ctbrowser-shell shell)
+
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-shell)
 

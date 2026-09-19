@@ -1,0 +1,3 @@
+css/css-link-params/inheritance.html	FAIL
+css/css-link-params/inheritance.html	SUBTEST	FAIL	"Property link-parameters does not inherit"
+css/css-link-params/inheritance.html	SUBTEST	FAIL	"Property link-parameters has initial value none"

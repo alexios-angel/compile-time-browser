@@ -1,0 +1,849 @@
+[Back to css-conformance.md](../css-conformance.md)
+
+## Columns recovery — 2026-09-18
+
+Full CSS at `39f651a3`: **1,596/2,926 files PASS, 70,328 subtests PASS**;
+**+4 files and +53 subtests** since `f5a00a58`, with zero passing file or
+subtest losses. `columns` now shares validation and CSSOM expansion for
+unordered width/count values and optional `/ column-height`.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-multicol` | 28 / 32 | 1,361 / 1,413 |
+| `css/css-cascade` | 52 / 52 | 1,014 / 1,015 |
+
+The four gained files are `columns-interpolation`, `columns-computed`,
+`columns-invalid` and `columns-valid`. The cascade gain is the new
+`column-height` initial-value subtest. Multicol still has 57 failing
+subtests: 43 for `column-wrap` support/reset, ten for pseudo selectors,
+and four for column-rule computed/default values. Scaled viewport bounds
+and elliptical radius expansion remain separate gaps.
+
+All other modules match the preceding full CSS measurement. The full
+status row and evidence are in `wpt.md` and `/tmp/ctbrowser20/`.
+The combined browser gate passed 216/216 CTests (68.27 seconds), excluding
+compiler tests; formatting passed. No expectations changed.
+
+## Positive integer animation follow-up — 2026-09-18
+
+Full CSS at `f5a00a58`: **1,592/2,926 files PASS, 70,275 subtests PASS**;
+**+1 file and +52 subtests** since `73833c09`, with zero file or subtest
+losses. The common numeric interpolator now clamps positive integer
+properties to one after rounding. `column-count-interpolation` passes;
+`columns-interpolation` retains the unsupported slash syntax failures.
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-break` | 19 / 19 | 470 / 514 |
+| `css/css-multicol` | 27 / 28 | 1,353 / 1,361 |
+
+Other modules are unchanged from the recovery below. The full status row
+and evidence are in `wpt.md` and `/tmp/ctbrowser-resume/positive-integers/`.
+The browser gate passed 233/233 CTests (69.00 seconds), with formatting
+checked. Against `b722aa41`, this session gained 57 files and 1,334 passing
+subtests, with zero losses.
+
+## CSS recovery — 2026-09-18
+
+Full `css/` replay at `73833c09`: **1,591 of 2,926 runnable files PASS
+(54.4%), 70,223 subtests PASS**. Against `b722aa41`: **+56 files,
++1,282 passing subtests, zero passing files or subtests lost**. There are
+1,119 FAIL, 25 TIMEOUT, zero CRASH, 191 HARNESS_ERROR and 1,488 SKIP files;
+subtests are 70,223 PASS, 32,865 FAIL, 22 TIMEOUT, 71 NOTRUN and one
+PRECONDITION_FAILED. Corpus and execution settings are unchanged.
+
+Changed modules only; all other module counts match the round-seven table:
+
+| module | files PASS before / after | subtests PASS before / after |
+|---|---:|---:|
+| `css/css-align` | 49 / 51 | 1,289 / 1,309 |
+| `css/css-backgrounds` | 59 / 61 | 5,146 / 5,282 |
+| `css/css-box` | 30 / 32 | 857 / 877 |
+| `css/css-break` | 19 / 19 | 422 / 470 |
+| `css/css-cascade` | 33 / 52 | 968 / 1,014 |
+| `css/css-color` | 44 / 46 | 12,020 / 12,050 |
+| `css/css-flexbox` | 26 / 29 | 910 / 952 |
+| `css/css-fonts` | 53 / 53 | 2,776 / 3,090 |
+| `css/css-grid` | 25 / 25 | 1,785 / 1,805 |
+| `css/css-logical` | 54 / 58 | 708 / 756 |
+| `css/css-masking` | 20 / 21 | 1,270 / 1,290 |
+| `css/css-multicol` | 24 / 27 | 1,277 / 1,353 |
+| `css/css-position` | 26 / 30 | 1,024 / 1,056 |
+| `css/css-shapes` | 6 / 7 | 310 / 328 |
+| `css/css-size-adjust` | 2 / 2 | 173 / 197 |
+| `css/css-sizing` | 16 / 20 | 2,500 / 2,540 |
+| `css/css-text` | 73 / 73 | 1,390 / 1,470 |
+| `css/css-transforms` | 30 / 33 | 3,186 / 3,310 |
+| `css/css-transitions` | 16 / 17 | 719 / 759 |
+| `css/css-ui` | 28 / 31 | 1,221 / 1,281 |
+| `css/css-variables` | 26 / 27 | 432 / 436 |
+| `css/motion` | 12 / 13 | 1,601 / 1,641 |
+
+`448ecf29` fixes cascade rollback after shorthand expansion, variable
+substitution and logical-to-physical mapping. `cc5c2133` and `73833c09`
+share the CSSOM grammar with both keyframe paths, preserve existing
+shorthand expansion where CSSOM is incomplete, and compute inherited
+keyframe values from the animated parent. New controls cover rollback,
+logical and columns keyframes, elliptical shorthand expansion, and animated
+parent inheritance. The combined browser gate passed 233/233 CTests.
+
+The final replay restores 21 of round seven's 23 lost files. Remaining:
+`columns-interpolation` needs positive integer clamping and the columns
+slash grammar; scaled viewport rectangles need transform-aware CSSOM View
+bounds. The existing elliptical-radius expander still drops the vertical
+axis. Evidence and the full status table are in `wpt.md` and
+`/tmp/ctbrowser-resume/corrected/`.
+
+## 1. The measurement was wrong before it was low
+
+**94 of `css/css-values`' 128 harness errors were a missing file, not a
+finding.** Almost every test in that suite is four lines long and calls
+`test_valid_value`, `test_computed_value` or `test_math_used`, all of which live
+in `css/support/*.js` — a directory `tools/wpt/fetch-wpt.sh` did not check out.
+Those files could not have passed whatever the engine did, and no engine fix
+could ever have moved them.
+
+`css/support/` is now in the sparse list, and `--verify` names
+`css/support/parsing-testcommon.js` by name so a checkout made before that line
+existed is caught rather than quietly measured. It is a `SKIP_DIR_PARTS`
+directory in `run-wpt.py`, so nothing in it is ever collected as a test: it is
+imported, never run.
+
+**This is a measurement fix and not engine progress.** Here is exactly what it
+was worth, engine unchanged at `9ee803a`, measured **2026-09-03**:
+
+| css/css-values | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| before — no `css/support/` (`docs/wpt.md`, 2026-09-02) | 13 | 128 | 2 | 0 | 128 | 237 | 508 |
+| after — helpers fetched, **same engine** | 16 | 211 | 2 | 0 | 42 | 237 | 508 |
+
+86 harness errors became real measurements: **+3 PASS and +83 FAIL**. The
+suite's honest score went *down* in the sense that matters — 83 files that were
+being counted as "the corpus is broken" are now counted as "the engine is
+wrong", which is what they always were.
+
+`css/cssom` does not use those helpers and reproduced the published baseline
+exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
+itself did not move underneath the comparison.
+
+## 2-wide. Every CSS module, measured — 2026-09-18: round seven
+
+Recovered session 19's completed `css.json` at `b722aa41`; comparison is
+against `9f8da347`, with the same corpus, worker count, cap and GL driver.
+**1,535 of 2,926 runnable files PASS (52.5%), 68,941 subtests PASS**:
+net **+122 files and +9,379 passing subtests**. The whole wide result and
+all file losses are recorded in `wpt.md`. The 23 files lost at this revision
+were investigated in the later recovery above; expectations were not
+changed to accept them.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **11** (+0) | 0 | 0 | 0 | 0 | 0 | 11 | 92 / 0 |
+| `css/css-align` | **49** (+6) | 8 | 0 | 0 | 0 | 0 | 57 | 1,289 / 32 |
+| `css/css-anchor-position` | **3** (+0) | 7 | 0 | 0 | 0 | 0 | 10 | 124 / 96 |
+| `css/css-animations` | **30** (+6) | 12 | 0 | 0 | 0 | 1 | 43 | 438 / 152 |
+| `css/css-backgrounds` | **59** (+7) | 48 | 0 | 0 | 0 | 45 | 152 | 5,146 / 899 |
+| `css/css-box` | **30** (+4) | 10 | 0 | 0 | 0 | 0 | 40 | 857 / 70 |
+| `css/css-break` | **19** (+1) | 3 | 0 | 0 | 0 | 0 | 22 | 422 / 118 |
+| `css/css-cascade` | **33** (-15) | 59 | 1 | 0 | 1 | 60 | 154 | 968 / 177 |
+| `css/css-color` | **44** (+16) | 20 | 0 | 0 | 0 | 257 | 321 | 12,020 / 600 |
+| `css/css-color-adjust` | **6** (+2) | 1 | 0 | 0 | 0 | 0 | 7 | 143 / 4 |
+| `css/css-color-hdr` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 1 / 1 |
+| `css/css-conditional` | **8** (+1) | 29 | 1 | 0 | 175 | 204 | 417 | 1,676 / 120 |
+| `css/css-contain` | **4** (+0) | 1 | 0 | 0 | 0 | 0 | 5 | 43 / 2 |
+| `css/css-content` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 96 / 112 |
+| `css/css-display` | **2** (+0) | 6 | 0 | 0 | 0 | 0 | 8 | 326 / 34 |
+| `css/css-exclusions` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 4 / 0 |
+| `css/css-flexbox` | **26** (+3) | 8 | 0 | 0 | 0 | 1 | 35 | 910 / 79 |
+| `css/css-fonts` | **53** (+1) | 48 | 0 | 0 | 0 | 0 | 101 | 2,776 / 1,505 |
+| `css/css-forced-color-adjust` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 13 / 1 |
+| `css/css-forms` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 20 / 32 |
+| `css/css-gaps` | **14** (+0) | 60 | 0 | 0 | 0 | 2 | 76 | 362 / 3,784 |
+| `css/css-grid` | **25** (+4) | 49 | 0 | 0 | 0 | 3 | 77 | 1,785 / 1,925 |
+| `css/css-images` | **23** (+1) | 8 | 0 | 0 | 0 | 0 | 31 | 3,074 / 142 |
+| `css/css-inline` | **13** (+3) | 7 | 0 | 0 | 0 | 0 | 20 | 254 / 79 |
+| `css/css-link-params` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 2 / 0 |
+| `css/css-lists` | **9** (+0) | 16 | 0 | 0 | 0 | 0 | 25 | 344 / 154 |
+| `css/css-logical` | **54** (+22) | 8 | 0 | 0 | 0 | 0 | 62 | 708 / 58 |
+| `css/css-masking` | **20** (+0) | 28 | 0 | 0 | 0 | 1 | 49 | 1,270 / 4,813 |
+| `css/css-multicol` | **24** (-1) | 15 | 0 | 0 | 0 | 0 | 39 | 1,277 / 193 |
+| `css/css-nesting` | **11** (+0) | 11 | 0 | 0 | 0 | 23 | 45 | 81 / 36 |
+| `css/css-overflow` | **19** (+0) | 17 | 0 | 0 | 0 | 0 | 36 | 286 / 93 |
+| `css/css-overscroll-behavior` | **2** (+0) | 2 | 0 | 0 | 0 | 0 | 4 | 56 / 11 |
+| `css/css-page` | **6** (+0) | 6 | 0 | 0 | 0 | 0 | 12 | 43 / 30 |
+| `css/css-paint-api` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **26** (+5) | 6 | 0 | 0 | 0 | 0 | 32 | 1,024 / 37 |
+| `css/css-properties-values-api` | **5** (+0) | 63 | 0 | 0 | 1 | 0 | 69 | 129 / 113 |
+| `css/css-pseudo` | **0** (+0) | 5 | 0 | 0 | 0 | 0 | 5 | 147 / 136 |
+| `css/css-rhythm` | **12** (+0) | 3 | 0 | 0 | 0 | 0 | 15 | 89 / 66 |
+| `css/css-ruby` | **7** (+0) | 2 | 0 | 0 | 0 | 0 | 9 | 41 / 6 |
+| `css/css-scroll-anchoring` | **4** (+0) | 0 | 0 | 0 | 0 | 0 | 4 | 8 / 0 |
+| `css/css-scroll-snap` | **26** (+4) | 0 | 0 | 0 | 0 | 0 | 26 | 473 / 0 |
+| `css/css-scrollbars` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 3 / 1 |
+| `css/css-shapes` | **6** (+1) | 15 | 0 | 0 | 0 | 0 | 21 | 310 / 2,041 |
+| `css/css-size-adjust` | **2** (+0) | 3 | 0 | 0 | 0 | 0 | 5 | 173 / 42 |
+| `css/css-sizing` | **16** (+5) | 21 | 0 | 0 | 0 | 0 | 37 | 2,500 / 734 |
+| `css/css-syntax` | **18** (+0) | 21 | 0 | 0 | 1 | 8 | 48 | 382 / 47 |
+| `css/css-tables` | **14** (+0) | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **73** (+8) | 24 | 0 | 0 | 0 | 0 | 97 | 1,390 / 542 |
+| `css/css-text-decor` | **18** (+0) | 17 | 0 | 0 | 0 | 0 | 35 | 451 / 741 |
+| `css/css-transforms` | **30** (+5) | 36 | 0 | 0 | 0 | 27 | 93 | 3,186 / 2,149 |
+| `css/css-transitions` | **16** (+4) | 14 | 0 | 0 | 0 | 0 | 30 | 719 / 190 |
+| `css/css-ui` | **28** (+4) | 24 | 0 | 0 | 0 | 0 | 52 | 1,221 / 173 |
+| `css/css-values` | **175** (+4) | 90 | 2 | 0 | 4 | 237 | 508 | 7,676 / 2,650 |
+| `css/css-variables` | **26** (+0) | 34 | 1 | 0 | 0 | 186 | 247 | 432 / 153 |
+| `css/css-view-transitions` | **8** (+0) | 4 | 0 | 0 | 0 | 0 | 12 | 337 / 687 |
+| `css/css-viewport` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 164 / 8 |
+| `css/css-writing-modes` | **15** (+0) | 1 | 0 | 0 | 0 | 0 | 16 | 50 / 2 |
+| `css/cssom` | **161** (+5) | 30 | 0 | 0 | 1 | 29 | 221 | 3,178 / 381 |
+| `css/cssom-view` | **78** (+10) | 126 | 11 | 0 | 2 | 22 | 239 | 1,139 / 976 |
+| `css/fill-stroke` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **14** (+1) | 14 | 0 | 0 | 0 | 0 | 28 | 350 / 2,060 |
+| `css/mediaqueries` | **9** (+0) | 19 | 2 | 0 | 0 | 63 | 93 | 277 / 74 |
+| `css/motion` | **12** (+1) | 31 | 0 | 0 | 0 | 4 | 47 | 1,601 / 3,347 |
+| `css/selectors` | **130** (+4) | 68 | 7 | 0 | 6 | 313 | 524 | 4,545 / 944 |
+| **total** | **1535** | 1175 | 25 | 0 | 191 | 1488 | 4414 | 68,941 / 34,147 |
+
+## 2-wide. Every CSS module, measured — 2026-09-17, midday: round six (V: CSSOM View)
+
+Round six's agent V built CSSOM View's scrolling half (`docs/wpt.md`'s row
+of this SHA says what), and the root's session-16 property work
+(`container-*`, `vi`/`vb` by writing mode, `name in el.style`,
+`unicode-range`, `var()` with one name) landed in between. Same instrument
+as the tables below, engine at `9f8da347`, deltas against `6edb7421`
+(round four - the last module table; round five's C2 touched only
+`css/selectors`' shadow pseudo-classes, whose files did not move):
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **11** (+0) | 0 | 0 | 0 | 0 | 0 | 11 | 92 / 0 |
+| `css/css-align` | **43** (+0) | 14 | 0 | 0 | 0 | 0 | 57 | 1,094 / 227 |
+| `css/css-anchor-position` | **3** (+0) | 7 | 0 | 0 | 0 | 0 | 10 | 124 / 96 |
+| `css/css-animations` | **24** (+0) | 18 | 0 | 0 | 0 | 1 | 43 | 360 / 230 |
+| `css/css-backgrounds` | **52** (+0) | 55 | 0 | 0 | 0 | 45 | 152 | 3,699 / 2,346 |
+| `css/css-box` | **26** (+0) | 14 | 0 | 0 | 0 | 0 | 40 | 450 / 477 |
+| `css/css-break` | **18** (+0) | 4 | 0 | 0 | 0 | 0 | 22 | 376 / 164 |
+| `css/css-cascade` | **48** (+1) | 45 | 1 | 0 | 0 | 60 | 154 | 1,005 / 140 |
+| `css/css-color` | **28** (+0) | 36 | 0 | 0 | 0 | 257 | 321 | 9,420 / 3,200 |
+| `css/css-color-adjust` | **4** (+0) | 3 | 0 | 0 | 0 | 0 | 7 | 131 / 16 |
+| `css/css-color-hdr` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 1 / 1 |
+| `css/css-conditional` | **7** (+3) | 33 | 1 | 0 | 172 | 204 | 417 | 1,674 / 122 |
+| `css/css-contain` | **4** (+0) | 1 | 0 | 0 | 0 | 0 | 5 | 43 / 2 |
+| `css/css-content` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 96 / 112 |
+| `css/css-display` | **2** (+0) | 6 | 0 | 0 | 0 | 0 | 8 | 326 / 34 |
+| `css/css-exclusions` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 4 / 0 |
+| `css/css-flexbox` | **23** (+0) | 11 | 0 | 0 | 0 | 1 | 35 | 753 / 236 |
+| `css/css-fonts` | **52** (+0) | 48 | 0 | 0 | 0 | 0 | 100 | 2,273 / 2,006 |
+| `css/css-forced-color-adjust` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 13 / 1 |
+| `css/css-forms` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 20 / 32 |
+| `css/css-gaps` | **14** (+0) | 60 | 0 | 0 | 0 | 2 | 76 | 356 / 3,790 |
+| `css/css-grid` | **21** (+0) | 53 | 0 | 0 | 0 | 3 | 77 | 1,614 / 2,096 |
+| `css/css-images` | **22** (+0) | 9 | 0 | 0 | 0 | 0 | 31 | 3,017 / 199 |
+| `css/css-inline` | **10** (+0) | 10 | 0 | 0 | 0 | 0 | 20 | 214 / 119 |
+| `css/css-link-params` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 2 / 0 |
+| `css/css-lists` | **9** (+0) | 16 | 0 | 0 | 0 | 0 | 25 | 335 / 163 |
+| `css/css-logical` | **32** (+0) | 30 | 0 | 0 | 0 | 0 | 62 | 620 / 146 |
+| `css/css-masking` | **20** (+0) | 28 | 0 | 0 | 0 | 1 | 49 | 1,199 / 4,884 |
+| `css/css-multicol` | **25** (+0) | 14 | 0 | 0 | 0 | 0 | 39 | 1,125 / 345 |
+| `css/css-nesting` | **11** (+0) | 11 | 0 | 0 | 0 | 23 | 45 | 81 / 36 |
+| `css/css-overflow` | **19** (+0) | 17 | 0 | 0 | 0 | 0 | 36 | 286 / 93 |
+| `css/css-overscroll-behavior` | **2** (+0) | 2 | 0 | 0 | 0 | 0 | 4 | 54 / 13 |
+| `css/css-page` | **6** (+0) | 6 | 0 | 0 | 0 | 0 | 12 | 43 / 30 |
+| `css/css-paint-api` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** (+0) | 11 | 0 | 0 | 0 | 0 | 32 | 822 / 239 |
+| `css/css-properties-values-api` | **5** (+2) | 63 | 0 | 0 | 1 | 0 | 69 | 79 / 163 |
+| `css/css-pseudo` | **0** (+0) | 5 | 0 | 0 | 0 | 0 | 5 | 144 / 139 |
+| `css/css-rhythm` | **12** (+0) | 3 | 0 | 0 | 0 | 0 | 15 | 89 / 66 |
+| `css/css-ruby` | **7** (+0) | 2 | 0 | 0 | 0 | 0 | 9 | 41 / 6 |
+| `css/css-scroll-anchoring` | **4** (+0) | 0 | 0 | 0 | 0 | 0 | 4 | 8 / 0 |
+| `css/css-scroll-snap` | **22** (+0) | 4 | 0 | 0 | 0 | 0 | 26 | 412 / 61 |
+| `css/css-scrollbars` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 3 / 1 |
+| `css/css-shapes` | **5** (+0) | 16 | 0 | 0 | 0 | 0 | 21 | 233 / 2,118 |
+| `css/css-size-adjust` | **2** (+0) | 3 | 0 | 0 | 0 | 0 | 5 | 160 / 55 |
+| `css/css-sizing` | **11** (+0) | 26 | 0 | 0 | 0 | 0 | 37 | 2,149 / 1,085 |
+| `css/css-syntax` | **18** (+1) | 21 | 0 | 0 | 1 | 8 | 48 | 382 / 47 |
+| `css/css-tables` | **14** (+0) | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **65** (+0) | 32 | 0 | 0 | 0 | 0 | 97 | 1,159 / 773 |
+| `css/css-text-decor` | **18** (+0) | 17 | 0 | 0 | 0 | 0 | 35 | 418 / 774 |
+| `css/css-transforms` | **25** (+0) | 41 | 0 | 0 | 0 | 27 | 93 | 1,592 / 3,743 |
+| `css/css-transitions` | **12** (+0) | 18 | 0 | 0 | 0 | 0 | 30 | 551 / 358 |
+| `css/css-ui` | **24** (+0) | 28 | 0 | 0 | 0 | 0 | 52 | 995 / 399 |
+| `css/css-values` | **171** (+2) | 89 | 7 | 0 | 4 | 237 | 508 | 7,611 / 2,717 |
+| `css/css-variables` | **26** (+0) | 34 | 1 | 0 | 0 | 186 | 247 | 432 / 153 |
+| `css/css-view-transitions` | **8** (+0) | 4 | 0 | 0 | 0 | 0 | 12 | 337 / 687 |
+| `css/css-viewport` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 164 / 8 |
+| `css/css-writing-modes` | **15** (+0) | 1 | 0 | 0 | 0 | 0 | 16 | 50 / 2 |
+| `css/cssom` | **156** (+5) | 36 | 0 | 0 | 0 | 29 | 221 | 3,168 / 391 |
+| `css/cssom-view` | **68** (+42) | 138 | 10 | 0 | 1 | 22 | 239 | 1,084 / 1,034 |
+| `css/fill-stroke` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **13** (+0) | 15 | 0 | 0 | 0 | 0 | 28 | 358 / 2,052 |
+| `css/mediaqueries` | **9** (+0) | 19 | 2 | 0 | 0 | 63 | 93 | 277 / 74 |
+| `css/motion` | **11** (+0) | 32 | 0 | 0 | 0 | 4 | 47 | 1,366 / 3,582 |
+| `css/selectors` | **126** (+5) | 72 | 7 | 0 | 6 | 313 | 524 | 4,538 / 951 |
+| **total** | **1413** | 1298 | 29 | 0 | 185 | 1488 | 4413 | 59,562 / 43,529 |
+1413 of the 2925 that ran (48.3%); subtests 59,562 PASS, 43,529 FAIL
+
+**1,413 files PASS of 2,925 (from 1,352), +61, and the modules that moved:**
+`css/css-cascade` 47 -> 48, `css/css-conditional` 4 -> 7, `css/css-properties-values-api` 3 -> 5, `css/css-syntax` 17 -> 18, `css/css-values` 169 -> 171, `css/cssom` 151 -> 156, `css/cssom-view` 26 -> 68, `css/selectors` 121 -> 126. `css/cssom-view` (+42) is most of it; `css/selectors` +5 (`:heading`,
+`:defined`, `:has-slotted`), `css/cssom` +5, `css-conditional` +3
+(`@container`), `css-properties-values-api` +2, `css-cascade`,
+`css-syntax`, `css-values`. Nothing lost at the file level.
+
+## 2-wide. Every CSS module, measured — 2026-09-16, evening: round four (G2)
+
+Round four's agent G2 tightened the value grammars round two's agent G had
+made too permissive. Same instrument as the tables below, engine at
+`6edb7421`, deltas against `273773cd` (`e29e197f`'s css numbers, unchanged
+through round three):
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **11** (+1) | 0 | 0 | 0 | 0 | 0 | 11 | 92 / 0 |
+| `css/css-align` | **43** (+0) | 14 | 0 | 0 | 0 | 0 | 57 | 1,094 / 227 |
+| `css/css-anchor-position` | **3** (+0) | 7 | 0 | 0 | 0 | 0 | 10 | 124 / 96 |
+| `css/css-animations` | **24** (+16) | 18 | 0 | 0 | 0 | 1 | 43 | 360 / 230 |
+| `css/css-backgrounds` | **52** (+2) | 55 | 0 | 0 | 0 | 45 | 152 | 3,699 / 2,346 |
+| `css/css-box` | **26** (+0) | 14 | 0 | 0 | 0 | 0 | 40 | 450 / 477 |
+| `css/css-break` | **18** (+2) | 4 | 0 | 0 | 0 | 0 | 22 | 376 / 164 |
+| `css/css-cascade` | **47** (+0) | 46 | 1 | 0 | 0 | 60 | 154 | 1,002 / 141 |
+| `css/css-color` | **28** (+0) | 36 | 0 | 0 | 0 | 257 | 321 | 9,420 / 3,200 |
+| `css/css-color-adjust` | **4** (+3) | 3 | 0 | 0 | 0 | 0 | 7 | 131 / 16 |
+| `css/css-color-hdr` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 1 / 1 |
+| `css/css-conditional` | **4** (+0) | 36 | 1 | 0 | 172 | 204 | 417 | 948 / 848 |
+| `css/css-contain` | **4** (+0) | 1 | 0 | 0 | 0 | 0 | 5 | 43 / 2 |
+| `css/css-content` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 96 / 112 |
+| `css/css-display` | **2** (+0) | 6 | 0 | 0 | 0 | 0 | 8 | 326 / 34 |
+| `css/css-exclusions` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 4 / 0 |
+| `css/css-flexbox` | **23** (+0) | 11 | 0 | 0 | 0 | 1 | 35 | 753 / 236 |
+| `css/css-fonts` | **52** (+5) | 48 | 0 | 0 | 0 | 0 | 100 | 2,273 / 2,006 |
+| `css/css-forced-color-adjust` | **3** (+0) | 1 | 0 | 0 | 0 | 0 | 4 | 13 / 1 |
+| `css/css-forms` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 20 / 32 |
+| `css/css-gaps` | **14** (+0) | 60 | 0 | 0 | 0 | 2 | 76 | 356 / 3,790 |
+| `css/css-grid` | **21** (+2) | 53 | 0 | 0 | 0 | 3 | 77 | 1,614 / 2,096 |
+| `css/css-images` | **22** (+2) | 9 | 0 | 0 | 0 | 0 | 31 | 3,017 / 199 |
+| `css/css-inline` | **10** (+0) | 10 | 0 | 0 | 0 | 0 | 20 | 214 / 119 |
+| `css/css-link-params` | **1** (+0) | 0 | 0 | 0 | 0 | 0 | 1 | 2 / 0 |
+| `css/css-lists` | **9** (+3) | 16 | 0 | 0 | 0 | 0 | 25 | 335 / 163 |
+| `css/css-logical` | **32** (+0) | 30 | 0 | 0 | 0 | 0 | 62 | 620 / 146 |
+| `css/css-masking` | **20** (+1) | 28 | 0 | 0 | 0 | 1 | 49 | 1,199 / 4,884 |
+| `css/css-multicol` | **25** (+1) | 14 | 0 | 0 | 0 | 0 | 39 | 1,125 / 345 |
+| `css/css-nesting` | **11** (+0) | 11 | 0 | 0 | 0 | 23 | 45 | 81 / 36 |
+| `css/css-overflow` | **19** (+6) | 17 | 0 | 0 | 0 | 0 | 36 | 286 / 93 |
+| `css/css-overscroll-behavior` | **2** (+0) | 2 | 0 | 0 | 0 | 0 | 4 | 54 / 13 |
+| `css/css-page` | **6** (+1) | 6 | 0 | 0 | 0 | 0 | 12 | 43 / 30 |
+| `css/css-paint-api` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** (+0) | 11 | 0 | 0 | 0 | 0 | 32 | 822 / 239 |
+| `css/css-properties-values-api` | **3** (+0) | 62 | 0 | 0 | 4 | 0 | 69 | 82 / 160 |
+| `css/css-pseudo` | **0** (+0) | 4 | 0 | 0 | 1 | 0 | 5 | 109 / 174 |
+| `css/css-rhythm` | **12** (+0) | 3 | 0 | 0 | 0 | 0 | 15 | 89 / 66 |
+| `css/css-ruby` | **7** (+1) | 2 | 0 | 0 | 0 | 0 | 9 | 41 / 6 |
+| `css/css-scroll-anchoring` | **4** (+0) | 0 | 0 | 0 | 0 | 0 | 4 | 8 / 0 |
+| `css/css-scroll-snap` | **22** (+0) | 4 | 0 | 0 | 0 | 0 | 26 | 412 / 61 |
+| `css/css-scrollbars` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 3 / 1 |
+| `css/css-shapes` | **5** (+0) | 16 | 0 | 0 | 0 | 0 | 21 | 233 / 2,118 |
+| `css/css-size-adjust` | **2** (+1) | 3 | 0 | 0 | 0 | 0 | 5 | 160 / 55 |
+| `css/css-sizing` | **11** (+0) | 26 | 0 | 0 | 0 | 0 | 37 | 2,149 / 1,085 |
+| `css/css-syntax` | **17** (+0) | 22 | 0 | 0 | 1 | 8 | 48 | 298 / 131 |
+| `css/css-tables` | **14** (+0) | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **65** (+7) | 32 | 0 | 0 | 0 | 0 | 97 | 1,159 / 773 |
+| `css/css-text-decor` | **18** (+0) | 17 | 0 | 0 | 0 | 0 | 35 | 418 / 774 |
+| `css/css-transforms` | **25** (+1) | 41 | 0 | 0 | 0 | 27 | 93 | 1,592 / 3,743 |
+| `css/css-transitions` | **12** (+6) | 18 | 0 | 0 | 0 | 0 | 30 | 551 / 358 |
+| `css/css-ui` | **24** (+0) | 28 | 0 | 0 | 0 | 0 | 52 | 995 / 399 |
+| `css/css-values` | **169** (+6) | 91 | 7 | 0 | 4 | 237 | 508 | 7,579 / 2,749 |
+| `css/css-variables` | **26** (+0) | 34 | 1 | 0 | 0 | 186 | 247 | 439 / 146 |
+| `css/css-view-transitions` | **8** (+2) | 4 | 0 | 0 | 0 | 0 | 12 | 337 / 687 |
+| `css/css-viewport` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **3** (+1) | 1 | 0 | 0 | 0 | 0 | 4 | 164 / 8 |
+| `css/css-writing-modes` | **15** (+2) | 1 | 0 | 0 | 0 | 0 | 16 | 50 / 2 |
+| `css/cssom` | **151** (+0) | 41 | 0 | 0 | 0 | 29 | 221 | 2,822 / 737 |
+| `css/cssom-view` | **26** (+0) | 173 | 5 | 0 | 13 | 22 | 239 | 412 / 1,559 |
+| `css/fill-stroke` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **13** (+0) | 15 | 0 | 0 | 0 | 0 | 28 | 358 / 2,052 |
+| `css/mediaqueries` | **9** (+0) | 19 | 2 | 0 | 0 | 63 | 93 | 277 / 74 |
+| `css/motion` | **11** (+4) | 32 | 0 | 0 | 0 | 4 | 47 | 1,366 / 3,582 |
+| `css/selectors` | **121** (+0) | 75 | 7 | 0 | 8 | 313 | 524 | 4,447 / 1,038 |
+
+**1,352 files PASS of the 2,925 that ran, from 1,276 at `273773cd` - +76,
+one lost, 57,583 subtests PASS.** The gains are the `*-invalid.html` parsing
+files whose grammar now refuses what the spec refuses: css-animations +16
+(`animation-range-*`, `animation-timing-function`, and
+`animation-duration`'s initial value 0s), css-text +7, css-transitions +6,
+css-overflow +6 (`line-clamp`, `scrollbar-gutter`, `block-ellipsis`),
+css-fonts +5, css-lists +3, motion +4 (`offset-*`). The math-function
+serialisation of css-values (`sin-cos-tan`, `minmax-angle`,
+`calc-background-position-003`, `signs-abs`) also came back. The one lost is
+`dom/events` (the activation regression, `docs/wpt.md`), not a css file.
+
+## 2-wide. Every CSS module, measured — 2026-09-16, after rounds two and three
+
+The same instrument as the 2026-09-13 table below (devbox, 4 workers,
+`CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap, corpus `3f6b09ae3e`),
+engine at `273773cd` - `7f9211d0` plus the round-one, round-two (A
+animations, G properties, L layout, C cascade) and round-three branches;
+the css rows did not move between `e29e197f` and `273773cd`. Deltas are
+against `7f9211d0`:
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **10** (+7) | 1 | 0 | 0 | 0 | 0 | 11 | 90 / 2 |
+| `css/css-align` | **43** (+22) | 14 | 0 | 0 | 0 | 0 | 57 | 1,094 / 227 |
+| `css/css-anchor-position` | **3** (+3) | 7 | 0 | 0 | 0 | 0 | 10 | 124 / 96 |
+| `css/css-animations` | **8** (-2) | 34 | 0 | 0 | 0 | 1 | 43 | 297 / 293 |
+| `css/css-backgrounds` | **50** (+18) | 57 | 0 | 0 | 0 | 45 | 152 | 3,696 / 2,349 |
+| `css/css-box` | **26** (+1) | 14 | 0 | 0 | 0 | 0 | 40 | 450 / 477 |
+| `css/css-break` | **16** (+8) | 6 | 0 | 0 | 0 | 0 | 22 | 374 / 166 |
+| `css/css-cascade` | **47** (+22) | 46 | 1 | 0 | 0 | 60 | 154 | 1,002 / 141 |
+| `css/css-color` | **28** (+17) | 36 | 0 | 0 | 0 | 257 | 321 | 9,420 / 3,200 |
+| `css/css-color-adjust` | **1** (+0) | 6 | 0 | 0 | 0 | 0 | 7 | 108 / 39 |
+| `css/css-color-hdr` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 1 / 1 |
+| `css/css-conditional` | **4** (-1) | 36 | 1 | 0 | 172 | 204 | 417 | 948 / 848 |
+| `css/css-contain` | **4** (+3) | 1 | 0 | 0 | 0 | 0 | 5 | 43 / 2 |
+| `css/css-content` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 96 / 112 |
+| `css/css-display` | **2** (+1) | 6 | 0 | 0 | 0 | 0 | 8 | 326 / 34 |
+| `css/css-exclusions` | **1** (+1) | 0 | 0 | 0 | 0 | 0 | 1 | 4 / 0 |
+| `css/css-flexbox` | **23** (+0) | 11 | 0 | 0 | 0 | 1 | 35 | 753 / 236 |
+| `css/css-fonts` | **47** (+23) | 53 | 0 | 0 | 0 | 0 | 100 | 2,257 / 2,022 |
+| `css/css-forced-color-adjust` | **3** (+2) | 1 | 0 | 0 | 0 | 0 | 4 | 13 / 1 |
+| `css/css-forms` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 20 / 32 |
+| `css/css-gaps` | **14** (-4) | 60 | 0 | 0 | 0 | 2 | 76 | 356 / 3,790 |
+| `css/css-grid` | **19** (+6) | 55 | 0 | 0 | 0 | 3 | 77 | 1,612 / 2,098 |
+| `css/css-images` | **20** (+12) | 11 | 0 | 0 | 0 | 0 | 31 | 3,000 / 216 |
+| `css/css-inline` | **10** (+4) | 10 | 0 | 0 | 0 | 0 | 20 | 214 / 119 |
+| `css/css-link-params` | **1** (+1) | 0 | 0 | 0 | 0 | 0 | 1 | 2 / 0 |
+| `css/css-lists` | **6** (-2) | 19 | 0 | 0 | 0 | 0 | 25 | 332 / 166 |
+| `css/css-logical` | **32** (+3) | 30 | 0 | 0 | 0 | 0 | 62 | 620 / 146 |
+| `css/css-masking` | **19** (+9) | 29 | 0 | 0 | 0 | 1 | 49 | 822 / 5,261 |
+| `css/css-multicol` | **24** (+13) | 15 | 0 | 0 | 0 | 0 | 39 | 1,123 / 347 |
+| `css/css-nesting` | **11** (+10) | 11 | 0 | 0 | 0 | 23 | 45 | 81 / 36 |
+| `css/css-overflow` | **13** (+1) | 23 | 0 | 0 | 0 | 0 | 36 | 227 / 152 |
+| `css/css-overscroll-behavior` | **2** (+1) | 2 | 0 | 0 | 0 | 0 | 4 | 54 / 13 |
+| `css/css-page` | **5** (+1) | 7 | 0 | 0 | 0 | 0 | 12 | 39 / 34 |
+| `css/css-paint-api` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** (+0) | 11 | 0 | 0 | 0 | 0 | 32 | 822 / 239 |
+| `css/css-properties-values-api` | **3** (+3) | 62 | 0 | 0 | 4 | 0 | 69 | 82 / 160 |
+| `css/css-pseudo` | **0** (+0) | 4 | 0 | 0 | 1 | 0 | 5 | 109 / 174 |
+| `css/css-rhythm` | **12** (+7) | 3 | 0 | 0 | 0 | 0 | 15 | 89 / 66 |
+| `css/css-ruby` | **6** (+2) | 3 | 0 | 0 | 0 | 0 | 9 | 36 / 11 |
+| `css/css-scroll-anchoring` | **4** (+3) | 0 | 0 | 0 | 0 | 0 | 4 | 8 / 0 |
+| `css/css-scroll-snap` | **22** (+15) | 4 | 0 | 0 | 0 | 0 | 26 | 412 / 61 |
+| `css/css-scrollbars` | **0** (+0) | 1 | 0 | 0 | 0 | 0 | 1 | 3 / 1 |
+| `css/css-shapes` | **5** (-2) | 16 | 0 | 0 | 0 | 0 | 21 | 191 / 2,160 |
+| `css/css-size-adjust` | **1** (+0) | 4 | 0 | 0 | 0 | 0 | 5 | 156 / 59 |
+| `css/css-sizing` | **11** (+0) | 26 | 0 | 0 | 0 | 0 | 37 | 2,149 / 1,085 |
+| `css/css-syntax` | **17** (+2) | 22 | 0 | 0 | 1 | 8 | 48 | 298 / 131 |
+| `css/css-tables` | **14** (+0) | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **58** (+22) | 39 | 0 | 0 | 0 | 0 | 97 | 1,093 / 839 |
+| `css/css-text-decor` | **18** (+6) | 17 | 0 | 0 | 0 | 0 | 35 | 418 / 774 |
+| `css/css-transforms` | **24** (+17) | 42 | 0 | 0 | 0 | 27 | 93 | 1,591 / 3,744 |
+| `css/css-transitions` | **6** (-3) | 24 | 0 | 0 | 0 | 0 | 30 | 530 / 379 |
+| `css/css-ui` | **24** (+3) | 28 | 0 | 0 | 0 | 0 | 52 | 995 / 399 |
+| `css/css-values` | **163** (+5) | 96 | 7 | 0 | 5 | 237 | 508 | 7,293 / 2,773 |
+| `css/css-variables` | **26** (+6) | 34 | 1 | 0 | 0 | 186 | 247 | 439 / 146 |
+| `css/css-view-transitions` | **6** (+3) | 6 | 0 | 0 | 0 | 0 | 12 | 323 / 701 |
+| `css/css-viewport` | **0** (+0) | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **2** (+1) | 2 | 0 | 0 | 0 | 0 | 4 | 161 / 11 |
+| `css/css-writing-modes` | **13** (+3) | 3 | 0 | 0 | 0 | 0 | 16 | 46 / 6 |
+| `css/cssom` | **151** (+4) | 41 | 0 | 0 | 0 | 29 | 221 | 2,821 / 738 |
+| `css/cssom-view` | **26** (-18) | 173 | 5 | 0 | 13 | 22 | 239 | 412 / 1,559 |
+| `css/fill-stroke` | **0** (+0) | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **13** (+9) | 15 | 0 | 0 | 0 | 0 | 28 | 358 / 2,052 |
+| `css/mediaqueries` | **9** (+4) | 19 | 2 | 0 | 0 | 63 | 93 | 277 / 74 |
+| `css/motion` | **7** (+0) | 36 | 0 | 0 | 0 | 4 | 47 | 1,276 / 3,672 |
+| `css/selectors` | **121** (+16) | 75 | 7 | 0 | 8 | 313 | 524 | 4,447 / 1,038 |
+
+**Across the 65 css modules: 1,276 files PASS of the 2,925 that ran, from
+988 at `7f9211d0` - +389 files gained, 117 lost; 56,473 subtests PASS.**
+The gains are the four round-two agents' (`docs/plans/wpt-next.md` §3):
+css-align +22, css-backgrounds +18, css-cascade +22, css-color +17,
+css-fonts +23, css-text +22, css-transforms +17, css-scroll-snap +15,
+selectors +15, css-multicol +13, css-images +12, css-nesting +10,
+filter-effects +9. Of the 117 lost, 53 are `*-invalid.html` parsing files
+(G: a property that was an expando refused everything, and its real
+grammar accepts some invalid forms - G2 in the plan), 28 are
+`promise_test` files that were the instrument's false pass (`docs/wpt.md`,
+the `9c70aaa0` row, point 1: 21 of them `cssom-view`'s smooth-scroll
+files), and the rest are single files under css-values (12), css-cascade
+(7), cssom (6), css-overflow (6), selectors (5), css-grid (5), css-gaps
+(5).
+
+## 2-wide. Every CSS module, measured — 2026-09-13
+
+The corpus grew on 2026-09-13 to every CSS module's `parsing/` tests,
+`inheritance.html` and `animation/` tests plus nine whole modules
+(`docs/wpt.md`, "the widened corpus"), so for the first time the CSS front
+end is measured property by property across the whole of CSS rather than in
+two suites. Engine at `7f9211d0`, same instrument (devbox, 4 workers,
+`CTBROWSER_GL_DRIVER=deterministic`, 4 GB cap):
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files | subtests PASS / FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `css/compositing` | **3** | 8 | 0 | 0 | 0 | 0 | 11 | 7 / 85 |
+| `css/css-align` | **21** | 36 | 0 | 0 | 0 | 0 | 57 | 593 / 728 |
+| `css/css-anchor-position` | **0** | 10 | 0 | 0 | 0 | 0 | 10 | 41 / 179 |
+| `css/css-animations` | **10** | 32 | 0 | 0 | 0 | 1 | 43 | 212 / 378 |
+| `css/css-backgrounds` | **32** | 71 | 4 | 0 | 0 | 45 | 152 | 1,411 / 2,876 |
+| `css/css-box` | **25** | 15 | 0 | 0 | 0 | 0 | 40 | 300 / 627 |
+| `css/css-break` | **8** | 14 | 0 | 0 | 0 | 0 | 22 | 91 / 449 |
+| `css/css-cascade` | **25** | 52 | 1 | 0 | 0 | 62 | 140 | 400 / 325 |
+| `css/css-color` | **11** | 51 | 2 | 0 | 0 | 257 | 321 | 1,996 / 5,702 |
+| `css/css-color-adjust` | **1** | 6 | 0 | 0 | 0 | 0 | 7 | 16 / 131 |
+| `css/css-color-hdr` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-conditional` | **5** | 35 | 1 | 0 | 172 | 204 | 417 | 1,295 / 501 |
+| `css/css-contain` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 14 / 31 |
+| `css/css-content` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 91 / 117 |
+| `css/css-display` | **1** | 7 | 0 | 0 | 0 | 0 | 8 | 142 / 218 |
+| `css/css-exclusions` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-flexbox` | **23** | 11 | 0 | 0 | 0 | 1 | 35 | 422 / 567 |
+| `css/css-fonts` | **24** | 73 | 3 | 0 | 0 | 0 | 100 | 1,423 / 2,446 |
+| `css/css-forced-color-adjust` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 6 / 8 |
+| `css/css-forms` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 1 / 51 |
+| `css/css-gaps` | **18** | 54 | 2 | 0 | 0 | 2 | 76 | 325 / 2,477 |
+| `css/css-grid` | **13** | 57 | 2 | 0 | 2 | 3 | 77 | 362 / 1,951 |
+| `css/css-images` | **8** | 23 | 0 | 0 | 0 | 0 | 31 | 744 / 2,472 |
+| `css/css-inline` | **6** | 14 | 0 | 0 | 0 | 0 | 20 | 78 / 255 |
+| `css/css-link-params` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 2 |
+| `css/css-lists` | **8** | 17 | 0 | 0 | 0 | 0 | 25 | 248 / 250 |
+| `css/css-logical` | **29** | 33 | 0 | 0 | 0 | 0 | 62 | 520 / 246 |
+| `css/css-masking` | **10** | 32 | 6 | 0 | 0 | 1 | 49 | 126 / 2,821 |
+| `css/css-multicol` | **11** | 28 | 0 | 0 | 0 | 0 | 39 | 78 / 1,392 |
+| `css/css-nesting` | **1** | 21 | 0 | 0 | 0 | 23 | 45 | 9 / 108 |
+| `css/css-overflow` | **12** | 24 | 0 | 0 | 0 | 0 | 36 | 165 / 214 |
+| `css/css-overscroll-behavior` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 15 / 52 |
+| `css/css-page` | **4** | 8 | 0 | 0 | 0 | 0 | 12 | 31 / 42 |
+| `css/css-paint-api` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-position` | **21** | 11 | 0 | 0 | 0 | 0 | 32 | 545 / 516 |
+| `css/css-properties-values-api` | **0** | 9 | 0 | 0 | 60 | 0 | 69 | 0 / 9 |
+| `css/css-pseudo` | **0** | 4 | 0 | 0 | 1 | 0 | 5 | 57 / 226 |
+| `css/css-rhythm` | **5** | 10 | 0 | 0 | 0 | 0 | 15 | 55 / 100 |
+| `css/css-ruby` | **4** | 5 | 0 | 0 | 0 | 0 | 9 | 26 / 21 |
+| `css/css-scroll-anchoring` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 2 / 6 |
+| `css/css-scroll-snap` | **7** | 19 | 0 | 0 | 0 | 0 | 26 | 183 / 290 |
+| `css/css-scrollbars` | **0** | 1 | 0 | 0 | 0 | 0 | 1 | 0 / 4 |
+| `css/css-shapes` | **7** | 11 | 3 | 0 | 0 | 0 | 21 | 66 / 481 |
+| `css/css-size-adjust` | **1** | 4 | 0 | 0 | 0 | 0 | 5 | 4 / 211 |
+| `css/css-sizing` | **11** | 23 | 3 | 0 | 0 | 0 | 37 | 1,033 / 941 |
+| `css/css-syntax` | **15** | 24 | 0 | 0 | 1 | 8 | 48 | 291 / 138 |
+| `css/css-tables` | **14** | 3 | 0 | 0 | 0 | 0 | 17 | 40 / 127 |
+| `css/css-text` | **36** | 61 | 0 | 0 | 0 | 0 | 97 | 556 / 1,376 |
+| `css/css-text-decor` | **12** | 23 | 0 | 0 | 0 | 0 | 35 | 185 / 1,007 |
+| `css/css-transforms` | **7** | 55 | 4 | 0 | 0 | 27 | 93 | 336 / 3,396 |
+| `css/css-transitions` | **9** | 21 | 0 | 0 | 0 | 0 | 30 | 299 / 610 |
+| `css/css-ui` | **21** | 31 | 0 | 0 | 0 | 0 | 52 | 558 / 836 |
+| `css/css-values` | **158** | 100 | 8 | 0 | 5 | 237 | 508 | 6,274 / 1,704 |
+| `css/css-variables` | **20** | 28 | 12 | 0 | 1 | 186 | 247 | 392 / 176 |
+| `css/css-view-transitions` | **3** | 9 | 0 | 0 | 0 | 0 | 12 | 80 / 944 |
+| `css/css-viewport` | **0** | 0 | 0 | 0 | 0 | 1 | 1 | 0 / 0 |
+| `css/css-will-change` | **1** | 3 | 0 | 0 | 0 | 0 | 4 | 127 / 45 |
+| `css/css-writing-modes` | **10** | 6 | 0 | 0 | 0 | 0 | 16 | 36 / 16 |
+| `css/cssom` | **147** | 35 | 0 | 0 | 10 | 29 | 221 | 1,618 / 81 |
+| `css/cssom-view` | **44** | 157 | 3 | 0 | 13 | 22 | 239 | 485 / 1,489 |
+| `css/fill-stroke` | **0** | 3 | 0 | 0 | 0 | 0 | 3 | 0 / 368 |
+| `css/filter-effects` | **4** | 24 | 0 | 0 | 0 | 0 | 28 | 143 / 2,267 |
+| `css/mediaqueries` | **5** | 25 | 0 | 0 | 0 | 63 | 93 | 834 / 864 |
+| `css/motion` | **7** | 33 | 3 | 0 | 0 | 4 | 47 | 172 / 3,120 |
+| `css/selectors` | **105** | 95 | 1 | 0 | 10 | 313 | 524 | 4,095 / 1,363 |
+
+**988 of the 2,909 css/* tests that ran (34.0%); 29,654 subtests PASS,
+50,439 FAIL.** The parsing and inheritance files alone are 24,411 subtests,
+8,460 PASS, and by property the failures are:
+
+| failing | passing | property | what it is |
+|---:|---:|---|---|
+| 5,271 | 1,805 | `color` | CSS Color 4/5: the modern space-separated syntax, `lab()`/`lch()`/`oklab()`/`oklch()`/`color()`, `color-mix()`, `light-dark()`, the relative colour syntax `rgb(from red r g b)`, `none`, and the computed serialisation `color(srgb 1 0 0)`. `properties/color.cpp` is a syntax check; `paint::parse_color` is what means a colour |
+| 2,160 | 632 | `background-image` | gradients: `linear-gradient()`/`radial-gradient()`/`conic-gradient()` and the repeating forms, colour stops and hints, canonical serialisation |
+| 318 | 317 | `font` | the shorthand's expansion and reserialisation |
+| 209+203+112+89+81+68 | | `grid-template-columns`/`-rows`, `grid`, `grid-row`, `grid-column`, `grid-template` | track lists: `repeat()`, `minmax()`, line names, `fit-content()` - parse and serialise, no layout |
+| 186 | 100 | `display` | the two-value syntax (`inline flow-root` is `inline-block`) |
+| 150+125+113+102+82+82 | | `rule`, `column-rule`, `rule-inset`, `row-rule`, `*-rule-inset` | css-gaps |
+| 139 | 69 | `offset-path` | basic shapes, `ray()`, `url()`, geometry boxes |
+| 135 | 92 | `content` | `counter()`/`counters()`/`attr()`/strings/`image-set()` |
+| 116 / 67 | 81 / 25 | `filter` / `backdrop-filter` | the filter function list |
+| 99 / 76 / 87 | | `clip-path` / `shape-outside` / `mask` | basic shapes and the mask shorthand |
+| 63 / 69 / 71 | | `text-decoration-line` / `box-shadow` / `font-size-adjust` | |
+
+211 of the 415 properties the sweep tests are absent from the property table
+(`grid-*`, `clip-path`, `mask-*`, `offset-*`, `place-*`, `justify-*`,
+`will-change`, `contain`, `columns`, `counter-*`, `font-variant-*`,
+`text-wrap`, `animation-range`, `backdrop-filter`, `shape-outside`, ...), and
+since `f08483ca` an unsupported name on `el.style` is an expando - CSSOM
+6.7.2 - so every one of their `test_valid_value`s fails honestly where it
+used to pass by echoing the author's bytes.
+
+The other block is not the grammar at all: **CSS Animations and CSS
+Transitions do not exist**, only Web Animations does, and the `animation/`
+files - `css-transforms` 3,396 failing subtests, `motion` 3,120,
+`css-backgrounds` 2,876, `css-masking` 2,821, `css-images` 2,472,
+`css-gaps` 2,477, `filter-effects` 2,267 - fail three of the four ways
+`interpolation-testcommon.js` drives them. Then **container queries**
+(`css-conditional`, 171 `assert_implements` HARNESS_ERRORs), `css-nesting`
+(1 of 22), `css-cascade` (`@layer`, `@scope`, `revert-layer`), and
+`cssom-view` (44 of 204).
+
+## 2. Where the two suites stand — 2026-09-12
+
+Engine at `b570bd29`, same instrument: `css/cssom` **115** PASS / 67 FAIL / 0
+TIMEOUT / 10 HARNESS_ERROR, subtests **1,443 PASS** / 260 FAIL;
+`css/css-values` **111** PASS / 132 FAIL / 10 TIMEOUT / 18 HARNESS_ERROR,
+subtests **4,633 PASS** / 2,615 FAIL. From the 09-10 late row: `css/cssom` +29
+files and +83 subtests — `@import` expanded into the cascade with a real
+`CSSImportRule` (`href`, `media`, `styleSheet`, `ownerRule`), `<style>`/`<link>`
+inside a shadow root with `sheet`/`styleSheets`/`adoptedStyleSheets`,
+`HTMLLinkElement.disabled` and `HTMLStyleElement.disabled` as the sheet's own
+flag (all seven `HTMLLinkElement-disabled-*` files), preferred style-sheet
+sets by `title`, `@namespace` passed to the selector parser and `selectorText`
+serialised against it, constructable sheets' `baseURL` and `replace()`, and
+the `background` shorthand finally expanded at cascade time (`6c68232b`); plus
+`serialize-values` whole (`font-family` unquoting, `counter(x, decimal)` ->
+`counter(x)`, `-0` kept inside math functions, `dd255c38`). `css/css-values`
++20 files and +390 subtests — `progress()` refusing non-simple types (the
+regression named on 09-10, gone), a percentage BASIS in `length_context` so
+`getComputedStyle` folds used-value math for margins and padding, the
+`lh`/`rlh`/`ic`/`ric`/`rex`/`rch` units and the `vi`/`vb`/`sv*`/`lv*`/`dv*`
+viewport variants with a line-height pre-pass in the cascade, computed
+`transform` as `matrix()`, the `border-radius` shorthand as `h h h h / v v v v`
+(`dd255c38`). One file went PASS -> FAIL, `animations/line-height-lh-transition`,
+because `20lh` resolves now and there are no transitions to animate it; and
+six new TIMEOUTs, the `cap`/`rcap`/`rch`/`rex`/`ric`/`rlh` `*-invalidation`
+files — a font-relative unit changing on the root does not settle, which is
+the next thing in `lib/Style`.
+
+What is left in `css/css-values`, by the agent's own count: `typed_arithmetic_cycle`
+needs `@property` registration (the parser discards the block) and the
+font-relative-unit cycle check; `minmax-length-percent-serialize`,
+`calc-nesting-002` and `calc-serialization-002` need the §10.13 tree
+serialisation (fold the resolvable terms around an unresolvable `min()`/`max()`,
+number-first products); `progress-computed` needs percentage ratios through
+`hypot()`/`abs()`; `calc-in-color-001` is `paint::parse_color`'s space/slash
+syntax. In `css/cssom`: shorthand reconstruction in `el.style`/`cssText` (the
+declaration store keeps a shorthand as one entry); `adoptedstylesheets-
+observablearray` (an in-place `push` is read but nothing schedules the
+restyle); `getComputedStyle` inside shadow trees, which are not rendered.
+
+## 2-late. Where the two suites stood — 2026-09-10, late
+
+Engine at `62945aeb`, same instrument: `css/cssom` **86** PASS / 90 FAIL / 3
+TIMEOUT / 13 HARNESS_ERROR, subtests **1,360 PASS** / 301 FAIL;
+`css/css-values` **91** PASS / 164 FAIL / 4 TIMEOUT / 12 HARNESS_ERROR,
+subtests **4,243 PASS** / 2,998 FAIL. From the evening row: `css/cssom` +11
+files and +164 subtests (the CSSOM interface work of `25d8a284` — class
+strings, iterators, CSSKeyframesRule indexing, CSSContainerRule, the three
+declaration-block kinds, origin-clean sheets — plus the selector parser
+refusing undefined pseudos and canonical `selectorText`, `e161aa19`);
+`css/css-values` +11 files and +345 subtests (`<position>` computing to
+percentages, infinity/NaN clamping, `round()`/`clamp()`/signed zero, typed
+calc() arithmetic, `attr()` as a substitution — `2214ce24` — and CSSOM number
+serialisation, `d611d333`), against two one-subtest regressions from the
+calc() type algebra named in `docs/wpt.md`.
+
+## 2-evening. Where the two suites stood — 2026-09-10, evening
+
+Engine at `8ca744a1`, same instrument: `css/cssom` **75** PASS / 99 FAIL / 5
+TIMEOUT / 13 HARNESS_ERROR, subtests 1,196 PASS / 463 FAIL — unchanged from
+the morning row. `css/css-values` **80** PASS / 173 FAIL / 2 TIMEOUT / 16
+HARNESS_ERROR, subtests **3,898 PASS** / 3,067 FAIL: two files fewer and 95
+subtests more, because `element.animate` now exists and the Web Animations
+leg of the interpolation tests runs for the first time — see
+`docs/wpt.md` for the two named files.
+
+## 2-morning. Where the two suites stood — 2026-09-10, morning
+
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f830fbd3` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css/cssom` | **75** | 99 | 5 | 0 | 13 | 29 | 221 |
+| `css/css-values` | **82** | 170 | 2 | 0 | 17 | 237 | 508 |
+
+Subtests: `css/cssom` **1,196 PASS** / 463 FAIL / 6 NOTRUN / 7 TIMEOUT;
+`css/css-values` **3,803 PASS** / 3,156 FAIL / 3 TIMEOUT.
+
+Zero crashes in either suite. Both blocks named in §2's "THE TWO BLOCKS" below
+are now closed: `el.style` forwards (`341e6eec`) and the CSSOM reaches the
+cascade (`3fad3a99`). `css/cssom` 54 -> 75 files is mostly the second; the
+largest remaining `css/css-values` cause is `Web Animations should be
+supported` (246 subtests), then `querySelector` undefined on a wrapper (129)
+and computed-value serialisation (111).
+
+## 2a-prev. Where the two suites stood — 2026-09-07, night
+
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f7e0912` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css/cssom` | **54** | 116 | 6 | 0 | 16 | 29 | 221 |
+| `css/css-values` | **69** | 181 | 3 | 0 | 18 | 237 | 508 |
+
+Subtests: `css/cssom` **1,052 PASS** / 593 FAIL / 1 NOTRUN / 8 TIMEOUT;
+`css/css-values` **2,515 PASS** / 4,429 FAIL / 15 TIMEOUT.
+
+Zero crashes in either suite, as in every run since the first.
+
+| | 2026-09-03 | 09-07 day | 09-07 eve `a790941` | 09-07 eve `636f1b3` | 09-07 night `f7e0912` |
+|---|---:|---:|---:|---:|---:|
+| `css/cssom` files | 8 | 21 | 39 | 54 | **54** |
+| `css/cssom` subtests | 113 | 220 | 346 | 1,050 | **1,052** |
+| `css/css-values` files | 16 | 16 | 29 | 48 | **69** |
+| `css/css-values` subtests | 549 | 695 | 2,038 | 2,332 | **2,515** |
+
+`css/css-values` gained 21 files with no change aimed at it in this run: they
+are the previous session's four subagent merges arriving, and §2b below is what
+each of them was.
+
+### THE TWO BLOCKS IN FRONT OF BOTH SUITES, and neither is a CSS bug
+
+Both were found by reading the failure log rather than by writing CSS, both are
+one line, and between them they hold more subtests than everything measured
+above.
+
+**1. `el.style` is a WRITABLE data property.** CSSOM declares it
+`[PutForwards=cssText] readonly attribute CSSStyleDeclaration style`, so
+`el.style = ""` must forward to `el.style.cssText = ""`. In this engine
+`lib/Shell/bindings/element/views.cpp` installs it with `obj.set(...)`, so that
+assignment REPLACES the declaration object with the string. Every later
+`el.style[prop] = v` writes to a primitive and vanishes, and `getComputedStyle`
+reports the initial value forever.
+
+`css/support/numeric-testcommon.js` — `test_math_used`, `test_math_computed`,
+`test_math_specified` — opens every case with exactly that assignment.
+**Nineteen `css/css-values` files fail 100% because of it, 1,339 failing
+subtests:** `round-mod-rem-computed` (243), `signs-abs-computed` (233),
+`round-function` (191), `signed-zero` (162), `minmax-length-computed` (80),
+`hypot-pow-sqrt-computed` (53), `calc-mix-computed` (53),
+`acos-asin-atan-atan2-computed` (52), `minmax-length-percent-computed` (50),
+`typed_arithmetic` (39), `progress-computed` (36), `minmax-angle-computed` (32),
+`sin-cos-tan-computed` (32), `minmax-time-computed` (24), `exp-log-compute`
+(21), `minmax-number-computed` (14), `minmax-percentage-computed` (14),
+`minmax-integer-computed` (10), and `sin-cos-tan-serialize`. The control is
+clean: `computed-testcommon.js` never writes `el.style = …` and its 15 files are
+an ordinary mix of pass and fail.
+
+`lib/Shell/bindings/stylesheets/prototypes.cpp` already installs `rule.style` as an
+accessor with a forwarding setter and is the template. **How many of the 1,339
+then PASS is not measured** — behind the block is the math serialization, which
+is a separate question.
+
+**2. `set_author_styles_hook` is never installed.** `browser/styles.cpp`'s
+`refresh_author_styles` rebuilds the cascade from the DOM's text rather than
+from `dom_bindings::author_style_text()`, because CSSOM's selector
+serialization is lossy — and so no `insertRule`, no `selectorText =`, no
+`replaceSync` and no `adoptedStyleSheets` reordering ever reaches the cascade.
+That is what "expected `rgb(255, 0, 0)`, got `rgb(0, 0, 0)`" means in
+`adoptedstylesheets-cascade-order` (10 subtests),
+`CSSStyleSheet-constructable-invalidation`, `-replace-cssRules`, `-cssRules`,
+`-duplicate`, `adoptedstylesheets-modify-array-and-sheet` (3),
+`selectorText-modification-restyle-002`, and 19 of
+`CSSStyleRule-set-selectorText`'s 43 — roughly 40 subtests over eight files,
+gated on one wire.
+
+What makes the serialization lossy is in `lib/Style/css/selector.cpp`:
+`representable()` falls back to the author's bytes when a compound sets
+`never_matches`, but a pseudo-class the compiler silently DROPS sets nothing, so
+it serializes as `*`. Fixing that in the compiler unblocks the wire.
+
+## 2a. Where the two suites stood — 2026-09-07, evening
+
+Measured on the devbox against WPT `3f6b09ae`, four workers, engine at commit
+`636f1b3` on `ctbrowser-wpt`. §6 is the 2026-09-07 daytime re-measurement and
+§2b is the 2026-09-03 baseline; all four are kept because the comparison is the
+instrument.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css/cssom` | **54** | 115 | 6 | 0 | 17 | 29 | 221 |
+| `css/css-values` | **48** | 199 | 3 | 0 | 21 | 237 | 508 |
+
+Subtests: `css/cssom` **1,050 PASS** / 591 FAIL / 1 NOTRUN / 8 TIMEOUT;
+`css/css-values` **2,332 PASS** / 4,526 FAIL / 15 TIMEOUT.
+
+Zero crashes in either suite, as in every run since the first.
+
+| | 2026-09-03 | 2026-09-07 day | 2026-09-07 eve, `a790941` | 2026-09-07 eve, `636f1b3` |
+|---|---:|---:|---:|---:|
+| `css/cssom` files | 8 | 21 | 39 | **54** |
+| `css/cssom` subtests | 113 | 220 | 346 | **1,050** |
+| `css/css-values` files | 16 | 16 | 29 | **48** |
+| `css/css-values` subtests | 549 | 695 | 2,038 | **2,332** |
+
+**`css/cssom`'s passing subtests tripled in one step**, 346 to 1,050, and the
+single change behind most of it is not a CSS one: `el.style`'s declaration store
+was seeded once at wrapper construction, so `setAttribute("style", …)` — which
+writes the attribute directly and never touches the proxy — left every read
+answering with what the element had when it was wrapped.
+`cssom/serialize-values.html` is 697 subtests of exactly that shape.
+
+### What moved `css/cssom`, 39 -> 54 files
+
+* **`el.style` follows the attribute**, above, and a supported property that is
+  not set reads `""` rather than `undefined` — CSSOM 6.7.2's generated getters.
+* **A pseudo-element argument is not the element.** `getComputedStyle(el, "::x")`
+  took the second argument and threw it away. CSSOM splits it three ways and only
+  the first is "ignore it"; a colon-prefixed argument this engine does not style
+  reports an EMPTY declaration, which is 17 of `getComputedStyle-pseudo-with-
+  argument.html`'s 22 subtests and 6 of `-picker.html`'s 9. It costs one:
+  `::picker(select)` on a non-select expected `rgba(0, 0, 0, 0)` and now gets
+  `""`, which is the honest answer from an engine with no `::picker`.
+* **The automatic minimum size**, `min-width`/`min-height: auto`. Three things
+  preserve it and only one was implemented: a flex item did, a GRID item did not
+  (there is no grid box kind — `display: grid` lays out as a block, so the fact
+  is a declaration on the PARENT), and a specified `aspect-ratio` did not.
+  The rule also keyed on the text being empty, so it applied to the initial value
+  and not to an `auto` the author wrote — and that file asserts each element
+  twice, once each way.
+* **A computed `font-family` keeps its case.** `collapse_keyword` ASCII-lowercases,
+  which is right for `display: BLOCK` and wrong for every family name ever
+  written: `Twisty Tie` came back `twisty tie` on every element of every page
+  that names a font. That is a real difference in the css-parity dump, not only
+  in WPT.
+* **The CSSOM object model** — constructable sheets, `insertRule` on a grouping
+  rule, a MediaList that is a view of its text rather than a stored list, and an
+  adopted sheet reaching the author CSS in the order it was adopted in.
+
+### What moved `css/css-values`, 29 -> 48 files
+
+All of it is the value grammar and the serialization, and every row was verified
+against a scratch oracle replaying the suite's own assertions before it landed:
+
+* **A percentage with no calculation context is a syntax error**, not a value:
+  a percentage in an expression that answers with an angle, time, frequency or
+  resolution. All 12 of `percentage-without-context`.
+* **`rotate()`/`skew()`/`hue-rotate()` take an angle**, so a math function in one
+  of those positions that resolves to another type is invalid —
+  `rotate(min(0px))`, `rotate(tan(45deg))`. It was the LAST failing subtest in
+  three whole files.
+* **Canonical sum ordering**, CSS Values §10.13: percentage first, then the units
+  ASCII-sorted. `calc(10px + 1vmin + 10%)` serializes as
+  `calc(10% + 10px + 1vmin)`, which needed a second, symbolic evaluation basis
+  where `1em` and `1cqw` stay terms of their own.
+* **The property's half of the calculation context**: `border-left-width:
+  min(1px, 0%)` is invalid where `text-indent: min(1px, 0%)` is not.
+* **`progress()`, `ident()`, `inherit()`, `random-item()`** as real functions
+  with real argument grammars — three files had been passing VACUOUSLY, because
+  an unknown function failed the property grammar for the wrong reason.
+* **An unresolved comparison's arguments still simplify**:
+  `min(10% + 30px, 5em + 5%)` -> `min(10% + 30px, 5% + 5em)`.
+
+### What is still in front of `css/css-values`
+
+`attr()` is 243 subtests over two files and lives in
+`lib/Style/css/substitute.cpp`. `calc-size()` (52), `calc-mix()` (69),
+`random()` (62), `position()` (21) and the URL request modifiers (35) are
+unimplemented CSS Values 5 features and deliberate gaps. `calc-in-color-001`
+needs a `<color>` value model: `color` is `freeform` today and stored verbatim,
+so `rgba(calc(0%) calc(100%) calc(0%) / calc(10% * 10))` cannot compute to
+`rgb(0, 255, 0)`. The four-corner `/` shorthand serialization for
+`border-radius` and the two-component `background-position` are in
+`lib/Shell/bindings/computed_style/entries.cpp`, not in the value code.
+
+## 2b. The baseline, 2026-09-03 — and where it stood then
+
+§6 is the 2026-09-07 re-measurement. In short: `css/cssom` 8 -> **21** files and
+113 -> **220** passing subtests; `css/css-values` stays at **16** files while its
+passing subtests go 549 -> **695**, and the six files it lost and the six it
+gained are named and diagnosed there.

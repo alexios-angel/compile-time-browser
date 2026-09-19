@@ -1,0 +1,95 @@
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-cseucpkdfmtjapanese.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	FAIL
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x8E, 0x8F, or the range 0xA1 to 0xFE: 91"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x8E, 0x8F, or the range 0xA1 to 0xFE: B0 B5 91"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x8E, 0x8F, or the range 0xA1 to 0xFE: B0 B5 FF"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x8E, 0x8F, or the range 0xA1 to 0xFE: FF"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: B0 B0 B0"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: B0 B5 B0"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: B0"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"pointer is null: A2 B9"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0xA1-0xFE: B0 31"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0xA1-0xFE: B0 A0"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0xA1-0xFE: B0 FF"
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode-x-euc-jp.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-decode.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-cseucpkdfmtjapanese.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-x-euc-jp.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/euc-jp/eucjp_chars-cseucpkdfmtjapanese.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/euc-jp/eucjp_chars-x-euc-jp.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/euc-jp/eucjp_chars.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/euc-jp/eucjp_errors.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-csiso2022jp.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	FAIL
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"ascii: 0E 24 42 79 56 1B 28 42"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"escape start: 1B 65 79 56 1B 28 42"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"escape: 1B 24 65 79 56 1B 28 42"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"katakana: 1B 28 49 65 1B 28 42"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"lead byte and trail byte 1B: 1B 24 42 7F 56 1B 28 42"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"roman: 1B 28 4A 0F 1B 28 42"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"trail byte null index code point: 1B 24 42 24 74"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html	SUBTEST	FAIL	"trail byte out of range: 1B 24 42 79 7F 1B 28 42"
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-csiso2022jp.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp_chars-csiso2022jp.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp_chars.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp_errors.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-csshiftjis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	FAIL
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0x9F,0xA1-0xDF,0xE0,0xFC: A0"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0x9F,0xA1-0xDF,0xE0,0xFC: E1"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0x9F,0xA1-0xDF,0xE0,0xFC: FA FA FF"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0x9F,0xA1-0xDF,0xE0,0xFC: FF"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: FA 6E FA"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: FA FA FA"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: FA"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"pointer is null: 81 B5"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0x41-0xFE: FA FD"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0x41-0xFE: FA FE"
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-ms932.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-ms_kanji.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-shift-jis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-sjis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-windows-31j.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-decode-x-sjis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-decode.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-csshiftjis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-ms932.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-ms_kanji.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-shift-jis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-sjis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-windows-31j.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-x-sjis.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-form.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-href-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-href-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-href-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis-encode-href.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-japanese/shift_jis/sjis_chars-csshiftjis.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_chars-ms932.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_chars-ms_kanji.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_chars-shift-jis.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_chars-sjis.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_chars-windows-31j.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_chars-x-sjis.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_chars.html	SKIP	not a testharness test
+encoding/legacy-mb-japanese/shift_jis/sjis_errors.html	SKIP	not a testharness test

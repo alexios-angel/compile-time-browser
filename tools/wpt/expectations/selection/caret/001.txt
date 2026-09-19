@@ -1,0 +1,8 @@
+selection/caret/after-designMode-off.html	SKIP	reftest: needs a reference render, not a harness result
+selection/caret/collapse-pre-linestart-1.html	SKIP	reftest: needs a reference render, not a harness result
+selection/caret/collapse-pre-linestart-2.html	SKIP	reftest: needs a reference render, not a harness result
+selection/caret/editing-host-has-only-invisible-br.html	SKIP	reftest: needs a reference render, not a harness result
+selection/caret/empty-elements.html	FAIL
+selection/caret/empty-elements.html	SUBTEST	FAIL	"Selection can be placed inside the empty element"
+selection/caret/move-around-contenteditable-false.html	SKIP	testdriver: needs WebDriver input injection
+selection/caret/move-around-generated-content.html	SKIP	testdriver: needs WebDriver input injection

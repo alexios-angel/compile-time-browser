@@ -6,3 +6,10 @@ ctbrowser_target(ctbrowser-dom)
 target_link_libraries(ctbrowser-dom PUBLIC ctbrowser-core)
 
 add_library(ctbrowser::dom ALIAS ctbrowser-dom)
+
+# Generated entity rows are part of the public lookup header.
+target_sources(ctbrowser-dom PUBLIC FILE_SET HEADERS FILES
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/entities/entity_table-01.inc"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/entities/entity_table-02.inc"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/entities/entity_table-03.inc"
+)

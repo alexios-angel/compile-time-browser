@@ -9,6 +9,9 @@ foreach(test IN LISTS tests)
   ctbrowser_test(${test})
 endforeach()
 
+# Constructor and receiver cases remain part of the vm_functions executable.
+target_sources(ctbrowser-test-vm_functions PRIVATE js/vm_functions/constructors.cpp)
+
 # Public Core clients also run without the browser or interpreter.
 foreach(client core_basics core_text core_uri core_json)
   get_target_property(_core_libs ctbrowser-test-${client} LINK_LIBRARIES)

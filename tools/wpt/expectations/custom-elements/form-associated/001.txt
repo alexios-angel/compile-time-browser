@@ -1,0 +1,65 @@
+custom-elements/form-associated/ElementInternals-NotSupportedError.html	FAIL
+custom-elements/form-associated/ElementInternals-NotSupportedError.html	SUBTEST	FAIL	"Form-related operations and attributes should throw NotSupportedErrors for non-form-associated custom elements."
+custom-elements/form-associated/ElementInternals-behavior-accessibility.tentative.html	SKIP	testdriver: needs WebDriver input injection
+custom-elements/form-associated/ElementInternals-form.html	HARNESS_ERROR
+custom-elements/form-associated/ElementInternals-labels.html	FAIL
+custom-elements/form-associated/ElementInternals-labels.html	SUBTEST	FAIL	"ElementInternals.labels should throw NotSupportedError if the target element is not a form-associated custom element"
+custom-elements/form-associated/ElementInternals-labels.html	SUBTEST	FAIL	"LABEL association"
+custom-elements/form-associated/ElementInternals-labels.html	SUBTEST	FAIL	"LABEL click"
+custom-elements/form-associated/ElementInternals-reportValidity-bubble-notref.html	SKIP	not a testharness test
+custom-elements/form-associated/ElementInternals-reportValidity-bubble.html	SKIP	reftest: needs a reference render, not a harness result
+custom-elements/form-associated/ElementInternals-reportValidity-delegatesFocus-notref.html	SKIP	not a testharness test
+custom-elements/form-associated/ElementInternals-reportValidity-delegatesFocus.html	SKIP	reftest: needs a reference render, not a harness result
+custom-elements/form-associated/ElementInternals-setFormValue-nullish-value.html	HARNESS_ERROR
+custom-elements/form-associated/ElementInternals-setFormValue.html	FAIL
+custom-elements/form-associated/ElementInternals-setFormValue.html	SUBTEST	FAIL	"ElementInternals.setFormValue() should throw NotSupportedError if the target element is not a form-associated custom element"
+custom-elements/form-associated/ElementInternals-setFormValue.html	SUBTEST	FAIL	"Multiple values - name content attribute is ignored"
+custom-elements/form-associated/ElementInternals-setFormValue.html	SUBTEST	FAIL	"Null value should submit nothing"
+custom-elements/form-associated/ElementInternals-setFormValue.html	SUBTEST	FAIL	"Single value - Non-empty name exists"
+custom-elements/form-associated/ElementInternals-setFormValue.html	SUBTEST	FAIL	"Single value - empty name exists"
+custom-elements/form-associated/ElementInternals-setFormValue.html	SUBTEST	FAIL	"Single value - name is missing"
+custom-elements/form-associated/ElementInternals-setFormValue.html	SUBTEST	FAIL	"setFormValue with an empty FormData should submit nothing"
+custom-elements/form-associated/ElementInternals-setValidity-normalize-newlines.html	FAIL
+custom-elements/form-associated/ElementInternals-setValidity-normalize-newlines.html	SUBTEST	FAIL	"setValidity() should normalize newlines with another validity flag set"
+custom-elements/form-associated/ElementInternals-setValidity-normalize-newlines.html	SUBTEST	FAIL	"setValidity() should normalize newlines with the customError flag set"
+custom-elements/form-associated/ElementInternals-submit-behavior-dialog.tentative.html	HARNESS_ERROR
+custom-elements/form-associated/ElementInternals-submit-behavior.tentative.html	SKIP	testdriver: needs WebDriver input injection
+custom-elements/form-associated/ElementInternals-validation.html	FAIL
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"Custom control affects :valid :invalid for FORM and FIELDSET"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"Custom control affects validation at the owner form"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"\"anchor\" argument of setValidity()"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"\"anchor\" argument of setValidity(): passing self"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"checkValidity() should throw NotSupportedError if the target element is not a form-associated custom element"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"checkValidity()"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"reportValidity() should throw NotSupportedError if the target element is not a form-associated custom element"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"reportValidity()"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"validity and setValidity()"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"validity.customError should be false if not explicitly set via setValidity()"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"willValidate after upgrade (document.createElement)"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"willValidate after upgrade"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"willValidate should throw NotSupportedError if the target element is not a form-associated custom element"
+custom-elements/form-associated/ElementInternals-validation.html	SUBTEST	FAIL	"willValidate"
+custom-elements/form-associated/disabled-delegatesFocus.html	HARNESS_ERROR
+custom-elements/form-associated/fieldset-elements.html	FAIL
+custom-elements/form-associated/fieldset-elements.html	SUBTEST	FAIL	"Form associated custom elements should work with fieldset.elements"
+custom-elements/form-associated/focusability.html	FAIL
+custom-elements/form-associated/focusability.html	SUBTEST	FAIL	"Focusability of form-associated custom elements"
+custom-elements/form-associated/form-associated-callback.html	HARNESS_ERROR
+custom-elements/form-associated/form-disabled-callback.html	FAIL
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"A disabled form-associated custom element should not provide an entry for it"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Adding/removing disabled content attribute"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Callback triggered during a clone operation, with disabled state provided by ancestor"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Callback triggered during a clone/append operation, with disabled state provided by ancestor"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Disabled attribute affects focus-capability"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Relationship with FIELDSET"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Toggling \"disabled\" attribute on a <fieldset> does not trigger a callback on disabled custom element descendant"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Toggling \"disabled\" attribute on a custom element inside disabled <fieldset> does not trigger a callback"
+custom-elements/form-associated/form-disabled-callback.html	SUBTEST	FAIL	"Upgrading an element with disabled content attribute"
+custom-elements/form-associated/form-elements-namedItem.html	FAIL
+custom-elements/form-associated/form-elements-namedItem.html	SUBTEST	FAIL	"Form associated custom elements should work with document.forms.elements.namedItem() after updating the name attribute"
+custom-elements/form-associated/form-elements-namedItem.html	SUBTEST	FAIL	"Form associated custom elements should work with document.forms.elements.namedItem() after upgrading"
+custom-elements/form-associated/form-elements-namedItem.html	SUBTEST	FAIL	"Form associated custom elements should work with document.forms.elements.namedItem()"
+custom-elements/form-associated/form-reset-callback.html	FAIL
+custom-elements/form-associated/form-reset-callback.html	SUBTEST	FAIL	"form.reset() should trigger formResetCallback"
+custom-elements/form-associated/form-reset-callback.html	SUBTEST	FAIL	"form.reset(): formResetCallback is called synchronously at the end of form reset, with custom element reaction timing, *after* built-in form control reset algorithms run."
+custom-elements/form-associated/label-delegatesFocus.html	SKIP	testdriver: needs WebDriver input injection

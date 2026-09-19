@@ -22,7 +22,7 @@ time and one binary search per character at match time:
     ranges and the sequences as a second table.
   * CaseFolding.txt's simple folds (C + S), for Canonicalize under `iu`.
 
-    python3 tools/gen/unicode_properties.py > ctbrowser/lib/Script/regex_properties.inc
+    python3 tools/gen/unicode_properties.py
 
 The version is PINNED, not "latest": test262's property-escape tests are
 generated from one Unicode release and assert the exact sets, so the engine
@@ -30,6 +30,8 @@ must carry that same release until the corpus moves. Bump VERSION with it.
 """
 
 import sys
+
+from cpp_table import generate
 import urllib.request
 
 VERSION = "17.0.0"
@@ -353,11 +355,13 @@ def main():
     print("};")
     print()
     t.print_index(
-        "rx_general_category", "General_Category, every value and grouping under every name."
+        "rx_general_category",
+        "General_Category, every value and grouping under every name.",
     )
     t.print_index("rx_script", "Script, under the long and the four-letter name.")
     t.print_index(
-        "rx_script_extensions", "Script_Extensions: a code point with no entry extends its Script."
+        "rx_script_extensions",
+        "Script_Extensions: a code point with no entry extends its Script.",
     )
     t.print_index("rx_binary", "The binary properties of table 67, under every alias.")
     print("// The properties of strings (table 69, `v` only): lone code points as")
@@ -390,4 +394,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(generate(main, "ctbrowser/lib/Script/regex_properties.inc"))

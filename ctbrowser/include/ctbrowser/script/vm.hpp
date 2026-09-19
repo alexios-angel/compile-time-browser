@@ -1,786 +1,104 @@
 #pragma once
-#include <algorithm>
-#include <array>
-#include <charconv>
-#include <cmath>
-#include <compare>
-#include <cstddef>
-#include <cstdint>
-#include <deque>
-#include <functional>
-#include <memory>
-#include <span>
-#include <string>
-#include <string_view>
-#include <system_error>
-#include <vector>
 
-#include <ctbrowser/core/algorithms.hpp>
-#include <ctbrowser/core/core.hpp>
+#include <optional>
 
-#include <ctbrowser/script/bytecode.hpp>
-#include <ctbrowser/script/dispatch.hpp>
-#include <ctbrowser/script/type_record.hpp>
-#include <ctbrowser/script/value.hpp>
-
-// The interpreter: a flat array of 4-byte instructions with registers already
-// assigned.
-//
-// GC is mark-and-sweep over precise roots - the register stack, the globals
-// table, the call frames and the inventory in each_root - so there is no
-// conservative stack scanning and no pointer-shaped integer can keep an object
-// alive.
-//
-// One agent per thread, like a real JS agent: a context is NOT thread-safe
-// and is not meant to be. Workers get their own context; what they share is
-// the DOM, which has its own concurrency control.
+#include "vm/objects.hpp"
 
 namespace ctbrowser::script {
 
-struct closure_object;
-
-// type_record.hpp is included rather than forward-declared because each_root
-// hands its visitor the `root_label` vocabulary declared there.
-
-using native_fn = std::function<value(class context &, std::span<value>)>;
-
-// THE LINEAR SCAN ON `native_object` AND `closure_object` BELOW IS DELIBERATE,
-// AND IT WAS MEASURED. Callgrind on `babylon_ratchet` (46.577 G instructions):
-//
-//   closure_object::find    64,466,020   0.14%
-//   native_object::find      2,666,456   0.01%
-//
-// A `string_flat_map` index built past a threshold took the pair from 5.14 M to
-// 9.54 M instructions - the scan-or-index branch touches the map's header, and
-// two inlined bodies became one out-of-line call. `ensure_prototype` is lazy,
-// so MOST CLOSURES HOLD NOTHING AT ALL and the loop exits on an empty vector.
-// Do not re-propose a hash table here without a profile that puts these two
-// functions somewhere near the top.
-struct native_object final : heap_object {
-    std::string name;
-    native_fn fn;
-    // A NATIVE IS A FUNCTION THAT IS ALSO AN OBJECT. `Symbol` has to be both -
-    // `Symbol('x')` calls it and `Symbol.iterator` reads a property of it - and
-    // without a table here the two were mutually exclusive. Closures have had
-    // one since classes needed somewhere for their statics; this is the same
-    // need arriving for the built-ins.
-    std::vector<std::pair<std::string, value>> props;
-    // Parallel to `props`, grown lazily - see the long note on
-    // object_object::attrs. A built-in constructor's statics are here, and the
-    // specification says none of them is enumerable.
-    std::vector<std::uint8_t> attrs;
-    bool extensible = true;
-    // Accessor keys retain their position in props with an undefined payload.
-    // That keeps data/accessor replacement in the same property order; find()
-    // only exposes data slots, while the VM invokes the separate descriptor.
-    accessor_table accessors;
-
-    // WHAT THIS NATIVE'S C++ LAMBDA IS HOLDING - the one root the collector
-    // could not otherwise have. A `value` captured by a C++ lambda is invisible
-    // to a precise collector: the captures live inside a std::function's erased
-    // storage, and `each_root` has no inventory of them. Anything that captures
-    // a value in a native lambda belongs here. A growing set is better made a
-    // heap object and retained as one handle, which is what `Symbol.for`'s
-    // registry does.
-    std::vector<value> retained;
-
-    [[nodiscard]] value * find(std::string_view key) {
-        if (accessors.find(key) != nullptr) { return nullptr; }
-        for (auto & [k, item] : props) {
-            if (k == key) { return &item; }
-        }
-        return nullptr;
-    }
-    [[nodiscard]] std::size_t position(std::string_view key) const {
-        for (std::size_t i = 0; i < props.size(); ++i) {
-            if (props[i].first == key) { return i; }
-        }
-        return props.size();
-    }
-    [[nodiscard]] std::uint8_t attrs_of(std::string_view key) const {
-        const std::size_t at = position(key);
-        return at < attrs.size() ? attrs[at] : attr_default;
-    }
-    void set_attrs(std::string_view key, std::uint8_t a) {
-        const std::size_t at = position(key);
-        if (at >= props.size()) { return; }
-        if (a == attr_default && attrs.empty()) { return; }
-        if (attrs.size() < props.size()) { attrs.resize(props.size(), attr_default); }
-        attrs[at] = a;
-    }
-    void set(std::string_view key, value v) {
-        accessors.erase(key);
-        if (!attrs.empty() && attrs.size() != props.size()) {
-            attrs.resize(props.size(), attr_default);
-        }
-        if (value * existing = find(key)) {
-            *existing = v;
-            return;
-        }
-        props.emplace_back(std::string{key}, v);
-        if (!attrs.empty()) { attrs.push_back(attr_default); }
-    }
-    void define(std::string_view key, value v, std::uint8_t a) {
-        set(key, v);
-        set_attrs(key, a);
-    }
-    [[nodiscard]] accessor_entry * find_accessor(std::string_view key) {
-        return accessors.find(key);
-    }
-    void define_accessor(std::string_view key, value getter, value setter,
-                         std::uint8_t a = attr_enumerable | attr_configurable) {
-        set(key, value::undefined());
-        set_attrs(key, a);
-        accessors.define(key, getter, setter, 0, a);
-    }
-    bool erase(std::string_view key) {
-        const std::size_t at = position(key);
-        if (at >= props.size()) { return false; }
-        if (key == "name") { name_erased = true; }
-        accessors.erase(key);
-        props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
-        if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
-        return true;
-    }
-
-    // THE FUNCTION'S OWN [[Prototype]], which a closure has had since Babel's
-    // `_inherits` needed one. A NativeError constructor's is %Error% (20.5.6.2)
-    // rather than Function.prototype, so `Object.getPrototypeOf(TypeError)` is
-    // `Error` and a static on Error is inherited by all six.
-    // WAS THE OWN `name` DELETED? `context::own_property` synthesises a native's
-    // `name` out of the C++ object when the table has none, which is right for a
-    // native that never had one installed and wrong after a `delete`: the
-    // synthesised slot uncovers, `hasOwnProperty("name")` stays true, and that
-    // is precisely what test262's `verifyProperty` asks when it checks the
-    // descriptor is configurable. A flag rather than deleting the fallback,
-    // because every native `define_native` makes - the DOM bindings, setTimeout,
-    // 400 others - has no own entry and still has to answer.
-    bool name_erased = false;
-    value proto_link = value::null();
-    // IsConstructor (7.2.4) for a native: a built-in METHOD, a getter and a
-    // promise reaction have no [[Construct]], so `new Math.abs()` is a
-    // TypeError. True by default because every native an embedder defines
-    // (`Image`, `DOMParser`, ...) is constructed and has no other way to say so.
-    bool is_constructor = true;
-
-    native_object(std::string n, native_fn f)
-        : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
-};
-
-// A captured variable's box. Sharing the CELL rather than the value is what
-// makes a mutation through a closure visible to everyone else holding it.
-struct cell_object final : heap_object {
-    value slot;
-    explicit cell_object(value v) : heap_object(heap_kind::cell), slot(v) {}
-};
-
-struct closure_object final : heap_object {
-    // A function IS an object in JavaScript, and a class compiles to one: its
-    // statics and its `prototype` live here. Linear on purpose - see the note
-    // above `native_object`.
-    std::vector<std::pair<std::string, value>> props;
-    // Parallel to `props`, grown lazily - see object_object::attrs. A class's
-    // statics live here, and `C.prototype` is { writable: false, enumerable:
-    // false, configurable: false } on one.
-    std::vector<std::uint8_t> attrs;
-    bool extensible = true;
-
-    [[nodiscard]] value * find(std::string_view name) {
-        for (auto & [key, item] : props) {
-            if (key == name) { return &item; }
-        }
-        return nullptr;
-    }
-    [[nodiscard]] std::size_t position(std::string_view name) const {
-        for (std::size_t i = 0; i < props.size(); ++i) {
-            if (props[i].first == name) { return i; }
-        }
-        return props.size();
-    }
-    [[nodiscard]] std::uint8_t attrs_of(std::string_view name) const {
-        const std::size_t at = position(name);
-        return at < attrs.size() ? attrs[at] : attr_default;
-    }
-    void set_attrs(std::string_view name, std::uint8_t a) {
-        const std::size_t at = position(name);
-        if (at >= props.size()) { return; }
-        if (a == attr_default && attrs.empty()) { return; }
-        if (attrs.size() < props.size()) { attrs.resize(props.size(), attr_default); }
-        attrs[at] = a;
-    }
-    void set(std::string_view name, value v) {
-        if (!attrs.empty() && attrs.size() != props.size()) {
-            attrs.resize(props.size(), attr_default);
-        }
-        if (value * existing = find(name)) {
-            *existing = v;
-            return;
-        }
-        props.emplace_back(std::string{name}, v);
-        if (!attrs.empty()) { attrs.push_back(attr_default); }
-    }
-    void define(std::string_view name, value v, std::uint8_t a) {
-        set(name, v);
-        set_attrs(name, a);
-    }
-    bool erase(std::string_view name) {
-        const std::size_t at = position(name);
-        if (at >= props.size()) { return false; }
-        props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
-        if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
-        return true;
-    }
-
-    // A CLASS IS A CLOSURE, so `static get w()` has nowhere else to go. Same
-    // table as an object's, and empty on every function that is not a class
-    // with a static accessor.
-    accessor_table accessors;
-    [[nodiscard]] accessor_entry * find_accessor(std::string_view name) {
-        return accessors.find(name);
-    }
-    void define_accessor(std::string_view name, value getter, value setter,
-                         std::uint8_t a = attr_enumerable | attr_configurable) {
-        accessors.define(name, getter, setter, 0, a);
-    }
-
-    // The function's OWN [[Prototype]] - what `Object.getPrototypeOf(F)`
-    // returns - which is a different thing from the `prototype` PROPERTY that
-    // its instances get. Babel's `_inherits` sets both: the subclass's
-    // prototype property chains to the superclass's for instance methods, and
-    // the subclass FUNCTION chains to the superclass function for static ones.
-    value proto_link = value::null();
-
-    // WERE THE SYNTHESISED `name` / `length` DELETED? Both are answered off the
-    // compiled function rather than stored (see context::own_property), so
-    // without a memory a `delete f.name` uncovered the same answer again and
-    // `hasOwnProperty("name")` stayed true - the question test262's
-    // verifyProperty asks to decide `name` is configurable. The native_object
-    // flag above has the same story.
-    bool name_erased = false;
-    bool length_erased = false;
-
-    const function_proto * proto = nullptr;
-    // WHICH PROGRAM ITS NESTED FUNCTIONS LIVE IN. `op::closure` names a
-    // function by INDEX, and the index only means anything in the program it
-    // was compiled against - a context runs more than one.
-    const program * owner = nullptr;
-    std::vector<value> upvalues; // each one is a cell_object
-    // Only meaningful when proto->is_arrow: the `this` in scope where the arrow
-    // was written, captured when the closure was made. An arrow has no receiver
-    // of its own, so this is the only place its `this` can come from.
-    value captured_this = value::undefined();
-    explicit closure_object(const function_proto * p)
-        : heap_object(heap_kind::function), proto(p) {}
-};
-
-// ONE MODULE, AS THE RUNTIME SEES IT.
-//
-// `exports` maps an exported name to the CELL holding it, not to a value. That
-// is what makes an imported binding live: the importer is handed the same box,
-// so a later write by the exporter is a write the importer reads. Handing over
-// the value instead passes a test that two modules can see each other and fails
-// the one that matters, which is why docs/plans/modules.md names it as the
-// shortcut to refuse.
-struct module_record {
-    std::string specifier;
-    const program * compiled = nullptr;
-    flat_map<std::string, value> exports;
-    // THE SPECIFIER AS WRITTEN -> THE ONE THE REGISTRY IS KEYED BY. `./dep.js`
-    // means a different file depending on WHICH module wrote it, and the
-    // bytecode can only carry what was written. Resolving is the loader's job -
-    // it is the half that knows about paths, and eventually about URLs and
-    // import maps - so it leaves the answer here and `op::load_import` looks it
-    // up rather than doing any path arithmetic of its own.
-    flat_map<std::string, std::string> resolved;
-    // ONE PER MODULE, made on demand: two `import * as` of the same module must
-    // give the same object. See context::module_namespace.
-    value namespace_object = value::undefined();
-    // And the DEFERRED one (`import defer * as ns`, 16.2.2), likewise once.
-    value deferred_namespace_object = value::undefined();
-    // Evaluated ONCE, however many modules import it. The flag is the whole of
-    // "a module is a singleton".
-    bool evaluated = false;
-};
-
-struct run_result {
-    value returned = value::undefined();
-    bool ok = true;
-    std::string error;
-};
-
-// `import.source(x)` (13.3.10.1.1 EvaluateImportCall, phase source), as a
-// hidden native the compiler calls: ToString the specifier, then answer a
-// promise REJECTED with the SyntaxError GetModuleSource of a source text
-// module always is (16.2.1.7.2) - or with what the ToString threw. A name a
-// page cannot shadow, like the ones in builtins.hpp; declared here because
-// the compiler and the VM's own builtins share it and this is the header
-// both include.
-inline constexpr std::string_view import_source_name = "__ctbrowser_import_source";
-// `using` / `await using` (explicit resource management, 9.13), as five
-// hidden natives the compiler calls around a protected region - see
-// compile/statements/using.cpp for the lowering and builtins/objects/
-// function.cpp for the bodies. `stack()` makes the DisposeCapability;
-// `add(stack, v, async)` is AddDisposableResource and answers v; `dispose
-// (stack, kind, value)` is DisposeResources for a sync stack, handed the
-// completion in flight (kind 1 = a throw of `value`) and throwing what comes
-// out; `step(stack, kind, value)` disposes ONE resource of an async stack and
-// answers what to await, or the stack itself when it is empty (throwing the
-// folded completion then); `failed(stack, e)` folds an awaited rejection in.
-// GetTemplateObject (13.2.8.4) for a tagged template: `(key, cooked, raw)`
-// answers the frozen strings array - `raw` frozen and hung off it - cached
-// per site under `key`, so the same site hands the same object to its tag
-// on every evaluation. See compile_tagged.
-inline constexpr std::string_view template_object_name = "__ctbrowser_template_object";
-// PutValue on an unresolvable reference in STRICT code (6.2.5.6 step 3.a): the
-// compiler calls this with the name before a set_global that is an
-// ASSIGNMENT (never a declaration's own write), and it throws the
-// ReferenceError when the name is neither a global nor on the global object.
-// A call rather than a check inside op::set_global, whose contract says it
-// cannot throw.
-inline constexpr std::string_view strict_assign_check_name = "__ctbrowser_strict_assign";
-// PrivateFieldAdd / PrivateMethodOrAccessorAdd (7.3.28, 7.3.29): `(obj, key,
-// v)` defines the private element - a field's value, or the class BRAND (see
-// context::private_element_present) as undefined - and it is the TypeError
-// when the object already carries the key (a constructor that returns the
-// same object twice) or is not extensible.
-inline constexpr std::string_view private_add_name = "__ctbrowser_private_add";
-// ClassDefinitionEvaluation steps 6-9 (15.7.14) for `class C extends P`:
-// `(C, P, C.prototype)` checks P is null or a constructor and P.prototype an
-// object or null - each a TypeError otherwise - then chains C.prototype to
-// P.prototype and C itself to P (or to Function.prototype for null).
-inline constexpr std::string_view class_heritage_name = "__ctbrowser_class_heritage";
-// `super.x` / `super[k]` READ (13.3.7.3, 6.2.5.5 GetValue of a Super
-// Reference): `(base, key, this)` is base.[[Get]](key, this) - a getter on
-// the parent runs with the method's own receiver, not with the parent.
-inline constexpr std::string_view super_get_name = "__ctbrowser_super_get";
-// A direct `eval(src)` written in a function's PARAMETER EXPRESSIONS:
-// `(src, name...)` is `eval` (the intrinsic - anything else the name is
-// bound to is simply called) with the one rule of 19.2.1.3
-// EvalDeclarationInstantiation step 3.d this engine can keep without a
-// caller-scoped eval: a `var` the eval'd code declares may not be one of the
-// names bound in that parameter scope - the parameters, and `arguments`
-// unless the function is an arrow or names a parameter so - which is the
-// SyntaxError the eval throws.
-inline constexpr std::string_view param_eval_name = "__ctbrowser_param_eval";
-// `delete o.k` / `delete o[k]` (13.5.1.2): `(obj, key, strict, super)` is
-// ToObject(obj).[[Delete]](ToPropertyKey(key)) with its ANSWER - the opcodes
-// delete_prop/delete_index produce none - a TypeError for a null or undefined
-// base, a TypeError in strict code when the delete answers false, and a
-// ReferenceError for `delete super.x` (`super` true; the key is still
-// evaluated first).
-inline constexpr std::string_view delete_ref_name = "__ctbrowser_delete";
-// InitializeInstanceElements (7.3.34) for a DERIVED class, `(this, C)` - or
-// `(this, C.prototype)`, the home object, whose own `constructor` is C: run C's
-// `__fields` on the object `super()` just bound as `this` - which is where
-// 10.2.1.3 / 13.3.7.1's super call runs them, and why a base constructor's
-// `Object.preventExtensions(this)` or a returned object is what the derived
-// fields meet. The compiler emits it after every `super(...)`; a base class's
-// fields still run at construct entry (context::run_field_initialisers).
-inline constexpr std::string_view init_fields_name = "__ctbrowser_init_fields";
-// `super(...)` returned `(result)`: BindThisValue (10.2.1.3) with what the
-// parent constructor answered - the object it returned (a "return
-// override") replaces the instance as `this` for the rest of the derived
-// constructor, and a derived constructor's implicit return hands back
-// `this`, so `new` evaluates to it. The compiler emits it right after every
-// super call, before the fields.
-inline constexpr std::string_view bind_this_name = "__ctbrowser_bind_this";
-inline constexpr std::string_view using_stack_name = "__ctbrowser_using_stack";
-inline constexpr std::string_view using_add_name = "__ctbrowser_using_add";
-inline constexpr std::string_view using_dispose_name = "__ctbrowser_using_dispose";
-inline constexpr std::string_view using_step_name = "__ctbrowser_using_step";
-inline constexpr std::string_view using_failed_name = "__ctbrowser_using_failed";
-
+// Detailed contracts: docs/reference/header-contracts/script-vm-*.md
 class context {
 public:
     context();
-    ~context() { sweep_all(); }
+
+    ~context();
 
     context(const context &) = delete;
     context & operator=(const context &) = delete;
 
-    // --- allocation -------------------------------------------------------
-    // A RUNAWAY PAGE IS REFUSED, not left to exhaust the machine: a cap turns
-    // std::bad_alloc into an ordinary fault with the JS stack attached. The
-    // number is far above any real page - p5.js loading allocates a few hundred
-    // thousand - so reaching it means a loop that does not terminate. Counted
-    // SINCE THE LAST COLLECTION (collect() resets it): a loop that allocates
-    // through a safepoint is bounded by the collector, not by this.
     static constexpr std::size_t allocation_ceiling = 40'000'000;
 
-    template <typename T, typename... Args> [[nodiscard]] T * allocate(Args &&... args) {
-        if (++allocations_ > allocation_ceiling && !failed_) {
-            raise("allocation ceiling reached (" + std::to_string(allocation_ceiling) +
-                  " objects) - a loop is not terminating");
-        }
-        auto * p = new T(std::forward<Args>(args)...);
-        p->next = heap_;
-        heap_ = p;
-        ++live_objects_;
-        // The escape oracle's hook: one predictable not-taken branch per
-        // allocation, which the `new` above dwarfs.
-        if (recorder_ != nullptr) [[unlikely]] { note_allocation(p); }
-        return p;
-    }
-    [[nodiscard]] value string(std::string s) {
-        // Two halves of a surrogate pair that met here - `'\uD800' +
-        // '\uDC00'`, String.fromCharCode(0xD800, 0xDC00) - are one code
-        // point, as they would be in UTF-16 (core's join_surrogates).
-        ctbrowser::join_surrogates(s);
-        return value::object(allocate<string_object>(std::move(s)));
-    }
-    [[nodiscard]] value make_object() { return value::object(allocate<object_object>()); }
-    [[nodiscard]] value make_array() { return value::object(allocate<array_object>()); }
-    // CreateIterResultObject (7.4.14): `{value, done}`, in that order.
-    [[nodiscard]] value iter_result(value v, bool done) {
-        const value out = make_object();
-        auto * obj = static_cast<object_object *>(out.as_heap());
-        obj->set("value", v);
-        obj->set("done", value::boolean(done));
-        return out;
-    }
+    template <typename T, typename... Args> [[nodiscard]] T * allocate(Args &&... args);
 
-    void define_global(std::string name, value v) { globals_[std::move(name)] = v; }
-    // `delete globalThis.x`: the binding is a table entry, and every global
-    // is { configurable: true } (clause 17), so the delete succeeds.
-    bool erase_global(std::string_view name) { return globals_.erase(name) != 0; }
-    void define_native(std::string name, native_fn fn) {
-        value v = value::object(allocate<native_object>(name, std::move(fn)));
-        globals_[std::move(name)] = v;
-    }
-    [[nodiscard]] value global(std::string_view name) const {
-        const auto it = globals_.find(name);
-        return it == globals_.end() ? value::undefined() : it->second;
-    }
-    // Whether the name is DEFINED, which is not whether it is truthy or even
-    // defined-and-undefined: `window.foo` on a global explicitly set to
-    // undefined must still report the global as present, or `'foo' in window`
-    // and a window that proxies to the globals disagree with `typeof foo`.
-    [[nodiscard]] bool has_global(std::string_view name) const {
-        return globals_.find(name) != globals_.end();
-    }
-    // Every global, for a window that enumerates itself.
-    [[nodiscard]] const string_flat_map<value> & globals() const noexcept { return globals_; }
-    // WHETHER SCRIPT IS RUNNING RIGHT NOW - a native called from the
-    // interpreter is on the C++ stack. `frames_` cannot answer this: a
-    // VM-level raise (the call-stack ceiling) returns out of the loop without
-    // unwinding, so the frames of a script that is OVER stay behind until the
-    // next top-level `run` clears them.
-    [[nodiscard]] bool in_native() const noexcept { return native_depth_ > 0; }
+    [[nodiscard]] value string(std::string s);
 
-    // WHAT AN UNDECLARED NAME MEANS, when the embedder has an answer. HTML
-    // 7.3.3: an element with an `id` is reachable as a bare identifier, and
-    // web-platform-tests leans on it constantly. The shell installs a
-    // function that answers named elements; it is consulted ONLY when the
-    // name is not a global, so the declared path is one map lookup.
-    void set_undeclared_name_hook(std::function<value(std::string_view)> hook) {
-        undeclared_name_ = std::move(hook);
-    }
-    // GetValue OF AN IDENTIFIER REFERENCE (6.2.5.5, 9.1.1.4.6). The global
-    // environment's object record IS the global object, so a name that is
-    // not in the binding table is read off `globalThis` - own, inherited
-    // (`toString` resolves to Object.prototype's) or what the embedder's hook
-    // answers - and a name that is nowhere is an unresolvable reference:
-    // ReferenceError, catchable, exactly what feature detection written as
-    // `try { x } catch (e) {}` expects - unless the read is the operand of
-    // `typeof` (13.5.3 step 2), which is the one silent one: `silent` is how
-    // the run loop and the AOT bridge ask for it.
-    [[nodiscard]] value global_or_named(std::string_view name, bool silent = false) {
-        const auto it = globals_.find(name);
-        if (it != globals_.end()) { return it->second; }
-        if (undeclared_name_) {
-            const value named = undeclared_name_(name);
-            if (!named.is_undefined()) { return named; }
-        }
-        // The global object is a PROXY in both embeddings, and a proxy is not
-        // is_object() - it is a heap value of its own kind.
-        if (global_this_.is_heap() && has_property(global_this_, string(std::string{name}))) {
-            return lookup_property(global_this_, std::string{name});
-        }
-        if (!silent) { throw_error("ReferenceError", std::string{name} + " is not defined"); }
-        return value::undefined();
-    }
+    [[nodiscard]] value make_object();
 
-    // The realm's script receiver is independent of the writable globalThis
-    // binding. An embedder selects its host object before running scripts;
-    // assigning globalThis in JavaScript never changes this identity.
-    [[nodiscard]] value global_this() const noexcept { return global_this_; }
-    void set_global_this(value receiver) {
-        global_this_ = receiver;
-        define_global("globalThis", receiver);
-    }
+    [[nodiscard]] value make_array();
 
-    // --- execution ---------------------------------------------------------
-    //
-    // THE PROGRAM MUST OUTLIVE THE CONTEXT. Closures hold `const function_proto *`
-    // into it, and anything that calls back in later - a timer, an event
-    // listener, requestAnimationFrame - dereferences them long after run()
-    // returned. Passing a temporary works exactly until the first callback.
+    [[nodiscard]] value iter_result(value v, bool done);
+
+    void define_global(std::string name, value v);
+
+    bool erase_global(std::string_view name);
+
+    void define_native(std::string name, native_fn fn);
+
+    [[nodiscard]] value global(std::string_view name) const;
+
+    [[nodiscard]] bool has_global(std::string_view name) const;
+
+    [[nodiscard]] const string_flat_map<value> & globals() const noexcept;
+
+    [[nodiscard]] bool in_native() const noexcept;
+
+    void set_undeclared_name_hook(std::function<value(std::string_view)> hook);
+
+    [[nodiscard]] value global_or_named(std::string_view name, bool silent = false);
+
+    [[nodiscard]] value global_this() const noexcept;
+
+    void set_global_this(value receiver);
+
     run_result run(const program & prog);
 
-    // --- ES modules --------------------------------------------------------
-    // Run `prog` AS a module: its exports are published into `into`, and its
-    // imports are resolved through the registry the loader filled in.
-    // BEFORE ANY OF THE GRAPH RUNS: creates this module's export cells without
-    // evaluating it, so a cyclic importer finds an empty binding rather than a
-    // missing one. See the definition.
     void instantiate_module(const program & prog, module_record & into);
     // THE NAMESPACE OBJECT for a module, live and cached. See the definition.
     [[nodiscard]] value module_namespace(module_record & of);
-    // WHAT `import(specifier)` CALLS. The VM knows nothing about paths, URLs or
-    // fetching, so a dynamic import hands the specifier and the module that
-    // wrote it to the embedder and expects a promise back.
+
     void set_module_loader(
-        std::function<value(context &, const std::string &, const std::string &)> loader) {
-        module_loader_ = std::move(loader);
-    }
+        std::function<value(context &, const std::string &, const std::string &)> loader);
     run_result run_module(const program & prog, module_record & into);
-    // Where a module is found by specifier. The loader owns the graph; the VM
-    // only needs to look a name up when `load_import` runs.
-    [[nodiscard]] flat_map<std::string, module_record> & modules() noexcept { return modules_; }
 
-    // THE FOUR MODULE OPCODE BODIES, shared by the interpreter's VM_CASEs and
-    // the ct_aot_module_* / ct_aot_dynamic_import helpers so the two tiers
-    // cannot disagree. Nothing else calls them.
-    //
-    // EACH KEEPS ITS OWN modules_ LOOKUP rather than sharing one that answers
-    // a module_record *. flat_map is boost::unordered_flat_map, which is open
-    // addressing with NO reference stability, and the dynamic-import loader
-    // INSERTS into modules_ - so a record reference held across anything that
-    // can load is a dangling one. Keeping the lookup inside each member is the
-    // rule ct_aot_module_namespace's ABI row states, applied on both sides.
+    [[nodiscard]] flat_map<std::string, module_record> & modules() noexcept;
 
-    // `a = the cell exported as `export_name` by the module at `specifier``.
-    //
-    // A CELL, NOT A VALUE. An imported binding is LIVE, so the importer must
-    // hold the very box the exporter writes through; copying the value is the
-    // CommonJS behaviour and is observably wrong.
-    //
-    // RAISE TIER on both misses - a module that was not loaded and a name it
-    // does not export are uncatchable engine faults, not the ReferenceError a
-    // spec-conformant engine would throw. It answers undefined on those paths
-    // and the caller polls failed().
     [[nodiscard]] value module_import_cell(const std::string & specifier,
                                            const std::string & export_name);
 
-    // Publish `name` as an export of the module being evaluated, and answer the
-    // cell that has to land in the destination register.
-    //
-    // IT ADOPTS THE RECORD'S CELL rather than publishing the register's.
-    // instantiate_module creates every cell before ANY module in the graph
-    // runs, so by the time this executes one may already be held by a cyclic
-    // importer; overwriting the record would hand that importer a box nobody
-    // ever writes to again.
-    //
-    // `current` IS ANSWERED UNCHANGED when no module is being evaluated, and
-    // that arm is the whole reason the parameter exists. The interpreter simply
-    // does not write the register, and the register holds the local being
-    // exported - so a second implementation that wrote undefined there would
-    // DESTROY it. Returning what was already there is the same thing said in a
-    // form a register-to-SSA lowering can express.
     [[nodiscard]] value module_export_cell(const std::string & name, value current);
 
-    // `a = the namespace object of the module at `specifier``, live and cached.
-    // Same resolve-then-find as module_import_cell and the same raise, but the
-    // RESULT KIND differs: an ordinary object whose properties are accessors
-    // over the cells, not a cell.
     [[nodiscard]] value module_namespace_for(const std::string & specifier);
-    // THE DEFERRED NAMESPACE (16.2.2, `import defer * as ns`): the module's
-    // live namespace, except that the first read of an export EVALUATES the
-    // module first, through the hook the loader installed (EvaluateSync) -
-    // an evaluation that throws is that read's throw. A symbol key and
-    // `then` never trigger it (IsSymbolLikeNamespaceKey). What the hidden
-    // native import_defer_name answers; see the definition for what of the
-    // exotic object this ordinary one does not do.
     [[nodiscard]] value deferred_module_namespace(module_record & of);
     [[nodiscard]] value deferred_module_namespace_for(const std::string & specifier);
-    // WHAT A DEFERRED NAMESPACE CALLS TO RUN ITS MODULE: the loader's own
-    // post-order evaluation, so the module's not-yet-run dependencies run
-    // first. Answers false when the evaluation threw (last_thrown says what).
-    void set_module_evaluator(std::function<bool(context &, module_record &)> evaluator) {
-        module_evaluator_ = std::move(evaluator);
-    }
 
-    // `a = import(specifier)` - a promise for the namespace object.
-    //
-    // THE REFERRER IS THE CALLER'S, not current_module_'s: a dynamic import is
-    // usually called long after its module finished evaluating, from a
-    // callback, where current_module_ is null. Both tiers read it off the
-    // running frame's function_proto::module and pass it in.
-    //
-    // to_string IS INSIDE THIS, not at the call sites: it can run a page's own
-    // toString, and converting on one side only would let the two tiers
-    // disagree about what was asked for.
+    void set_module_evaluator(std::function<bool(context &, module_record &)> evaluator);
+
     [[nodiscard]] value dynamic_import(value specifier, const std::string & referrer);
 
-    // The receiver of the method call currently running, for natives. JS
-    // methods get `this` from the call site; a native has no frame to read it
-    // from, so the VM hands it over here. It is how one native object's methods
-    // tell which object they were called on - `el.setText(...)` and
-    // `other.setText(...)` are the same native.
-    [[nodiscard]] value current_this() const noexcept { return current_this_; }
+    [[nodiscard]] value current_this() const noexcept;
 
-    // Run a program NESTED inside another - `new Function(...)` evaluating its
-    // own body while a script is halfway through a statement.
-    //
-    // Not `run()`, which clears the failure flag and drains the microtask
-    // queue - both belong to the TURN rather than to the program. And not
-    // `execute()`, which is the TOP-LEVEL entry: it clears `frames_` and
-    // `registers_` and points `program_` at its argument, which called nested
-    // throws away the stack of whoever was running.
-    //
-    // A closure over the program's entry function, called normally. Its `owner`
-    // is what makes every `op::closure` inside it index the right table.
-    [[nodiscard]] value run_nested(const program & prog) {
-        if (!prog.ok || prog.functions.empty()) { return value::undefined(); }
-        // Its `var`s exist before it starts, as run() gives a script's
-        // (19.2.1.3 EvalDeclarationInstantiation binds them the same way).
-        for (const std::string & name : prog.hoisted_vars) {
-            if (!has_global(name)) { define_global(name, value::undefined()); }
-        }
-        auto * entry = allocate<closure_object>(&prog.functions[0]);
-        entry->owner = &prog;
-        return call(value::object(entry), std::span<const value>{});
-    }
+    [[nodiscard]] value run_nested(const program & prog);
 
-    // KEEP a compiled program for the life of the context. The compiler is
-    // the caller's because the VM does not depend on it - `compile.hpp`
-    // includes `vm.hpp`, not the other way round.
-    const program & own_program(program compiled) {
-        owned_programs_.push_back(std::make_unique<program>(std::move(compiled)));
-        return *owned_programs_.back();
-    }
+    const program & own_program(program compiled);
 
-    // A NATIVE REFUSING. Ends the run with a named message, the way any other
-    // fault does. Not catchable from script; a native that needs to be caught
-    // wants throw_error.
-    void refuse(std::string_view what, std::string why) {
-        raise(std::string{what} + ": " + std::move(why));
-    }
+    void refuse(std::string_view what, std::string why);
 
-    // AN ERROR OBJECT WITHOUT THROWING IT. A rejected promise carries one and
-    // is not a throw, so building and throwing are separate.
-    [[nodiscard]] value make_error(std::string_view kind, std::string message) {
-        value made = make_object();
-        auto * o = static_cast<object_object *>(made.as_heap());
-        // ON THE PROTOTYPE THE KIND NAMES, not on Error's: `assert.throws
-        // (TypeError, ...)` compares the CONSTRUCTOR. `name` is NOT an own
-        // property - 20.5.6.5 puts it on the prototype, and an own one would
-        // show in `Object.keys(e)` and `e.hasOwnProperty('name')`.
-        object_object * table = error_prototype(kind);
-        if (table == nullptr) {
-            // A KIND WITH NO CONSTRUCTOR - "DataCloneError" is a DOMException
-            // name rather than an ECMAScript one, and this engine has no
-            // DOMException. Error.prototype plus an own `name` is the honest
-            // fallback: the name is still right and `e instanceof Error` holds.
-            table = prototype(proto_kind::error);
-            o->define("name", string(std::string{kind}), attr_builtin);
-        }
-        // { true, false, true }, as 20.5.1.1 step 3 installs it.
-        o->define("message", string(message), attr_builtin);
-        // The frames it happened on, exactly as a constructed Error gets them -
-        // a page catching a TypeError the VM raised should be able to report
-        // where as easily as one it threw itself. IN THE [[ErrorData]] SLOT
-        // the Error constructor uses (builtins/objects/errors.cpp's
-        // error_stack_slot): Error.prototype's `stack` accessor answers it,
-        // and Error.isError tests for it.
-        o->define("@#ErrorData", string(std::string{kind} + ": " + message + current_stack()),
-                  attr_none);
-        if (table != nullptr) { o->prototype = value::object(table); }
-        return made;
-    }
+    [[nodiscard]] value make_error(std::string_view kind, std::string message);
 
-    // --- ONE PROTOTYPE PER ERROR KIND ------------------------------------
-    //
-    // `proto_kind` is a fixed enum over the value KINDS property lookup falls
-    // back to, and the error types are not that: they are seven ordinary
-    // objects chained to one another, and the runtime only ever looks one up by
-    // the name a throw site wrote. A small keyed list rather than seven more
-    // enumerators keeps the fallback array - which every property read on a
-    // primitive indexes - exactly the size it was.
-    void register_error_prototype(std::string kind, object_object * table) {
-        error_prototypes_.emplace_back(std::move(kind), table);
-    }
-    [[nodiscard]] object_object * error_prototype(std::string_view kind) const {
-        for (const auto & [name, table] : error_prototypes_) {
-            if (name == kind) { return table; }
-        }
-        return nullptr;
-    }
+    void register_error_prototype(std::string kind, object_object * table);
 
-    // THROW A CATCHABLE ERROR, and only end the run if nothing catches it.
-    // Different from raise(), which ends the run outright: calling a
-    // non-function is a TypeError in JavaScript and pages CATCH it - feature
-    // detection is written as `try { thing() } catch (e) {}`.
-    void throw_error(std::string_view kind, std::string message) {
-        // A throw is already crossing this native (see `call`): the first
-        // one propagates, this one is the native carrying on after it.
-        if (has_pending_throw_) { return; }
-        thrown_ = make_error(kind, std::move(message));
-        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
-    }
-    // BindThisValue for the frame a native was called from (see
-    // bind_this_name): a native pushes no frame, so frames_.back() is its
-    // caller's - the derived constructor whose `super()` just returned. An
-    // arrow's frame (a `super()` inside one) rebinds only the arrow's own
-    // receiver. A NATIVE PARENT TOO: Error, Map, Date fill the instance and
-    // answer it, and Array and the typed arrays answer an array of their own
-    // carrying the instance's prototype (adopt_subclass_prototype) - either
-    // way the answer is the [[Construct]] result and is `this` from here.
-    // Until 2026-09-17 a native parent was skipped, so `class A extends
-    // Array` built a plain object that was never an array.
-    void rebind_receiver(value v) {
-        if (frames_.empty() || frames_.back().closure == nullptr) { return; }
-        frames_.back().receiver = v;
-    }
-    // THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
-    // that has to CONVERT a throw crossing one of its `call`s - into a rejected
-    // promise, as EvaluateImportCall does with a specifier whose toString
-    // threw. Undefined when nothing is parked.
-    [[nodiscard]] value take_pending_throw() {
-        if (!has_pending_throw_) { return value::undefined(); }
-        has_pending_throw_ = false;
-        const value taken = pending_throw_;
-        pending_throw_ = value::undefined();
-        return taken;
-    }
-    // The throw `call` parked, thrown again from the native's call site.
-    // Answers whether there was one; the caller then continues as after any
-    // other unwind.
-    bool rethrow_pending() {
-        if (!has_pending_throw_) { return false; }
-        has_pending_throw_ = false;
-        thrown_ = pending_throw_;
-        pending_throw_ = value::undefined();
-        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
-        return true;
-    }
+    [[nodiscard]] object_object * error_prototype(std::string_view kind) const;
 
-    // THROW SOMETHING THAT IS NOT AN ECMAScript Error - a DOM method must throw
-    // a DOMException, and `assert_throws_dom` checks `code`, `name` AND
-    // `e.constructor === DOMException`. The unwinding is `throw_error`'s
-    // exactly, with the object supplied rather than made.
-    void throw_value(value thrown) {
-        if (has_pending_throw_) { return; }
-        thrown_ = thrown;
-        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
-    }
+    void throw_error(std::string_view kind, std::string message);
 
-    // --- THE CEILING THE C++ STACK NEVER HAD -------------------------------
-    //
-    // `frames_` counts INTERPRETED frames, so the 512-frame ceiling in
-    // `invoke` cannot see a cycle that never pushes one. A native `toString`
-    // that asks the context to stringify its own receiver recurses
-    //
-    //     to_string -> to_primitive_string -> invoke -> to_string -> ...
-    //
-    // entirely on the C++ stack, and a self-referential array - `a[0] = a;
-    // String(a)` - is the same cycle with no call in it at all, which is why
-    // the counter is on the CONVERSIONS as well as on the native call.
-    //
-    // A catchable RangeError, like every engine's stack exhaustion. The same
-    // 512 as the interpreted stack: one level is four C++ frames of a few
-    // hundred bytes, so 512 is a few hundred KB of an 8 MB stack - far enough
-    // below the fault to be a diagnosis, and far above any finite conversion.
+    void rebind_receiver(value v);
+
+    [[nodiscard]] value take_pending_throw();
+
+    bool rethrow_pending();
+
+    void throw_value(value thrown);
+
     static constexpr std::uint32_t reentry_ceiling = 512;
 
     // RAII, one level. `overflowed()` says the ceiling was reached, in which
@@ -812,148 +130,38 @@ public:
         bool over_ = false;
     };
 
-    // Call a JS function FROM C++ - an event listener, a timer, a
-    // requestAnimationFrame callback. Re-entrant: it runs a nested interpreter
-    // loop on the existing register stack, so a listener may itself call back
-    // into script.
-    // A THROW THE CALLEE DOES NOT CATCH IS HELD UNTIL THE NATIVE RETURNS.
-    // Called DIRECTLY from a native (native_scope, and no interpreted frame
-    // pushed since it began), `call` fences the callee (see call_fenced); a
-    // throw that crosses it is parked in pending_throw_, this returns
-    // undefined, every further `call` from the same native returns undefined
-    // without calling, and the VM rethrows it at the native's own call site
-    // (rethrow_pending, at the three places a native returns to it). From
-    // interpreted code - a setter reached through op::set_index inside a test
-    // body that `apply` is running - the throw unwinds at once to that code's
-    // own handlers, as before. So `[1, 2].forEach(f)` with `f`
-    // throwing on 1 never calls `f` for 2, and the page's `try` around the
-    // forEach catches once - before, the first throw unwound to that `try`
-    // while forEach kept going, and the second throw found the handler
-    // already consumed and was an engine fault. A native that wants to see
-    // the throw itself uses call_fenced.
     value call(value callable, std::span<const value> args, value this_value = value::undefined());
-    // `call`, WITH THE THROW VISIBLE TO THE CALLER. A throw the callee does
-    // not catch unwinds to the innermost `try` on the WHOLE stack - which,
-    // from C++, is whatever page code happened to be running above the
-    // native, or nothing (an engine fault). This puts a fence on the handler
-    // stack first: the throw stops here, `threw` says so and `thrown` is the
-    // value, and the caller decides - a promise reaction rejects its
-    // promise, a callback-taking native rethrows. The listener trampoline in
-    // events/dispatch.cpp did this with compiled JavaScript; this is the
-    // same fence in the VM.
     value call_fenced(value callable, std::span<const value> args, value this_value, bool & threw,
                       value & thrown);
-    // Queue a job for the end of the turn. FIFO, and a job queued BY a job runs
-    // in the same drain - that is what makes a promise chain complete before
-    // the turn ends rather than one link per turn.
-    void queue_microtask(value fn, std::vector<value> args = {}) {
-        if (fn.is_callable()) { microtasks_.push_back(microtask{fn, std::move(args)}); }
-    }
-    // Run the queue to exhaustion. Called after the top-level script and from
-    // the event loop - after timers, before animation frames, and again after
-    // each event dispatch, which is where a browser puts its checkpoints.
-    void drain_microtasks() {
-        // Bounded: a job that queues a job that queues a job forever is a
-        // runaway page, and the alternative to a cap is a hang with no message.
-        for (std::size_t ran = 0; !microtasks_.empty() && ran < 1'000'000 && !failed_; ++ran) {
-            const microtask job = std::move(microtasks_.front());
-            microtasks_.pop_front();
-            (void)call(job.fn, job.args);
-        }
-        if (!microtasks_.empty() && !failed_) {
-            microtasks_.clear();
-            raise("the microtask queue did not drain - a promise chain is not terminating");
-        }
-    }
 
-    // THE STACK AS IT IS RIGHT NOW - for raise() and for a constructed
-    // Error's `stack`. The function's INDEX as well as its name: most of a
-    // bundle's functions are anonymous, and the index is what points the
-    // corpus ratchet (tools/corpus/ratchet.py) straight at the failing code.
-    [[nodiscard]] std::string current_stack(std::size_t skip = 0) const {
-        std::string trace;
-        int shown = 0;
-        const std::size_t depth = frames_.size() > skip ? frames_.size() - skip : 0;
-        for (std::size_t i = depth; i-- > 0 && shown < 12; ++shown) {
-            const function_proto * fp = frames_[i].proto;
-            if (fp == nullptr) { continue; }
-            std::size_t which = 0;
-            const program * owner =
-                frames_[i].closure != nullptr && frames_[i].closure->owner != nullptr
-                    ? frames_[i].closure->owner
-                    : program_;
-            if (owner != nullptr) {
-                for (std::size_t k = 0; k < owner->functions.size(); ++k) {
-                    if (&owner->functions[k] == fp) {
-                        which = k;
-                        break;
-                    }
-                }
-            }
-            // A COMPILED FRAME HAS NO BYTECODE OFFSET, so it does not get one:
-            // `ip` on a compiled frame is where the unwinder puts the LANDING
-            // PAD, with CT_AOT_PAD_BIT set, so a trace captured between a catch
-            // firing and ct_aot_catch_land reading it would print
-            // 9223372036854775815 as an offset.
-            const bool compiled = fp->aot_entry != nullptr;
-            trace += "\n        at " + (fp->name.empty() ? std::string{"<anonymous>"} : fp->name) +
-                     " (fn#" + std::to_string(which) +
-                     (compiled ? std::string{", compiled)"}
-                               : " +" + std::to_string(frames_[i].ip) + ")");
-        }
-        if (depth > 12) { trace += "\n        ... " + std::to_string(depth - 12) + " more"; }
-        return trace;
-    }
+    void queue_microtask(value fn, std::vector<value> args = {});
 
-    // Whether a fault is outstanding, and the message. `run` clears these on
-    // entry and reports them in its result; `call` has no result to report
-    // through, so a host that drives callbacks must ask.
-    [[nodiscard]] bool failed() const noexcept { return failed_; }
-    [[nodiscard]] const std::string & error() const noexcept { return error_; }
-    // See store_rejected_: a store from strict code asks this afterwards.
-    void clear_store_rejected() noexcept { store_rejected_ = false; }
-    // Was the last store refused (a non-writable property, a `set` trap
-    // answering false, a non-extensible receiver)? Reflect.set's answer.
-    [[nodiscard]] bool store_rejected() const noexcept { return store_rejected_; }
-    void strict_store_check(std::string_view name) {
-        if (!store_rejected_) { return; }
-        store_rejected_ = false;
-        throw_error("TypeError",
-                    "Cannot assign to read only property '" + std::string{name} + "' of object");
-    }
-    // WHETHER A NATIVE SHOULD STOP: a throw crossed one of its `call`s and is
-    // parked for rethrow at its call site, or the run has failed outright.
-    // Every further `call` would answer undefined without running anything.
-    [[nodiscard]] bool throw_pending() const noexcept { return has_pending_throw_ || failed_; }
-    // HOW MANY THROWS HAVE UNWOUND, EVER. A throw a native raised itself
-    // through throw_error is not parked - it has already landed on a handler
-    // by the time the native's next line runs, and throw_pending cannot see
-    // it - so a native that keeps going compares this before and after.
-    [[nodiscard]] std::size_t unwinds() const noexcept { return unwinds_; }
-    // THE VALUE AN UNCAUGHT THROW LEFT BEHIND, for a host that has to NAME its
-    // constructor rather than print it (`tools/ct262` on a `negative:` test).
-    // Undefined when a run failed WITHOUT a throw (the allocation ceiling, the
-    // call-stack ceiling); stale after a run that succeeded, so read it only
-    // when `run_result::ok` is false.
-    [[nodiscard]] value last_thrown() const noexcept { return thrown_; }
-    // Report it and carry on, which is what a browser does: an exception in one
-    // callback does not cancel the next one or end the page.
-    [[nodiscard]] std::string take_error() {
-        std::string out = std::move(error_);
-        error_.clear();
-        failed_ = false;
-        return out;
-    }
+    void drain_microtasks();
+
+    [[nodiscard]] std::string current_stack(std::size_t skip = 0) const;
+
+    [[nodiscard]] bool failed() const noexcept;
+
+    [[nodiscard]] const std::string & error() const noexcept;
+
+    void clear_store_rejected() noexcept;
+
+    [[nodiscard]] bool store_rejected() const noexcept;
+
+    void strict_store_check(std::string_view name);
+
+    [[nodiscard]] bool throw_pending() const noexcept;
+
+    [[nodiscard]] std::size_t unwinds() const noexcept;
+
+    [[nodiscard]] value last_thrown() const noexcept;
+
+    [[nodiscard]] std::string take_error();
 
     // WHATEVER A PAGE CAN ITERATE, AS AN ARRAY OF VALUES - the one answer
     // for-of, spread and Array.from share. See the definition for what it
     // covers.
     [[nodiscard]] value iterable_values(value v);
-    // op::iterable - a SPREAD's source (`[...x]`, `f(...x)`), which is
-    // iterable_values with the one thing a spread adds: null, undefined and a
-    // primitive that is not a string are the TypeError of 13.2.5.1's
-    // GetIterator, where a library constructor given null (`new Map(null)`)
-    // is content with nothing. Both tiers call this one.
     [[nodiscard]] value spread_values(value v);
     // GetIterator(v, sync) (7.4.3): `v[Symbol.iterator]()`, checked to be an
     // object. A TypeError (thrown, catchable) and undefined when it is not
@@ -964,157 +172,39 @@ public:
     // result is not an object.
     [[nodiscard]] value iterator_step(value iterator, value next, bool & done);
 
-    // `new callee(...args)` where the argument count is only known at run time.
-    // op::construct keeps its own inline path because it does not need a nested
-    // interpreter loop; this is for the spread form and for `Reflect.construct`,
-    // which both do.
-    // `new_target` defaults to the callee (a plain `new`); a proxy's
-    // [[Construct]] and Reflect.construct pass their own.
     [[nodiscard]] value construct(value callee, std::span<const value> args,
                                   value new_target = value::undefined());
 
-    // --- conversions (ECMA-262 shaped, and shared with the bindings) -------
-    // ToPrimitive (7.1.1) with a hint - "default", "number" or "string": the
-    // object's @@toPrimitive, then OrdinaryToPrimitive. False means a
-    // TypeError is in flight. to_primitive, to_number_value and
-    // to_primitive_string are this one walk.
     bool to_primitive_hint(value v, const char * hint, value & out);
     [[nodiscard]] static bool truthy(value v);
 
-    // The handler's trap of this name, or undefined when it has none. Public
-    // for the standard library: `hasOwnProperty` must ask a proxy's handler the
-    // same question `in` asks it, and `window` is a proxy.
-    // GetMethod (7.3.10): null/undefined is "no trap" (undefined here); a
-    // revoked proxy or a non-callable trap is the TypeError, and `failed`,
-    // when given, is set for that and for a getter's throw - the caller must
-    // not forward to the target after either (see the definition).
     [[nodiscard]] value proxy_trap(value proxy, const std::string & name, bool * failed = nullptr);
-    // ECMA-262 ToInt32 / ToUint32: NaN and the infinities are 0, everything
-    // else truncates toward zero and wraps modulo 2^32.
-    [[nodiscard]] static std::int32_t to_int32(value v) {
-        return static_cast<std::int32_t>(to_uint32(v));
-    }
-    [[nodiscard]] static std::uint32_t to_uint32(value v) {
-        const double n = to_number(v);
-        if (!std::isfinite(n)) { return 0; }
-        const double truncated = std::trunc(n);
-        return static_cast<std::uint32_t>(
-            static_cast<std::int64_t>(std::fmod(truncated, 4294967296.0)));
-    }
+
+    [[nodiscard]] static std::int32_t to_int32(value v);
+
+    [[nodiscard]] static std::uint32_t to_uint32(value v);
     [[nodiscard]] static double to_number(value v);
-    // Number::exponentiate (6.1.6.1.3), which is NOT C's `pow`. C99 F.10.4.4
-    // defines pow(+-1, y) as 1 for EVERY y - including NaN and both infinities -
-    // where the specification requires NaN for exactly those. Shared by
-    // `Math.pow` and the `**` opcode, which had the same bug in two places.
     [[nodiscard]] static double exponentiate(double base, double exponent);
     [[nodiscard]] std::string to_string(value v);
     [[nodiscard]] static std::string_view type_of(value v);
-    // ToNumber, 7.1.4, INCLUDING the object case - an object coerces through
-    // its own valueOf and then toString, which the static `to_number` cannot do
-    // because it cannot call back into the VM. Every built-in whose spec text
-    // reads `? ToNumber(x)` must use this one: `Number([])` is 0.
     [[nodiscard]] double to_number_value(value v);
     // IsLooselyEqual, 7.2.15. NOT static: an object compared against a
     // primitive has to go through ToPrimitive, which re-enters the VM.
     [[nodiscard]] bool loose_equals(value a, value b);
-    // Abstract Relational Comparison, 7.2.13 - the ONE comparison that `<`,
-    // `>`, `<=` and `>=` each ask a different question of.
-    //
-    // It is not a numeric comparison. Two STRINGS compare as text, and coercing
-    // them to numbers instead makes `"a" < "b"` false - along with `>`, `<=`
-    // and `>=`, because ToNumber("a") is NaN and every comparison against NaN
-    // is false. `unordered` is the specification's `undefined` result, which is
-    // what makes all four operators false on a NaN.
     [[nodiscard]] std::partial_ordering compare_relational(value a, value b);
 
-    // BIGINT ARITHMETIC, and the rule that makes it safe.
-    //
-    // A BigInt and a Number CANNOT be mixed in arithmetic - `1n + 1` is a
-    // TypeError - and that is the feature rather than an omission: an engine
-    // that quietly coerced would round exactly where the type exists to stay
-    // exact. So the dispatch is: both bigint, do it; one bigint and one
-    // anything-else, throw.
-    //
-    // Returns true when it HANDLED the operation (including by throwing), so
-    // the caller falls through to the Number path only when neither side is a
-    // bigint. `kind` is the opcode being executed.
     [[nodiscard]] bool bigint_binary(op kind, value a, value b, value & out);
 
-    // THE SEVEN NON-RE-ENTERING BINARY OPERATIONS, in one place.
-    //
-    // add, bit_and, bit_or, bit_xor, shl, shr and ushr. They are together
-    // because they are the same function: try the BigInt arm, and otherwise
-    // apply a STATIC conversion - to_number for add, to_int32/to_uint32 for the
-    // six bitwise - which is what makes them non-re-entering. None of them can
-    // run a user valueOf or toString, so a backend that has proven both
-    // operands are Numbers may drop the call, the exception edge AND the
-    // safepoint.
-    //
-    // `add` BELONGS HERE AND NOT WITH THE RE-ENTERING FAMILY, which looks wrong
-    // and is not: compile_binary maps source `+` to add_generic, and op::add
-    // comes only from `++` and three internal counters. So `x++` on
-    // {valueOf: () => 3} is NaN and never runs user code. That is a deviation
-    // from the specification rather than an optimisation, and aot_helpers.def
-    // records it as one - if it is ever fixed, these seven move.
-    //
-    // ct_aot_binary_op_static calls exactly this, so the two tiers cannot drift.
     [[nodiscard]] value binary_op_static(op kind, value lhs, value rhs);
 
-    // AND THE SEVEN THAT CAN RUN PAGE JAVASCRIPT.
-    //
-    // sub, mul, div, mod, pow, add_generic and concat. They are the same seven
-    // shapes as `binary_op_static` above except that their conversions are the
-    // RE-ENTERING ones - to_primitive, to_number_value, to_string - each of
-    // which runs a user `valueOf` or `toString` when handed an object. So every
-    // caller must have its live values reachable from a root for the duration,
-    // which is what is_safepoint means on these rows.
-    //
-    // THE THREE `+` OPCODES STAY THREE, and that is the trap in this
-    // extraction. `add` is the static-family immediate above; `add_generic`
-    // makes both sides primitive and then lets the operands decide, with the
-    // string test taking first refusal so `1n + "a"` concatenates while
-    // `1n + 1` is a TypeError; `concat` unconditionally ToStrings both and is
-    // emitted only by template literals. Routing concat through bigint_binary
-    // would send `${1n}` to a switch that has no case for it and throw "BigInts
-    // have no unsigned right shift".
     [[nodiscard]] value binary_op(op kind, value lhs, value rhs);
 
-    // UNARY MINUS, AND ITS TWO ARMS ARE NOT ONE OPERATION.
-    //
-    // It is NOT to_number_value plus a negation, which is the lowering the
-    // shape invites: a BigInt operand is negated as an unbounded integer and
-    // ALLOCATES, so `-0n` is `0n` - a BigInt has one zero - and the result may
-    // be an unrooted heap value. That is why this answers with a `value` where
-    // ct_aot_to_number answers with a double, and it is the whole reason the
-    // ABI gives the two separate rows.
-    //
-    // THE BIGINT TEST COMES FIRST AND THAT ORDERING IS LOAD-BEARING: it is what
-    // makes to_number_value's own "Cannot convert a BigInt value to a number"
-    // TypeError unreachable from `-x`. `+1n` throws; `-1n` does not.
     [[nodiscard]] value negate_value(value v);
 
-    // BITWISE NOT, and the same split for a different reason.
-    //
-    // `~1n` is `-2n` on the unbounded two's-complement value: there is no
-    // ToInt32 step, because a BigInt has no width to truncate to. The Number
-    // arm does have one, so the two arms genuinely differ rather than one being
-    // the other's fast path.
     [[nodiscard]] value bit_not_value(value v);
 
-    // ToNumeric (7.1.3) of an OBJECT operand, for the interpreter's six
-    // bitwise operations, `~` and the `++`/`--` add: ToPrimitive with hint
-    // number, and a BigInt out of it stays one. A primitive comes back as it
-    // is - to_int32/to_number take it from there without re-entering, which
-    // keeps binary_op_static's contract (and ct_aot_binary_op_static's row)
-    // exactly what it was for every primitive operand. Null with a
-    // TypeError in flight when valueOf threw.
     [[nodiscard]] value numeric_operand(value v);
 
-    // --- prototypes ---------------------------------------------------------
-    //
-    // A string is not an object_object, so there is nowhere on it to put a
-    // method: each VALUE KIND gets a prototype object, and property lookup
-    // falls back to it (see implicit_prototypes).
     enum class proto_kind : std::uint8_t {
         object,
         array,
@@ -1132,361 +222,90 @@ public:
         promise,
         generator,
         async_generator,
-        // %GeneratorFunction.prototype%, %AsyncGeneratorFunction.prototype%
-        // and %AsyncFunction.prototype% (27.3.3, 27.4.3, 27.7.3): what a
-        // `function*`, `async function*` or `async function` closure's
-        // [[Prototype]] is instead of Function.prototype.
         generator_function,
         async_generator_function,
         async_function,
         count_
     };
 
-    // THE [[Prototype]] KIND OF A FUNCTION VALUE by its shape: the three above
-    // for the generator and async forms, `function` for the rest and for
-    // every native.
-    [[nodiscard]] static proto_kind function_proto_kind(value v) noexcept {
-        if (!v.is_kind(heap_kind::function)) { return proto_kind::function; }
-        const function_proto * fp = static_cast<closure_object *>(v.as_heap())->proto;
-        if (fp == nullptr) { return proto_kind::function; }
-        if (fp->is_generator) {
-            return fp->is_async ? proto_kind::async_generator_function
-                                : proto_kind::generator_function;
-        }
-        return fp->is_async ? proto_kind::async_function : proto_kind::function;
-    }
+    [[nodiscard]] static proto_kind function_proto_kind(value v) noexcept;
 
-    // THE IMPLICIT PROTOTYPES FOR A VALUE'S KIND, most derived first.
-    //
-    // Property lookup falls back to these tables (see lookup_property), and
-    // anything else that asks "what is this value's prototype chain" -
-    // `instanceof` - has to see the SAME ones or it disagrees with `.`.
-    //
-    // Three entries because that is the deepest chain there is here - a typed
-    // array is TypedArray.prototype, then Array.prototype, then
-    // Object.prototype - and nullptr pads the rest.
-    [[nodiscard]] std::array<object_object *, 3> implicit_prototypes(value v) const {
-        const auto table = [this](proto_kind kind) { return prototype(kind); };
-        if (v.is_array()) {
-            auto * arr = static_cast<array_object *>(v.as_heap());
-            if (arr->elements != element_kind::none) {
-                return {table(proto_kind::typed_array), table(proto_kind::array),
-                        table(proto_kind::object)};
-            }
-            return {table(proto_kind::array), table(proto_kind::object), nullptr};
-        }
-        if (v.is_string()) {
-            return {table(proto_kind::string), table(proto_kind::object), nullptr};
-        }
-        if (v.is_number()) {
-            return {table(proto_kind::number), table(proto_kind::object), nullptr};
-        }
-        // So `(1n).toString(16)` finds a method at all - a bigint is a
-        // primitive, so it has no own properties and the prototype is the only
-        // place a method can live.
-        if (v.is_kind(heap_kind::bigint)) {
-            return {table(proto_kind::bigint), table(proto_kind::object), nullptr};
-        }
-        if (v.is_boolean()) {
-            return {table(proto_kind::boolean), table(proto_kind::object), nullptr};
-        }
-        if (v.is_kind(heap_kind::symbol)) {
-            return {table(proto_kind::symbol), table(proto_kind::object), nullptr};
-        }
-        if (v.is_kind(heap_kind::function) || v.is_kind(heap_kind::native)) {
-            const proto_kind own = function_proto_kind(v);
-            if (own != proto_kind::function && table(own) != nullptr) {
-                return {table(own), table(proto_kind::function), table(proto_kind::object)};
-            }
-            return {table(proto_kind::function), table(proto_kind::object), nullptr};
-        }
-        if (v.is_object()) { return {table(proto_kind::object), nullptr, nullptr}; }
-        return {nullptr, nullptr, nullptr};
-    }
+    [[nodiscard]] std::array<object_object *, 3> implicit_prototypes(value v) const;
 
-    void set_prototype(proto_kind kind, object_object * table) {
-        prototypes_[static_cast<std::size_t>(kind)] = table;
-    }
-    [[nodiscard]] object_object * prototype(proto_kind kind) const {
-        return prototypes_[static_cast<std::size_t>(kind)];
-    }
+    void set_prototype(proto_kind kind, object_object * table);
 
-    // WHAT TIME A PAGE THINKS IT IS. Deterministic by default for the reason
-    // Math.random is seeded - goldens are byte-compared - but it ADVANCES: a
-    // FIXED BASE plus the page's own monotonic time under `tick()`. An embedder
-    // that wants real time installs one (`browser::set_clock`, which the SDL
-    // app does).
-    static constexpr double fixed_epoch_base = 1767225600000.0; // 2026-01-01T00:00:00Z
+    [[nodiscard]] object_object * prototype(proto_kind kind) const;
 
-    void set_clock(std::function<double()> clock) { clock_ = std::move(clock); }
-    [[nodiscard]] double clock_ms() const { return clock_ ? clock_() : fixed_epoch_base; }
+    static constexpr double fixed_epoch_base = 1767225600000.0;
 
-    // How an `async` function's return value becomes a promise. The VM cannot
-    // build one itself - a promise is an ordinary object carrying then/catch/
-    // finally natives, and those live in the standard library - so builtins
-    // installs these hooks. Without them (a VM with no builtins) an async
-    // function returns its plain value, which `await` still handles.
-    void set_pending_promise_factory(std::function<value(context &)> make) {
-        pending_promise_factory_ = std::move(make);
-    }
-    void set_promise_settler(std::function<void(context &, value, value, bool)> settle) {
-        promise_settler_ = std::move(settle);
-    }
-    void set_promise_factory(std::function<value(context &, value, bool)> make) {
-        promise_factory_ = std::move(make);
-    }
-    // HostPromiseRejectionTracker (27.2.1.9), for the host to wire
-    // `unhandledrejection` / `rejectionhandled` from: called with `handled`
-    // false when a promise is rejected while no reaction was ever attached to
-    // it (RejectPromise step 7, [[PromiseIsHandled]] false), and with `handled`
-    // true when a reaction is later attached to such a promise
-    // (PerformPromiseThen step 9 - `then`, `catch`, `finally`, an `await`).
-    // No JS semantics change and nothing is dispatched here; without a
-    // tracker the calls are dropped. [[PromiseIsHandled]] is the promise's
-    // private `@#PromiseIsHandled` slot (builtins/async.cpp).
-    void set_rejection_tracker(std::function<void(value promise, bool handled)> track) {
-        rejection_tracker_ = std::move(track);
-    }
-    void track_promise_rejection(value promise, bool handled) {
-        if (rejection_tracker_) { rejection_tracker_(promise, handled); }
-    }
-    // [[PromiseIsHandled]]: read and set through one member so attach_resume
-    // (an await is a PerformPromiseThen) and the standard library agree.
-    [[nodiscard]] static bool promise_is_handled(value promise) {
-        if (!promise.is_object()) { return true; }
-        const value * flag = static_cast<object_object *>(promise.as_heap())
-                                 ->find(std::string_view{"@#PromiseIsHandled"});
-        return flag != nullptr && truthy(*flag);
-    }
-    // PerformPromiseThen steps 9 and 11 for `promise`: the tracker's "handle"
-    // when it was rejected unhandled, then the flag.
-    void mark_promise_handled(value promise) {
-        if (!promise.is_object() || promise_is_handled(promise)) { return; }
-        auto * p = static_cast<object_object *>(promise.as_heap());
-        const value * rejected = p->find(std::string_view{"__rejected"});
-        const value * settled = p->find(std::string_view{"__settled"});
-        if (settled != nullptr && truthy(*settled) && rejected != nullptr && truthy(*rejected)) {
-            track_promise_rejection(promise, true);
-        }
-        p->define(std::string_view{"@#PromiseIsHandled"}, value::boolean(true), attr_none);
-    }
-    // A PENDING promise, and settling one. What a host needs to model work that
-    // finishes later - a fetch off the event loop, a decode, a file read - now
-    // that `await` can actually suspend on one.
-    //
-    // The standard library owns what settling MEANS, including queueing the
-    // handlers, so both go through the hooks it installed rather than reaching
-    // into the object's properties.
-    [[nodiscard]] value make_pending_promise() {
-        return pending_promise_factory_ ? pending_promise_factory_(*this) : value::undefined();
-    }
-    void settle_promise(value promise, value with, bool rejected) {
-        if (promise_settler_) { promise_settler_(*this, promise, with, rejected); }
-    }
+    void set_clock(std::function<double()> clock);
 
-    [[nodiscard]] value make_promise(value v, bool rejected) {
-        return promise_factory_ ? promise_factory_(*this, v, rejected) : v;
-    }
+    [[nodiscard]] double clock_ms() const;
 
-    // WHAT AN ASYNC FUNCTION'S `return` DOES - op::wrap_promise, and the one
-    // half of async that never suspends.
-    //
-    // Here rather than in run_loop because the compiled tier calls it too:
-    // `ct_aot_wrap_promise` is this member and nothing else, so the two tiers
-    // cannot spell the already-a-promise test differently. Three properties a
-    // caller must not "simplify":
-    //
-    //   is_object() is heap_kind::object EXACTLY (value.hpp), so an array, a
-    //   function or a proxy returned from an async function is ALWAYS
-    //   re-wrapped. That is the interpreter's behaviour and therefore correct
-    //   by definition.
-    //
-    //   The shape test is an own `__value`, which is NOT the test
-    //   is_pending_promise uses (`__settled` present and false). The two are
-    //   deliberately different and unifying them would change what
-    //   `return somePendingPromise` does inside an async function: a pending
-    //   promise carries an own __value of undefined, so it is passed through
-    //   UNWRAPPED here.
-    //
-    //   With no promise_factory_ installed make_promise is the IDENTITY, so
-    //   this is not "the result is always an object" and nothing may fold it
-    //   that way. A context without install_builtins has no factory at all.
-    [[nodiscard]] value wrap_in_promise(value v) {
-        if (v.is_object() &&
-            static_cast<object_object *>(v.as_heap())->find("__value") != nullptr) {
-            return v;
-        }
-        return make_promise(v, false);
-    }
+    void set_pending_promise_factory(std::function<value(context &)> make);
 
-    // One property lookup, shared by get_prop, get_index-with-a-string-key and
-    // call_method. Three copies of this is three chances for `a.length` and
-    // `a["length"]` to disagree.
-    // NOT const: an accessor on the chain is called, and that re-enters the VM.
+    void set_promise_settler(std::function<void(context &, value, value, bool)> settle);
+
+    void set_promise_factory(std::function<value(context &, value, bool)> make);
+
+    void set_rejection_tracker(std::function<void(value promise, bool handled)> track);
+
+    void track_promise_rejection(value promise, bool handled);
+
+    [[nodiscard]] static bool promise_is_handled(value promise);
+
+    void mark_promise_handled(value promise);
+
+    [[nodiscard]] value make_pending_promise();
+
+    void settle_promise(value promise, value with, bool rejected);
+
+    [[nodiscard]] value make_promise(value v, bool rejected);
+
+    [[nodiscard]] value wrap_in_promise(value v);
+
     [[nodiscard]] value lookup_property(value target, const std::string & name);
-    // A PROPERTY KEY AS A VALUE: the string, or the symbol rebuilt from its
-    // key - which IS its identity (value.hpp), so it is `===` to the one the
-    // property was defined with. What a proxy trap, Reflect.ownKeys and
-    // Object.getOwnPropertySymbols hand to script.
     [[nodiscard]] value key_value(const std::string & key);
     // Assign through the chain, honouring a setter. Returns false when nothing
     // took the write, so the caller can fall back to defining an own property.
     bool assign_through_accessor(value target, const std::string & name, value v);
-    // `target.name = v`, the whole write path: a proxy's `set` trap, then a
-    // setter on the prototype chain, then an own data property.
-    //
-    // One function because set_prop and set_index are the same operation with
-    // the key arriving differently, and the two copies had already drifted -
-    // only one of them consulted a proxy. `element.style.width = "10px"` goes
-    // through a proxy and it can be written either way.
     void store_property(value target, const std::string & name, value v);
-    // A STRING LITERAL, MEMOISED PER SITE - AND THE MEMO IS PART OF THE ABI
-    // RATHER THAN AN OPTIMISATION. `allocations_` is a lifetime budget, so a
-    // string literal in a per-pixel loop compiled WITHOUT the memo reaches the
-    // 40,000,000 ceiling in about a second - an UNCATCHABLE failure on a
-    // program the interpreter runs forever.
-    //
-    // site == nullptr MEANS DO NOT MEMOISE. POINTER AND LENGTH, not a C string:
-    // a JavaScript string may contain an embedded NUL. String IDENTITY is
-    // unobservable - strict equality compares text - so sharing one object is
-    // safe; it is the ceiling, not identity, that makes it required.
     [[nodiscard]] value interned_string(const void * site, std::uint32_t slot,
                                         std::string_view text);
 
-    // A BIGINT LITERAL, PARSED ONCE PER SITE, for the same reason. IT TAKES THE
-    // SOURCE TEXT, not digits: the parse is bigint_from_literal's and must not
-    // be duplicated, or `0x1fn`, `0b..n` and the 1.5n-to-0n substitution drift
-    // between the two tiers.
     [[nodiscard]] value interned_bigint_literal(const void * site, std::uint32_t slot,
                                                 std::string_view text);
 
-    // `target[key]` for an arbitrary key value. Numeric keys index an array or
-    // a string; anything else is a named lookup. Shared by get_index and by
-    // computed method calls, because `a[0]()` and `a['push']()` must both work
-    // and they take different branches.
     [[nodiscard]] value lookup_index(value target, value key);
 
-    // `target[key] = v` for an arbitrary key value - the write twin of
-    // lookup_index, and the same shape: array-with-a-NUMBER is the fast path,
-    // with the typed-array and owning arms inside it, and everything else is a
-    // named write through store_property with to_string of the key.
-    //
-    // THE SLOW PATH IS NOT "THE NON-ARRAY CASE". The guard is is_array() AND
-    // is_number(), so `a['foo'] = 1` arrives there on an array and hits
-    // store_property's drop-everything-but-length arm.
     void store_index(value target, value key, value v);
 
-    // WHAT super(...) HANDS THE BASE CONSTRUCTOR. The next frame pushed gets
-    // THIS frame's new.target instead of undefined.
-    //
-    // IT MUST REPRODUCE THE LEAK, NOT REPAIR IT. Only two places clear
-    // pending_new_target_ and both are JS-closure frame pushes, so a native or
-    // generator callee leaves the flag set and the next ordinary call anywhere
-    // sees a truthy new.target. That is the interpreter's behaviour and the two
-    // tiers have to agree on it.
-    //
-    // IT TAKES THE VALUE rather than the frame only because call_frame is
-    // declared further down this class. The ABI helper above it is
-    // zero-operand on purpose - reading THIS frame's field is the point, and an
-    // explicit ABI parameter would let a backend hand over a stale one.
     void pass_new_target(value from);
 
-    // `{...o}` AND `{a, ...rest}` - object spread, both directions.
-    //
-    // THE SOURCE'S ENTRIES ARE COPIED FIRST, and that is not a micro-optimisation
-    // to undo: set() can reallocate the target's storage, and target and source
-    // may be the SAME object.
     void copy_own_properties(value target, value source);
 
-    // `get x()` AND `set x(v)`, in a class or an object literal.
-    //
-    // BOTH OPCODES ARE THIS ONE MEMBER, because the runtime primitive is
-    // already fused: accessor_table::define SKIPS undefined halves, which is
-    // exactly what merges a get/set pair into one entry. The discriminator is
-    // the OPCODE, read out of in.code by the interpreter and known statically
-    // at a compiled site - so it never reaches here; the caller passes
-    // undefined for the half it does not have.
-    //
-    // ONE ASYMMETRY IS PRESERVED RATHER THAN TIDIED. object_object's arm
-    // erase()s a shadowing data property first and closure_object's does NOT,
-    // and lookup_property checks find() before find_accessor - so a
-    // `static get x()` on a class that already has a static data property `x`
-    // never runs. Harmonising the two would change observable behaviour.
-    //
-    // AND THE CLOSURE ARM MUST STAY: a `static get` installs onto the
-    // CONSTRUCTOR closure, so testing is_object() alone would silently drop
-    // every static accessor.
     void define_accessor(value target, const std::string & name, value getter, value setter);
 
     // What the implicit Object.prototype answers for `name` on `receiver` - a
     // data member or an accessor called with that receiver. The fallback every
     // arm of lookup_property ends in; see the definition for why.
     [[nodiscard]] value from_object_prototype(value receiver, const std::string & name);
-    // THE EXPLICIT CHAIN FROM `from` UPWARD, for `receiver`: a data member or an
-    // accessor called with the receiver, the implicit Object.prototype at the
-    // top, an explicit null ending it, and a link that is not a plain object
-    // (an array, a function) carrying on in its own arm of lookup_property.
-    // Shared by an object's walk and an array with a prototype of its own.
     [[nodiscard]] value lookup_along(object_object * from, value receiver,
                                      const std::string & name);
 
-    // `delete o.k` - the NAMED form. delete_index is the computed one and they
-    // are separate opcodes because the key arrives differently: a name is a
-    // constant-pool index here and a VALUE there, and converting a value key
-    // runs to_string, which for an object runs user JavaScript.
     void delete_named(value target, const std::string & name);
 
-    // THE OWN STRING KEYS OF AN OBJECT, AS AN ARRAY - what `for (k in o)`
-    // iterates. for-in compiles to a for-of over this array, which is how the
-    // runtime keeps ONE iteration mechanism instead of two.
-    //
-    // IN DEFINITION ORDER, data and accessors interleaved, because that is what
-    // a page sees and what Object.keys has to match. An ARRAY source enumerates
-    // its indices as strings and a PROXY enumerates its target; anything else
-    // yields an empty array rather than throwing.
     [[nodiscard]] value own_keys(value source);
 
-    // THE PROTOTYPE LINK, READ AND WRITTEN - what `super` walks.
-    //
-    // is_object() is heap_kind::object EXACTLY, so both report or ignore an
-    // array, a string, a proxy, a native and a CLOSURE, whose chain is
-    // closure_object::proto_link and is never this field. And a fresh object's
-    // prototype is value::null() while `extends` is what sets it, so
-    // `super.m()` in a BASE-class method reads null - which a backend that
-    // folded super-dispatch would get wrong.
     [[nodiscard]] value get_prototype(value target);
     void set_prototype(value target, value proto);
 
-    // THREE OPCODE BODIES shared with the compiled tier so `key in obj` cannot
-    // disagree between them. Each keeps its opcode's own quirks. `in` on an
-    // ARRAY asks about an index, so the key must parse as a whole number and
-    // consume the whole string - "1x" is not index 1. `instanceof` walks the
-    // explicit prototype chain and THEN the implicit tables, but the second
-    // pass is object-like only, because `5 instanceof Number` is false in
-    // JavaScript however many methods a primitive resolves. `delete` on
-    // anything that is not an object is a silent no-op.
     [[nodiscard]] bool has_property(value target, value key);
     // The same walk for a name already a string - no key object made.
     [[nodiscard]] bool has_property(value target, const std::string & name);
     [[nodiscard]] bool instance_of(value target, value ctor);
     void delete_index(value target, value key);
 
-    // --- PROPERTY DESCRIPTORS, one shape for every kind of value -----------
-    //
-    // A property lives in four different tables here - object_object's, a
-    // closure's statics, a native's statics, and an array's elements - plus a
-    // handful of synthesised ones (`length` on an array or a string, `name` on
-    // a function). Every operation that has to REASON about a property rather
-    // than read it - getOwnPropertyDescriptor, defineProperty, freeze, seal,
-    // hasOwnProperty, propertyIsEnumerable - needs the same answer from all of
-    // them.
-    //
-    // `has_*` says which fields the descriptor MENTIONS, which is the whole
-    // difference between "define x as undefined" and "change only x's
-    // attributes": ValidateAndApplyPropertyDescriptor (10.1.6.3) is written in
-    // terms of absent fields, and writing undefined for an absent one is what
-    // made `Object.defineProperty(C, "prototype", {writable: false})` wipe a
-    // transpiled class's prototype.
     struct property_descriptor {
         bool has_value = false;
         bool has_get = false;
@@ -1500,10 +319,6 @@ public:
         bool writable = false;
         bool enumerable = false;
         bool configurable = false;
-        // A SYNTHESISED property - an array's `length`, a string's `length`, a
-        // native's `name`. It can be read and it can be enumerated, but there
-        // is no slot to redefine or delete, so the operations that would write
-        // one refuse rather than pretending.
         bool virtual_slot = false;
 
         [[nodiscard]] bool is_accessor() const noexcept { return has_get || has_set; }
@@ -1531,16 +346,6 @@ public:
         }
     };
 
-    // 6.2.6.4 FromPropertyDescriptor and 6.2.6.5 ToPropertyDescriptor: the
-    // descriptor OBJECT a page sees, and the one it hands back. Members of the
-    // context rather than of the standard library because a proxy's
-    // getOwnPropertyDescriptor and defineProperty traps speak in these objects
-    // too, and those are called from inside own_property / define_own_property.
-    // Only the fields the descriptor MENTIONS are written; a field of the
-    // object is read with HasProperty then Get, so an inherited or accessor
-    // field counts - test262 devotes ~250 files in built-ins/Object/
-    // defineProperties (15.2.3.7-5-b-*) to descriptors inheriting a field
-    // through a prototype getter. `from` must be an object - the callers check.
     [[nodiscard]] value from_property_descriptor(const property_descriptor & from);
     [[nodiscard]] property_descriptor to_property_descriptor(value from);
 
@@ -1551,14 +356,6 @@ public:
     // Does `target` have an own property `name` at all? The question
     // hasOwnProperty, Object.hasOwn and verifyProperty all ask.
     [[nodiscard]] bool has_own_property(value target, const std::string & name);
-    // PrivateElementFind (7.3.30) over this engine's spelling: a private
-    // FIELD is an own property under its `@#name:class` key; a private
-    // METHOD or ACCESSOR lives on the prototype (or the constructor when
-    // static) under its key, and an object carries it only when it carries
-    // the class's BRAND - the own `@#:class` key the class's initialiser
-    // adds to every instance it constructs (and to the constructor itself,
-    // for the statics). So `Object.create(C.prototype)` and a subclass
-    // constructor fail the brand check, as PrivateBrandCheck says.
     [[nodiscard]] bool private_element_present(value target, const std::string & key);
     // [[Get]] with an explicit receiver (10.1.8.1 OrdinaryGet): `base`'s own
     // property or the first one up its chain, a getter called on `receiver`.
@@ -1579,35 +376,15 @@ public:
     void prevent_extensions(value target);
     [[nodiscard]] bool is_extensible(value target);
 
-    // PUSH ONE ELEMENT ONTO AN ARRAY LITERAL UNDER CONSTRUCTION.
-    //
-    // SILENT ON A NON-ARRAY, which is the row's (0, 0, 0) rather than an
-    // oversight: the bytecode only ever emits this against an array it has just
-    // built, so the guard is a belt on a thing that cannot happen and answering
-    // rather than faulting is what keeps the row free of an exception edge.
     void array_append(value target, value v);
 
     // --- gc ----------------------------------------------------------------
     std::size_t collect();
 
-    // ROOTS THE VM CANNOT SEE. The DOM bindings hold every event listener,
-    // every timer callback and every element wrapper in C++ containers, and
-    // nothing in the register file, the globals table or a call frame refers to
-    // them. A collection without this frees a page's listeners while the page
-    // is still using them - which is why collection never ran at all.
     using root_visitor = std::function<void(value)>;
-    void set_external_roots(std::function<void(const root_visitor &)> enumerate) {
-        external_roots_ = std::move(enumerate);
-    }
 
-    // A VALUE THE COLLECTOR CAN SEE, FOR AS LONG AS A C++ SCOPE HOLDS IT.
-    //
-    // The precise collector walks exactly the roots of each_root, and a value
-    // in a C++ local is in none of them. `construct` allocates the instance,
-    // then runs field initialisers, then calls the constructor body, with the
-    // instance in a C++ local across both - under gc_stress that is a
-    // use-after-free. A STACK OF TEMPORARIES rather than another special-cased
-    // field like `current_this_` and `pending_new_target_`.
+    void set_external_roots(std::function<void(const root_visitor &)> enumerate);
+
     class rooted {
     public:
         rooted(context & cx, value v) : cx_(&cx) { cx.temporaries_.push_back(v); }
@@ -1621,21 +398,6 @@ public:
         context * cx_;
     };
 
-    // THE SAME THING FOR A WHOLE RANGE - a std::vector<value> a builtin is
-    // holding across a call back into the VM.
-    //
-    // `Array.prototype.sort` is why. It snapshots the array so a comparator
-    // cannot make the merge index out of bounds, and that snapshot is a bare
-    // std::vector<value>: a comparator that empties the array leaves the
-    // snapshot holding the only reference to every element that is not
-    // currently an argument, and a collection there frees them under the merge
-    // that is still reading them. One `rooted` per element cannot be spelled -
-    // `rooted` is deliberately immovable, so it does not go in a container.
-    //
-    // A COPY AT CONSTRUCTION IS SUFFICIENT AND EXACT for a sort, because the
-    // work vector is PERMUTED and never gains a value the snapshot did not
-    // have. Anything that can grow its range mid-call wants a heap object it
-    // can root once instead.
     class rooted_values {
     public:
         rooted_values(context & cx, std::span<const value> vs) : cx_(&cx), count_(vs.size()) {
@@ -1657,21 +419,6 @@ public:
         std::size_t count_;
     };
 
-    // WHAT A NATIVE IN PROGRESS MAY BE HOLDING. A native allocates an object,
-    // calls back into JavaScript (`to_string` on an argument, a callback, a
-    // getter) and then uses the object - `new Blob([part])` stringifies each
-    // part with the Blob it is building in a C++ local. The precise collector
-    // has no inventory of C++ locals, so every such native was a use-after-free
-    // once collection could run inside a turn; the first one found was
-    // `loadBlob`'s result no longer being `instanceof Blob`. Rather than audit
-    // ~1,300 natives for `rooted`, the collector PINS EVERYTHING ALLOCATED
-    // SINCE THE OUTERMOST NATIVE WAS ENTERED: the heap is a newest-first list,
-    // so that is the prefix down to the object that was the head at entry.
-    // Bounded, because a native's own allocations are bounded; what is NOT
-    // pinned is what testharness.js's per-subtest `apply` was called on, so a
-    // synchronous script of ten thousand subtests still collects. A collector
-    // policy, not a root: it is applied in collect(), outside each_root, so the
-    // escape oracle's notion of "reachable" does not learn it.
     class native_scope {
     public:
         explicit native_scope(context & cx) : cx_(&cx), saved_frames_(cx.native_frames_) {
@@ -1693,75 +440,19 @@ public:
         std::size_t saved_frames_;
     };
 
-    // COLLECT AT EVERY SAFEPOINT, FOR TESTS.
-    //
-    // Until 2026-09-12 the only thing that collected in an ordinary run was
-    // `collect_if_due`, once per tick, from the browser's frame loop - so a
-    // collection NEVER happened while script was running, and a rooting bug
-    // was unreachable. `safepoint()` now collects when the heap is due, but
-    // only at a call boundary. This TEST MODE collects the whole heap at every
-    // safepoint, which is enormously slow, and is the only way the rooting
-    // discipline the ABI demands can be exercised.
-    void set_gc_stress(bool on) noexcept { gc_stress_ = on; }
-    [[nodiscard]] bool gc_stress() const noexcept { return gc_stress_; }
+    void set_gc_stress(bool on) noexcept;
 
-    // --- the type oracle ----------------------------------------------------
-    //
-    // ANOTHER TEST MODE, and the same shape as the one above: off by default,
-    // one predictable not-taken branch when it is off, and enormously more
-    // expensive when it is on. A context picks up whatever
-    // `set_active_type_recorder` last installed when it is CONSTRUCTED, which
-    // is what lets a whole page be recorded - a `shell::browser` builds its own
-    // context and never hands it out.
-    //
-    // ONE INTERPRETER STEP, called from the dispatch loop and defined in
-    // type_record.cpp. Public only because the macro in run_loop.cpp is
-    // clearer than a friend declaration; nothing else should call it. The
-    // escape oracle's four hooks are declared with the collector's root walk
-    // further down, after call_frame.
+    [[nodiscard]] bool gc_stress() const noexcept;
+
     void record_step(instruction in);
 
-    // A point where the ABI says a collection may happen. Under stress it
-    // always does; otherwise only when the heap has grown past the threshold
-    // `collect_if_due` keeps - the tick's rule, applied inside a turn, so a
-    // synchronous script that never yields is bounded the way a page on a
-    // timer is. Before this it was stress-only, and seven WPT reflection
-    // files - thousands of subtests in ONE top-level script - grew until a
-    // 4 GB address-space cap killed the process. One compare on the path that
-    // calls it: `invoke`, every C++ entry into JavaScript - which is what
-    // `Function.prototype.apply` is, and what testharness.js runs every
-    // subtest through. An interpreted JS-to-JS call is deliberately NOT one:
-    // ctcompile/test/EscapeCycle.cpp pins that `churn(1000)` collects exactly
-    // once under stress and returns with its 4,000 dead nodes unswept.
-    void safepoint() {
-        if (gc_stress_) [[unlikely]] {
-            (void)collect();
-            return;
-        }
-        (void)collect_if_due();
-    }
+    void safepoint();
 
-    // HOW MANY COLLECTIONS HAVE RUN. A test that forces GC and asserts an
-    // answer proves nothing on its own - the answer is the same if no
-    // collection happened at all, which is exactly how a stress mode that
-    // silently does nothing looks.
-    [[nodiscard]] std::size_t collections() const noexcept { return collections_; }
+    [[nodiscard]] std::size_t collections() const noexcept;
 
-    // Collect if the heap has grown enough to be worth it. Called once per
-    // tick, and from `safepoint()` at every call boundary, so a long-running
-    // page's garbage is bounded instead of accumulating for the life of the
-    // document - or of one synchronous script. The threshold doubles with the
-    // survivors, so the work is amortised O(1) per allocation and the heap
-    // peaks at about twice the live set.
-    std::size_t collect_if_due() {
-        if (live_objects_ < collect_threshold_) { return 0; }
-        const std::size_t freed = collect();
-        // The next collection waits for the heap to grow again, so a page whose
-        // live set is genuinely large does not collect on every tick.
-        collect_threshold_ = std::max(minimum_collect_threshold, live_objects_ * 2);
-        return freed;
-    }
-    [[nodiscard]] std::size_t live_objects() const noexcept { return live_objects_; }
+    std::size_t collect_if_due();
+
+    [[nodiscard]] std::size_t live_objects() const noexcept;
 
     // WHERE A THROW LANDS. One entry per open `try`, so unwinding can pop back
     // to the frame that installed it - a handler in a caller must not be caught
@@ -1776,24 +467,6 @@ public:
         bool fence = false;
     };
 
-    // A SUSPENDED FRAME, saved whole.
-    //
-    // `await` on a pending promise cannot block - there is one stack and the
-    // event loop is above it - so the frame is lifted out of the register stack
-    // and put here, the caller is handed a promise, and the frame goes back when
-    // the awaited promise settles.
-    //
-    // Only the TOP frame can suspend, which is sufficient: `registers_` is one
-    // flat vector indexed by base, so lifting a frame out from the middle would
-    // move every frame above it. And there is never a reason to - every frame
-    // below is either already suspended or a synchronous caller that must
-    // itself unwind before it can wait for anything.
-    //
-    // The register window is COPIED rather than referenced. It has to be: the
-    // stack is truncated the moment the frame leaves, and whatever runs next
-    // reuses those slots.
-    // What `.next(v)` / `.throw(e)` / `.return(v)` do to a generator. Declared
-    // ahead of coroutine_object because an async generator queues them.
     enum class resume_mode {
         next,
         thrown,
@@ -1818,42 +491,16 @@ public:
         // The promise the caller was given, settled when the body finally
         // returns. One per suspended function however many times it awaits.
         value promise;
-        // --- generators ------------------------------------------------
-        // A generator is the SAME suspended frame with a different resumer: an
-        // explicit `.next()` rather than a settling promise. `started` exists
-        // because the first `.next(v)` must NOT deliver v anywhere - there is
-        // no yield waiting for it yet - and `done` because a finished generator
-        // must keep answering `{value: undefined, done: true}` for ever rather
-        // than running its body again.
         bool generator = false;
         bool started = false;
         bool done = false;
         // Set while the body is running, so a `.next()` from inside itself is
         // refused rather than corrupting the register stack.
         bool running = false;
-        // --- async generators ------------------------------------------
-        // `async function*`: the SAME frame again, resumed by `.next()` and
-        // suspended by BOTH `yield` and `await`. Each `.next(v)` hands back a
-        // promise of the `{value, done}` record and joins a queue
-        // (AsyncGeneratorEnqueue, 27.6.3.5); requests run one at a time, the
-        // next one starting when the body yields or finishes. `awaiting` is
-        // the body parked on an `await` between two requests - `promise` is
-        // then the request that the eventual yield settles - and `self` is
-        // the generator object, which the drain needs and the frame does not
-        // carry.
         bool async_gen = false;
         bool awaiting = false;
-        // A `.return(v)` whose v is being AWAITED (27.6.3.8 / 27.6.3.9)
-        // before the body sees it: 1 = the frame is at a yield and resumes
-        // with a return completion of the awaited value, 2 = the generator
-        // is finished and the request settles with it directly.
         std::uint8_t return_pending = 0;
         value self;
-        // THE ITERATOR RECORD OF A `yield*` IN PROGRESS (see yield_delegate_open_name),
-        // undefined otherwise. While it is set, `.next()` on a sync generator
-        // hands the inner result object out as it is, and `.throw()` /
-        // `.return()` are forwarded to the inner iterator by generator_resume
-        // instead of resuming the frame (27.5.3.7 / 14.4.14).
         value delegate;
         struct async_request {
             resume_mode how;
@@ -1875,66 +522,26 @@ public:
     // Put a suspended frame back and run it. `with` is what the await
     // evaluates to; `rejected` throws it at the await instead.
     void resume(value coroutine, value with, bool rejected);
-    // 27.7.5.3 Await steps 1-2 for a frame ALREADY parked: PromiseResolve
-    // (%Promise%, v), then resume() when it settles - from the promise's
-    // handler list, or from a job when it already has. A `constructor`
-    // getter that throws rejects on the spot, as PromiseResolve's `?` says.
     void await_for(coroutine_object * saved, value v);
     // What an async generator's `.throw(e)` / `.return(v)` becomes at a
     // `yield*`: the value handed to the delegate loop, which forwards it to
     // the inner iterator's own method (14.4.14 step 7.b / 7.c).
     [[nodiscard]] value make_resume_record(std::string_view how, value v);
-    // LIFT THE TOP FRAME INTO A COROUTINE (await and yield are the same
-    // suspension): its register window is copied out, its handlers travel
-    // with it with reg_top made RELATIVE - it comes back somewhere else in
-    // the stack - and the frame is popped. `await_reg` is where the resuming
-    // value lands.
     void suspend_frame(coroutine_object * saved, std::uint16_t await_reg);
     // The mirror: the window back on the register stack with slack above it,
     // a frame rebuilt from the coroutine and pushed, the handlers absolute
     // again. Returns the frame's base.
     std::size_t restore_frame(coroutine_object * saved);
 
-    // What `.next(v)` / `.throw(e)` / `.return(v)` do. Runs the body until it
-    // yields or finishes, and answers the `{value, done}` record the iterator
-    // protocol is made of. For an ASYNC generator the body may also park on an
-    // `await`, in which case the answer is undefined and `awaiting` is set:
-    // resume() finishes that request when the awaited promise settles.
     [[nodiscard]] value generator_resume(value generator, value sent, resume_mode how);
     // The async generator's `.next(v)` / `.throw(e)` / `.return(v)`: a promise
     // of the record, queued behind whatever the body is doing.
     [[nodiscard]] value async_generator_request(value generator, value sent, resume_mode how);
     // Run queued requests while the body is neither running nor awaiting.
     void async_generator_drain(coroutine_object * saved);
-    // What one request's outcome does to its promise: a rejected settled
-    // promise rejects it (the body threw - see the compiler's async fence),
-    // anything else fulfils it with `{value, done}`. `raw_return` says the
-    // outcome is the body's return value, still to be wrapped in a done record.
     void settle_async_generator(coroutine_object * saved, value outcome, bool raw_return);
-    // WHERE THE PARENT'S HALF OF AN UPVALUE COMES FROM, and the two tiers
-    // genuinely differ - which is why this is a parameter and not an
-    // assumption.
-    //
-    // A descriptor marked from_parent_local names a REGISTER of the enclosing
-    // frame. The interpreter has that window and indexes it directly. A
-    // compiled body does not: its registers are the backend's own slots and its
-    // numbering is not the bytecode's, so the ABI has it pass an array indexed
-    // IN PARALLEL with the descriptors instead - ct_aot_make_closure's row
-    // spells that out, and packed is the plausible wrong reading.
-    //
-    // Exactly one pointer is set. Passing both, or neither, is a caller bug.
     struct upvalue_source {
-        // RAW BITS, because that is what the ABI passes and a value is not
-        // layout-punnable: script::value keeps its bits private and offers
-        // from_bits/bits() as the only route in and out. Reinterpreting an
-        // array of one as an array of the other would be exactly the type
-        // punning this project refuses, and copying it would allocate once per
-        // closure a compiled body builds.
         const std::uint64_t * by_descriptor = nullptr;
-        // HOW LONG by_descriptor IS, and only that form has a length to state.
-        // The register window is the enclosing frame's and is as long as that
-        // frame; the parallel array is the CALLER's, and reading past its end
-        // is a closure that captured whatever was next in memory.
         std::uint32_t descriptor_count = 0;
         const value * by_register = nullptr;
 
@@ -1944,72 +551,27 @@ public:
         }
     };
 
-    // ONE COPY OF op::closure's BODY, shared with the compiled tier.
-    //
-    // Factored so run_loop and ct_aot_make_closure cannot drift, which is the
-    // .def's instruction for this row. It also GUARDS three things the inline
-    // version dereferences unguarded, because a compiled caller can reach it in
-    // configurations the interpreter cannot: no program with no enclosing
-    // closure, a function index past the end, and an upvalue count that
-    // disagrees with the target's. Each raises; the row is raise-tier only.
     [[nodiscard]] value make_closure(closure_object * enclosing, std::uint32_t function_index,
                                      upvalue_source parent, value enclosing_this);
 
     // The object a generator function call hands back.
     [[nodiscard]] value make_generator(closure_object * closure, value receiver,
                                        std::span<const value> args);
-    // Whether this value is a promise that has NOT settled - the one case
-    // `await` cannot answer by reading. The shape is the standard library's:
-    // `__settled` present and false.
-    [[nodiscard]] static bool is_pending_promise(value v) {
-        if (!v.is_object()) { return false; }
-        value * settled = static_cast<object_object *>(v.as_heap())->find("__settled");
-        return settled != nullptr && !truthy(*settled);
-    }
+
+    [[nodiscard]] static bool is_pending_promise(value v);
     // %ThrowTypeError% (10.2.4.1): ONE per realm, anonymous, arity 0, frozen -
     // the getter and setter of Function.prototype's `caller` and `arguments`
     // and of an unmapped arguments object's `callee`. Made on first use.
     [[nodiscard]] value throw_type_error();
-    // THE JOB THAT RESUMES AN AWAIT OF A SETTLED VALUE: (coroutine, value,
-    // rejected) -> resume. One native per context, made on first use.
-    [[nodiscard]] value await_job() {
-        if (await_job_.is_undefined()) {
-            await_job_ =
-                value::object(allocate<native_object>("await", [](context & c, std::span<value> a) {
-                    if (a.size() >= 3) { c.resume(a[0], a[1], truthy(a[2])); }
-                    return value::undefined();
-                }));
-        }
-        return await_job_;
-    }
-    // Ask a pending promise to put this coroutine back when it settles. The
-    // record goes on the promise's own handler list, so a resumption is queued
-    // and ordered exactly like a `then` - because that is what it is.
-    void attach_resume(value promise, value coroutine) {
-        if (!promise.is_object()) { return; }
-        value * handlers = static_cast<object_object *>(promise.as_heap())->find("__handlers");
-        if (handlers == nullptr || !handlers->is_array()) { return; }
-        auto * record = allocate<object_object>();
-        record->set("co", coroutine);
-        static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
-        mark_promise_handled(promise); // an await is a PerformPromiseThen (27.7.5.3)
-    }
+
+    [[nodiscard]] value await_job();
+
+    void attach_resume(value promise, value coroutine);
 
 private:
-    // THE AOT BRIDGE REACHES IN HERE - ct_aot_enter pushes a real call_frame,
-    // ct_aot_leave truncates handlers_ exactly as op::ret does, and
-    // ct_aot_check classifies against frames_ and failed_. See
-    // lib/Script/aot_bridge/.
-    // The one implementation of "enter this callable", which `call` and
-    // `construct` are the two public spellings of. Private because
-    // `constructing` is not a thing an embedder should be choosing.
     value invoke(value callable, std::span<const value> args, value this_value, bool constructing);
 
     friend struct aot_bridge;
-    // The dispatch layer maintains `executing_` and reads it to attribute a
-    // transition. It is not a second implementation of anything - it is the
-    // ONE place that decides interpreted or native, and these are the two
-    // members it needs.
     friend class executing_as;
     // THE SIGNATURE MUST MATCH EXACTLY or this friends a different overload and
     // every private access inside dispatch.cpp fails at once - which is how it
@@ -2036,24 +598,10 @@ private:
         // back to it, so a handler in a caller cannot be caught by a callee.
         std::size_t handler_base = 0;
 
-        // WHERE THE THROWN VALUE WAS JUST PUT, recorded by unwind_to_handler at
-        // the moment it writes, for compiled frames: a compiled body has no
-        // bytecode to resume into, so it asks ct_aot_catch_land where the value
-        // went - and the handler that knew has already been POPPED by the
-        // search. The interpreter's catch block has the register baked into
-        // the instruction at `address`.
         std::uint16_t landed_slot = 0;
 
-        // `new.target`: the constructor this frame was entered with, or
-        // undefined for an ordinary call. It is a VALUE rather than a flag
-        // because it PROPAGATES - a base constructor reached through super()
-        // reports the derived class `new` was written against, not itself.
         value new_target = value::undefined();
 
-        // WHICH GENERATOR THIS FRAME IS THE BODY OF, or null for an ordinary
-        // call. `yield` needs it to know where to save itself, and it cannot be
-        // found any other way: the coroutine is reached from the generator
-        // object, not from the frame.
         coroutine_object * generator = nullptr;
 
         // `new C()` evaluates to the new object, NOT to whatever the
@@ -2061,68 +609,21 @@ private:
         // which is the one case the spec lets override it.
         bool constructing = false;
 
-        // The `arguments` object, when this body built one.
-        //
-        // Kept on the FRAME as well as in a register because it is built before
-        // the parameter prologue - it has to be, or a default or a destructured
-        // pattern has already overwritten the register it would read - and
-        // building it claims a register that an EXTRA argument may be sitting
-        // in. Anything after that point which still needs the raw arguments,
-        // which is the rest parameter, reads them from here instead.
         value arguments_object = value::undefined();
 
-        // The promise this frame's eventual return settles, once it has
-        // suspended at least once. Undefined on a frame that has not - a
-        // function that never awaits anything pending returns normally and
-        // needs no promise of its own beyond the one `wrap_promise` makes.
         value async_promise = value::undefined();
 
-        // THE ESCAPE ORACLE'S FRAME IDENTITY. Zero until this frame's first
-        // tracked allocation, when note_allocation assigns the next serial.
-        // Keyed on a serial rather than on `base` or `proto` because neither
-        // is unique across a run.
-        //
-        // TRAILING, WITH A DEFAULT, AND IT MUST STAY THAT WAY. Five sites
-        // build a call_frame with a positional aggregate initializer that
-        // lists the first eight members (run_loop.cpp's VM_CASE(call) and
-        // VM_CASE(construct); vm/call/'s invoke, run_module and execute);
-        // a member added anywhere but the end shifts every one of them and
-        // compiles cleanly.
         std::uint64_t serial = 0;
     };
 
-    // The `this` a frame actually sees. For an ordinary function that is its
-    // own receiver; for an arrow it is the one captured where the arrow was
-    // written, because an arrow never gets a receiver of its own. Both
-    // `load_this` and the closure builder go through here, which is what makes
-    // an arrow nested inside an arrow inside a method still resolve correctly.
-    [[nodiscard]] static value effective_this(const call_frame & f) {
-        if (f.closure != nullptr && f.closure->proto != nullptr && f.closure->proto->is_arrow) {
-            return f.closure->captured_this;
-        }
-        return f.receiver;
-    }
+    [[nodiscard]] static value effective_this(const call_frame & f);
 
-    // `arguments` AND A REST PARAMETER, which are one problem: both need the
-    // arguments PAST the declared parameters, and both take the window and the
-    // count as arguments rather than reading the frame - because a compiled
-    // frame's own `base` is above the caller's window, not at it.
-    //
-    // THE SIDE-SLOT WRITE IS PART OF make_arguments_object, not of its caller.
-    // It is the half a fusion of these two would drop: gather_rest READS
-    // call_frame::arguments_object on one of its two paths, because building
-    // the arguments object claims a register an extra argument may be sitting
-    // in, so after it runs the frame's copy is the one that still has them.
     [[nodiscard]] value make_arguments_object(call_frame & fr, const value * slots,
                                               std::uint32_t argc);
 
     [[nodiscard]] value gather_rest_values(const call_frame & fr, const value * slots,
                                            std::uint32_t argc, std::uint32_t from);
 
-    // Run the `__fields` initialiser of `constructor` and of every class it
-    // extends, BASE FIRST, against a freshly made instance. The chain is walked
-    // here rather than threaded through the compiler because the compiler does
-    // not know what `extends` will evaluate to.
     void run_field_initialisers(value constructor, value self);
 
     [[nodiscard]] static std::string callee_origin(const function_proto & fn, std::size_t ip,
@@ -2141,93 +642,28 @@ private:
     // constructor's own `prototype` property.
     [[nodiscard]] value make_instance(value callee);
 
-    // THE `new` FORM OF THE CALLEE TYPE ERROR, factored so the two tiers
-    // cannot spell it differently.
-    //
-    // `origin` IS THE BACKWARDS SCAN, PASSED IN. callee_origin walks emitted
-    // bytecode from an ip and a register index, and an AOT frame has neither,
-    // so the interpreter supplies the scan's result and a compiled frame
-    // supplies nothing - which describe_callee renders as "the value".
     void new_callee_type_error(const function_proto & fn, std::string_view origin, value callee);
 
-    // THE SPREAD FORMS OF A CALL AND A `new`, which are one VM_CASE because
-    // they differ only in which member they end in. THE ARGUMENTS ARRIVED AS AN
-    // ARRAY because their count was not known until the spread was evaluated -
-    // so there is no argc and no contiguous window. A non-array yields NO
-    // arguments rather than one, which is the interpreter's behaviour and is
-    // why the unpack is shared rather than written twice.
     [[nodiscard]] std::vector<value> spread_arguments(value arg_array);
     [[nodiscard]] value call_spread(value callee, value arg_array, value receiver);
     [[nodiscard]] value construct_spread(value callee, value arg_array);
 
-    // op::construct's OWN DISPATCH, AS A VALUE - a different function from
-    // `construct` above rather than a wrapper round it, because VM_CASE
-    // (construct) ends in a frame PUSH and computes nothing. Every branch is
-    // the same member the interpreter calls. `from` is the function the `new`
-    // was written in, used only to name it in the TypeError.
     [[nodiscard]] value construct_new(value callee, std::span<const value> args,
                                       const function_proto & from);
 
     [[nodiscard]] value execute(const program & prog, const function_proto & entry);
-    // THE DISPATCH LOOP, IN TWO INSTANTIATIONS - see run_loop.cpp. `Record`
-    // is the type oracle's hook and it is `if constexpr`: a per-instruction
-    // `if (recorder_)` measured +0.48% on phaser_invaders, and two
-    // instantiations cost ~15 KB of COLD object code instead.
     [[nodiscard]] value run_loop(std::size_t stop_depth);
     template <bool Record> [[nodiscard]] value run_loop_impl(std::size_t stop_depth);
-    // A FAILURE COMES WITH THE STACK IT HAPPENED ON.
-    void raise(std::string message) {
-        if (failed_) { return; }
-        failed_ = true;
-        error_ = std::move(message) + current_stack();
-    }
+    void execute_call(instruction in, call_frame * vm_frame, const function_proto * vm_proto,
+                      std::size_t base);
+    void execute_construct(instruction in, call_frame * vm_frame, const function_proto * vm_proto,
+                           std::size_t base);
+    std::optional<value> execute_await(instruction in, call_frame *& vm_frame, std::size_t & base,
+                                       std::size_t stop_depth);
 
-    // Find the innermost live handler and jump to it, discarding every call
-    // frame between here and the one that owns it. Returning false means
-    // nothing caught it, which is an uncaught exception.
-    [[nodiscard]] bool unwind_to_handler() {
-        ++unwinds_;
-        while (!handlers_.empty()) {
-            const handler h = handlers_.back();
-            handlers_.pop_back();
-            if (h.fence) {
-                // A C++ caller catches here - see call_fenced. Every frame the
-                // callee pushed goes; the caller's registers stay (a native
-                // still on the C++ stack may write its result into a popped
-                // frame's slot, as it already could through a page's `try`).
-                if (recorder_ != nullptr && h.frame < frames_.size()) [[unlikely]] {
-                    record_frames_unwound(h.frame);
-                }
-                if (frames_.size() > h.frame) { frames_.resize(h.frame); }
-                fence_thrown_ = thrown_;
-                fence_hit_ = true;
-                thrown_ = value::undefined();
-                return true;
-            }
-            if (h.frame >= frames_.size()) { continue; } // its frame already returned
-            // THE ESCAPE ORACLE SEES THE FRAMES BEFORE THEY GO - FrameEnds.def
-            // row `unwind`. Here `thrown_` is still
-            // set (it is cleared below, after the landing write), so a value
-            // in flight is a root and an object thrown out of a frame reads
-            // as escaped `via thrown` rather than as confined. Only frames
-            // ABOVE the handler's are ending; a throw caught in its own frame
-            // discards none and records nothing.
-            if (recorder_ != nullptr && h.frame + 1 < frames_.size()) [[unlikely]] {
-                record_frames_unwound(h.frame + 1);
-            }
-            frames_.resize(h.frame + 1);
-            call_frame & target = frames_.back();
-            target.ip = h.address;
-            if (registers_.size() < h.reg_top) { registers_.resize(h.reg_top, value::undefined()); }
-            registers_[target.base + h.slot] = thrown_;
-            // AND WHICH SLOT THAT WAS. The handler carrying it has already been
-            // popped above, so this is the last moment anything knows.
-            target.landed_slot = h.slot;
-            thrown_ = value::undefined();
-            return true;
-        }
-        return false;
-    }
+    void raise(std::string message);
+
+    [[nodiscard]] bool unwind_to_handler();
 
     void mark(value v);
     // Marks `o` and everything reachable from it. Iterative - see
@@ -2235,116 +671,8 @@ private:
     void mark_object(heap_object * o);
     void sweep_all();
 
-    // --- THE ONE ROOT INVENTORY --------------------------------------------
-    //
-    // Every root the collector walks, in CTBROWSER_ROOT_LABELS order and with
-    // that label on each, handed to a visitor. collect() marks through it
-    // and nothing else about collect() changed when it was split out; the
-    // escape oracle (type_record.cpp) walks the SAME inventory with the popped
-    // frame's dead register window excluded, so a root the collector knows
-    // cannot be one the oracle forgets. A template rather than a virtual, so
-    // the visitor collect() passes inlines to what the loop was before.
-    //
-    // `register_limit` bounds the flat register file: slots at or above it
-    // are not visited. `frame_limit` bounds the per-frame roots: frames at or
-    // above that index are not visited. collect() passes the whole of both.
-    // The oracle passes the ending frame's base and index - an inline callee
-    // sits INSIDE its caller's register extent (VM_CASE(call) places it at
-    // base + a + 1) and `ret` never shrinks registers_, so without the bound
-    // every object an ending frame still held in a register would read as
-    // reachable, and "reachable in the VM" is not "reachable in the program".
     template <class Visit>
-    void each_root(std::size_t register_limit, std::size_t frame_limit, Visit && visit) {
-        // A script can replace every visible alias of its global object. The
-        // realm still owns it between turns, and the next script receives it.
-        visit(root_label::globals, global_this_);
-        for (const auto & [name, v] : globals_) { visit(root_label::globals, v); }
-        const std::size_t top = std::min(register_limit, registers_.size());
-        for (std::size_t i = 0; i < top; ++i) { visit(root_label::registers, registers_[i]); }
-        // The receiver of a native call in progress. It is held in a C++
-        // local, not in a register, so nothing else would keep it alive - and
-        // collecting the object a method is running on is about as bad as it
-        // gets.
-        visit(root_label::current_this, current_this_);
-        // The constructor a super() call is in the middle of handing on. It
-        // lives only in this slot between the two instructions, which is
-        // exactly the window a collection can fall in.
-        visit(root_label::pending_new_target, pending_new_target_);
-        visit(root_label::pending_closure, pending_closure_);
-        // And the closure each live frame is executing. A function called
-        // from C++ via call() is likewise only referenced from a C++ local;
-        // without this its upvalues can be freed while its body is still
-        // running.
-        const std::size_t frames = std::min(frame_limit, frames_.size());
-        for (std::size_t k = 0; k < frames; ++k) {
-            const call_frame & f = frames_[k];
-            if (f.closure != nullptr) {
-                visit(root_label::frame_closure, value::object(f.closure));
-            }
-            visit(root_label::frame_receiver, f.receiver);
-            visit(root_label::frame_arguments, f.arguments_object);
-            visit(root_label::frame_async_promise, f.async_promise);
-            visit(root_label::frame_new_target, f.new_target);
-        }
-        // A QUEUED JOB AND ITS ARGUMENTS. Nothing else refers to them between
-        // the moment they are queued and the moment they run, which is
-        // precisely the window a collection can fall in.
-        for (const microtask & job : microtasks_) {
-            visit(root_label::microtasks, job.fn);
-            for (const value & arg : job.args) { visit(root_label::microtasks, arg); }
-        }
-        visit(root_label::microtasks, await_job_); // the one native every settled await queues
-        visit(root_label::prototypes, throw_type_error_);
-        // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no
-        // register once the module has finished evaluating, so without this a
-        // collection between two modules frees the bindings the second one is
-        // about to import - and it frees them while a closure inside the
-        // first still refers to the same cell.
-        for (auto & [specifier, mod] : modules_) {
-            for (auto & [name, cell] : mod.exports) { visit(root_label::module_exports, cell); }
-            visit(root_label::module_namespace, mod.namespace_object);
-        }
-        // A thrown value in flight is reachable from nothing else.
-        visit(root_label::thrown, thrown_);
-        visit(root_label::thrown, fence_thrown_);  // caught by a C++ fence, not yet consumed
-        visit(root_label::thrown, pending_throw_); // parked by `call`, not yet rethrown
-        // AND WHAT A C++ SCOPE IS HOLDING ACROSS A CALL. `construct` allocates
-        // the instance and then runs field initialisers and the constructor
-        // body with it in a local; without this the object being constructed
-        // is freed by any collection inside either. See context::rooted.
-        for (const value & v : temporaries_) { visit(root_label::temporaries, v); }
-        // The prototype tables hold every builtin method. Nothing else
-        // references them, so without this the standard library is collected
-        // on the first gc.
-        for (object_object * table : prototypes_) {
-            if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
-        }
-        // ...and the six NativeError prototypes, for the same reason: an
-        // engine-raised error is put on one, and a page that never mentions
-        // `RangeError` holds no other reference to its table.
-        for (const auto & [kind, table] : error_prototypes_) {
-            (void)kind;
-            if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
-        }
-        // The per-function string cache. These are live `value`s held by the
-        // context itself and referenced from nowhere else - a sweep without
-        // them frees a string literal that a running loop is about to read
-        // again.
-        for (auto & [proto, cache] : string_cache_) {
-            for (auto & [index, v] : cache) { visit(root_label::string_cache, v); }
-        }
-        // The BigInt literal cache is a root for exactly the same reason: the
-        // context is the only thing holding those values, so a sweep without
-        // this frees a literal a running loop is about to read again.
-        for (auto & [proto, cache] : bigint_cache_) {
-            for (auto & [index, v] : cache) { visit(root_label::bigint_cache, v); }
-        }
-        // And whatever the embedder holds: every DOM listener, timer callback
-        // and element wrapper lives in the bindings, not in any VM structure.
-        if (external_roots_) {
-            external_roots_([&](value v) { visit(root_label::external, v); });
-        }
-    }
+    void each_root(std::size_t register_limit, std::size_t frame_limit, Visit && visit);
     // collect(), in its three parts - vm/objects/gc.cpp. `mark_roots` marks through
     // each_root; `sweep` frees the unmarked and clears the marked; `unmark_all`
     // clears every mark and frees NOTHING, which is the escape oracle's exit.
@@ -2352,36 +680,13 @@ private:
     [[nodiscard]] std::size_t sweep();
     void unmark_all();
 
-    // THE GREY SET, and why the mark phase is a loop rather than a recursion:
-    // a recursive mark needs a C++ stack as deep as the object graph is LONG,
-    // and `head = { next: head }` 200,000 times is a plain page - a list, a
-    // parser's node chain - that segfaults an 8 MiB stack.
-    //
-    // Tri-colour in the classic sense: `marked` is the black/grey bit, set the
-    // moment an object is discovered so a cycle terminates, and this vector is
-    // the grey set waiting to have its edges walked. `push_mark` greys;
-    // `trace_object` blackens one object by greying its children. Held as a
-    // MEMBER rather than a local so its capacity survives between collections -
-    // a long-lived page collects many times and would otherwise regrow it every
-    // time.
     std::vector<heap_object *> mark_worklist_;
-    // Grey one object: set the bit and queue it. Never walks edges, so it
-    // cannot recurse.
-    void push_mark(heap_object * o) {
-        if (o == nullptr || o->marked) { return; }
-        o->marked = true;
-        mark_worklist_.push_back(o);
-    }
+
+    void push_mark(heap_object * o);
     // Blacken one object: grey everything it points at. THE ONLY PLACE THAT
     // KNOWS THE PER-KIND EDGES.
     void trace_object(heap_object * o);
 
-    // --- THE ESCAPE ORACLE'S HOOKS - type_record.cpp ------------------------
-    //
-    // Beside record_step in spirit; declared here because two of them take a
-    // call_frame, which the class has not declared at that point. All four are
-    // reached only through `recorder_ != nullptr` and under the Record
-    // instantiation of the dispatch loop, so a shipped build runs none of them.
     void note_allocation(heap_object * p);
     void note_freed(heap_object * o);
     void record_frame_pop(const call_frame & popped, value carried, bool compiled_return = false);
@@ -2389,13 +694,6 @@ private:
     void adjudicate(std::size_t register_limit, std::size_t frame_limit,
                     std::vector<type_recorder::escape_record> & records);
 
-    // WHAT IS RUNNING RIGHT NOW - the interpreter, a compiled body, or C++.
-    //
-    // The half of a mixed-mode transition that cannot be read off the call
-    // site: `enter_compiled` is reached from `op::call` and from `context::call`
-    // alike, and only this says whether the code doing the calling was itself
-    // compiled. Maintained by `executing_as`, which is one byte saved and
-    // restored on the C++ stack of whatever entered a body.
     executing_kind executing_ = executing_kind::cxx;
 
     // Set while a native runs, so it can see its receiver.
@@ -2403,21 +701,7 @@ private:
     // The program being executed, so a call from C++ can find the string
     // tables a nested frame needs.
     const program * program_ = nullptr;
-    // PROGRAMS THE CONTEXT COMPILED ITSELF, for `new Function(body)`.
-    //
-    // A closure holds a `const function_proto *` into the program it came from
-    // and `closure_object::owner` records which program that is, so a function
-    // compiled at run time works everywhere - as long as the program OUTLIVES
-    // it. Nothing else owns one, so the context does. Same reasoning as
-    // browser::run_script keeping its own.
     std::vector<std::unique_ptr<program>> owned_programs_;
-    // Keyed by the FUNCTION rather than by its index in the current program,
-    // because a context runs more than one program. KEYED BY const void *,
-    // NOT const function_proto *: the interpreter keys it by the proto it is
-    // running; a compiled body keys it by a marker address of its own, because
-    // the backend numbers its slots in walk order and the interpreter by
-    // constant-pool index, so sharing a key would let a compiled body read a
-    // slot the interpreter filled with a DIFFERENT literal.
     flat_map<const void *, flat_map<std::uint32_t, value>> string_cache_;
     // The same for BigInt literals, keyed and swept the same way.
     flat_map<const void *, flat_map<std::uint32_t, value>> bigint_cache_;
@@ -2428,11 +712,6 @@ private:
     // Seven entries, scanned linearly: see register_error_prototype.
     std::vector<std::pair<std::string, object_object *>> error_prototypes_;
     std::function<value(context &, value, bool)> promise_factory_;
-    // Making a PENDING promise and settling one. The VM can read a promise's
-    // state - `await` already did - but creating and settling run the standard
-    // library's own logic, including queueing the handlers. Two hooks rather
-    // than reaching into the object's properties, so there is one definition of
-    // what settling means.
     std::function<double()> clock_;
     std::function<value(context &)> pending_promise_factory_;
     std::function<void(context &, value, value, bool)> promise_settler_;
@@ -2440,30 +719,8 @@ private:
     // Set by `op::pass_new_target` and consumed by the very next frame push, so
     // a super() call hands its own new.target to the base constructor.
     value pending_new_target_ = value::undefined();
-    // THE CLOSURE A COMPILED BODY IS ABOUT TO BE ENTERED WITH. The entry ABI
-    // delivers `site` - the function_proto - and not the closure, and upvalues
-    // live on the closure INSTANCE. It travels the same way new.target does
-    // rather than through the ABI's signature: set by enter_compiled_body,
-    // consumed and cleared by ct_aot_enter, and a GC root in the window
-    // between.
     value pending_closure_ = value::undefined();
 
-    // WHERE THE ARRIVING ARGUMENTS ARE, AS AN INDEX, and how many.
-    //
-    // A compiled frame's own `base` is ABOVE the caller's window - ct_aot_enter
-    // resizes registers_ and starts the frame at the new end - so a compiled
-    // body has no way to reach the arguments past its declared parameters. The
-    // entry ABI delivers `argv` and `argc`, but argv is a POINTER into
-    // registers_ and ct_aot_enter's resize may reallocate it.
-    //
-    // AN INDEX SURVIVES WHAT A POINTER DOES NOT, which is the whole design.
-    // registers_ only grows during a call and the caller's window is not
-    // truncated until the compiled body returns, so the index stays valid and
-    // the VALUES stay rooted - collect() marks registers_ in full.
-    //
-    // NOT IN each_root, deliberately, unlike pending_new_target_ and
-    // pending_closure_ beside them: these root an integer. There is nothing
-    // here for the collector to trace.
     std::size_t pending_argv_base_ = 0;
     std::uint32_t pending_argc_ = 0;
     flat_map<std::string, module_record> modules_;
@@ -2482,14 +739,6 @@ private:
     // from one that RETURNED - run_loop hands back a value either way, and the
     // difference is the whole of `done`.
     bool yielded_ = false;
-    // The MICROTASK QUEUE. A promise handler runs at the end of the turn, not
-    // the moment the promise settles: `p.then(f); after();` must run `after`
-    // FIRST.
-    //
-    // A job is a callable plus its arguments, held as values so the collector
-    // traces them - a std::function capturing a value would be a root nothing
-    // knows about, which is how a queued handler's argument gets freed before
-    // it runs.
     struct microtask {
         value fn;
         std::vector<value> args;
@@ -2532,22 +781,12 @@ private:
     // What the innermost call_fenced caught, consumed by it on return.
     bool fence_hit_ = false;
     value fence_thrown_;
-    // WHETHER THE LAST [[Set]] WAS REJECTED - a non-writable or inherited
-    // non-writable property, a non-extensible receiver, a getter with no
-    // setter, a primitive receiver. store_property/store_index set it and
-    // carry on silently, which is sloppy mode; the run loop and the AOT
-    // bridge read it after a store from STRICT code and throw the TypeError
-    // (10.1.9.2 / 13.15.2 PutValue step 6.b).
     bool store_rejected_ = false;
     value await_job_ = value::undefined();        // see await_job(); a root in each_root
     value throw_type_error_ = value::undefined(); // see throw_type_error(); a root too
     // What `call` parked for rethrow_pending - see `call`.
     bool has_pending_throw_ = false;
     value pending_throw_;
-    // How many throws have unwound, ever. A handler that called into
-    // something that may throw compares it before and after, which is the
-    // only way to know a throw crossed the call: the landing already cleared
-    // thrown_.
     std::size_t unwinds_ = 0;
     std::size_t collections_ = 0;
     bool gc_stress_ = false;
@@ -2567,3 +806,8 @@ private:
 [[nodiscard]] bool is_constructor(value v);
 
 } // namespace ctbrowser::script
+
+#include "vm/execution_inline.hpp"
+#include "vm/frames_inline.hpp"
+#include "vm/gc_inline.hpp"
+#include "vm/properties_inline.hpp"

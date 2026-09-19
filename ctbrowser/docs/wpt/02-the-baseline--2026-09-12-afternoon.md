@@ -1,0 +1,847 @@
+[Back to wpt.md](../wpt.md)
+
+## The baseline — 2026-09-12, afternoon
+
+**585 of the 1,090 tests that ran, which is 53.7%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `b570bd29` on
+`ctbrowser-wpt` — browser gate 186/186 at that commit. The day started at
+491/1,090 = 45.0%, re-measured at `0e5cfbef` (identical to the 09-10 row, so
+the audit cuts moved nothing).
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 175 | 117 | 14 | 0 | 3 | 53 | 362 |
+| `dom/events` | 71 | 14 | 4 | 0 | 2 | 85 | 176 |
+| `html/dom` | 113 | 95 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 115 | 67 | 0 | 0 | 10 | 29 | 221 |
+| `css/css-values` | 111 | 132 | 10 | 0 | 18 | 237 | 508 |
+| **total** | **585** | **425** | **38** | **0** | **42** | **542** | **1,632** |
+
+Subtests: **25,113 PASS, 7,537 FAIL, 212 NOTRUN, 26 TIMEOUT.**
+
+(The run's JSON also holds 14 files under `html/dom/agentE-tmp/` that an agent
+left in the corpus checkout on the devbox while iterating on the reflection
+tests; they are excluded above and the corpus checkout was cleaned.)
+
+Against `0e5cfbef`: **+94 files, +7,522 passing subtests**, FAIL subtests
+8,455 -> 7,537. Per suite: `dom/nodes` +38, `css/cssom` +29, `css/css-values`
++21, `html/dom` +4, `dom/events` +3. What did it, from the PASS-set diff and
+the agents' own measurements (each on its own branch, against this JSON):
+
+- `dom/nodes` +38: every Node/Element/ParentNode/ChildNode operation now lives
+  on its interface PROTOTYPE, one native per realm with a `length`
+  (`c49750cc`: `Node-constants`, `Element-remove`, `Document-createComment`,
+  `*-getElementsByTagNameNS`, +3,700 subtests in `ParentNode-querySelector-All`,
+  `Element-classlist`, `Element-matches` alone); the three missing node kinds —
+  DocumentType, ProcessingInstruction, CDATASection — with the Document node
+  owning its child list and cross-document `adoptNode`/insert-adopts
+  (`055be4c3`, `d42d36ab`: `Document-doctype`, `DocumentType-literal`,
+  `Document-createProcessingInstruction`, `Node-nodeName`, `Node-nodeValue`,
+  `Node-isEqualNode`, `Document-adoptNode`, `rootNode`, `Node-parentElement`);
+  the Selectors engine — An+B in every spelling, `[ns|attr]`, `:has()`,
+  `:scope`, `:root` as the tree root only, a scoped `querySelectorAll` that
+  walks only its subtree (`87f64857`: `ParentNode-querySelector-scope`,
+  `ParentNode-querySelectors-namespaces`, `Element-matches-namespaced-elements`);
+  and the VM: a throw crossing a native is thrown ONCE at the native's call
+  site (`0f2a3ca8` — `ParentNode-append`, `ParentNode-prepend`, and every
+  assertion inside a `forEach` callback inside `test()`).
+- `css/cssom` +29: `@import` expanded into the cascade with `CSSImportRule`,
+  shadow-root `sheet`/`styleSheets`/`adoptedStyleSheets`,
+  `HTMLLinkElement.disabled` (all seven files), preferred style-sheet sets,
+  `@namespace`, `selectorText` against the sheet's namespaces, constructable
+  sheets' `baseURL`/`replace` (`6c68232b`), and value serialisation
+  (`serialize-values`, `dd255c38`).
+- `css/css-values` +21: `progress()`/`hypot()`/`exp()`/`round()` families,
+  signed zero, a percentage basis for used-value math, `lh`/`rlh`/`ic`/`rex`
+  /`rch` and the viewport-variant units, computed `transform` as `matrix()`,
+  the `border-radius` shorthand (`dd255c38`); the three `url-font-*-negative`
+  files and `viewport-units-css2-001` moved with the VM's `null.x` TypeError
+  and the promise-reaction fence.
+- `html/dom` +4 and `dom/events` +3: `EventListener-handleEvent`, the two
+  `scroll*` event files, `stream-append-*` and `src-buffered` — the VM changes
+  (async functions rejecting, throws through natives), not shell work.
+
+**PASS -> FAIL, three, all unmaskings:** `css/cssom/property-accessors` (a
+setter's throw parked past the test body's own `try` — fixed in `849c7b50`,
+after this measurement); `html/dom/historical` (`document.all` and
+`HashChangeEvent` are absent and reading through them is now an honest
+TypeError rather than a silent undefined); `css/css-values/animations/
+line-height-lh-transition` (`20lh` resolves now, and with no transitions the
+end value is read). **TIMEOUT 33 -> 38**: `MutationObserver-textContent`,
+`MutationObserver-cross-realm-callback-report-exception` and the six
+`*-invalidation` files for the new font-relative units (`cap`, `rcap`, `rch`,
+`rex`, `ric`, `rlh`) — each a restyle that does not converge, named for the
+next agent in `lib/Style`.
+
+### What is standing in front of the most tests now
+
+| what | where | counted |
+|---|---|---:|
+| reading an UNRESOLVABLE name is `undefined`, not a ReferenceError — `get_global`'s row says may_throw 0, so it is an ABI change made together with Codex (proposed in the journal) | `bytecode_opcodes.def`, `run_loop.cpp` | 1,211 test262 files; every WPT `assert_throws_js(ReferenceError, ...)` |
+| no strict mode at all: writes to non-writable properties, `this` in a plain call, `arguments` — the `-s.js` tests | the compiler (directive prologue) and `store_property` | ~1,000 test262 files across `-s` and `gs` |
+| `for await` / the sync `for-of` do not close the iterator on `break`/throw; `.return()` runs no `finally` | `compile_for_await`, `generator_resume` | ~100 test262 files |
+| the six `*-invalidation` TIMEOUTs above — a font-relative unit change on the root does not settle | `lib/Style` restyle | 6 files |
+| `document.all`, `HashChangeEvent`, `MutationObserver` on `textContent` | `bindings/document`, `events/`, `mutation.cpp` | `historical`, 2 TIMEOUTs |
+| the wrapper of an adopted node is not the wrapper that was adopted (identity across `adoptNode`) | `document/tree_ops.cpp` `node_from` | named in `unit/second_document` |
+| `:target`; null-namespace elements (`|div`); `#eof\` tokenisation | `lib/Shell/page` -> engine hook; the DOM/bindings; `css/token.cpp` | 6 + 16 + 2 subtests |
+| shorthand reconstruction in `el.style`/`cssText`; `@property` registration (`typed_arithmetic_cycle`) | `element/declarations.cpp`; `css/parser.cpp` | the `shorthand-*` files, 1 subtest |
+| the seven `reflection-*.html` files now report (see the late row: it was the harness); what is left is URL reflection (`link.href`, `input.formAction`: the document has no URL under ctdrive — `browser::set_location` from the driver turns 160 subtests) and the per-row table in `element/reflection.cpp` | `element/reflection.cpp`, `browser.hpp`, `tools/ctdrive` | ~1,900 subtests |
+
+## The baseline — 2026-09-10, late
+
+**491 of the 1,090 tests that ran, which is 45.0%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `62945aeb` on
+`ctbrowser-wpt` — browser gate 160/160 at that commit. The day started at
+369/1,090 = 33.9%.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 137 | 149 | 12 | 0 | 11 | 53 | 362 |
+| `dom/events` | 68 | 17 | 4 | 0 | 2 | 85 | 176 |
+| `html/dom` | 109 | 99 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 86 | 90 | 3 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 91 | 164 | 4 | 0 | 12 | 237 | 508 |
+| **total** | **491** | **519** | **33** | **0** | **47** | **542** | **1,632** |
+
+Subtests: **17,591 PASS, 8,455 FAIL, 72 NOTRUN, 34 TIMEOUT.**
+
+Against `d99ddf7b` (the night row below): +46 files, +1,078 passing
+subtests, two files PASS -> FAIL. Named from the PASS-set diff:
+
+- `dom/nodes` +5: `ChildNode-after`, `ChildNode-replaceWith`,
+  `Document-createTreeWalker`, `Node-cloneNode-svg`, `Node-lookupPrefix` —
+  the Node method surface following DOM 4.2 (`51aac4de`), the Document
+  binding's constructor/traversal/clone work (`d049b7d4`).
+- `dom/events` +2: `Event-dispatch-detached-input-and-change`,
+  `Event-dispatch-single-activation-behavior` — activation behaviour moved
+  into dispatch (`690e0036`).
+- `html/dom` +17: the nine `translate` files, `dataset-delete` and
+  `dataset-binding` (proxy `deleteProperty`/`getOwnPropertyDescriptor`,
+  `3e096c88`), `dynamic-getter`, `innertext-whitespace-pre-line`,
+  `multiple-text-nodes`, `getter-first-letter-marker-multicol` (innerText,
+  `fce07d5d`), `document.title-06`, `sanitize-regular`.
+- `css/cssom` +11: `CSS-namespace-object-class-string`, `CSSContainerRule`,
+  `CSSKeyframesRule`, `CSSStyleDeclaration-iterator`,
+  `cssom-fontfacerule-constructors`, `cssom-pagerule`,
+  `cssstyledeclaration-cssfontrule`, `escape`, `insertRule-charset-no-index`,
+  `invalid-pseudo-elements`, `rule-restrictions` — the CSSOM interface work
+  (`25d8a284`) and the selector parser refusing undefined pseudos
+  (`e161aa19`).
+- `css/css-values` +13: `position-computed`, `round-function`,
+  `clamp-partial-serialize`, `calc-numbers`, `clamp-length-computed`,
+  `exp-log-compute`, `sin-cos-tan-computed`, `acos-asin-atan-atan2-computed`,
+  `getComputedStyle-calc-mixed-units-001`, `calc-complex-unresolved-serialize`,
+  `attr-invalidation`, `attr-length-specified`, `attr-serialization` — the
+  math and `attr()` work (`2214ce24`) and number serialisation (`d611d333`).
+- **`css/css-values` −2, both one subtest and both from the calc() type
+  algebra in `2214ce24`**: `progress-invalid.html` — `progress(10px * 10px,
+  …)` on `opacity` must be refused and now computes to `calc(0)` (a
+  `<length>²` result is being accepted where the whole must be a number);
+  `typed_arithmetic_cycle.html` — a custom-property cycle through typed
+  arithmetic reads `20px` where `228px` is expected. Both are the next
+  agent's first two items in `lib/Style/css/calc/`.
+
+### What is standing in front of the most tests now
+
+From the agents' own reports over this run, with the file each names.
+
+| what | where | counted |
+|---|---|---:|
+| Node methods live on each WRAPPER, not on `Node.prototype` (`Node.prototype.insertBefore` is undefined), and the natives carry no `length` | `element/node_methods.cpp` `install_node_methods` / `method` lambda | 16 + 3 subtests in `dom/nodes`, and every `X.prototype.method.call` idiom |
+| no `DocumentType` / `ProcessingInstruction` / `CDATASection` node kinds | `include/ctbrowser/dom/node.hpp`, the tree builder | ~60 subtests + 3 whole-file HARNESS_ERRORs (`Node-contains`, `Node-compareDocumentPosition`, `Node-properties` die in `dom/common.js`) |
+| collection inside a turn — the seven `reflection-*.html` files die at the 4 GB cap because `collect_if_due` runs once per tick | `include/ctbrowser/script/vm.hpp` `safepoint()` — landed as `d0345272` and REVERTED: it turns `unit/p5_api` red (`loadBlob`'s result stops being `instanceof Blob`), i.e. the fetch -> `Response.blob()` path holds a heap value the root inventory cannot see | 7 TIMEOUTs, thousands of subtests |
+| `createElement("f:oo")` splits at the colon | `element/wrapper.cpp:171` | 15 subtests of `Document-createElement` |
+| a native cannot see that a throw crossed its `cx.call` — the TreeWalker filter re-entry case, and any binding that loops over callbacks | the VM; the events fence in `events/dispatch.cpp` is the pattern | `TreeWalker-acceptNode-filter` and its kin |
+| `@import` is consumed and dropped; a `<style>` appended to a shadow root has no `sheet` | `style/css/parser.cpp:187`, `stylesheets/` `sync_style_sheets` | 2 HARNESS_ERRORs + 3 files in `css/cssom` |
+| `font-family` unquoted serialisation, `counter()` canonicalisation, shorthand reconstruction in `cssText` | `lib/Style/css/properties` | the rest of `serialize-values` and the shorthand-* files |
+| transforms computing to `matrix()`; `lh`/`cap`/`cqw` units; `composite: add/accumulate` for animations | `lib/Style`, `bindings/animations.cpp` | 14 + ~20 + 2 files in `css/css-values` |
+| `javascript:` hrefs; `hashchange`; `<input type=image>` as a submit | `browser/actions.cpp` | the `<a>` rows of the activation tests |
+| Web Animations render nothing (the overlay is for the object model only); no `finish`/`cancel` events | `bindings/animations.cpp` | — |
+
+### And the two that were NOT measured
+
+`test262` was not re-run this session, although the VM changed in ways it
+scores: top-level block `let`/`const` scoping (`d99ddf7b`),
+`Object.prototype.__proto__` and the proxy traps (`552a4ba0`, `3e096c88`),
+`for-in` over a proxy (`e32599bf`), label chains (`65bb22ed`). The numbers in
+`docs/test262.md` are therefore older than the engine; the next session should
+run `ct262` before touching the VM again.
+
+## The baseline — 2026-09-10, night
+
+**445 of the 1,090 tests that ran, which is 40.8%**, and still not one crash.
+Same instrument, engine at commit `d99ddf7b` on `ctbrowser-wpt` — browser gate
+152/152 at that commit.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 132 | 153 | 13 | 0 | 11 | 53 | 362 |
+| `dom/events` | 66 | 18 | 5 | 0 | 2 | 85 | 176 |
+| `html/dom` | 92 | 116 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 75 | 101 | 3 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 80 | 173 | 2 | 0 | 16 | 237 | 508 |
+| **total** | **445** | **561** | **33** | **0** | **51** | **542** | **1,632** |
+
+Subtests: **16,513 PASS, 9,113 FAIL, 72 NOTRUN, 40 TIMEOUT.**
+
+Against `8ca744a1` (the evening row): +13 files, +182 passing subtests, and
+TIMEOUT 43 -> 33. Named from the PASS-set diff: `html/dom` +10 is the whole
+of `render-blocking/` bar the IDL file that already passed —
+`parser-blocking-script`, `parser-inserted-{async,defer,module}-script`,
+`parser-inserted-{style-element,stylesheet-link}`,
+`script-inserted-{script,module-script,style-element,stylesheet-link}` —
+which is Paint Timing plus `load`/`error` at a sheet or script element
+(`1abf9798`), the `?pipe=` query dropped before the filesystem probe
+(`4e3f124c`), and the `blocking` token list (`cb6fa020`). `dom/nodes` +3 is
+`ChildNode-before`, `Text-wholeText` and `insert-adjacent` — the fragment
+serialisation and `textContent` on a text node (`74d61725`). Nothing went
+PASS -> FAIL. **FAIL subtests rose 8,218 -> 9,113 and NOTRUN fell 727 -> 72
+in the same run**: eight `dom/nodes` files that used to time out — the two
+`Document-characterSet-normalization` files among them — now run to the end
+under the top-level block-scoping fix (`d99ddf7b`) and report their
+failures instead of NOTRUN, which is the honest number.
+
+## The baseline — 2026-09-10, evening
+
+**432 of the 1,090 tests that ran, which is 39.6%**, and still not one crash.
+Same instrument (WPT `3f6b09ae`, four workers, 4 GB `ulimit -v`,
+`CTBROWSER_GL_DRIVER=deterministic`), engine at commit `8ca744a1` on
+`ctbrowser-wpt` — browser gate 151/151 at that commit.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 129 | 148 | 21 | 0 | 11 | 53 | 362 |
+| `dom/events` | 66 | 18 | 5 | 0 | 2 | 85 | 176 |
+| `html/dom` | 82 | 126 | 10 | 0 | 9 | 138 | 365 |
+| `css/cssom` | 75 | 99 | 5 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 80 | 173 | 2 | 0 | 16 | 237 | 508 |
+| **total** | **432** | **564** | **43** | **0** | **51** | **542** | **1,632** |
+
+Subtests: **16,331 PASS, 8,218 FAIL, 727 NOTRUN, 48 TIMEOUT.**
+
+Against `f830fbd3` (the morning row below): +10 files, +206 subtests. Named,
+because a PASS-set diff of the two JSON files says exactly which:
+`dom/events` +10 — `Event-dispatch-listener-order`, `Event-dispatch-throwing`,
+`EventTarget-add-listener-platform-object`, `EventTarget-dispatchEvent`,
+`synthetic-events-cancelable`, the four `webkit-*-event` files and
+`window-event-restored-after-throwing-onerror` — which is the events port
+(`4f3fdc50`), the listener fence actually compiling (`c282145e`), the
+shadow-aware dispatch path (`8ca744a1`) and `customElements` (`1e9a8275`,
+the platform-object test defines one). `dom/nodes` +1 `slotchange-events`
+(customElements), `html/dom` +1 `blocking-idl-attr` (`cb6fa020`).
+**`css/css-values` −2**: `interpolate-size-{max,min}-height-composition`
+went PASS → FAIL because `element.animate` now exists (`8606ed50`), so their
+Web Animations leg runs instead of being skipped as unsupported — they were
+passing by not testing, and composition (`add`/`accumulate`) is not
+implemented. The subtest count went up 95 in that suite all the same.
+
+## The baseline — 2026-09-10, morning
+
+**422 of the 1,090 tests that ran, which is 38.7%**, and still not one crash.
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f830fbd3` on
+`ctbrowser-wpt` — the tip after the five red gate tests were fixed and the
+CSSOM-to-cascade hook (`3fad3a99`) was installed. The browser gate at that
+commit is 144 of 145: the one failure, `cssom_sheets`, pinned the trailing
+space the style attribute no longer has and was corrected in `77afb315`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 128 | 146 | 23 | 0 | 12 | 53 | 362 |
+| `dom/events` | 56 | 29 | 5 | 0 | 1 | 85 | 176 |
+| `html/dom` | 81 | 125 | 10 | 0 | 11 | 138 | 365 |
+| `css/cssom` | 75 | 99 | 5 | 0 | 13 | 29 | 221 |
+| `css/css-values` | 82 | 170 | 2 | 0 | 17 | 237 | 508 |
+| **total** | **422** | **569** | **45** | **0** | **54** | **542** | **1,632** |
+
+Subtests: **16,125 PASS, 8,405 FAIL, 729 NOTRUN, 48 TIMEOUT.**
+
+Against the `f7e0912` row below: +53 files (369 -> 422), +2,572 subtests
+(13,553 -> 16,125), FAIL 599 -> 569, TIMEOUT 59 -> 45, HARNESS_ERROR 63 -> 54.
+Per suite: `dom/nodes` 114 -> 128, `dom/events` 56 -> 56, `html/dom` 76 -> 81,
+`css/cssom` 54 -> 75, `css/css-values` 69 -> 82. What sits between the two
+commits: the 2026-09-08 file splits (no behaviour), the four gate fixes
+(`querySelector` on a detached subtree, `:lang()` wildcards and the
+Content-Language pragma, `for-in` over a proxy, the style attribute's
+serialisation, an iframe's `parent`/`top`), and the CSSOM reaching the cascade —
+which is most of `css/cssom`'s +21.
+
+### What is standing in front of the most tests now
+
+Counted from this run's JSON. "Near-pass" is a FAIL file with one or two
+failing subtests — the cheapest file to turn.
+
+| what | where | counted |
+|---|---|---:|
+| near-pass files | — | `html/dom` 98, `css/css-values` 75, `dom/nodes` 70, `css/cssom` 67, `dom/events` 13 |
+| Web Animations (`element.animate`, `getAnimations`) | new binding | 246 subtests say "Web Animations should be supported" in `css/css-values` |
+| `customElements.define` | new binding | 6 HARNESS_ERRORs across `dom/nodes`, `html/dom`, `css/css-values` |
+| reflection: `IDL get expected _ but got _` | `element/reflection.cpp` | 1,097 subtests in `html/dom`, plus 234 `expected null but got string` and 283 `innerText` |
+| `render-blocking` (`blocking=`) | `element/reflection.cpp` | 11 files in `html/dom`, several as 10 s TIMEOUTs |
+| `hasOwnProperty` undefined on a wrapper | the wrapper prototype chain | 6 HARNESS_ERRORs in `html/dom`, 11 subtests in `css/cssom` |
+| `on{animation,transition}*` handlers | `events/` — landed after this run in `4f3fdc50` | ~36 subtests in `dom/events` |
+| `HTMLLinkElement-disabled-*` | `stylesheets/` | 4 TIMEOUTs in `css/cssom` |
+| `document.characterSet` normalisation | `document/` | 2 × 60 s TIMEOUTs in `dom/nodes` |
+| `FontFace` constructor, `CSS.registerProperty`, `showModal` | new | 3 + 2 + 1 HARNESS_ERRORs in `css/css-values` |
+
+## The previous baseline — 2026-09-07, night
+
+**369 of the 1,090 tests that ran, which is 33.9%**, and still not one crash.
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f7e0912` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 114 | 148 | 32 | 0 | 15 | 53 | 362 |
+| `dom/events` | 56 | 24 | 8 | 0 | 3 | 85 | 176 |
+| `html/dom` | 76 | 130 | 10 | 0 | 11 | 138 | 365 |
+| `css/cssom` | 54 | 116 | 6 | 0 | 16 | 29 | 221 |
+| `css/css-values` | 69 | 181 | 3 | 0 | 18 | 237 | 508 |
+| **total** | **369** | **599** | **59** | **0** | **63** | **542** | **1,632** |
+
+Subtests: **13,553 PASS, 10,868 FAIL, 726 NOTRUN, 111 TIMEOUT.**
+
+`f7e0912` is the tip of the branch after the previous session's four subagent
+merges landed — the XML front end, the live collections, the CSS value grammar,
+the CSSOM object model, the reflection work, `attachShadow`, `document.fonts`
+and the ECMAScript early errors. Those merges are the +34 files over the
+`636f1b3` row below; the table under it is what each of them was for.
+
+### And what the same commit says about the SUITE
+
+**The engine's own CTest gate was RED at `f7e0912`, 112 of 119**, and it had
+been red since those merges landed: `page_scripts`, `selectors`,
+`widgets_basics`, `shadow_dom`, `vm_basics` and `promise_combinators` failed and
+`early_errors` **hung** — killed at 1,500 s. Every one of them predates this
+measurement.
+
+That is worth writing down beside a number that went up, because the two facts
+are the same fact: four branches were merged without the suite being run over
+them, so the WPT score moved and six unit tests and one hang moved with it. The
+instrument is not the gate. `tools/remote-build.sh` is the gate, and a WPT
+measurement taken without it is a measurement of an engine nobody has checked.
+
+## The previous baseline — 2026-09-07, evening
+
+**335 of the 1,090 tests that ran, which is 30.7%**, and still not one crash.
+Measured on the devbox against WPT `3f6b09ae`, four workers,
+`CTBROWSER_GL_DRIVER=deterministic`, engine at commit `636f1b3` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 106 | 157 | 31 | 0 | 15 | 53 | 362 |
+| `dom/events` | 56 | 24 | 8 | 0 | 3 | 85 | 176 |
+| `html/dom` | 71 | 135 | 10 | 0 | 11 | 138 | 365 |
+| `css/cssom` | 54 | 115 | 6 | 0 | 17 | 29 | 221 |
+| `css/css-values` | 48 | 199 | 3 | 0 | 21 | 237 | 508 |
+| **total** | **335** | **630** | **58** | **0** | **67** | **542** | **1,632** |
+
+Subtests: **13,168 PASS, 11,165 FAIL, 726 NOTRUN, 109 TIMEOUT.**
+
+**Test by test against the run below it: 74 files gained and NOT ONE lost.**
+That is the number worth reading twice, because the previous session's table has
+a column of six regressions in it and this one does not. HARNESS_ERROR fell
+90 -> 67 and TIMEOUT 60 -> 58, both of which mean tests that could not start now
+start.
+
+Two measurements were taken this session and both are here, because the first
+one is what makes the second attributable:
+
+| date | commit | PASS | of 1,090 | what it measures |
+|---|---|---:|---:|---|
+| 2026-09-07 (day) | — | 197 | 18.1% | the session in the table further down |
+| 2026-09-07 (eve) | `a790941` | 261 | 23.9% | three DOM commits carried over from an interrupted session: a namespaced `attribute`, the document answering as a Node, and the computed passive default |
+| 2026-09-07 (eve) | `636f1b3` | **335** | **30.7%** | the session below |
+
+### What moved, and what it cost
+
+| change | measured effect |
+|---|---|
+| **an XML front end** — `dom/xml.hpp` and `lib/DOM/xml.cpp`, a real XML 1.0 parser, because an `.xhtml` file handed to the HTML tree builder gets a `<script>` whose body still has `<![CDATA[` on the front | twelve `dom/nodes` files reported `parse error: expression - at 1:1` and ran no assertion at all. All 80 `.xhtml`/`.xht`/`.xml` files in the corpus were parsed with it and 76 are well-formed by it; the four that are not are each correct, and named in the header |
+| **the interface table is built before it is adopted** — `interface_prototypes_` is built lazily on the first `wrap()`, and `createHTMLDocument`, `make_live_collection` and `documentElement` all read it before anything had wrapped a node | four unit tests, and the shape of the bug is worth naming: `instanceof HTMLDivElement` was FALSE for a page whose first statement made a document and TRUE for one that had touched an element first |
+| **a collection is live, an HTMLCollection, and read-only by index** — `getElementsByTagName` built an array-shaped plain object and `Element.children` a plain Array | `dom/nodes` 75 -> 106 with the two below |
+| **`instanceof` follows a proxy to its target** — 7.3.21 calls `[[GetPrototypeOf]]`, which a proxy forwards; this engine read a `prototype` field a `proxy_object` does not have | every live collection and `window` answered false. It is also what `document.links`, `document.scripts` and `getElementsByName` assert first |
+| **`el.style` follows the `style` attribute** — the declaration store was seeded once at wrapper construction and `setAttribute("style", …)` never touched the proxy | `serialize-values.html` is 697 subtests of exactly that shape, and `css-style-attr-decl-block.html` names it in a subtest title |
+| **an undeclared name asks the embedder** — HTML 7.3.3 makes an element with an `id` a named property of the global object, and a bare identifier resolves against that object | six `css/cssom` files address their subject as `getComputedStyle(target1)` with `target1` written nowhere but in the markup, and every read off it was `undefined` |
+| **CharacterData**, `Text.splitText`, `new Text()`/`new Comment()`/`new DocumentFragment()`, `isEqualNode`/`isSameNode`, and a detached `Attr` that keeps the value it was removed with | `dom/nodes` again; offsets are UTF-16 code units over UTF-8 bytes, which is the part a shortcut gets wrong |
+| **the CSS value grammar and canonical serialization** — §10.13 sum ordering, the calculation context a property imposes, `progress()`, `ident()`, `inherit()`, `random-item()`, and a percentage with no context being a syntax error | `css/css-values` 29 -> 48 |
+| **CSSOM's `getComputedStyle`** — a pseudo-element argument is not the element, the automatic minimum size for a grid item and for an `aspect-ratio`, and a computed `font-family` that keeps its case | `css/cssom` 39 -> 54 |
+| **the CSSOM object model** — constructable sheets, `insertRule` on a grouping rule, a MediaList that is a view of its text, adopted sheets reaching the author CSS | `css/cssom`, with the row above |
+| **reflection, `dataset`, ARIA, `insertAdjacent*`, the namespaced attribute API** | `html/dom` 62 -> 71 |
+
+### And one regression, caused and fixed inside the session
+
+Making `getElementsByTagName` and `Element.children` live turned them into
+PROXIES, and `context::iterable_values` had no proxy case — so
+`for (const x of el.children)` and `[...collection]` silently read an **empty
+list**. Not an error: a wrong answer. `unittests/unit/node_methods` caught it
+on the devbox before the measurement above was taken.
+
+`getElementsByClassName` and the eight document collections were already proxies
+and already iterated as nothing, so the defect predates the change that exposed
+it — which is the argument for a suite that runs on every build rather than a
+number that only moves forward.
+
+## The previous baseline — 2026-09-07, day
+
+**1,632 tests, 232.1 s, four workers, and still not one crash.** Measured on the
+devbox against WPT `3f6b09ae`, engine at this branch.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 65 | 181 | 31 | 0 | 32 | 53 | 362 |
+| `dom/events` | 52 | 21 | 8 | 0 | 10 | 85 | 176 |
+| `html/dom` | 43 | 150 | 17 | 0 | 17 | 138 | 365 |
+| `css/cssom` | 21 | 140 | 7 | 0 | 24 | 29 | 221 |
+| `css/css-values` | 16 | 215 | 1 | 0 | 39 | 237 | 508 |
+| **total** | **197** | **707** | **64** | **0** | **122** | **542** | **1,632** |
+
+Subtests: **3,622 PASS, 18,478 FAIL, 736 NOTRUN, 101 TIMEOUT.**
+
+**197 of 1,090 tests that ran, which is 18.1%.** Four days earlier it was 119 —
+10.9% — and the two measurements in between are worth keeping because they say
+which half of the movement was aimed at:
+
+| date | PASS | of 1,090 | what happened |
+|---|---:|---:|---|
+| 2026-09-02 | 52 | 4.8% | the first measurement |
+| 2026-09-03 | 119 | 10.9% | six DOM changes, each measured |
+| 2026-09-07 (before) | 138 | 12.7% | **nothing aimed at WPT**: the GC, array and error-prototype work since |
+| 2026-09-07 (after) | 197 | 18.1% | the session below |
+
+Test by test against the 2026-09-07 "before" run: **65 files gained, 6 lost**.
+HARNESS_ERROR fell 162 -> 122 and TIMEOUT 81 -> 64, both of which mean tests that
+could not start now start.
+
+**Zero crashes** again, over a still larger executed surface.
+
+### What moved, and what it cost
+
+Every row is one commit with its own before/after, and every number was measured
+rather than projected. The engine work is described where it lives; this is what
+the instrument said about it.
+
+| change | measured effect |
+|---|---|
+| **DOMException**, and `context::throw_value` so a native can throw one | `assert_throws_dom` checks `code`, `name` AND `e.constructor === DOMException`; an Error passes none. 246 `dom/nodes` subtests reported exactly that |
+| **`getComputedStyle` answers** — a script mutation marks `dirty::styles` rather than `dirty::paint`, the read flushes the pending restyle, and the object publishes 125 longhands under both spellings with their initial values | `css/cssom` 12 -> 21, and it is the precondition for most of `css/css-values` |
+| **the value grammar** — 143 properties with a syntax, `el.style` validating and canonicalising, `CSS.supports`, `CSS.escape` | `test_invalid_value` can be answered at all for the first time |
+| **the element-only tree** — `firstElementChild` and its six siblings, `moveBefore`, `matches`/`closest`, and pre-insertion validity throwing the DOMException the specification names | `dom/nodes` 46 -> 65 |
+| **eleven event interfaces**, a listener that may be an object with `handleEvent`, `this` bound to the current target, `passive` enforced, and a throwing listener reported to the page | `dom/events` 37 -> 52, subtests 180 -> 320 |
+| **a handler property on the window fires at all** — `fire_handler_property` tested `is_object()` and the window is a PROXY, so `window.onerror`, `window.onload` and `window.onclick` had never once run | found by a unit test written for the throwing-listener work, not by the corpus |
+| **the document's own throws**, three separate name rules verified against every row of the corpus's own tables, `defaultView`, `document.write`, `compatMode` from the doctype | `html/dom` 27 -> 43 |
+
+### And six that went PASS -> FAIL, every one of them diagnosed
+
+The gate fails in both directions and so does this table. All six are in
+`css/css-values`, and **all six were passing by not testing anything**:
+
+| what | why it passed before | why it fails now |
+|---|---|---|
+| `attr-all-types`, `attr-argument-grammar`, `random-alias-property`, `calc-time-values` | each guards its assertions on `CSS.supports`, which did not exist | it does now, and `attr()` / `random()` / `type()` are not implemented. `CSS.supports` was fixed the same day to refuse a value calling a function this engine cannot evaluate — these four now RUN and fail on the feature itself |
+| `random-item-serialize` | `el.style` stored any value it was given, so a `random-item()` on a modelled property round-tripped | the value grammar refuses it, which is what a browser without `random-item()` does. `assert_not_equals(readValue, "")` is the test noticing |
+| `lh-rlh-on-root-001` | `getComputedStyle` answered `undefined` and two of its four subtests never got far enough to compare | it answers now, and answers 16 where 20 belongs: `lh` must be the line box's height and this engine resolves it to the font size |
+
+Two of the seven in the first measurement were a real defect of this session's own
+— `el.style` re-serialising a value whose grammar it does not model, so
+`random-item(auto ,serif)` came back with the spacing changed — and that one is
+fixed; `random-item-valid.html` passes again.
+
+### The previous baseline, 2026-09-03
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP |
+|---|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 42 | 199 | 32 | 0 | 36 | 53 |
+| `dom/events` | 24 | 45 | 11 | 0 | 11 | 85 |
+| `html/dom` | 27 | 126 | 19 | 0 | 55 | 138 |
+| `css/cssom` | 10 | 145 | 17 | 0 | 20 | 29 |
+| `css/css-values` | 16 | 213 | 3 | 0 | 39 | 237 |
+| **total** | **119** | **728** | **82** | **0** | **161** | **542** |
+
+Subtests: **2,262 PASS, 16,331 FAIL, 746 NOTRUN, 92 TIMEOUT.**
+
+### The previous baseline, 2026-09-02, for comparison
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP |
+|---|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 14 | 215 | 29 | 0 | 51 | 53 |
+| `dom/events` | 6 | 62 | 10 | 0 | 13 | 85 |
+| `html/dom` | 11 | 135 | 7 | 0 | 74 | 138 |
+| `css/cssom` | 8 | 148 | 15 | 0 | 21 | 29 |
+| `css/css-values` | 13 | 128 | 2 | 0 | 128 | 237 |
+| **total** | **52** | **688** | **63** | **0** | **287** | **542** |
+
+**Two columns are not comparable across the 09-02 and 09-03 tables, and saying
+which is the point of keeping both.** `css/support/` was not in the sparse
+checkout on 2026-09-02, so 94 of `css/css-values`' 128 harness errors were one
+missing helper file each; fetching it converted 84 into real failures and three
+into passes with the engine UNCHANGED. FAIL going up by 84 is the instrument
+working. HARNESS_ERROR falling and TIMEOUT rising is mostly the same story: a
+test that used to die on the first missing function now runs.
+
+**And once more between 09-03 and 09-07**, for the same reason and recorded the
+same way: `/dom/constants.js` and `/dom/common.js` joined the sparse list.
+`dom/events/Event-constants.html` reported HARNESS_ERROR about a helper that was
+never checked out. One file, and it is named here so nobody attributes it to the
+engine.
+
+## What is standing in front of the most tests now
+
+Every entry is a count from the **2026-09-07 evening** run at `636f1b3` and
+names a piece of work rather than a symptom. This is the handoff.
+
+| what | where | what it is worth, counted |
+|---|---|---:|
+| **`attachShadow` and the shadow root** | `lib/Shell/bindings/element/shadow.cpp`, and it is a BINDINGS change: `node_kind` already has `document_fragment`, which is the shape of a shadow root | **34 files**, across all four suites, and most of them are not ABOUT shadow DOM - they attach a shadow tree as scaffolding and assert something else. Several are whole-file HARNESS_ERRORs, so they report nothing at all today |
+| **`customElements.define`** | new, `lib/Shell/bindings/` | 11 files |
+| **`document.fonts`**, even as a `FontFaceSet` whose `ready` is already resolved | `lib/Shell/bindings/document/install.cpp` | 10 files die on `` `then` is undefined `` before their first assertion |
+| **`assert_implements`** — the feature-detection helper reports `undefined` | mostly `html/dom/render-blocking/`, which needs `blocking=` on `<link>`/`<script>` | 11 files |
+| **Web Animations** — `element.animate`, `getAnimations`, `KeyframeEffect` | new | 6 files in `css/css-values`, plus the interpolation ones behind them |
+| **`<script type="module">`** | `lib/Shell` script loading | the seven `css/cssom/getComputedStyle-insets-*` files import their fixture as a module |
+| **the reflection tables** | `lib/Shell/bindings/element/reflection.cpp` | the largest SUBTEST cluster left: `html/dom` has 2,468 failing subtests and the eight `reflection-*.html` files are most of them. Note the file yield is low - they time out regardless - and the subtest yield is enormous |
+| **`css/css-values` has 4,541 failing subtests** and `dom/nodes` 4,203 | — | the two suites where the remaining work is deepest rather than widest |
+
+### The earlier handoff, from the 2026-09-07 day run
+
+Kept because several of its rows are now done and the ones that are not have not
+moved. `querySelector` on the Selectors engine, reflection as a table, a second
+Document, MutationObserver, the CSSOM object model, interface objects for node
+types and attribute namespaces have all landed since it was written; shadow DOM
+and named access on the Window are the two that had not, and named access landed
+in the evening run above.
+
+| what | where | what it is worth |
+|---|---|---|
+| **`querySelector` runs a hand-rolled matcher, not the Selectors engine** | `dom_bindings::query`, `lib/Shell/bindings/document/tree_ops.cpp` | it gives up on ANY selector containing a space or a `>` — its own comment says "a combinator: not supported, matches nothing" — while `lib/Style/css/selector.cpp` and `style::engine::matches` implement combinators, attribute selectors, `:not`/`:is` and the sibling forms. Two matchers, and the weaker one is the one script reaches. `matches`/`closest` are deliberately defined in terms of it so the two cannot disagree, which means all three move together. The rung: give `style::engine` a public `select(txn, root, selector_list)` that runs the same DFS `resolve_subtree` does but tests each element instead of resolving it — the cursor it needs (`levels_`, `path_`, `ancestor_filter`) is already maintained there — and give `dom_bindings` a way to reach the engine, which today observes only the resolved `style_map`. It is also the precondition for `querySelector` throwing `SyntaxError`, which it must NOT do before then: it cannot parse plenty of VALID selectors, so it would fire on correct input |
+| **reflection: an IDL attribute does not reflect its content attribute** | `lib/Shell/bindings/element/reflection.cpp` | ~6,400 failing subtests in `html/dom`, in four shapes: `getAttribute() expected X but got Y` (2,453), `IDL get expected (string) X but got undefined` (2,411), the same for boolean (665) and for number (576). It wants a TABLE — interface, IDL name, content attribute, type, default — not a method each. Note the file yield is low and the subtest yield is enormous: the eight `reflection-*.html` files each run thousands of subtests and time out regardless |
+| **a second Document** | `dom_bindings`, the whole handle model | `createHTMLDocument` (27 files) and `createDocument` (17). `node_id` is a slot+generation into one slab and `wrappers_`, `namespaces_`, `mirrors_` and `webgl_objects_` are ALL keyed on `pack(node_id)`, so two documents give two different nodes the same key and `getElementById` on one returns the other's wrapper. Doing it properly means a document handle beside the node handle in every one of those and in `receiver()`/`handle_of()`/`wrap()`, and `doc_` becoming "the document this call is about" rather than a member, across ~90 uses in six files |
+| **MutationObserver** | `dom_bindings`, `mutated()` | 18 files in `dom/nodes`, 5 more as harness errors in `css/cssom` and `html/dom`. `mutated()` is already the funnel — 18 call sites under `element/`, 5 in `document/` — so a per-target snapshot diff there is the shape, and it needs members on `dom_bindings` to hold the observer list, its queue and the snapshot. **All or nothing**: the validation half alone turns five `MutationObserver-*` files from a fast FAIL into a 10-second TIMEOUT, because their last subtest is an `async_test` waiting for a record |
+| **the CSSOM object model** | new, `lib/Shell/bindings/` | `document.styleSheets`, `CSSStyleSheet`, `CSSRuleList`, `CSSStyleRule.selectorText`, `insertRule`/`deleteRule`, `new CSSStyleSheet()`. It is the precondition for most of what is left in `css/cssom` — 22 subtests fail on `new CSSStyleSheet` by name and four `dom/events` harness errors are `insertRule`. `style::css::stylesheet` already retains the rules, the selectors and the declarations, so the model is there; what is missing is the binding and a way for `dom_bindings` to reach the engine's sheets |
+| **interface objects for node types** | `lib/Shell/bindings/element/interfaces.cpp` | `HTMLBodyElement`, `Window`, `Document`, `NodeList`, `HTMLCollection` as globals with prototypes the wrappers chain to. It is what `assert_class_string`, `e instanceof HTMLBodyElement` and `eventTarget.constructor.name` all ask, and one defect stands behind `Body-FrameSet-Event-Handlers.html`, `passive-by-default.html`, `document.links` and `document.scripts` |
+| **shadow DOM** | the tree model | `attachShadow`: 14 files plus five harness errors across three suites. Not a bindings change |
+| **attribute namespaces** | `include/ctbrowser/dom/node.hpp` | `setAttributeNS`/`getAttributeNS`: `struct attribute` is `(atom name, std::string value)` with nowhere to put a namespace, so this is a DOM-layer change rather than a binding. 80 subtests and two harness errors in `dom/nodes` |
+| **named access on the Window** | `lib/Shell/bindings/window/window.cpp` | `window[id]` for an element with an `id`. One harness error in `dom/events` found it; it is a documented HTML feature that pages use widely |
+
+## Skips, all 542 of them
+
+| count | reason |
+|---:|---|
+| 331 | reftest: needs a reference render |
+| 120 | not a testharness test |
+| 76 | testdriver: needs WebDriver input injection |
+| 8 | variant: the driver opens a file and has no query string |
+| 6 | https: needs a TLS origin |
+| 1 | `global=dedicatedworker`: no Worker |
+
+Every one names a feature. **No skip in this list exists to improve a number.**
+
+
+## The corpus
+
+Fetched by `tools/wpt/fetch-wpt.sh` into `~/.cache/wpt` (`$WPT_DIR` overrides),
+**sparse and shallow, at a pinned commit**, and never committed here.
+
+| | |
+|---|---|
+| pin | `3f6b09ae3ed55280074645ce38e9002f52fc60a8` |
+| where | `~/.cache/wpt`, outside the source tree |
+| size | ~71 MB, 10,601 files on disk out of WPT's 162,834 (2,465 and 13 MB before the widening of 2026-09-13) |
+| verify | `tools/wpt/fetch-wpt.sh --verify` — checks the SHA *and* that the sparse patterns matched something |
+
+Vendoring it was never on the table: WPT is ~1.5 million files, it changes every
+day, and what has to be reproducible is the **commit**, not a copy of the bytes.
+`~/.cache` rather than `build/` because a reconfigure wipes the build tree and
+re-downloading a corpus because somebody deleted a `CMakeCache.txt` is a bad
+trade.
+
+**THE WIDENING OF 2026-09-13.** Five suites at 69% with a long tail of features
+said less and less about the engine, so the list grew in two ways. Every CSS
+module's `parsing/` directory, its `inheritance.html` and its `animation/`
+tests are in - the sparse patterns `/css/*/parsing/`, `/css/*/inheritance.html`,
+`/css/*/animation/` are what `--no-cone` is for - which is 1,747 testharness
+files over 60 modules that all go through `css/support/`: the CSS front end
+measured property by property (`test_valid_value`, `test_invalid_value`,
+`test_computed_value` over 415 properties), and every interpolation test that
+drives CSS Transitions, CSS Animations and Web Animations. And twenty more
+whole suites that are mostly testharness and mostly implemented: `css-syntax`,
+`css-variables`, `css-cascade`, `css-conditional`, `css-nesting`, `css-color`,
+`cssom-view`, `selectors`, `mediaqueries`, `html/syntax` (the html5lib
+tree-construction fixtures against the DOM's own tree builder),
+`html/semantics/forms`, `html/webappapis`, `dom/ranges`, `dom/traversal`,
+`dom/lists`, `dom/collections`, `dom/abort`, `shadow-dom`, `custom-elements`,
+`domparsing`, `selection`, `url`, `encoding`. `run-wpt.py`'s own planner
+counts 5,099 runnable tests in the widened checkout against 1,090 before,
+2,593 skipped (reftests, mostly). A module directory taken whole would be
+reftests; a suite for a feature the engine has never heard of would be NOTRUN
+noise - both are still the rule for what is NOT in the list.
+
+**THE CHECKOUT IS SHARED, on the devbox.** One `~/.cache/wpt` serves every agent
+and every worktree on that machine, and it is not covered by the per-directory
+isolation that keeps two builds apart. On 2026-09-03 one agent added
+`/css/support/` to it and another agent's next measurement moved by 87 files in
+a suite its change could not have touched. **If a number moves in a suite the
+change cannot explain, check `.git/info/sparse-checkout` and its mtime before
+believing the engine did it** — that is what identified this one. The fetch list
+in `fetch-wpt.sh` and the expectations file are kept in step deliberately so a
+fresh checkout and a shared one agree.
+
+`--verify` checks two things and the second is the one that matters: a sparse
+checkout whose patterns matched nothing leaves a directory that exists, has the
+right `HEAD`, and cannot run a single test. That is a green verify followed by a
+suite of identical harness errors, so `resources/testharness.js` and `dom/nodes`
+are checked **by name**.
+
+### Which suites, and why
+
+The sparse list is in `fetch-wpt.sh`. It is chosen by what this engine
+implements, because a suite for a feature the engine has never heard of reports
+the same thing for every file in it and that is noise in a table rather than a
+finding.
+
+| path | why it is fetched |
+|---|---|
+| `resources/` | testharness.js itself. Not optional |
+| `common/` | the fixtures the suites import |
+| `dom/nodes/` | the tree: `Node`, `Element`, `Attr`, `Document`. The engine has its own WHATWG tokenizer and tree builder, so this is the closest thing to a direct measurement of it |
+| `dom/events/` | `EventTarget`, dispatch, capture/bubble, listener options — all of which `lib/Shell/bindings/events/` implements |
+| `html/dom/` | reflection: does `el.id = "x"` change the attribute, and back |
+| `css/cssom/` | `getComputedStyle` and the style declaration objects, which `lib/Shell/bindings/computed_style/` answers and `tools/check/css-parity.py` already measures against Chrome a different way |
+| `css/css-values/` | value parsing and computation — `calc()`, lengths, units — against the CSS Syntax Level 3 front end in `lib/Style/css/` |
+| `css/support/` | the helpers the two `css/` suites import. **Not optional either**: `test_valid_value`, `test_computed_value`, `test_math_used`, `test_interpolation` and `test_specified_serialization` all live here, and a test that cannot load one reports HARNESS_ERROR without running a subtest. Adding it on 2026-09-03 converted 87 harness errors into real measurements |
+
+**Left out on purpose**, and each for a reason rather than a score: everything
+needing a network origin (`fetch/`, `xhr/`, `service-workers/` — the runner has
+no server and `CTBROWSER_NETWORK=0`), everything needing a second browsing
+context (`html/browsers/`, `webmessaging/` — no iframes, no `window.open`, no
+workers), and the reftest suites (`css/css-flexbox/` and friends are render
+comparisons, which is `tools/check/check-render.cmake`'s instrument, not this
+one).
+
+## The results hook
+
+`tools/wpt/testharnessreport.js` is **the slot WPT leaves for the
+implementation**. Every test loads two scripts: `testharness.js`, which is the
+harness and is the same for everybody, and `testharnessreport.js`, whose copy in
+the checkout does nothing at all. `run-wpt.py` copies ours over it on **every**
+run, so a re-fetch can never leave the corpus silently reporting nothing. This
+is exactly what every browser vendor does.
+
+**Where the results go**: onto `window.__wpt_state`, as a string that is already
+JSON, with `window.__wpt_done` set after it. The runner reads it back through
+`ctdrive`'s `eval`, which returns whatever the snippet *logged* — so one
+`console.log` of one string is the whole channel, and it needs nothing from the
+engine a page could not do.
+
+Three decisions in that file are worth stating:
+
+- **The JSON is built by hand.** `JSON.stringify` would make every result in the
+  suite depend on this engine's `JSON.stringify` being right about nested
+  objects, string escaping and lone surrogates — and when it was not, the
+  failure would arrive as a hundred harness errors that look like the DOM is
+  broken. The one thing that must not be under test is the instrument. Non-ASCII
+  is escaped too, so the payload crossing a socket, a `std::string` and a Python
+  decode is pure ASCII and none of the three has to agree about an encoding.
+- **`setup({output: false})`**, as wptrunner's own hook does. The results table
+  testharness builds into `#log` is for a human with a browser window; building
+  it puts `createElementNS`, `appendChild` and `textContent` between every test
+  and its result, so a defect in any of the three would arrive as a corpus-wide
+  failure saying nothing about the test that found it.
+- **A missing harness is reported, not silent.** If `add_completion_callback` is
+  not a function the hook publishes a `HARNESS_ERROR` saying so. Without that,
+  a page that failed to load the harness reports zero subtests — and zero
+  failing subtests is exactly what a naive runner scores as a pass.
+
+### How console output and errors reach the terminal today
+
+They already did, and nothing new was needed for the channel itself:
+
+- `console.log` accumulates in `browser::bindings().console_output()`, and
+  `ctdrive`'s `eval` returns everything logged during the snippet. That is the
+  mechanism `tools/check/compare.py` has used all along.
+- an uncaught throw in a `<script>` lands in `browser::script_error()`, which
+  `ctdrive`'s `info` command returns and which `ctbrowse` prints. The runner
+  reads it when a page dies without publishing, so a timeout can say *why*.
+
+What was missing was the **page's** half of that — see the next section.
+
+## What WPT found in the engine
+
+**Seven gaps**, in the order they blocked things. Each is a genuine engine
+defect rather than harness scaffolding, each is fixed on this branch, and the
+full suite (118 tests, goldens included) still passes with all seven fixed.
+
+Two of them were found by the negative proofs rather than by the corpus, which
+is the argument for having them: `--selftest` reported the wrong outcome for
+three of its five fixtures the first time it ran, and `window.parent` and the
+stuck VM fault were what those misses turned out to be. The regex defect came
+the other way round - the corpus ran, the numbers looked plausible, and the
+FAILURE MESSAGES were gibberish.
+
+| | what was wrong | what it looked like |
+|---|---|---|
+| `self` was not defined | `window` and `globalThis` were, `self` was not | testharness.js is `(function (global_scope) { … }(self))`, so `global_scope` was `undefined` — and this engine treats a property **store** on undefined as a no-op rather than a TypeError, so the harness ran to completion, reported no error, and defined not one of its globals. The page then failed with "`test` is undefined", forty lines from the cause. **100% of WPT was unrunnable for one missing alias.** |
+| a leading `/` had no document root | `<script src="/resources/testharness.js">` was read off the root of the disk | every test in the corpus loaded with no harness at all, and every one of them reported the same error — none of which was about the engine. `shell::asset_registry::set_document_root`, set from `CTBROWSER_DOC_ROOT`, is what a server would have resolved it against |
+| `addEventListener` was not a bare global | it was a property of `window` only, and the window proxy's fallback goes `window.x` → global, never the other way | testharness installs its uncaught-exception handler as a receiverless `addEventListener("error", …)`. That threw a TypeError at the very end of the harness's own initialisation — after the asserts were exposed and before `on_tests_ready()`, which is the worst possible place: the file half-ran and said nothing |
+| there was no `load` event | the engine sets `document.readyState` to `"complete"` from the start, so every library that *asks* before it listens — p5, Phaser, Babylon — takes its already-loaded branch and never needed one | testharness does the opposite: it listens unconditionally and sets `all_loaded` in the handler, and `Tests.all_done()` requires that flag. **Every test ran its subtests, passed them, and then sat until the harness's own 10-second timeout and reported TIMEOUT.** `browser::tick` now fires `DOMContentLoaded` and then `load` at the window, once per document |
+| an uncaught throw was invisible to the page | it reached `browser::script_error()` — an *embedder* channel — and no `error` event was ever dispatched | a test that threw during load could not be told from one that never finished. `dom_bindings::dispatch_error` gives the page `window.onerror` and `addEventListener("error", …)`, which is what turns that case into a `HARNESS_ERROR` |
+| `window.parent` was undefined | there are no iframes, so nothing had ever needed the browsing-context chain | testharness walks `[self … top, opener]` to broadcast state. With `parent` undefined the walk ran one step past the end and called `postMessage` on `undefined` — **inside a completion callback**, and `notify_complete` runs those in a bare `forEach` with no try/catch, so the throw killed every later callback including the one that reports results. Every test that ran perfectly reported nothing and was recorded as a TIMEOUT. `parent`/`top` are now this window and `opener` is null, which is what the spec says a top-level browsing context reports |
+| a thrown script left the VM refusing to run | `run()` leaves `failed_` set, and every C++ entry into JavaScript declines while it is | so dispatching the new `error` event ran **no listener at all**, reported the original error a second time as a "callback fault", and left the page believing nothing had gone wrong. The harness then finished normally and **a page that threw during load was reported as a PASS** — the single worst answer this instrument can give. The fault is now taken before the event is dispatched: `script_error_` already holds the text, and the page cannot be handed anything while the VM is refusing to run its code |
+| `\uXXXX` and `\xHH` in a regex were not decoded | `rx_escape_char` fell through to "the char itself", so `\u` was the letter `u` and the four hex digits became four more class members. `[\udc00-\udfff]` parsed as `{u,d,c,0,f}` plus the **range `'0'`–`'u'`** | which matches most of ASCII, silently. testharness sanitises every test **name** and every assertion **message** through `str.replace(/([\ud800-\udbff]+)…/g, …)`, so that bogus range hit nearly every character of every string the harness had to say: 2,343 failing subtests in `dom/nodes` came back with their names rewritten into runs of `U+61U+73U+73…`. A corpus-wide corruption of the **results**, from one escape. Now decoded; above `0xFF` the byte-based matcher refuses the pattern rather than approximating it, which makes the sanitiser the no-op it should always have been |
+
+### And six more, found in the second pass
+
+The gaps above stopped the corpus running at all. These were found by reading
+what it then said, one API at a time — each is measured in the table further up,
+and each has a commit of its own.
+
+| | what was wrong | what it looked like |
+|---|---|---|
+| `getElementsByClassName` did not exist | neither did `getElementsByName`, `removeAttribute`, `hasAttribute`, `nodeName`, `nodeType` or `localName` | 39 test files, and it was the largest single cause in the first baseline. The hard half was not the search but the COLLECTION: `getElementsBy*` returns a live view, and five of the suite's own tests take one, mutate the document and read it again |
+| the document and the window were ONE listener bucket | `listener::target` empty meant "one of the two, we cannot tell" | invisible until an event carried `currentTarget`, and then both reported the same object. `removeEventListener` on one could take the other's listener away |
+| dispatch had no path, no phase and no flags | it fired the global bucket, walked the ancestors, and fired the global bucket again | `currentTarget` and `eventPhase` read `undefined`, `stopPropagation` was a no-op, and nothing a page CONSTRUCTED could be dispatched at all — `document.createEvent` and `dispatchEvent` did not exist |
+| a `once` listener was reaped during a NESTED dispatch | the compaction ran at the end of every dispatch, including one started inside a listener | it shifts the vector the outer dispatch is indexing, so the listener after the removed one is skipped. Reproduced by `AddEventListenerOptions-once.any.js`, whose second case dispatches from inside a `once` listener that re-registers itself |
+| a listener registered twice was registered twice | the DOM says (type, callback, capture) on one target is a listener's IDENTITY | a page that registers defensively in a function it calls twice got two calls per event, and a `once` listener registered twice fired twice |
+| `document.implementation` did not exist | so `hasFeature` did not, and the test's `.apply(...)` on `undefined` did not either | 136 assertions in one file, reported as "`apply` is not a function" — a message about a method nobody was missing, forty lines from the cause |
+
+### And the two that were NOT fixed then, both of which are now
+
+`docs/wpt.md` named these on 2026-09-03 as standing in front of many tests. Both
+have since been closed, and how each turned out is worth a line:
+
+- **`"length" in []` was false.** `context::has_property` parsed an array key as
+  an index and never answered `"length"`, so `assert_array_equals` — which opens
+  with exactly that test — could not compare against any array a page built.
+  Closed by the property-attribute work: `own_property` is now the shared
+  [[GetOwnProperty]] over all four tables and `in` walks the whole chain through
+  it, which also fixed `'toString' in {}` and an accessor being invisible to the
+  operator whose entire job is to see one.
+- **A native could not throw a DOMException.** Closed by
+  `context::throw_value(value)` and `lib/Shell/bindings/exceptions.cpp`. What it
+  was worth is in the 2026-09-07 table; what it turned out to ALSO be worth is
+  not in any table: `Document-createElementNS.html` passes
+  `doc.defaultView.DOMException` as `assert_throws_dom`'s constructor argument,
+  so its 110 throwing assertions needed `document.defaultView` as much as they
+  needed the exception.
+
+## Running it
+
+**One directory at a time is the interface.** A batch that runs everything and
+prints one number hides exactly what you need.
+
+```bash
+tools/wpt/fetch-wpt.sh                            # once; ~40 MB
+tools/wpt/run-wpt.py --selftest                   # FIRST: does the harness fail?
+tools/wpt/run-wpt.py --dir dom/nodes              # a table
+tools/wpt/run-wpt.py --dir dom/events --filter Event-dispatch
+tools/wpt/run-wpt.py --dir css/cssom --json /tmp/cssom.json --tsv /tmp/cssom.tsv
+```
+
+Useful flags: `--jobs N` (4 by default — **the devbox has 8 vCPUs and is
+shared**), `--memory-mb N` (4096, applied as `ulimit -v` to each driver),
+`--limit N`, `--driver PATH`.
+
+Each test is **one `ctdrive` process**, which is what makes a crash a crash: the
+process dies, the runner sees the signal and names it, and the next test is
+unaffected. The environment is pinned the way the render checks pin theirs —
+`CTBROWSER_GL_DRIVER=deterministic`, `SDL_VIDEODRIVER=offscreen`,
+`CTBROWSER_FONTS=font8x8`, `CTBROWSER_NETWORK=0` — so a run says the same thing
+twice and a box with no GPU is not a variable.
+
+### Timeouts and the memory cap
+
+WPT's own metadata is the source of truth: `<meta name="timeout" content="long">`
+means 60 s and everything else means 10 s. The runner adds a 5 s margin on top,
+and the margin is the point — the harness has its **own** 10-second timeout and
+must be given the chance to report it, because a page killed at exactly its
+deadline loses the subtest detail the harness was about to publish.
+
+`ulimit -v` is applied by a one-line `/bin/sh` wrapper rather than by Python's
+`preexec_fn`, which the standard library documents as unsafe from a thread pool
+— and this runner has four workers, so that is not a theoretical objection.
+`ulimit -c 0` goes with it: hundreds of multi-GB cores is a build machine down,
+not a finding.
+
+### `.any.js` and the wrappers
+
+A `.any.js` test has **no HTML on disk at all** — wptrunner synthesises
+`<test>.any.html` when the browser asks for it. The runner builds the same page,
+reading the `// META:` lines the way the manifest does (`global=`, `script=`,
+`timeout=`), and writes it *beside* the script so its relative `<script src>`
+resolves. Wrappers are named `*.ctwpt.html`, deleted at the end of a run, and
+swept at the start of the next one so an interrupted run cannot leave the corpus
+with tests nobody wrote.
+
+## What is skipped, and why
+
+Every skip names a **feature this engine does not implement**, never a number.
+The counts are in the baseline table above; the reasons are these and only these:
+
+| reason | what it means |
+|---|---|
+| `reftest: needs a reference render, not a harness result` | `<link rel=match>`. A different instrument — `tools/check/check-render.cmake` |
+| `not a testharness test` | the file never loads `testharness.js`; usually a fixture or a helper page |
+| `testdriver: needs WebDriver input injection` | `test_driver.click()` and friends. `ctdrive` can synthesise input, but not through testdriver's protocol |
+| ~~`variant: the driver opens a file and has no query string`~~ | gone on 2026-09-13: a `<meta name="variant" content="?file=x">` is one run per variant, `ctdrive --query` giving the page its `location.search`, keyed `path?query` in the expectations as WPT's manifest keys it |
+| `global=…: no Worker/ServiceWorker in this engine` | a `.any.js` whose declared scopes exclude `window` |
+| `Worker:` / `SharedWorker:` / `ServiceWorker: not implemented` | the `.worker.` / `.sharedworker.` / `.serviceworker.` filename spellings |
+| `https: needs a TLS origin` / `h2: needs an HTTP/2 server` | WPT encodes its server requirements in the filename, and there is no server here |
+
+A test that this engine simply fails is **not** skipped. It is run, it fails, and
+the failure is recorded — which is the difference between a measurement and a
+score.
+
+## Expectations, and the gate
+
+`tools/wpt/expectations.txt` is **every deviation from "it passes"**, one line
+each, sorted, keyed on the test path:
+
+    dom/nodes/Node-cloneNode.html	FAIL
+    dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"Node.cloneNode() on a DocumentType"
+    dom/nodes/Node-baseURI.html	SKIP	not a testharness test
+
+A test with **no** line is expected to pass with every subtest passing, so the
+file only ever grows when the engine is wrong and only shrinks when it is fixed.
+Subtest names are JSON-quoted because WPT has names containing tabs and
+newlines. Assertion *messages* are deliberately absent: they carry values that
+differ run to run, and a file that churns is a file nobody re-reads.
+
+**The gate fails in both directions.**
+
+```bash
+tools/wpt/run-wpt.py --dir dom/nodes --check              # against expectations
+tools/wpt/run-wpt.py --dir dom/nodes --update-expectations
+```
+
+A new failure is a regression. **A line that has started passing is a failure
+too**, and that is the half that keeps the file honest: an expectations file
+that only ever grows is a file that tells lies about the engine, and a gate that
+checks one direction would keep them there forever. `--update-expectations`
+records a change deliberately, and **merges** — re-measuring one directory
+rewrites that directory's lines and leaves every other suite exactly as it was.
+
+Both `--check` and `--gate` scope the comparison to the tests the run actually
+ran, so one file serves the two-minute gate and a full-suite sweep.
+
+## The ctest entries
+
+Off by default, because the corpus is not in this repository and a test that
+silently passes when the corpus is absent is worse than one that is not
+registered.
+
+```bash
+cmake --preset default -DCTBROWSER_WPT=ON
+ctest --preset default -L wpt          # both, ~2 minutes
+ctest --preset default -LE wpt         # everything else
+```
+
+| test | what it does |
+|---|---|
+| `wpt-selftest` | the **negative proofs** — five fixtures whose outcomes are asserted. Seconds |
+| `wpt-gate` | a fixed subset against `expectations.txt`, budgeted at two minutes |
+
+The **full** run is a documented command and not a build step: it takes tens of
+minutes and belongs to a person.

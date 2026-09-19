@@ -28,6 +28,18 @@ target_sources(ctbrowser-script
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/type_record.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/builtins.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/regex.hpp")
+
+# Public value types and VM inline definitions are installed with their entry headers.
+target_sources(ctbrowser-script PUBLIC FILE_SET HEADERS FILES
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/value/arrays.hpp"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/value/base.hpp"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/value/objects.hpp"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm/execution_inline.hpp"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm/frames_inline.hpp"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm/gc_inline.hpp"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm/objects.hpp"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/script/vm/properties_inline.hpp"
+)
 target_compile_features(ctbrowser-script PUBLIC cxx_std_23)
 
 # Both PRIVATE, and they must be: neither changes the shape of a public
@@ -48,3 +60,11 @@ target_include_directories(ctbrowser-script PRIVATE
 target_link_libraries(ctbrowser-script PUBLIC ctbrowser-core Boost::headers)
 
 add_library(ctbrowser::script ALIAS ctbrowser-script)
+
+# Public X-macro helper declarations include these table sections.
+target_sources(ctbrowser-script PUBLIC FILE_SET HEADERS FILES
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/aot/aot_helpers.def"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/aot/helpers/frames-and-bindings.def"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/aot/helpers/values-and-properties.def"
+  "${CTBROWSER_INCLUDE_DIR}/ctbrowser/aot/helpers/calls-and-modules.def"
+)

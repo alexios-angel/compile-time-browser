@@ -1,0 +1,16 @@
+dom/collections/HTMLCollection-as-prototype.html	FAIL
+dom/collections/HTMLCollection-as-prototype.html	SUBTEST	FAIL	"HTMLCollection as a prototype should not allow getting .length on the base object"
+dom/collections/HTMLCollection-delete.html	FAIL
+dom/collections/HTMLCollection-delete.html	SUBTEST	FAIL	"Loose name"
+dom/collections/HTMLCollection-delete.html	SUBTEST	FAIL	"Strict id"
+dom/collections/HTMLCollection-delete.html	SUBTEST	FAIL	"Strict name"
+dom/collections/HTMLCollection-supported-property-indices.html	FAIL
+dom/collections/HTMLCollection-supported-property-indices.html	SUBTEST	FAIL	"Handling of property names that look like integers around 2^32"
+dom/collections/HTMLCollection-supported-property-indices.html	SUBTEST	FAIL	"Trying to delete an indexed property name should never work"
+dom/collections/HTMLCollection-supported-property-indices.html	SUBTEST	FAIL	"Trying to set an expando that would shadow an already-existing indexed property"
+dom/collections/HTMLCollection-supported-property-indices.html	SUBTEST	FAIL	"Trying to set an expando with an indexed property name past the end of the list"
+dom/collections/HTMLCollection-supported-property-names.html	FAIL
+dom/collections/HTMLCollection-supported-property-names.html	SUBTEST	FAIL	"Trying to set a non-configurable expando that shadows a named property that gets added later"
+dom/collections/HTMLCollection-supported-property-names.html	SUBTEST	FAIL	"Trying to set an expando that shadows a named property that gets added later"
+dom/collections/HTMLCollection-supported-property-names.html	SUBTEST	FAIL	"Trying to set an expando that would shadow an already-existing named property"
+dom/collections/childnodes-messagechannel-crash.html	SKIP	not a testharness test
