@@ -463,6 +463,56 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .reads = "a[0]=one; a[0]=one; a[1]=x; a[0]=one",
          .exit = "zero -> {}"},
         "x");
+    const auto disjointReload =
+        replace(replace(replace(reloaded, "  cf.br ^header",
+                                "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"
+                                "  cf.br ^header"),
+                        "  %unit =", "  ctjs.set_property %base[%i], %zero\n  %unit ="),
+                "%unit = ctjs.get_property %base[%zero]", "%unit = ctjs.get_property %seed[%zero]");
+    run({.what = "a disjoint reloaded stride survives current own-element overwrites",
+         .body = disjointReload,
+         .arrays = "a:[zero,zero]; seed:[one]",
+         .reads = "a[0]=one; seed[0]=one; a[1]=x; seed[0]=one",
+         .exit = "x -> {x}"});
+    run({.what = "disjoint stride reads release overwritten children of the returned array",
+         .body = replace(disjointReload, "ctjs.return %result", "ctjs.return %a"),
+         .arrays = "a:[zero,zero]; seed:[one]",
+         .reads = "a[0]=one; seed[0]=one; a[1]=x; seed[0]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto nestedReload = replace(
+        replace(replace(disjointReload, "  cf.br ^header",
+                        "  %box = ctjs.create_array [%seed, %a] {storage_test_id = \"box\"}\n"
+                        "  cf.br ^header"),
+                "  %unit =", "  %input = ctjs.get_property %box[%zero]\n  %unit ="),
+        "%seed[%zero]", "%input[%zero]");
+    run({.what = "nested stride reads use selected allocation origins, not whole-graph aliases",
+         .body = replace(nestedReload, "ctjs.return %result", "ctjs.return %a"),
+         .arrays = "a:[zero,zero]; seed:[one]; box:[seed,a]",
+         .reads = "a[0]=one; box[0]=seed; seed[0]=one; a[1]=x; box[0]=seed; seed[0]=one",
+         .exit = "a -> {a}"},
+        "x,seed");
+    reject("a nested stride read cannot hide the overwritten guard allocation",
+           replace(nestedReload, "[%seed, %a]", "[%a, %seed]"));
+    reject("a recursive contents graph cannot hide a selected guard allocation",
+           replace(replace(replace(nestedReload, "[%seed, %a]", "[%zero, %a]"), "  cf.br ^header",
+                           "  ctjs.set_property %box[%zero], %box\n  cf.br ^header"),
+                   "%input = ctjs.get_property %box[%zero]",
+                   "%link = ctjs.get_property %box[%zero]\n"
+                   "  %input = ctjs.get_property %link[%one]"));
+    reject("a saved array alias is not disjoint from the overwritten guard allocation",
+           replace(replace(disjointReload, "  cf.br ^header",
+                           "  %box = ctjs.create_array [%a]\n"
+                           "  %alias = ctjs.get_property %box[%zero]\n  cf.br ^header"),
+                   "%seed[%zero]", "%alias[%zero]"));
+    run({.what = "a nested guard length stays invariant across own-element overwrites",
+         .body = replace(replace(replace(nestedReload, "[%seed, %a]", "[%a, %seed]"),
+                                 "%input[%zero]", "%input[%key]"),
+                         "ctjs.return %result", "ctjs.return %a"),
+         .arrays = "a:[zero,x]; seed:[one]; box:[a,seed]",
+         .reads = "a[0]=one; box[0]=a",
+         .exit = "a -> {a,x}"},
+        "seed");
     for (const std::string key : {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">",
                                   "#ctjs.boolean<false>", "#ctjs.number<4613937818241073152>"}) {
         reject(

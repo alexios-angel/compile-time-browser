@@ -417,6 +417,40 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[one,y]",
                     .reads = "a[0]=one; a[0]=one; a[1]=y; a[0]=one",
                     .exit = "zero -> {}"});
+    const auto disjointReload =
+        replace(replace(replace(reloaded, "  %finalIndex,",
+                                "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"
+                                "  %finalIndex,"),
+                        "    %unit =", "    ctjs.set_property %base[%i], %zero\n    %unit ="),
+                "%unit = ctjs.get_property %base[%zero]", "%unit = ctjs.get_property %seed[%zero]");
+    rows.push_back({.what = "structured disjoint stride reads preserve a saved child",
+                    .body = disjointReload,
+                    .arrays = "a:[zero,zero]; seed:[one]",
+                    .reads = "a[0]=one; seed[0]=one; a[1]=y; seed[0]=one",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured disjoint stride reads release overwritten children",
+                    .body = replace(disjointReload, "ctjs.return %result", "ctjs.return %a"),
+                    .arrays = "a:[zero,zero]; seed:[one]",
+                    .reads = "a[0]=one; seed[0]=one; a[1]=y; seed[0]=one",
+                    .exit = "a -> {a}"});
+    const auto nestedReload = replace(
+        replace(replace(disjointReload, "  %finalIndex,",
+                        "  %box = ctjs.create_array [%seed, %a] {storage_test_id = \"box\"}\n"
+                        "  %finalIndex,"),
+                "    %unit =", "    %input = ctjs.get_property %box[%zero]\n    %unit ="),
+        "%seed[%zero]", "%input[%zero]");
+    rows.push_back({.what = "structured nested stride reads keep exact selected origins",
+                    .body = replace(nestedReload, "ctjs.return %result", "ctjs.return %a"),
+                    .arrays = "a:[zero,zero]; seed:[one]; box:[seed,a]",
+                    .reads = "a[0]=one; box[0]=seed; seed[0]=one; a[1]=y; box[0]=seed; seed[0]=one",
+                    .exit = "a -> {a}"});
+    reject("structured nested reads cannot conceal the overwritten guard allocation",
+           replace(nestedReload, "[%seed, %a]", "[%a, %seed]"));
+    reject("structured saved array aliases retain their original allocation",
+           replace(replace(disjointReload, "  %finalIndex,",
+                           "  %box = ctjs.create_array [%a]\n"
+                           "  %alias = ctjs.get_property %box[%zero]\n  %finalIndex,"),
+                   "%seed[%zero]", "%alias[%zero]"));
     for (const std::string key : {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">",
                                   "#ctjs.boolean<false>", "#ctjs.number<4613937818241073152>"}) {
         reject("structured reload cannot coerce or inherit an absent own key",

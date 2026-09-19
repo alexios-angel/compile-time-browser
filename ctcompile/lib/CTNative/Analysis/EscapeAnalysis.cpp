@@ -1327,8 +1327,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             const mlir::Value next = backedge[argument.getArgNumber()];
             return next == value || fromHeader(next) == value;
         };
+        const mlir::Value base = origin(array);
+        const auto * guardSite = base ? base.getDefiningOp() : nullptr;
         auto invariantFailure = unsupported;
-        bool reloadsElement = false;
+        bool reloadsGuardElement = false;
         const auto invariant = [&](auto && self, mlir::Value operand,
                                    unsigned depth) -> std::optional<ContentsValue> {
             if (!spend()) {
@@ -1370,7 +1372,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 const auto position = ownArrayIndex(*key);
                 if (!position || *position >= array->second.size()) { return std::nullopt; }
-                reloadsElement = true;
+                // Check every recursive read against the exact allocation, so
+                // a distinct outer array cannot hide a selected guard alias.
+                reloadsGuardElement |= array->first == guardSite;
                 // Retaining the original element keeps primitive keys intact.
                 return array->second[*position];
             } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
@@ -1469,7 +1473,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 if (&operation == block->getTerminator()) { continue; }
                 if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                    if (block != body || reloadsElement ||
+                    if (block != body || reloadsGuardElement ||
                         (store.getObject() != array && fromHeader(store.getObject()) != array) ||
                         fromHeader(store.getKey()) != index) {
                         return unsupported;
@@ -1483,7 +1487,6 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
             }
         }
-        const mlir::Value base = origin(array);
         // SCF can eliminate an invariant array parameter. A direct allocation
         // already executed on this exact path needs no backedge transport;
         // the body census above still excludes repeated allocation and resizing.
