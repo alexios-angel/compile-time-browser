@@ -1,0 +1,2 @@
+selection/toString-ff-bug-001.html	FAIL
+selection/toString-ff-bug-001.html	SUBTEST	FAIL	"Can serialize a range which starts at the end of an element"

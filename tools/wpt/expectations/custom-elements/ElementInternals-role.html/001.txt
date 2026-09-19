@@ -1,0 +1,1 @@
+custom-elements/ElementInternals-role.html	SKIP	testdriver: needs WebDriver input injection

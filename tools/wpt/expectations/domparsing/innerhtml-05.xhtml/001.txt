@@ -1,0 +1,2 @@
+domparsing/innerhtml-05.xhtml	FAIL
+domparsing/innerhtml-05.xhtml	SUBTEST	FAIL	"innerHTML in XHTML"

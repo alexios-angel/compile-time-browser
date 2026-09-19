@@ -1,0 +1,4 @@
+custom-elements/Document-createElement-customized-builtins.html	FAIL
+custom-elements/Document-createElement-customized-builtins.html	SUBTEST	FAIL	"document.createElement must report an exception thrown by a custom built-in element constructor"
+custom-elements/Document-createElement-customized-builtins.html	SUBTEST	FAIL	"document.createElement with unknown \"is\" value should create \"undefined\" state element"
+custom-elements/Document-createElement-customized-builtins.html	SUBTEST	FAIL	"document.createElement()'s second argument is to be ignored when it's a string"

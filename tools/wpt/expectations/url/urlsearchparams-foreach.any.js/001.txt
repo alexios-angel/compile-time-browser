@@ -1,0 +1,7 @@
+url/urlsearchparams-foreach.any.js	FAIL
+url/urlsearchparams-foreach.any.js	SUBTEST	FAIL	"For-of Check"
+url/urlsearchparams-foreach.any.js	SUBTEST	FAIL	"ForEach Check"
+url/urlsearchparams-foreach.any.js	SUBTEST	FAIL	"delete current param during iteration"
+url/urlsearchparams-foreach.any.js	SUBTEST	FAIL	"delete every param seen during iteration"
+url/urlsearchparams-foreach.any.js	SUBTEST	FAIL	"delete next param during iteration"
+url/urlsearchparams-foreach.any.js	SUBTEST	FAIL	"empty"

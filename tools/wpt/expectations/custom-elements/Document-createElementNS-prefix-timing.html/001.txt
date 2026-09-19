@@ -1,0 +1,4 @@
+custom-elements/Document-createElementNS-prefix-timing.html	FAIL
+custom-elements/Document-createElementNS-prefix-timing.html	SUBTEST	FAIL	"Autonomous custom element prefix is set after constructor returns"
+custom-elements/Document-createElementNS-prefix-timing.html	SUBTEST	FAIL	"Nested createElementNS calls do not corrupt prefix state"
+custom-elements/Document-createElementNS-prefix-timing.html	SUBTEST	FAIL	"Reentrant construction does not leak prefix between instances"

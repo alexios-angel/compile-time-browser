@@ -1,0 +1,1 @@
+selection/canvas-click.html	SKIP	testdriver: needs WebDriver input injection

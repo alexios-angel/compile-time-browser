@@ -1,0 +1,6 @@
+domparsing/DOMParser-parseFromString-xml-scripting-support-disabled.html	FAIL
+domparsing/DOMParser-parseFromString-xml-scripting-support-disabled.html	SUBTEST	FAIL	"parseFromString as XML, svg script, append adoptNode result"
+domparsing/DOMParser-parseFromString-xml-scripting-support-disabled.html	SUBTEST	FAIL	"parseFromString as XML, svg script, append cloneNode result"
+domparsing/DOMParser-parseFromString-xml-scripting-support-disabled.html	SUBTEST	FAIL	"parseFromString as XML, svg script, append importNode result"
+domparsing/DOMParser-parseFromString-xml-scripting-support-disabled.html	SUBTEST	FAIL	"parseFromString as XML, svg script, append importNode result, but with namespace prefix"
+domparsing/DOMParser-parseFromString-xml-scripting-support-disabled.html	SUBTEST	FAIL	"parseFromString as XML, svg script, appendChild"

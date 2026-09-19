@@ -1,0 +1,8 @@
+custom-elements/HTMLElement-constructor.html	FAIL
+custom-elements/HTMLElement-constructor.html	SUBTEST	FAIL	"HTMLElement constructor must not get .prototype until it finishes its registration  sanity checks, calling via Reflect"
+custom-elements/HTMLElement-constructor.html	SUBTEST	FAIL	"HTMLElement constructor must only get .prototype once, calling proxy constructor directly"
+custom-elements/HTMLElement-constructor.html	SUBTEST	FAIL	"HTMLElement constructor must only get .prototype once, calling proxy constructor via Reflect with no inheritance"
+custom-elements/HTMLElement-constructor.html	SUBTEST	FAIL	"HTMLElement constructor must only get .prototype once, calling proxy constructor via Reflect"
+custom-elements/HTMLElement-constructor.html	SUBTEST	FAIL	"HTMLElement constructor must throw TypeError when it has not been defined by customElements.define"
+custom-elements/HTMLElement-constructor.html	SUBTEST	FAIL	"HTMLElement constructor must throw a TypeError when NewTarget is equal to itself via a Proxy object"
+custom-elements/HTMLElement-constructor.html	SUBTEST	FAIL	"HTMLElement constructor must throw a TypeError when NewTarget is equal to itself"

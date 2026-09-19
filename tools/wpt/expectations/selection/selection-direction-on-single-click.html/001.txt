@@ -1,0 +1,1 @@
+selection/selection-direction-on-single-click.html	SKIP	testdriver: needs WebDriver input injection

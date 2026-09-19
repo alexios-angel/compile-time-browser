@@ -1,0 +1,71 @@
+selection/shadow-dom/cross-shadow-boundary-1.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-2.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-3.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-4.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-5.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-6.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-extend.html	HARNESS_ERROR
+selection/shadow-dom/cross-shadow-boundary-img.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-select-document.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/cross-shadow-boundary-select-root.html	SKIP	reftest: needs a reference render, not a harness result
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	FAIL
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"Collapse selection after the <span> which is not part of the flattened tree"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"Extend selection from end of the host to start of the host"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"Extend selection from start of the host to end of the host"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"Select all children of the host"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"Select set base to end of the host and extent to start of the host"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"Select set base to start of the host and extent to end of the host"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"Test Selection API working with nodes in not part of flattened tree 1"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"containsNode of non-assigned node child should return false (when all children of the host is selected)"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"containsNode of non-assigned node child should return false (when the host is selected)"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"containsNode of non-assigned node should return false (when all children of the host is selected)"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"containsNode of non-assigned node should return false (when the host is selected)"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"getRangeAt(0).comparePoint of start of non-assigned node child should return 0 (when all children of the host is selected)"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"getRangeAt(0).comparePoint of start of non-assigned node child should return 0 (when the host is selected)"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"getRangeAt(0).comparePoint of start of non-assigned node should return 0 (when all children of the host is selected)"
+selection/shadow-dom/selection-at-nodes-not-part-of-flattened-tree.html	SUBTEST	FAIL	"getRangeAt(0).comparePoint of start of non-assigned node should return 0 (when the host is selected)"
+selection/shadow-dom/tentative/Range-isPointInRange.html	FAIL
+selection/shadow-dom/tentative/Range-isPointInRange.html	SUBTEST	FAIL	"isPointInRange() test for collapsed selection"
+selection/shadow-dom/tentative/Range-isPointInRange.html	SUBTEST	FAIL	"isPointInRange() test for non-collapsed selection"
+selection/shadow-dom/tentative/Selection-collapse-and-extend.html	FAIL
+selection/shadow-dom/tentative/Selection-collapse-and-extend.html	SUBTEST	FAIL	"collapse abort steps when called with a disconnected node inside a shadow tree"
+selection/shadow-dom/tentative/Selection-collapse-and-extend.html	SUBTEST	FAIL	"collapse can set selection to a node inside a shadow tree"
+selection/shadow-dom/tentative/Selection-collapse-and-extend.html	SUBTEST	FAIL	"extend abort steps when called with a disconnected node inside a shadow tree"
+selection/shadow-dom/tentative/Selection-collapse-and-extend.html	SUBTEST	FAIL	"extend can set selection to a node inside a shadow tree"
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	FAIL
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<div><shadow-root><span>InnerText</span></shadow-root><span>Unassigned[Text</span></div><p>abc]def</p>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<div><shadow-root><span>InnerText</span></shadow-root><span>{UnassignedText}</span></div>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<div><shadow-root><span>InnerText</span></shadow-root>{<span>UnassignedText</span></div><p>abc]def</p>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<div><shadow-root><span>Inner[Text</span></shadow-root><span>UnassignedText</span></div><p>abc]def</p>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<p>abc[def</p><div><shadow-root></slot><span>InnerText</span></shadow-root><slot><span>Assigned]Text</span></div>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<p>abc[def</p><div><shadow-root><span>InnerText</span></shadow-root><span>UnassignedText</span>}</div>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<p>abc[def</p><div><shadow-root><span>InnerText</span></shadow-root><span>Unassigned]Text</span></div>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<p>abc[def</p><div><shadow-root><span>InnerText</span><slot name=\"assigned\"></slot></shadow-root><span>Assigned]Text</span><span>UnassignedText</span></div>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<p>abc[def</p><div><shadow-root><span>InnerText</span><slot name=\"assigned\"></slot></shadow-root><span>UnassignedText</span><span>Assigned]Text</span></div>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<p>abc[def</p><div><shadow-root><span>InnerText</span><slot></slot></shadow-root><span>Assigned]Text</span></div>\""
+selection/shadow-dom/tentative/Selection-deleteFromDocument-around-shadow.html	SUBTEST	FAIL	"Selection.deleteFromDocument() when \"<p>abc[def</p><div><shadow-root><span>Inner]Text</span></shadow-root><span>UnassignedText</span></div>\""
+selection/shadow-dom/tentative/Selection-direction.html	SKIP	testdriver: needs WebDriver input injection
+selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html	FAIL
+selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html	SUBTEST	FAIL	"Setting the range to nodes in different shadow trees collapses ordinary ranges, but does not collapse composed ranges."
+selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html	SKIP	variant: the driver opens a file and has no query string
+selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html	HARNESS_ERROR
+selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html	FAIL
+selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html	SUBTEST	FAIL	"Setting the range to start and end on slotted content, should follow DOM tree order."
+selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html	SUBTEST	FAIL	"Setting the range to start on slotted content and end in shadow tree, should follow DOM tree order."
+selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html	SUBTEST	FAIL	"Setting the range to start on unslotted content and end in shadow tree, should follow DOM tree order."
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	FAIL
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges a sequence with a static range pointing to the shadow host when there is a forward selection that crosses shadow boundaries and the shadow tree is not specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges a sequence with a static range that crosses shadow boundaries when there is a forward selection that crosses shadow boundaries and the shadow tree is specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range pointing to a shadow tree when there is a selection in the shadow tree and the shadow tree is specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range pointing to the inner shadow tree when there is a selection in an inner shadow tree and the inner shadow tree is specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range pointing to the outer shadow host when there is a selection in an inner shadow tree and no shadow tree is specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range pointing to the outer shadow tree when there is a selection in an inner shadow tree and the outer shadow tree is specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range pointing to the shadow host when there is a selection in a shadow tree and the shadow tree is not specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range when there is a backward-direction selection in the document tree"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range when there is a forward-direction selection in the document tree"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns a sequence with a static range without rescoping when there is a selection in an outer shadow tree and the inner shadow tree is specified as an argument"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges returns an empty sequence when there is no selection"
+selection/shadow-dom/tentative/Selection-getComposedRanges.html	SUBTEST	FAIL	"getComposedRanges should fail if argument is not a shadow root"
+selection/shadow-dom/tentative/Selection-isCollapsed.html	HARNESS_ERROR
+selection/shadow-dom/tentative/Selection-later-become-slotted-content.html	FAIL
+selection/shadow-dom/tentative/Selection-later-become-slotted-content.html	SUBTEST	FAIL	"test to select a light DOM element and it becomes a slotted content after the selection"

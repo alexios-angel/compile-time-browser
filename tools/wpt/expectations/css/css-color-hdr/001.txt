@@ -1,0 +1,3 @@
+css/css-color-hdr/inheritance.html	FAIL
+css/css-color-hdr/inheritance.html	SUBTEST	FAIL	"Property dynamic-range-limit has initial value no-limit"
+css/css-color-hdr/inheritance.html	SUBTEST	FAIL	"Property dynamic-range-limit inherits"

@@ -1,0 +1,5 @@
+selection/selection-range-after-editinghost-removed.html	FAIL
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after it's removed"
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after it's replaced with itself (.replaceChild)"
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after it's replaced with itself (.replaceWith)"
+selection/selection-range-after-editinghost-removed.html	SUBTEST	FAIL	"Selection range in an editing host should be collapsed where the host was after its parent is removed"

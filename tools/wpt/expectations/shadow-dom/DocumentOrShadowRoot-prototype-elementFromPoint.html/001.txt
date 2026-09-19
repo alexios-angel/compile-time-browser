@@ -1,0 +1,2 @@
+shadow-dom/DocumentOrShadowRoot-prototype-elementFromPoint.html	HARNESS_ERROR
+shadow-dom/DocumentOrShadowRoot-prototype-elementFromPoint.html	SUBTEST	TIMEOUT	"document.elementFromPoint and shadow.ElementFromPoint must return the shadow host of the hit-tested text node when the hit-tested text node is a direct child of the root and the host has display: inline"

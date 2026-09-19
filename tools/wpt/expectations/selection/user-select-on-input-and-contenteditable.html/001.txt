@@ -1,0 +1,1 @@
+selection/user-select-on-input-and-contenteditable.html	SKIP	testdriver: needs WebDriver input injection

@@ -1,0 +1,15 @@
+custom-elements/state/ElementInternals-states.html	FAIL
+custom-elements/state/ElementInternals-states.html	SUBTEST	FAIL	"CustomStateSet behavior of ElementInternals.states: Exceptions"
+custom-elements/state/ElementInternals-states.html	SUBTEST	FAIL	"CustomStateSet behavior of ElementInternals.states: Initial state"
+custom-elements/state/ElementInternals-states.html	SUBTEST	FAIL	"CustomStateSet behavior of ElementInternals.states: Modifications"
+custom-elements/state/ElementInternals-states.html	SUBTEST	FAIL	"Updating a CustomStateSet while iterating it should work"
+custom-elements/state/state-css-selector-nth-of.html	HARNESS_ERROR
+custom-elements/state/state-css-selector-shadow-dom.html	HARNESS_ERROR
+custom-elements/state/state-css-selector.html	HARNESS_ERROR
+custom-elements/state/state-pseudo-class.html	FAIL
+custom-elements/state/state-pseudo-class.html	SUBTEST	FAIL	":state() parsing failures"
+custom-elements/state/state-pseudo-class.html	SUBTEST	FAIL	":state(foo) and ::part()"
+custom-elements/state/state-pseudo-class.html	SUBTEST	FAIL	":state(foo) and :host()"
+custom-elements/state/state-pseudo-class.html	SUBTEST	FAIL	":state(foo) and other pseudo classes"
+custom-elements/state/state-pseudo-class.html	SUBTEST	FAIL	":state(foo) in simple cases"
+custom-elements/state/state-pseudo-class.html	SUBTEST	FAIL	":state(foo) serialization"

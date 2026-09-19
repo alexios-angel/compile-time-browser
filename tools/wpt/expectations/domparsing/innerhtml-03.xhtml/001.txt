@@ -1,0 +1,6 @@
+domparsing/innerhtml-03.xhtml	FAIL
+domparsing/innerhtml-03.xhtml	SUBTEST	FAIL	"innerHTML in XHTML 1"
+domparsing/innerhtml-03.xhtml	SUBTEST	FAIL	"innerHTML in XHTML 3"
+domparsing/innerhtml-03.xhtml	SUBTEST	FAIL	"innerHTML in XHTML 4"
+domparsing/innerhtml-03.xhtml	SUBTEST	FAIL	"innerHTML in XHTML 7"
+domparsing/innerhtml-03.xhtml	SUBTEST	FAIL	"innerHTML in XHTML"

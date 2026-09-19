@@ -1,0 +1,4 @@
+selection/toString-user-select-none.html	FAIL
+selection/toString-user-select-none.html	SUBTEST	FAIL	"Selection.toString() excludes basic user-select: none content"
+selection/toString-user-select-none.html	SUBTEST	FAIL	"Selection.toString() excludes nested user-select: none content"
+selection/toString-user-select-none.html	SUBTEST	FAIL	"Selection.toString() includes selectable children in unselectable container"

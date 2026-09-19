@@ -1,0 +1,3 @@
+url/urlsearchparams-set.any.js	FAIL
+url/urlsearchparams-set.any.js	SUBTEST	FAIL	"Set basics"
+url/urlsearchparams-set.any.js	SUBTEST	FAIL	"URLSearchParams.set"

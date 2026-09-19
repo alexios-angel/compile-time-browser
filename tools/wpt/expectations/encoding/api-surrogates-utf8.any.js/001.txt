@@ -1,0 +1,7 @@
+encoding/api-surrogates-utf8.any.js	FAIL
+encoding/api-surrogates-utf8.any.js	SUBTEST	FAIL	"Invalid surrogates encoded into UTF-8: Sanity check"
+encoding/api-surrogates-utf8.any.js	SUBTEST	FAIL	"Invalid surrogates encoded into UTF-8: Surrogate half (high)"
+encoding/api-surrogates-utf8.any.js	SUBTEST	FAIL	"Invalid surrogates encoded into UTF-8: Surrogate half (high), in a string"
+encoding/api-surrogates-utf8.any.js	SUBTEST	FAIL	"Invalid surrogates encoded into UTF-8: Surrogate half (low)"
+encoding/api-surrogates-utf8.any.js	SUBTEST	FAIL	"Invalid surrogates encoded into UTF-8: Surrogate half (low), in a string"
+encoding/api-surrogates-utf8.any.js	SUBTEST	FAIL	"Invalid surrogates encoded into UTF-8: Wrong order"

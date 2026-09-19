@@ -1,0 +1,10 @@
+domparsing/DOMParser-parseFromString-url.html	FAIL
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"application/xhtml+xml invalid XML: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"application/xhtml+xml valid: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"application/xml invalid XML: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"application/xml valid: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"image/svg+xml invalid XML: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"image/svg+xml valid: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"text/html valid: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"text/xml invalid XML: created normally"
+domparsing/DOMParser-parseFromString-url.html	SUBTEST	FAIL	"text/xml valid: created normally"

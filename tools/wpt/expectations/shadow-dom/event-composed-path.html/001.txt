@@ -1,0 +1,9 @@
+shadow-dom/event-composed-path.html	FAIL
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with a closed ShadowRoot."
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with a slot in a closed Shadow Root."
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with a slot in an open Shadow Root."
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with nested ShadowRoots: closed > closed."
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with nested ShadowRoots: closed > open."
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with nested ShadowRoots: open > closed."
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with slots in nested ShadowRoots: closed > closed."
+shadow-dom/event-composed-path.html	SUBTEST	FAIL	"Event Path with slots in nested ShadowRoots: open > open."

@@ -1,0 +1,1 @@
+shadow-dom/slot-with-slottable-slot-in-display-none-subtree-crash.html	SKIP	not a testharness test

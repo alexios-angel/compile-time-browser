@@ -1,0 +1,6 @@
+custom-elements/upgrading.html	FAIL
+custom-elements/upgrading.html	SUBTEST	FAIL	"Creating an element in an HTML document fetched by XHR and adopting back to a document with browsing context must enqueue a custom element upgrade reaction"
+custom-elements/upgrading.html	SUBTEST	FAIL	"Creating an element in an HTML document fetched by XHR and inserting into the document must not enqueue a custom element upgrade reaction"
+custom-elements/upgrading.html	SUBTEST	FAIL	"Creating an element in an HTML document fetched by XHR must not enqueue a custom element upgrade reaction because the document does not have a browsing context"
+custom-elements/upgrading.html	SUBTEST	FAIL	"If definition's disable shadow is true and element's shadow root is non-null, then throw a \"NotSupportedError\" DOMException."
+custom-elements/upgrading.html	SUBTEST	FAIL	"Infinite constructor recursion with appendChild should not be possible"

@@ -1,0 +1,1 @@
+selection/stringifier_editable_element.tentative.html	SKIP	testdriver: needs WebDriver input injection

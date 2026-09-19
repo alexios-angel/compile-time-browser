@@ -1,0 +1,1 @@
+selection/anchor-removal.html	SKIP	testdriver: needs WebDriver input injection

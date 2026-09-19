@@ -1,0 +1,1 @@
+url/url-setters.any.js	SKIP	variant: the driver opens a file and has no query string

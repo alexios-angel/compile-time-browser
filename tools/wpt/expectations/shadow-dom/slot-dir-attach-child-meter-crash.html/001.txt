@@ -1,0 +1,1 @@
+shadow-dom/slot-dir-attach-child-meter-crash.html	SKIP	not a testharness test

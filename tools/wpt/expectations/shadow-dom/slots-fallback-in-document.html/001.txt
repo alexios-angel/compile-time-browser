@@ -1,0 +1,3 @@
+shadow-dom/slots-fallback-in-document.html	FAIL
+shadow-dom/slots-fallback-in-document.html	SUBTEST	FAIL	"Children of a slot in a document tree should not be counted in flattened assigned nodes."
+shadow-dom/slots-fallback-in-document.html	SUBTEST	FAIL	"Slot fallback content in shadow tree should be counted in flattened assigned nodes."

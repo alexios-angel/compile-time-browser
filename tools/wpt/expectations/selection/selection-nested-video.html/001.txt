@@ -1,0 +1,2 @@
+selection/selection-nested-video.html	HARNESS_ERROR
+selection/selection-nested-video.html	SUBTEST	TIMEOUT	"selection have the same anchor and focus nodes because b and c are in different tree scopes."

@@ -1,0 +1,78 @@
+css/css-properties-values-api/animation/custom-property-animation-angle-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-angle-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-angle.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-color-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-color-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-color.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-custom-ident.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-image.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-inherited-used-by-standard-property.html	FAIL
+css/css-properties-values-api/animation/custom-property-animation-inherited-used-by-standard-property.html	SUBTEST	FAIL	"Animating an inherited CSS variable on a parent is reflected on a standard property using that variable as a value on a child"
+css/css-properties-values-api/animation/custom-property-animation-integer-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-integer-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-integer.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-length-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-length-percentage-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-length-percentage-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-length-percentage.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-length-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-length.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-list-type-mismatch.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-non-inherited-used-by-standard-property.html	FAIL
+css/css-properties-values-api/animation/custom-property-animation-non-inherited-used-by-standard-property.html	SUBTEST	FAIL	"Animating a non-inherited CSS variable is reflected on a standard property using that variable as a value"
+css/css-properties-values-api/animation/custom-property-animation-number-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-number-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-number.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-percentage-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-percentage-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-percentage.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-resolution-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-resolution-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-resolution.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-time-comma-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-time-space-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-time.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-transform-function.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-transform-list-multiple-values.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-transform-list-single-values.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-transform-none.tentative.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-url.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-animation-used-in-shorthand.html	FAIL
+css/css-properties-values-api/animation/custom-property-animation-used-in-shorthand.html	SUBTEST	FAIL	"Animated custom property is applied in a shorthand property."
+css/css-properties-values-api/animation/custom-property-animation-with-zoom.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-angle.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-color.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-custom-ident.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-image.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-inherited-used-by-standard-property.html	FAIL
+css/css-properties-values-api/animation/custom-property-transition-inherited-used-by-standard-property.html	SUBTEST	FAIL	"Running a transition an inherited CSS variable is reflected on a standard property using that variable as a value"
+css/css-properties-values-api/animation/custom-property-transition-integer.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-length-percentage.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-length.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-mismatched-inherited-property-numbers.html	FAIL
+css/css-properties-values-api/animation/custom-property-transition-mismatched-inherited-property-numbers.html	SUBTEST	FAIL	"Using a single \"transition-property\" value set to a custom property and two \"transition-duration\" values correctly yields a CSS Transition when the transition properties are set on a parent and the child inherits."
+css/css-properties-values-api/animation/custom-property-transition-mismatched-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-mismatched-property-numbers.html	FAIL
+css/css-properties-values-api/animation/custom-property-transition-mismatched-property-numbers.html	SUBTEST	FAIL	"Using a single \"transition-property\" value set to a custom property and two \"transition-duration\" values correctly yields a CSS Transition."
+css/css-properties-values-api/animation/custom-property-transition-non-inherited-used-by-standard-property.html	FAIL
+css/css-properties-values-api/animation/custom-property-transition-non-inherited-used-by-standard-property.html	SUBTEST	FAIL	"Running a transition a non-inherited CSS variable is reflected on a standard property using that variable as a value"
+css/css-properties-values-api/animation/custom-property-transition-number-percentage.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-number.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-percentage.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-property-all.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-resolution.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-time.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-function-box-size.tentative.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-function-matrix.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-function-none.tentative.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-function-to-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-function.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-list-box-size.tentative.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-list-matrix.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-list-none.tentative.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-transform-list.html	HARNESS_ERROR
+css/css-properties-values-api/animation/custom-property-transition-url.html	HARNESS_ERROR
+css/css-properties-values-api/animation/registered-neutral-keyframe.html	FAIL
+css/css-properties-values-api/animation/registered-neutral-keyframe.html	SUBTEST	FAIL	"CSS Animations neutral keyframes on registered custom properties should produce the underlying value"
+css/css-properties-values-api/animation/registered-var-to-registered-animating.html	FAIL
+css/css-properties-values-api/animation/registered-var-to-registered-animating.html	SUBTEST	FAIL	"Animated registered custom properties can var() reference other animated registered custom properties across separate Animations."

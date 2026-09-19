@@ -1,0 +1,1 @@
+selection/canvas-drag.html	SKIP	testdriver: needs WebDriver input injection

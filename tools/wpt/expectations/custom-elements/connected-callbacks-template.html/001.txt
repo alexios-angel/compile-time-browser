@@ -1,0 +1,2 @@
+custom-elements/connected-callbacks-template.html	FAIL
+custom-elements/connected-callbacks-template.html	SUBTEST	FAIL	"Nested custom element connectedCallback insertion involving a template DocumentFragment"

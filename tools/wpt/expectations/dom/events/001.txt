@@ -1,0 +1,118 @@
+dom/events/Event-dispatch-on-disabled-elements.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/Event-dispatch-redispatch.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/Event-timestamp-high-resolution.https.html	SKIP	https: needs a TLS origin, and there is no server here
+dom/events/EventListener-incumbent-global-1.sub.html	FAIL
+dom/events/EventListener-incumbent-global-1.sub.html	SUBTEST	FAIL	"Check the incumbent global EventListeners  are called with"
+dom/events/EventListener-incumbent-global-2.sub.html	FAIL
+dom/events/EventListener-incumbent-global-2.sub.html	SUBTEST	FAIL	"Check the incumbent global EventListeners  are called with"
+dom/events/EventListener-incumbent-global-subframe-1.sub.html	SKIP	not a testharness test
+dom/events/EventListener-incumbent-global-subframe-2.sub.html	SKIP	not a testharness test
+dom/events/EventListener-incumbent-global-subsubframe.sub.html	SKIP	not a testharness test
+dom/events/EventListener-invoke-legacy.html	SUBTEST	TIMEOUT	"Legacy listener of animationend"
+dom/events/EventListener-invoke-legacy.html	SUBTEST	TIMEOUT	"Legacy listener of animationstart"
+dom/events/EventListener-invoke-legacy.html	SUBTEST	TIMEOUT	"Legacy listener of transitionend"
+dom/events/EventListener-invoke-legacy.html	SUBTEST	TIMEOUT	"Listener of animationend"
+dom/events/EventListener-invoke-legacy.html	SUBTEST	TIMEOUT	"Listener of animationstart"
+dom/events/EventListener-invoke-legacy.html	SUBTEST	TIMEOUT	"Listener of transitionend"
+dom/events/EventListener-invoke-legacy.html	TIMEOUT
+dom/events/EventTarget-this-of-listener.html	HARNESS_ERROR
+dom/events/click-on-absolute-pseudo.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/event-global-extra.window.js	FAIL
+dom/events/event-global-extra.window.js	SUBTEST	FAIL	"Listener from a different global"
+dom/events/event-global-extra.window.js	SUBTEST	FAIL	"window.event and moving an element post-dispatch"
+dom/events/event-global-extra.window.js	SUBTEST	FAIL	"window.event for constructors from another global: XMLHttpRequest"
+dom/events/event-global-extra.window.js	SUBTEST	FAIL	"window.event should not be affected by nodes moving post-dispatch"
+dom/events/event-global-is-still-set-when-coercing-beforeunload-result.html	FAIL
+dom/events/event-global-is-still-set-when-coercing-beforeunload-result.html	SUBTEST	FAIL	"window.event is still set when 'beforeunload' result is coerced to string"
+dom/events/event-global-is-still-set-when-reporting-exception-onerror.html	FAIL
+dom/events/event-global-is-still-set-when-reporting-exception-onerror.html	SUBTEST	FAIL	"window.onerror handler restores window.event after it reports an exception"
+dom/events/event-global.html	FAIL
+dom/events/event-global.html	SUBTEST	FAIL	"window.event is set to the current event, which is the event passed to dispatch (2)"
+dom/events/focus-event-document-move.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/handler-count.html	SKIP	variant: the driver opens a file and has no query string
+dom/events/keypress-dispatch-crash.html	SKIP	not a testharness test
+dom/events/no-focus-events-at-clicking-editable-content-in-link.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-mousewheel-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-mousewheel-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-mousewheel-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-mousewheel-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-mousewheel-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchmove-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchmove-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchmove-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchmove-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchmove-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchstart-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchstart-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchstart-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchstart-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-touchstart-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-wheel-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-wheel-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-wheel-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-wheel-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/non-passive-wheel-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-mousewheel-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-mousewheel-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-mousewheel-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-mousewheel-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-mousewheel-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchmove-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchmove-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchmove-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchmove-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchmove-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchstart-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchstart-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchstart-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchstart-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-touchstart-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-body.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-div.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-root.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/non-cancelable-when-passive/passive-wheel-event-listener-on-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/pointer-event-document-move.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/relatedTarget.window.js	FAIL
+dom/events/relatedTarget.window.js	SUBTEST	FAIL	"Reset if target pointed to a shadow tree pre-dispatch"
+dom/events/relatedTarget.window.js	SUBTEST	FAIL	"Reset if target pointed to a shadow tree"
+dom/events/relatedTarget.window.js	SUBTEST	FAIL	"Reset targets before activation behavior"
+dom/events/relatedTarget.window.js	SUBTEST	FAIL	"Retarget a shadow-tree relatedTarget"
+dom/events/replace-event-listener-null-browsing-context-crash.html	SKIP	not a testharness test
+dom/events/scrolling/iframe-chains.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/input-text-scroll-event-when-using-arrow-keys.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/save-iframe-scroll-offset-when-display-none.sub.html	SKIP	not a testharness test
+dom/events/scrolling/scroll-cross-origin-iframes.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scroll-cross-origin-iframes.sub.html	SKIP	not a testharness test
+dom/events/scrolling/scrollIntoView-in-onscroll-to-sticky.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fired-after-snap.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html	SKIP	variant: the driver opens a file and has no query string
+dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html	SKIP	variant: the driver opens a file and has no query string
+dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html	SKIP	variant: the driver opens a file and has no query string
+dom/events/scrolling/scrollend-event-fired-to-document.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fired-to-element-with-overscroll-behavior.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fired-to-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fires-for-repeat-key-ending-after-scroll-container-end-is-reached.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fires-on-visual-viewport.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-fires-to-iframe-inner-frame.html	SKIP	not a testharness test
+dom/events/scrolling/scrollend-event-fires-to-iframe-window.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-for-user-scroll.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-handler-content-attributes.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-not-fired-after-removing-scroller.tentative.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-event-not-fired-on-no-scroll.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/scrollend-fires-to-text-input.html	HARNESS_ERROR
+dom/events/scrolling/scrollend-fires-to-text-input.html	SUBTEST	NOTRUN	"scrolled input field should receive scrollend with scrollBy({ behavior: 'instant' })."
+dom/events/scrolling/scrollend-fires-to-text-input.html	SUBTEST	NOTRUN	"scrolled input field should receive scrollend with scrollBy({ behavior: 'smooth' })."
+dom/events/scrolling/scrollend-fires-to-text-input.html	SUBTEST	NOTRUN	"scrolled input field should receive scrollend with scrollTo({ behavior: 'instant' })."
+dom/events/scrolling/scrollend-fires-to-text-input.html	SUBTEST	NOTRUN	"scrolled input field should receive scrollend with scrollTo({ behavior: 'smooth' })."
+dom/events/scrolling/wheel-event-composed.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/wheel-event-no-scroll-after-prevent-default.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/wheel-event-transactions-basic.html	SKIP	variant: the driver opens a file and has no query string
+dom/events/scrolling/wheel-event-transactions-multiple-action-chains.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/wheel-event-transactions-target-display-change.html	SKIP	variant: the driver opens a file and has no query string
+dom/events/scrolling/wheel-event-transactions-target-elements.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/wheel-event-transactions-target-move.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/wheel-event-transactions-target-removal.html	SKIP	testdriver: needs WebDriver input injection
+dom/events/scrolling/wheel-event-transactions-target-resize.html	SKIP	variant: the driver opens a file and has no query string

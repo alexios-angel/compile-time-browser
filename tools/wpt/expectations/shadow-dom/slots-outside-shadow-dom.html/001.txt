@@ -1,0 +1,2 @@
+shadow-dom/slots-outside-shadow-dom.html	FAIL
+shadow-dom/slots-outside-shadow-dom.html	SUBTEST	FAIL	"Light DOM slot element should be in flattened assignedNodes"

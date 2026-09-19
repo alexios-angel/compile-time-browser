@@ -1,0 +1,5 @@
+domparsing/DOMParser-parseFromString-xml-parsererror.html	FAIL
+domparsing/DOMParser-parseFromString-xml-parsererror.html	SUBTEST	FAIL	"A lone surrogate is replaced with U+FFFD"
+domparsing/DOMParser-parseFromString-xml-parsererror.html	SUBTEST	FAIL	"DOMParser: <parsererror> element added on error, <span ::=\"test\">11</span>"
+domparsing/DOMParser-parseFromString-xml-parsererror.html	SUBTEST	FAIL	"DOMParser: <parsererror> element added on error, <span :test=\"testing\">3</span>"
+domparsing/DOMParser-parseFromString-xml-parsererror.html	SUBTEST	FAIL	"DOMParser: <parsererror> element added on error, <span xmlns:=\"urn:x-test:test\">12</span>"

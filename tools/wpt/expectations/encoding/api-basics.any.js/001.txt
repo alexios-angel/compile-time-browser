@@ -1,0 +1,7 @@
+encoding/api-basics.any.js	FAIL
+encoding/api-basics.any.js	SUBTEST	FAIL	"Decode sample: utf-16"
+encoding/api-basics.any.js	SUBTEST	FAIL	"Decode sample: utf-16be"
+encoding/api-basics.any.js	SUBTEST	FAIL	"Decode sample: utf-16le"
+encoding/api-basics.any.js	SUBTEST	FAIL	"Default encodings"
+encoding/api-basics.any.js	SUBTEST	FAIL	"Default inputs"
+encoding/api-basics.any.js	SUBTEST	FAIL	"Encode/decode round trip: utf-8"

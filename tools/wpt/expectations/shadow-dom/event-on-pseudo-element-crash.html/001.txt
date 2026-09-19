@@ -1,0 +1,1 @@
+shadow-dom/event-on-pseudo-element-crash.html	SKIP	not a testharness test

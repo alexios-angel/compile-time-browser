@@ -1,0 +1,1 @@
+encoding/eof-shift_jis.html	SKIP	reftest: needs a reference render, not a harness result

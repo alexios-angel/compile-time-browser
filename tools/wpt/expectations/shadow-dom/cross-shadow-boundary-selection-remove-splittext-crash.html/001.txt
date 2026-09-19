@@ -1,0 +1,1 @@
+shadow-dom/cross-shadow-boundary-selection-remove-splittext-crash.html	SKIP	not a testharness test

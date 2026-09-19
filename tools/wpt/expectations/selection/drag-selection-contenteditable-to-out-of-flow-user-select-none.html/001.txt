@@ -1,0 +1,1 @@
+selection/drag-selection-contenteditable-to-out-of-flow-user-select-none.html	SKIP	testdriver: needs WebDriver input injection

@@ -1,0 +1,5 @@
+url/urlsearchparams-size.any.js	FAIL
+url/urlsearchparams-size.any.js	SUBTEST	FAIL	"URLSearchParams's size and addition"
+url/urlsearchparams-size.any.js	SUBTEST	FAIL	"URLSearchParams's size and deletion"
+url/urlsearchparams-size.any.js	SUBTEST	FAIL	"URLSearchParams's size when obtained from a URL and using .search"
+url/urlsearchparams-size.any.js	SUBTEST	FAIL	"URLSearchParams's size when obtained from a URL"

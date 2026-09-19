@@ -1,0 +1,3 @@
+custom-elements/range-and-constructors.html	FAIL
+custom-elements/range-and-constructors.html	SUBTEST	FAIL	"Range.cloneContents should invoke constructor in tree order"
+custom-elements/range-and-constructors.html	SUBTEST	FAIL	"Range.extractContents should invoke constructor in tree order"

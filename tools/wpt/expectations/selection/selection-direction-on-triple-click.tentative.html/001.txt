@@ -1,0 +1,1 @@
+selection/selection-direction-on-triple-click.tentative.html	SKIP	testdriver: needs WebDriver input injection

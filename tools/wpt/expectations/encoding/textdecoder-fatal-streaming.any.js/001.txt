@@ -1,0 +1,3 @@
+encoding/textdecoder-fatal-streaming.any.js	FAIL
+encoding/textdecoder-fatal-streaming.any.js	SUBTEST	FAIL	"Fatal flag, non-streaming cases"
+encoding/textdecoder-fatal-streaming.any.js	SUBTEST	FAIL	"Fatal flag, streaming cases"

@@ -1,0 +1,2 @@
+selection/extend-exception.html	FAIL
+selection/extend-exception.html	SUBTEST	FAIL	"InvalidStateError exception is thrown for extend() when no ranges are present in Selection"

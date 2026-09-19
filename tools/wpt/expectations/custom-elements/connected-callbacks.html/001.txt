@@ -1,0 +1,6 @@
+custom-elements/connected-callbacks.html	FAIL
+custom-elements/connected-callbacks.html	SUBTEST	FAIL	"Inserting a custom element into a detached shadow tree that belongs to an HTML document fetched by XHR must not enqueue and invoke connectedCallback"
+custom-elements/connected-callbacks.html	SUBTEST	FAIL	"Inserting a custom element into a shadow tree in an HTML document fetched by XHR must enqueue and invoke connectedCallback"
+custom-elements/connected-callbacks.html	SUBTEST	FAIL	"Inserting a custom element into an HTML document fetched by XHR must enqueue and invoke connectedCallback"
+custom-elements/connected-callbacks.html	SUBTEST	FAIL	"Inserting an ancestor of custom element into an HTML document fetched by XHR must enqueue and invoke connectedCallback"
+custom-elements/connected-callbacks.html	SUBTEST	FAIL	"Inserting the shadow host of a custom element into an HTML document fetched by XHR must enqueue and invoke connectedCallback"

@@ -1,0 +1,3 @@
+domparsing/xml-parse-serialize-roundtrip.html	FAIL
+domparsing/xml-parse-serialize-roundtrip.html	SUBTEST	FAIL	"DOMParser and XMLSerializer should round trip with CDATA sections: large CDATA"
+domparsing/xml-parse-serialize-roundtrip.html	SUBTEST	FAIL	"DOMParser and XMLSerializer should round trip with CDATA sections: multiple CDATAs"

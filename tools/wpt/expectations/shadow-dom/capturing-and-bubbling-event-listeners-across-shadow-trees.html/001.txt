@@ -1,0 +1,5 @@
+shadow-dom/capturing-and-bubbling-event-listeners-across-shadow-trees.html	FAIL
+shadow-dom/capturing-and-bubbling-event-listeners-across-shadow-trees.html	SUBTEST	FAIL	"Capturing event listeners should be invoked before bubbling event listeners when an event is dispatched inside a doubly nested shadow tree"
+shadow-dom/capturing-and-bubbling-event-listeners-across-shadow-trees.html	SUBTEST	FAIL	"Capturing event listeners should be invoked before bubbling event listeners when an event is dispatched inside a shadow tree which passes through another shadow tree"
+shadow-dom/capturing-and-bubbling-event-listeners-across-shadow-trees.html	SUBTEST	FAIL	"Capturing event listeners should be invoked before bubbling event listeners when an event is dispatched inside a shadow tree"
+shadow-dom/capturing-and-bubbling-event-listeners-across-shadow-trees.html	SUBTEST	FAIL	"Capturing event listeners should be invoked before bubbling event listeners when an event is dispatched via a slot"

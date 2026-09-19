@@ -1,0 +1,7 @@
+shadow-dom/Document-prototype-currentScript.html	HARNESS_ERROR
+shadow-dom/Document-prototype-currentScript.html	SUBTEST	NOTRUN	"document.currentScript must be set to a script element that loads an external script in a document tree (2)"
+shadow-dom/Document-prototype-currentScript.html	SUBTEST	NOTRUN	"document.currentScript must be set to a script element that loads an external script that was in a closed shadow tree and then removed"
+shadow-dom/Document-prototype-currentScript.html	SUBTEST	NOTRUN	"document.currentScript must be set to a script element that loads an external script that was in an open shadow tree and then removed"
+shadow-dom/Document-prototype-currentScript.html	SUBTEST	NOTRUN	"document.currentScript must not be set to a script element that loads an external script in a closed shadow tree"
+shadow-dom/Document-prototype-currentScript.html	SUBTEST	NOTRUN	"document.currentScript must not be set to a script element that loads an external script in an open shadow tree"
+shadow-dom/Document-prototype-currentScript.html	SUBTEST	TIMEOUT	"document.currentScript must be set to a script element that loads an external script in a document tree"

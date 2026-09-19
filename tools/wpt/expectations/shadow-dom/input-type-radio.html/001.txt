@@ -1,0 +1,2 @@
+shadow-dom/input-type-radio.html	FAIL
+shadow-dom/input-type-radio.html	SUBTEST	FAIL	"input type=radio elements should form a group inside shadow DOM."

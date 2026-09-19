@@ -1,0 +1,418 @@
+css/css-variables/css-vars-custom-property-case-sensitive-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/css-vars-custom-property-inheritance.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/long-variable-reference-crash.html	SKIP	not a testharness test
+css/css-variables/missing-closing-nested-fallback-crash.html	SKIP	not a testharness test
+css/css-variables/registered-property-light-dark.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/revert-in-fallback.html	FAIL
+css/css-variables/revert-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert) in shorthand observed via longhand"
+css/css-variables/revert-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert) in shorthand"
+css/css-variables/revert-layer-in-fallback.html	FAIL
+css/css-variables/revert-layer-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-layer) in custom property"
+css/css-variables/revert-layer-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-layer) in longhand"
+css/css-variables/revert-layer-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-layer) in shorthand observed via longhand"
+css/css-variables/revert-layer-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-layer) in shorthand"
+css/css-variables/revert-rule-in-fallback.html	FAIL
+css/css-variables/revert-rule-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-rule) in custom property"
+css/css-variables/revert-rule-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-rule) in longhand"
+css/css-variables/revert-rule-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-rule) in shorthand observed via longhand"
+css/css-variables/revert-rule-in-fallback.html	SUBTEST	FAIL	"var(--unknown, revert-rule) in shorthand"
+css/css-variables/revert-rule-to-var.html	FAIL
+css/css-variables/revert-rule-to-var.html	SUBTEST	FAIL	"Using revert-rule to revert to a value containing var()"
+css/css-variables/test_variable_legal_values.html	FAIL
+css/css-variables/test_variable_legal_values.html	SUBTEST	FAIL	"unbalanced_close_brace_in_something_balanced"
+css/css-variables/test_variable_legal_values.html	SUBTEST	FAIL	"unbalanced_close_bracket_at_toplevel"
+css/css-variables/test_variable_legal_values.html	SUBTEST	FAIL	"unbalanced_close_bracket_in_something_balanced"
+css/css-variables/test_variable_legal_values.html	SUBTEST	FAIL	"unbalanced_close_paren_at_toplevel"
+css/css-variables/test_variable_legal_values.html	SUBTEST	FAIL	"unbalanced_close_paren_in_something_balanced"
+css/css-variables/url-syntax-crash.html	SKIP	not a testharness test
+css/css-variables/var-ident-function.html	FAIL
+css/css-variables/var-ident-function.html	SUBTEST	FAIL	"ident() causing lookup of invalid custom property, fallback"
+css/css-variables/var-ident-function.html	SUBTEST	FAIL	"ident() causing lookup of invalid custom property, fallback, CSS-wide keyword"
+css/css-variables/var-parsing.html	FAIL
+css/css-variables/var-parsing.html	SUBTEST	FAIL	"e.style['width'] = \"var()\" should not set the property value"
+css/css-variables/var-parsing.html	SUBTEST	FAIL	"e.style['width'] = \"var(, 10px)\" should not set the property value"
+css/css-variables/var-parsing.html	SUBTEST	FAIL	"e.style['width'] = \"var(--x {--y})\" should not set the property value"
+css/css-variables/var-parsing.html	SUBTEST	FAIL	"e.style['width'] = \"var(--x {--y}, 10px)\" should not set the property value"
+css/css-variables/var-parsing.html	SUBTEST	FAIL	"e.style['width'] = \"var({--x} --y)\" should not set the property value"
+css/css-variables/var-parsing.html	SUBTEST	FAIL	"e.style['width'] = \"var({})\" should not set the property value"
+css/css-variables/var-parsing.html	SUBTEST	FAIL	"e.style['width'] = \"var({}, 10px)\" should not set the property value"
+css/css-variables/variable-animation-from-to.html	SUBTEST	FAIL	"Verify CSS variable value before animation"
+css/css-variables/variable-animation-from-to.html	SUBTEST	FAIL	"Verify substituted color value before animation"
+css/css-variables/variable-animation-from-to.html	SUBTEST	NOTRUN	"Verify CSS variable value after animation"
+css/css-variables/variable-animation-from-to.html	SUBTEST	NOTRUN	"Verify substituted color value after animation"
+css/css-variables/variable-animation-from-to.html	TIMEOUT
+css/css-variables/variable-animation-guaranteed-invalid.html	FAIL
+css/css-variables/variable-animation-guaranteed-invalid.html	SUBTEST	FAIL	".test 3"
+css/css-variables/variable-animation-guaranteed-invalid.html	SUBTEST	FAIL	".test 4"
+css/css-variables/variable-animation-guaranteed-invalid.html	SUBTEST	FAIL	".test 5"
+css/css-variables/variable-animation-guaranteed-invalid.html	SUBTEST	FAIL	".test 6"
+css/css-variables/variable-animation-over-transition.html	SUBTEST	FAIL	"Verify CSS variable value before animation"
+css/css-variables/variable-animation-over-transition.html	SUBTEST	FAIL	"Verify substituted color value before animation"
+css/css-variables/variable-animation-over-transition.html	SUBTEST	NOTRUN	"Verify CSS variable value after animation"
+css/css-variables/variable-animation-over-transition.html	SUBTEST	NOTRUN	"Verify substituted color value after animation"
+css/css-variables/variable-animation-over-transition.html	TIMEOUT
+css/css-variables/variable-animation-substitute-into-keyframe-shorthand.html	SUBTEST	FAIL	"Verify border-bottom-color before animation"
+css/css-variables/variable-animation-substitute-into-keyframe-shorthand.html	SUBTEST	TIMEOUT	"Verify border-bottom-color after animation"
+css/css-variables/variable-animation-substitute-into-keyframe-shorthand.html	TIMEOUT
+css/css-variables/variable-animation-substitute-into-keyframe-transform.html	SUBTEST	FAIL	"Verify transform before animation"
+css/css-variables/variable-animation-substitute-into-keyframe-transform.html	SUBTEST	TIMEOUT	"Verify transform after animation"
+css/css-variables/variable-animation-substitute-into-keyframe-transform.html	TIMEOUT
+css/css-variables/variable-animation-substitute-into-keyframe.html	SUBTEST	FAIL	"Verify color before animation"
+css/css-variables/variable-animation-substitute-into-keyframe.html	SUBTEST	TIMEOUT	"Verify color after animation"
+css/css-variables/variable-animation-substitute-into-keyframe.html	TIMEOUT
+css/css-variables/variable-animation-substitute-within-keyframe-fallback.html	SUBTEST	FAIL	"Verify color before animation"
+css/css-variables/variable-animation-substitute-within-keyframe-fallback.html	SUBTEST	TIMEOUT	"Verify color after animation"
+css/css-variables/variable-animation-substitute-within-keyframe-fallback.html	TIMEOUT
+css/css-variables/variable-animation-substitute-within-keyframe-multiple.html	SUBTEST	FAIL	"Verify color before animation"
+css/css-variables/variable-animation-substitute-within-keyframe-multiple.html	SUBTEST	TIMEOUT	"Verify color after animation"
+css/css-variables/variable-animation-substitute-within-keyframe-multiple.html	TIMEOUT
+css/css-variables/variable-animation-substitute-within-keyframe.html	SUBTEST	FAIL	"Verify color before animation"
+css/css-variables/variable-animation-substitute-within-keyframe.html	SUBTEST	TIMEOUT	"Verify color after animation"
+css/css-variables/variable-animation-substitute-within-keyframe.html	TIMEOUT
+css/css-variables/variable-animation-to-only.html	SUBTEST	TIMEOUT	"Verify CSS variable value after animation"
+css/css-variables/variable-animation-to-only.html	TIMEOUT
+css/css-variables/variable-created-document.html	HARNESS_ERROR
+css/css-variables/variable-css-wide-keywords-after-substitution.html	FAIL
+css/css-variables/variable-css-wide-keywords-after-substitution.html	SUBTEST	FAIL	"CSS-wide keyword `initial` after var() substitution"
+css/css-variables/variable-css-wide-keywords-after-substitution.html	SUBTEST	FAIL	"revert-layer after var() substitution takes effect on the cascade"
+css/css-variables/variable-css-wide-keywords.html	FAIL
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`inherit` as a `var()` fallback for an unregistered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`initial` as a `var()` fallback for an unregistered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`revert-layer` as a `var()` fallback for a non-inheriting registered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`revert-layer` as a `var()` fallback for an inheriting registered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`revert-layer` as a `var()` fallback for an unregistered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`revert-layer` as a value for a non-inheriting registered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`revert-layer` as a value for an inheriting registered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`revert-layer` as a value for an unregistered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`revert` as a `var()` fallback for an unregistered custom property"
+css/css-variables/variable-css-wide-keywords.html	SUBTEST	FAIL	"`unset` as a `var()` fallback for an unregistered custom property"
+css/css-variables/variable-cssText.html	FAIL
+css/css-variables/variable-cssText.html	SUBTEST	FAIL	"target10"
+css/css-variables/variable-cssText.html	SUBTEST	FAIL	"target9"
+css/css-variables/variable-declaration-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-02.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-03.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-04.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-05.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-06.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-07.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-08.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-09.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-10.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-11.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-12.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-13.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-14.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-15.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-16.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-17.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-18.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-19.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-20.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-21.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-22.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-23.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-24.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-25.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-26.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-29.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-30.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-31.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-32.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-33.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-34.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-35.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-36.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-37.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-38.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-39.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-40.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-41.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-42.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-43.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-44.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-45.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-46.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-47.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-48.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-49.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-50.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-51.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-52.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-53.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-54.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-55.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-56.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-57.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-58.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-59.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-declaration-60.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-definition-keywords.html	FAIL
+css/css-variables/variable-definition-keywords.html	SUBTEST	FAIL	"computed style initial"
+css/css-variables/variable-definition.html	FAIL
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"CSSOM.setProperty with space 1"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"CSSOM.setProperty with space 2"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"can overwrite with no value (Cascading)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"can overwrite with no value (Computed Style)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"can overwrite with no value"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"can overwrite with space value (Cascading)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"can overwrite with space value (Computed Style)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"can overwrite with space value"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"no char variable (Cascading)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"no char variable (Computed Style)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"no char variable"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"parsing multiple dashes with one dash at start of variable (Computed Style)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"parsing multiple dashes with one dash at start of variable"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"white space value (double space) (Cascading)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"white space value (double space) (Computed Style)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"white space value (double space)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"white space value (single space) (Cascading)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"white space value (single space) (Computed Style)"
+css/css-variables/variable-definition.html	SUBTEST	FAIL	"white space value (single space)"
+css/css-variables/variable-empty-name-reserved.html	FAIL
+css/css-variables/variable-empty-name-reserved.html	SUBTEST	FAIL	"-- is a reserved property name"
+css/css-variables/variable-external-declaration-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-external-font-face-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-external-reference-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-external-supports-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-first-letter.html	FAIL
+css/css-variables/variable-first-letter.html	SUBTEST	FAIL	"abspos"
+css/css-variables/variable-first-letter.html	SUBTEST	FAIL	"position"
+css/css-variables/variable-first-line.html	FAIL
+css/css-variables/variable-first-line.html	SUBTEST	FAIL	"abspos"
+css/css-variables/variable-first-line.html	SUBTEST	FAIL	"position"
+css/css-variables/variable-font-face-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-font-face-02.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-generated-content-dynamic-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-invalid-recovery.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-presentation-attribute.html	FAIL
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'alignment-baseline'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'baseline-shift'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'clip' on '#test4'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'clip-rule'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'color-interpolation-filters'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'display'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'dominant-baseline'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'fill'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'fill-opacity'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'fill-rule'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'flood-color'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'flood-opacity'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'font-family'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'glyph-orientation-vertical'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'kerning'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'lighting-color'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'pointer-events'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stop-color'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stop-opacity'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke-linecap'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke-linejoin'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke-miterlimit'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke-opacity'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke-width' on '#box1'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke-width' on '#box2'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'stroke-width' on '#box3'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'text-anchor'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'word-spacing'."
+css/css-variables/variable-presentation-attribute.html	SUBTEST	FAIL	"Testing 'writing-mode'."
+css/css-variables/variable-reference-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-02.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-03.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-04.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-05.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-06.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-07.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-08.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-09.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-10.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-11.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-12.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-13.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-14.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-15.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-16.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-17.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-18.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-19.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-20.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-21.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-22.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-23.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-24.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-25.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-26.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-27.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-28.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-29.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-30.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-31.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-32.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-33.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-34.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-35.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-36.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-37.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-38.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-39.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-40.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-name-substitution-attr-taint.html	FAIL
+css/css-variables/variable-reference-name-substitution-attr-taint.html	SUBTEST	FAIL	"attr()-taint reaches the name argument through another custom property"
+css/css-variables/variable-reference-name-substitution-attr-taint.html	SUBTEST	FAIL	"attr()-tainted name argument makes an image-set() declaration invalid at computed-value time"
+css/css-variables/variable-reference-name-substitution-attr-taint.html	SUBTEST	FAIL	"attr()-tainted name argument taints a registered <url> property"
+css/css-variables/variable-reference-name-substitution-attr-taint.html	SUBTEST	FAIL	"attr()-tainted name argument taints a url() value"
+css/css-variables/variable-reference-name-substitution-attr-taint.html	SUBTEST	FAIL	"attr()-tainted name argument taints the value even when an earlier value was already tainted"
+css/css-variables/variable-reference-name-substitution-attr-taint.html	SUBTEST	FAIL	"untainted substituted name argument does not taint the value"
+css/css-variables/variable-reference-name-substitution.html	FAIL
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"dimension-token substituted name falls back"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"fallback of an unparsed name is not syntax checked"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"invalid substituted name falls back"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"multi-token substituted name falls back"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"name argument substituting to nothing falls back"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"string substituted name falls back"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"substituted name of a guaranteed-invalid registered property uses the fallback"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"unset name-providing var() falls back"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"var() name from attr() that is not a name falls back"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"{}-wrapped literal name argument"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"{}-wrapped name argument with fallback"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"{}-wrapped name argument with whitespace"
+css/css-variables/variable-reference-name-substitution.html	SUBTEST	FAIL	"{}-wrapped substituted name argument"
+css/css-variables/variable-reference-perspective-origin.html	FAIL
+css/css-variables/variable-reference-perspective-origin.html	SUBTEST	FAIL	"same var() for both values of perspective-origin"
+css/css-variables/variable-reference-perspective-origin.html	SUBTEST	FAIL	"var() as both values of perspective-origin"
+css/css-variables/variable-reference-perspective-origin.html	SUBTEST	FAIL	"var() as first value of perspective-origin"
+css/css-variables/variable-reference-perspective-origin.html	SUBTEST	FAIL	"var() as first value with keyword"
+css/css-variables/variable-reference-perspective-origin.html	SUBTEST	FAIL	"var() as second value of perspective-origin"
+css/css-variables/variable-reference-perspective-origin.html	SUBTEST	FAIL	"var() as second value with keyword"
+css/css-variables/variable-reference-refresh.html	SUBTEST	FAIL	"Verify substituted color value before refresh"
+css/css-variables/variable-reference-refresh.html	TIMEOUT
+css/css-variables/variable-reference-shorthands.html	FAIL
+css/css-variables/variable-reference-shorthands.html	SUBTEST	FAIL	"target1 margin"
+css/css-variables/variable-reference-shorthands.html	SUBTEST	FAIL	"target3 margin"
+css/css-variables/variable-reference-visited.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference-without-whitespace.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-reference.html	FAIL
+css/css-variables/variable-reference.html	SUBTEST	FAIL	"Variable reference left open at end of stylesheet"
+css/css-variables/variable-reference.html	SUBTEST	FAIL	"width: var();"
+css/css-variables/variable-substitution-background-properties.html	FAIL
+css/css-variables/variable-substitution-background-properties.html	SUBTEST	FAIL	"background-image-linear-gradient"
+css/css-variables/variable-substitution-background-properties.html	SUBTEST	FAIL	"background-image-radial-gradient"
+css/css-variables/variable-substitution-basic.html	FAIL
+css/css-variables/variable-substitution-basic.html	SUBTEST	FAIL	"Multiple var references in fallback value"
+css/css-variables/variable-substitution-basic.html	SUBTEST	FAIL	"Multiple variable references in a single property (no spaces)"
+css/css-variables/variable-substitution-basic.html	SUBTEST	FAIL	"You can't build up a single token where part of it is provided by a variable"
+css/css-variables/variable-substitution-replaced-size.html	FAIL
+css/css-variables/variable-substitution-replaced-size.html	SUBTEST	FAIL	"height on INPUT"
+css/css-variables/variable-substitution-replaced-size.html	SUBTEST	FAIL	"width on INPUT"
+css/css-variables/variable-substitution-shorthands.html	FAIL
+css/css-variables/variable-substitution-shorthands.html	SUBTEST	FAIL	"target7 margin-bottom"
+css/css-variables/variable-substitution-shorthands.html	SUBTEST	FAIL	"target7 margin-left"
+css/css-variables/variable-substitution-shorthands.html	SUBTEST	FAIL	"target7 margin-right"
+css/css-variables/variable-substitution-shorthands.html	SUBTEST	FAIL	"target7 margin-top"
+css/css-variables/variable-substitution-shorthands.html	SUBTEST	FAIL	"target8 transition-duration"
+css/css-variables/variable-substitution-shorthands.html	SUBTEST	FAIL	"target9 border-left-width"
+css/css-variables/variable-substitution-variable-declaration.html	FAIL
+css/css-variables/variable-substitution-variable-declaration.html	SUBTEST	FAIL	"target2 --var2"
+css/css-variables/variable-substitution-variable-declaration.html	SUBTEST	FAIL	"target5 --varC"
+css/css-variables/variable-substitution-variable-declaration.html	SUBTEST	FAIL	"target8 --varB"
+css/css-variables/variable-supports-01.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-02.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-03.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-04.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-05.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-06.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-07.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-08.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-09.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-10.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-11.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-12.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-13.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-14.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-15.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-16.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-17.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-18.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-19.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-20.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-21.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-22.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-23.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-24.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-25.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-26.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-27.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-28.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-29.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-30.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-31.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-32.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-33.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-34.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-35.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-36.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-37.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-38.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-39.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-40.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-41.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-42.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-43.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-44.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-45.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-46.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-47.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-48.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-49.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-50.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-51.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-52.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-53.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-54.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-55.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-56.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-57.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-58.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-59.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-60.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-61.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-62.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-63.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-64.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-65.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-66.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-supports-67.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/variable-transitions-transition-property-all-before-value.html	SUBTEST	NOTRUN	"Verify CSS variable value after transition"
+css/css-variables/variable-transitions-transition-property-all-before-value.html	SUBTEST	NOTRUN	"Verify substituted color value after transition"
+css/css-variables/variable-transitions-transition-property-all-before-value.html	TIMEOUT
+css/css-variables/variable-transitions-value-before-transition-property-all.html	SUBTEST	NOTRUN	"Verify CSS variable value after transition"
+css/css-variables/variable-transitions-value-before-transition-property-all.html	SUBTEST	NOTRUN	"Verify substituted color value after transition"
+css/css-variables/variable-transitions-value-before-transition-property-all.html	TIMEOUT
+css/css-variables/variables-animation-math-functions.html	FAIL
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (-1) should be [20deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (0) should be [100deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (0.125) should be [110deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (0.875) should be [170deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (1) should be [180deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (2) should be [260deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (-1) should be [20deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (0) should be [100deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (0.125) should be [110deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (0.875) should be [170deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (1) should be [180deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Animations: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (2) should be [260deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (-1) should be [20deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (0) should be [100deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (0.125) should be [110deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (0.875) should be [170deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [100deg] to [calc(sign(20rem - 20px) * 180deg)] at (2) should be [260deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (-1) should be [20deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (0) should be [100deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (0.125) should be [110deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (0.875) should be [170deg]"
+css/css-variables/variables-animation-math-functions.html	SUBTEST	FAIL	"CSS Transitions: property <--my-angle> from [calc(sign(20rem - 20px) * 100deg)] to [calc(sign(20rem - 20px) * 180deg)] at (2) should be [260deg]"
+css/css-variables/vars-background-shorthand-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/vars-font-shorthand-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/whitespace-in-fallback-crash.html	SKIP	not a testharness test
+css/css-variables/wide-keyword-fallback-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-variables/wide-keyword-fallback-002.html	SKIP	reftest: needs a reference render, not a harness result

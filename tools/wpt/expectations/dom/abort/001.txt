@@ -1,0 +1,27 @@
+dom/abort/AbortSignal.any.js	FAIL
+dom/abort/AbortSignal.any.js	SUBTEST	FAIL	"signal returned by AbortSignal.abort() should not fire abort event"
+dom/abort/AbortSignal.any.js	SUBTEST	FAIL	"the AbortSignal.abort() static returns an already aborted signal"
+dom/abort/abort-signal-any-crash.html	SKIP	not a testharness test
+dom/abort/abort-signal-any.any.js	HARNESS_ERROR
+dom/abort/abort-signal-timeout.html	FAIL
+dom/abort/abort-signal-timeout.html	SUBTEST	FAIL	"Signal returned by AbortSignal.timeout() is not aborted after frame detach"
+dom/abort/crashtests/any-on-abort.html	SKIP	not a testharness test
+dom/abort/crashtests/timeout-close.html	SKIP	not a testharness test
+dom/abort/event.any.js	FAIL
+dom/abort/event.any.js	SUBTEST	FAIL	"AbortController abort() should fire event synchronously"
+dom/abort/event.any.js	SUBTEST	FAIL	"AbortController abort(undefined) creates an \"AbortError\" DOMException"
+dom/abort/event.any.js	SUBTEST	FAIL	"AbortController.signal.reason returns the same DOMException"
+dom/abort/event.any.js	SUBTEST	FAIL	"AbortSignal.reason returns the same DOMException"
+dom/abort/event.any.js	SUBTEST	FAIL	"aborting AbortController without reason creates an \"AbortError\" DOMException"
+dom/abort/event.any.js	SUBTEST	FAIL	"controller.abort() should do nothing the second time it is called"
+dom/abort/event.any.js	SUBTEST	FAIL	"static aborting signal should have right properties"
+dom/abort/event.any.js	SUBTEST	FAIL	"static aborting signal with reason should set signal.reason"
+dom/abort/event.any.js	SUBTEST	FAIL	"throwIfAborted() should not throw if signal not aborted"
+dom/abort/event.any.js	SUBTEST	FAIL	"throwIfAborted() should throw abort.reason if signal aborted"
+dom/abort/event.any.js	SUBTEST	FAIL	"throwIfAborted() should throw primitive abort.reason if signal aborted"
+dom/abort/reason-constructor.html	FAIL
+dom/abort/reason-constructor.html	SUBTEST	FAIL	"AbortSignal.reason.constructor should be from iframe"
+dom/abort/timeout.any.js	FAIL
+dom/abort/timeout.any.js	SUBTEST	FAIL	"AbortSignal timeouts fire in order"
+dom/abort/timeout.any.js	SUBTEST	FAIL	"AbortSignal.timeout() returns a non-aborted signal"
+dom/abort/timeout.any.js	SUBTEST	FAIL	"Signal returned by AbortSignal.timeout() times out"

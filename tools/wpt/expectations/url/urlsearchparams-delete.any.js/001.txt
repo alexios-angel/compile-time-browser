@@ -1,0 +1,9 @@
+url/urlsearchparams-delete.any.js	FAIL
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Changing the query of a URL with an opaque path with trailing spaces and a fragment"
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Changing the query of a URL with an opaque path with trailing spaces"
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Delete basics"
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Deleting all params removes ? from URL"
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Deleting appended multiple"
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Removing non-existent param removes ? from URL"
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Two-argument delete() respects undefined as second arg"
+url/urlsearchparams-delete.any.js	SUBTEST	FAIL	"Two-argument delete()"

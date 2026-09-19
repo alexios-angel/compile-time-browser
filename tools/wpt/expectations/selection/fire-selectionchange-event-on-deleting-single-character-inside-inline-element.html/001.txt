@@ -1,0 +1,1 @@
+selection/fire-selectionchange-event-on-deleting-single-character-inside-inline-element.html	SKIP	testdriver: needs WebDriver input injection

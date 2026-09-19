@@ -1,0 +1,3 @@
+encoding/textdecoder-copy.any.js	FAIL
+encoding/textdecoder-copy.any.js	SUBTEST	FAIL	"Modify buffer after passing it in (ArrayBuffer)"
+encoding/textdecoder-copy.any.js	SUBTEST	FAIL	"Modify buffer after passing it in (SharedArrayBuffer)"

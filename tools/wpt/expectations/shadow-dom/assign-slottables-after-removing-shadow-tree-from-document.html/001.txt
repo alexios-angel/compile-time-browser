@@ -1,0 +1,2 @@
+shadow-dom/assign-slottables-after-removing-shadow-tree-from-document.html	FAIL
+shadow-dom/assign-slottables-after-removing-shadow-tree-from-document.html	SUBTEST	FAIL	"Slottables should be assigned to slots even after the shadow host has been removed from the document"

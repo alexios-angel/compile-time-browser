@@ -1,0 +1,1 @@
+shadow-dom/wheel-event-related-target.html	SKIP	testdriver: needs WebDriver input injection

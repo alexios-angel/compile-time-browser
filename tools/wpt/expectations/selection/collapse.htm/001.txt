@@ -1,0 +1,2 @@
+selection/collapse.htm	FAIL
+selection/collapse.htm	SUBTEST	FAIL	"Selection: Collapse the selection using collapse()"

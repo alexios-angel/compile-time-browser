@@ -1,0 +1,1 @@
+shadow-dom/invalidate-shadow-dom-crash.html	SKIP	not a testharness test

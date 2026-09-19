@@ -1,0 +1,1 @@
+shadow-dom/attachShadow-with-ShadowRoot.html	SKIP	testdriver: needs WebDriver input injection

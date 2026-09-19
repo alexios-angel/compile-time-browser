@@ -1,0 +1,1 @@
+encoding/sharedarraybuffer.https.html	SKIP	https: needs a TLS origin, and there is no server here

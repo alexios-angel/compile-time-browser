@@ -1,0 +1,1 @@
+custom-elements/pseudo-class-defined-print.html	SKIP	reftest: needs a reference render, not a harness result

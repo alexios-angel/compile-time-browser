@@ -1,0 +1,3 @@
+shadow-dom/Element-interface-attachShadow-custom-element.html	FAIL
+shadow-dom/Element-interface-attachShadow-custom-element.html	SUBTEST	FAIL	"Element.attachShadow for a customized built-in element with disabledFeatures=[\"shadow\"] should throw a NotSupportedError"
+shadow-dom/Element-interface-attachShadow-custom-element.html	SUBTEST	FAIL	"Element.attachShadow for an autonomous custom element with disabledFeatures=[\"shadow\"] should throw a NotSupportedError"
