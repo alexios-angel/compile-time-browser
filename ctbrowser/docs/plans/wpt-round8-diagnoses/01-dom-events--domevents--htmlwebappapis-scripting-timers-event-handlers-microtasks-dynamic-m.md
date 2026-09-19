@@ -31,6 +31,8 @@ Baseline: At 9f8da347 (from the JSON): dom/events (/tmp/m-9f8da347/dom-events.js
 - Evidence: html/webappapis/dynamic-markup-insertion/html-unsafe-methods/setHTMLUnsafe-runScripts.html (20: Element 10 + ShadowRoot 10); html/webappapis/dynamic-markup-insertion/html-unsafe-methods/setHTMLUnsafe-xml.html (2); html/webappapis/dynamic-markup-insertion/html-unsafe-methods/setHTMLUnsafe.html (1, template case)
 - Fix: Read `SetHTMLUnsafeOptions {runScripts}` from args[1]. Parse the fragment with the scripting flag = runScripts (so <noscript> etc. behave); after the copy, if runScripts: collect every <script> in the inserted subtree in tree order, mark them 'already started' cleared, then run prepare-the-script-element for each (inline: execute now with currentScript rules; src: fetch via assets_ and run in a later task with load event) - the existing execute_script_element does the run; do it BEFORE custom element reactions are flushed (test expects 'run-scripts' before 'element-1-ctor'). Template target: if target is <template>, the copy destination is its content fragment's node (the same as innerHTML on a template). XML documents: always parse as HTML fragment with context element name only (HTML 8.6.2 'HTML fragment parsing algorithm' regardless of document type) - pass node_ns::html for the [..]
 
+<a id="only-one-activation-target-must-run-area-href-never-follows-its-link-and-a-nested-forms-submit-reaches-the-outer-forms-onsubmit"></a>
+
 ### Only one activation target must run: <area href> never follows its link, and a nested form's submit reaches the outer form's onsubmit
 
 - **18 subtests / 1 files**, size S, overlaps none, confidence medium
@@ -130,6 +132,8 @@ Baseline: At 9f8da347 (from the JSON): dom/events (/tmp/m-9f8da347/dom-events.js
 - Evidence: html/webappapis/dynamic-markup-insertion/html-unsafe-methods/Document-parseHTMLUnsafe-url-pushstate.html (HARNESS_ERROR: 'history is not defined'); html/webappapis/dynamic-markup-insertion/html-unsafe-methods/Document-parseHTMLUnsafe-url-base-pushstate.html (HARNESS_ERROR); html/webappapis/dynamic-markup-insertion/opening-the-input-stream/history.window.js (HARNESS_ERROR, also window.open); [..]
 - Fix: A minimal History per bindings: {length, state, scrollRestoration, pushState(data,unused,url), replaceState, back/forward/go -> no-op or fragment-only}, pushState/replaceState structuredClone the state and update location_href_ (same-origin, resolve against the document URL) and `document.URL`; document.open keeps `history.state` (8.4.2 step 15 does not touch it). ~120 lines in a new bindings/window/history.cpp; the interface object via the existing interface_object helper.
 
+<a id="inline-event-handler-scope-omits-the-form-owner-for-img-and-form-associated-custom-elements"></a>
+
 ### Inline event handler scope omits the form owner for <img> and form-associated custom elements
 
 - **2 subtests / 1 files**, size S, overlaps CE2, confidence high
@@ -164,6 +168,8 @@ Baseline: /tmp/m-9f8da347/html-dom.json: 376 files = 153 PASS / 71 FAIL / 13 TIM
 - Engine files: tools/wpt/run-wpt.py; ctbrowser/include/ctbrowser/shell/page/assets.hpp; ctbrowser/lib/Shell/bindings/frames.cpp; ctbrowser/lib/Shell/bindings/element/control_methods.cpp
 - Evidence: html/semantics/forms/form-submission-0/multipart-formdata.window.js (62/62); html/semantics/forms/form-submission-0/text-plain.window.js (62/62); html/semantics/forms/form-submission-0/urlencoded2.window.js (62/62); html/semantics/forms/form-submission-0/submit-entity-body.html (13, TIMEOUT); html/semantics/forms/form-submission-0/form-data-set-empty-file.window.js (3 of 4)
 - Fix: Two halves. Engine: in navigate_form_target accept POST and build the request body with the enctype's serialiser (multipart/form-data per 4.10.21.7 with a random boundary, text/plain per 4.10.21.8, urlencoded via URLSearchParams' rules) and hand {url, method, body, content-type} to load_frame. Infrastructure (pick one): (a) run-wpt.py launches `wpt serve` and the registry fetches http://web-platform.test:8000 for anything under the doc root that is a .py handler; or (b) the cheap in-engine emulation - when the planned navigation's path is one of the three echo handlers (echo-content.py, echo-content-escaped.py with its \xNN escaping, form-submission.py), the frame's document is the request body as text/plain. 33 of these subtests ALSO need the DataTransfer cluster.
+
+<a id="input-typecolor-colorspacealpha-attributes-not-threaded-through-sanitisation-nor-reflected"></a>
 
 ### <input type=color>: colorspace/alpha attributes not threaded through sanitisation nor reflected
 
@@ -434,6 +440,8 @@ Baseline: 615 files in slice at 9f8da347: 303 PASS, 155 FAIL, 133 SKIP (reftests
 - Evidence: html/syntax/charset/with-inheritance.html: 15 'Check character' subtests (expected ζ or ж, got the first UTF-8 byte)
 - Fix: Owned by the VM/test262 agents: either a UTF-16 (or latin1/UTF-16 dual) string_object, or, as a bridge, code-unit-indexed accessors (length/charAt/charCodeAt/substring/slice/indexOf) that map UTF-16 indices to byte offsets with a cached ASCII-only flag so the common case stays O(1). unittests/js/string_basics.cpp pins today's wrong answers as the acceptance list.
 
+<a id="encoding-no-change-the-encoding-after-the-1024-byte-prescan-and-the-prescan-sees-meta-inside-scriptstyletitle"></a>
+
 ### Encoding: no 'change the encoding' after the 1024-byte prescan, and the prescan sees <meta> inside script/style/title
 
 - **13 subtests / 3 files**, size M, overlaps none, confidence high
@@ -452,6 +460,8 @@ Baseline: 615 files in slice at 9f8da347: 303 PASS, 155 FAIL, 133 SKIP (reftests
 - Evidence: domparsing/insert_adjacent_html.html 6/31 (3 'parent node is null ... did not throw', 3 'parent is a document ... threw HierarchyRequestError'); domparsing/insert_adjacent_html-xhtml.xhtml 7/30 (same)
 - Fix: In adjacent_place for beforebegin/afterend: if parent is null or a Document node -> throw_dom_exception("NoModificationAllowedError"). Keep the SyntaxError for bad positions. One-line change plus the comment.
 
+<a id="customizable-select-selectedcontentbutton-inside-select-parsed-by-the-old-in-select-rules"></a>
+
 ### Customizable <select>: <selectedcontent>/<button> inside <select> parsed by the old 'in select' rules
 
 - **12 subtests / 3 files**, size S, overlaps none, confidence medium
@@ -469,6 +479,8 @@ Baseline: 615 files in slice at 9f8da347: 303 PASS, 155 FAIL, 133 SKIP (reftests
 - Engine files: ctbrowser/lib/Shell/browser/frame.cpp; ctbrowser/lib/Shell/bindings/events/dispatch.cpp
 - Evidence: html/syntax/parsing/the-end.html 4/4 (1 FAIL + 3 TIMEOUT); html/syntax/parsing/DOMContentLoaded-defer.html 1/1
 - Fix: Give the engine-event maker per-type flags: DOMContentLoaded {bubbles:true, cancelable:false}, load {false,false} targeted at the document but dispatched at the window; fire pageshow (PageTransitionEvent with persisted=false) right after load (HTML 7.4.6 'completely finish loading' step). Run defer scripts and then DOMContentLoaded as tasks in order (HTML 13.2.7 'the end' steps 3-4: 'spin the event loop until scripts that will execute when the document has finished parsing is empty', then queue a global task for DOMContentLoaded).
+
+<a id="the-page-parser-never-attaches-declarative-shadow-roots-template-shadowrootmode-in-loaded-markup"></a>
 
 ### The page parser never attaches declarative shadow roots (<template shadowrootmode> in loaded markup)
 
@@ -541,6 +553,8 @@ Baseline: At 9f8da347 (/tmp/w-9f8da347/css.json; the m-9f8da347 css-css-values/c
 - Evidence: css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html 20/20 ('Initially, the sibling-index() is 3 for --time' expected "6s" got "calc(2s * sibling-index())"); css/css-values/tree-counting/sibling-index-keyframe-{font-style,font-variation-settings,font-weight,length-value,palette-mix,percent,rotate,scale,transform}-dynamic.html 2 each; [..]
 - Fix: When an animation's keyframes are computed for a target (the point where custom properties and var() are substituted into keyframe values - bindings/animations/css.cpp around 420-440), run the same per-element fold the cascade runs for a declared value: expose `engine::compute_value_for(node, property, text)` (substitute -> tree-counting facts -> math fold -> registered-property syntax check) and use it for every keyframe value, re-running when the target's sibling facts change (the '-dynamic' files remove #rm and expect the value to follow: the style-change event must invalidate running animations' computed keyframes). Allow the functions in @container size/style queries (media.cpp's `feature` gets the facts from chain_styles_) and refuse them in descriptors (parser.cpp font-face/counter-style blocks).
 
+<a id="var-is-not-yet-an-arbitrary-substitution-function-name-from-a-substitution-any-declaration-value-in-the-arguments-css-wide-keywords-as-fallback-51-subtests-9-files"></a>
+
 ### var() is not yet an arbitrary substitution function: name from a substitution, any <declaration-value> in the arguments, CSS-wide keywords as fallback (51 subtests, 9 files)
 
 - **51 subtests / 9 files**, size M, overlaps none, confidence high
@@ -549,6 +563,8 @@ Baseline: At 9f8da347 (/tmp/w-9f8da347/css.json; the m-9f8da347 css-css-values/c
 - Engine files: /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/lib/Style/css/substitute.cpp; /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/include/ctbrowser/style/css/substitute.hpp; /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/lib/Style/css/properties/declaration.cpp; /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/lib/Style/engine.cpp
 - Evidence: css/css-variables/variable-reference-name-substitution.html 13/24 ('invalid substituted name falls back' expected "20px" got "1008px"; 'unset name-providing var() falls back'); css/css-variables/var-parsing.html 8/18 ("var(--x ())" should set the property value), variable-reference.html 8/18 (width: var(prop) expected "var(prop)" got ""); css/css-variables/variable-css-wide-keywords.html 7/30 [..]
 - Fix: Parse-time (declaration.cpp value_check + substitute.cpp's may_substitute scan): a var() whose first argument is a balanced <declaration-value> and whose optional second part follows a top-level comma is VALID at parse time (store the text as written; CSSOM serializes it back). Computed-value time (substituter::run / the var arm): substitute the name argument first (recursively, depth-limited), trim, require a single ident token starting with `--` (else guaranteed-invalid -> use fallback or the whole declaration invalid at computed-value time), then look it up; carry attr-taint through the name. After substitution of the whole value, if the result is exactly one CSS-wide keyword (initial/inherit/unset/revert/revert-layer/revert-rule), hand it to the cascade's keyword resolver (engine.cpp:1300-1345 `put`) instead of the grammar check. Unit tests are the four test names above.
+
+<a id="presentational-hints-live-in-the-box-builder-not-in-the-cascade-revertrevert-layer-cannot-roll-back-img-width-and-svg-presentation-attributes-are-not-mapped-at-all-39-subtests"></a>
 
 ### Presentational hints live in the box builder, not in the cascade: revert/revert-layer cannot roll back <img width>, and SVG presentation attributes are not mapped at all (39 subtests)
 
@@ -773,6 +789,8 @@ Baseline: 732 files in the slice at 9f8da347: 412 PASS / 316 FAIL / 4 SKIP, 0 TI
 
 Baseline: From /tmp/w-9f8da347/css.json filtered to the slice: 1,412 files, 390 fully passing (PASS with 0 failing subtests), subtests 28,015 PASS / 18,599 FAIL. Per suite (files / fully-passing / subtests pass / fail): css-backgrounds 152/52/3699/2346; css-images 31/22/3017/199; css-masking 49/20/1199/4884; css-transforms 93/25/1592/3743; css-transitions 30/12/551/358; css-animations 43/24/360/230; [..]
 
+<a id="basic-shape-does-not-exist-clip-path--object-view-box-refused-by-csssupports-no-grammar-no-interpolation"></a>
+
 ### <basic-shape> does not exist: clip-path / object-view-box refused by CSS.supports, no grammar, no interpolation
 
 - **2858 subtests / 12 files**, size L, overlaps none, confidence high
@@ -790,6 +808,8 @@ Baseline: From /tmp/w-9f8da347/css.json filtered to the slice: 1,412 files, 390 
 - Engine files: /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/lib/Style/css/properties/table_modules.cpp; /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/lib/Style/css/properties/shorthands.cpp; /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/lib/Style/css/properties/backgrounds.cpp; /home/alex/Downloads/claude/wt/ctbrowser-wpt/ctbrowser/lib/Style/easing.cpp
 - Evidence: css/css-masking/animations/mask-border-width-interpolation.html 558/558 ("'from' value should be supported expected true got false"); css/css-masking/animations/mask-border-slice-interpolation.html 434/434; css/css-masking/animations/mask-border-source-interpolation.html 294/294; css/css-masking/animations/mask-border-outset-interpolation.html 168/168; [..]
 - Fix: Add seven rows to table_modules.cpp mirroring border-image-* (table.cpp:156-161): mask-border-source none, mask-border-slice 0 (`<number-percentage>{1,4} fill?`), mask-border-width auto (`[<length-percentage>|<number>|auto]{1,4}`), mask-border-outset 0, mask-border-repeat stretch, mask-border-mode alpha, plus the `mask-border` shorthand with border-image's slash split (shorthands.cpp:312-319 already special-cases border-image's `slice / width / outset`; generalise the name). Add `mask` to the shorthands table as a layer list like `background` (backgrounds.cpp match_background_list already knows mask-* keywords at :306-335): `<mask-layer>#` where each layer is image || position [/ size] || repeat || geometry-box{1,2} || composite || mode, with the canonical order the test prints (image, position/size, repeat, origin, clip, composite, mode), `no-clip` as clip, and the shorthand resets [..]
+
+<a id="3d-transform-functions-missing-from-the-value-function-allow-list-no-transform-list-grammar-no-matrix3d-computed-value"></a>
 
 ### 3D transform functions missing from the value-function allow-list; no <transform-list> grammar; no matrix3d computed value
 

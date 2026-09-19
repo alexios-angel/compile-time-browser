@@ -72,7 +72,7 @@ The following sections retain the complete original text and measurements.
 <a id="the-baseline--2026-09-16-afternoon-rounds-two-and-three-merged"></a>
 - [The baseline — 2026-09-16, afternoon: rounds two and three merged](wpt/01-columns-and-runtime-recovery--2026-09-18.md#the-baseline--2026-09-16-afternoon-rounds-two-and-three-merged)
 <a id="and-the-wide-corpus-at-the-same-sha-1"></a>
-- [And the wide corpus at the same SHA](wpt/01-columns-and-runtime-recovery--2026-09-18.md#and-the-wide-corpus-at-the-same-sha)
+- [And the wide corpus at the same SHA](wpt/01-columns-and-runtime-recovery--2026-09-18.md#and-the-wide-corpus-at-the-same-sha-1)
 <a id="the-baseline--2026-09-16-the-five-suites-after-the-round-one-merges"></a>
 - [The baseline — 2026-09-16, the five suites after the round-one merges](wpt/01-columns-and-runtime-recovery--2026-09-18.md#the-baseline--2026-09-16-the-five-suites-after-the-round-one-merges)
 <a id="the-baseline--2026-09-13-the-widened-corpus"></a>
@@ -92,7 +92,7 @@ The following sections retain the complete original text and measurements.
 <a id="the-baseline--2026-09-10-late"></a>
 - [The baseline — 2026-09-10, late](wpt/02-the-baseline--2026-09-12-afternoon.md#the-baseline--2026-09-10-late)
 <a id="what-is-standing-in-front-of-the-most-tests-now-1"></a>
-- [What is standing in front of the most tests now](wpt/02-the-baseline--2026-09-12-afternoon.md#what-is-standing-in-front-of-the-most-tests-now)
+- [What is standing in front of the most tests now](wpt/02-the-baseline--2026-09-12-afternoon.md#what-is-standing-in-front-of-the-most-tests-now-1)
 <a id="and-the-two-that-were-not-measured"></a>
 - [And the two that were NOT measured](wpt/02-the-baseline--2026-09-12-afternoon.md#and-the-two-that-were-not-measured)
 <a id="the-baseline--2026-09-10-night"></a>
@@ -102,7 +102,7 @@ The following sections retain the complete original text and measurements.
 <a id="the-baseline--2026-09-10-morning"></a>
 - [The baseline — 2026-09-10, morning](wpt/02-the-baseline--2026-09-12-afternoon.md#the-baseline--2026-09-10-morning)
 <a id="what-is-standing-in-front-of-the-most-tests-now-2"></a>
-- [What is standing in front of the most tests now](wpt/02-the-baseline--2026-09-12-afternoon.md#what-is-standing-in-front-of-the-most-tests-now)
+- [What is standing in front of the most tests now](wpt/02-the-baseline--2026-09-12-afternoon.md#what-is-standing-in-front-of-the-most-tests-now-2)
 <a id="the-previous-baseline--2026-09-07-night"></a>
 - [The previous baseline — 2026-09-07, night](wpt/02-the-baseline--2026-09-12-afternoon.md#the-previous-baseline--2026-09-07-night)
 <a id="and-what-the-same-commit-says-about-the-suite"></a>
@@ -116,7 +116,7 @@ The following sections retain the complete original text and measurements.
 <a id="the-previous-baseline--2026-09-07-day"></a>
 - [The previous baseline — 2026-09-07, day](wpt/02-the-baseline--2026-09-12-afternoon.md#the-previous-baseline--2026-09-07-day)
 <a id="what-moved-and-what-it-cost-1"></a>
-- [What moved, and what it cost](wpt/02-the-baseline--2026-09-12-afternoon.md#what-moved-and-what-it-cost)
+- [What moved, and what it cost](wpt/02-the-baseline--2026-09-12-afternoon.md#what-moved-and-what-it-cost-1)
 <a id="and-six-that-went-pass---fail-every-one-of-them-diagnosed"></a>
 - [And six that went PASS -> FAIL, every one of them diagnosed](wpt/02-the-baseline--2026-09-12-afternoon.md#and-six-that-went-pass---fail-every-one-of-them-diagnosed)
 <a id="the-previous-baseline-2026-09-03"></a>
@@ -124,7 +124,7 @@ The following sections retain the complete original text and measurements.
 <a id="the-previous-baseline-2026-09-02-for-comparison"></a>
 - [The previous baseline, 2026-09-02, for comparison](wpt/02-the-baseline--2026-09-12-afternoon.md#the-previous-baseline-2026-09-02-for-comparison)
 <a id="what-is-standing-in-front-of-the-most-tests-now-3"></a>
-- [What is standing in front of the most tests now](wpt/02-the-baseline--2026-09-12-afternoon.md#what-is-standing-in-front-of-the-most-tests-now)
+- [What is standing in front of the most tests now](wpt/02-the-baseline--2026-09-12-afternoon.md#what-is-standing-in-front-of-the-most-tests-now-3)
 <a id="the-earlier-handoff-from-the-2026-09-07-day-run"></a>
 - [The earlier handoff, from the 2026-09-07 day run](wpt/02-the-baseline--2026-09-12-afternoon.md#the-earlier-handoff-from-the-2026-09-07-day-run)
 <a id="skips-all-542-of-them"></a>

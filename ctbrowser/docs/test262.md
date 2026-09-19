@@ -84,7 +84,7 @@ The following sections retain the complete original text and measurements.
 <a id="what-was-actually-wrong-which-is-not-what-the-brief-expected"></a>
 - [What was actually wrong, which is not what the brief expected](test262/01-the-pieces.md#what-was-actually-wrong-which-is-not-what-the-brief-expected)
 <a id="what-was-implemented-1"></a>
-- [What was implemented](test262/01-the-pieces.md#what-was-implemented)
+- [What was implemented](test262/01-the-pieces.md#what-was-implemented-1)
 <a id="measured-per-test"></a>
 - [Measured, per test](test262/01-the-pieces.md#measured-per-test)
 <a id="what-is-deliberately-not-done"></a>
@@ -100,7 +100,7 @@ The following sections retain the complete original text and measurements.
 <a id="what-else-changed-each-its-own-correctness-fix"></a>
 - [What else changed, each its own correctness fix](test262/01-the-pieces.md#what-else-changed-each-its-own-correctness-fix)
 <a id="what-is-deliberately-not-done-1"></a>
-- [What is deliberately NOT done](test262/01-the-pieces.md#what-is-deliberately-not-done)
+- [What is deliberately NOT done](test262/01-the-pieces.md#what-is-deliberately-not-done-1)
 <a id="the-largest-thing-left-unchanged"></a>
 - [The largest thing left, unchanged](test262/01-the-pieces.md#the-largest-thing-left-unchanged)
 <a id="measured-at-0e5cfbef--2026-09-12-before-the-days-runtime-work"></a>

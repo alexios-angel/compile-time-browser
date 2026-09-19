@@ -208,7 +208,7 @@ The following sections retain the complete original text and measurements.
 <a id="tonumber-of-an-object-goes-through-toprimitive"></a>
 - [ToNumber of an object goes through ToPrimitive](script/02-a--b-was-false.md#tonumber-of-an-object-goes-through-toprimitive)
 <a id="the-rest-1"></a>
-- [The rest](script/02-a--b-was-false.md#the-rest)
+- [The rest](script/02-a--b-was-false.md#the-rest-1)
 <a id="still-known-and-not-fixed"></a>
 - [Still known and not fixed](script/02-a--b-was-false.md#still-known-and-not-fixed)
 <a id="what-the-per-type-suites-found-fixed-2026-08-09"></a>

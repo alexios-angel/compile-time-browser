@@ -1,5 +1,7 @@
 [Back to wpt-round8-diagnoses.md](../wpt-round8-diagnoses.md)
 
+<a id="css-color-leftovers-outside-agent-ks-batches-light-dark-as-an-image-opacity-percentages-calc50-colour-channels-system-colour-consistencytyped-om"></a>
+
 ### css-color leftovers outside agent K's batches: light-dark() as an <image>, opacity percentages, calc(50%) colour channels, system-colour consistency/Typed OM
 
 - **120 subtests / 7 files**, size S, overlaps none, confidence medium
