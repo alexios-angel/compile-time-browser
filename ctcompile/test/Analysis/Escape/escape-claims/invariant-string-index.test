@@ -1,0 +1,75 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-string-index
+// RUN: FileCheck %s < %t/escape-claims-invariant-string-index.claims
+
+// Only original bounded ASCII Strings and Number keys agree with Script lookup.
+// Conversion snapshots never replace the original String's property-key identity.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function released() {
+    var child = {}, array = [child], text = '1', saved = 0;
+    for (var i = 0; i < array.length; i += +text[0]) saved = array[i];
+    return 0;
+}
+function retained() {
+    var child = {}, array = [child], text = '1', saved = 0;
+    for (var i = 0; i < array.length; i += +text[0]) saved = array[i];
+    return saved;
+}
+function savedCharacter() {
+    var child = {}, array = [child], text = '1', stride = +text[0], saved = 0;
+    text = '2';
+    for (var i = 0; i < array.length; i += stride) saved = array[i];
+    return 0;
+}
+function characterLength() {
+    var child = {}, array = [child], text = 'a', saved = 0;
+    for (var i = 0; i < array.length; i += text[0].length) saved = array[i];
+    return 0;
+}
+function loadedString() {
+    var child = {}, array = [child], texts = ['1'], saved = 0;
+    for (var i = 0; i < array.length; i += +texts[0][0]) saved = array[i];
+    return 0;
+}
+function stringKey() {
+    var child = {}, array = [child], text = '1', saved = 0;
+    for (var i = 0; i < array.length; i += +text['0']) saved = array[i];
+    return 0;
+}
+function unicodeIndex() {
+    var child = {}, array = [child], text = '1é', saved = 0;
+    for (var i = 0; i < array.length; i += +text[0]) saved = array[i];
+    return 0;
+}
+function changingKey() {
+    var child = {}, array = [child, child], text = '11', saved = 0;
+    for (var i = 0; i < array.length; i += +text[i]) saved = array[i];
+    return 0;
+}
+function loopWrite() {
+    var child = {}, array = [child], text = '1', saved = 0;
+    for (var i = 0; i < array.length; i += +text[0]) {
+        saved = array[i]; array[0] = 0;
+    }
+    return 0;
+}
+function growingString() {
+    var child = {}, array = [child], text = '1', saved = 0;
+    for (var i = 0; i < array.length; i += +text[0]) {
+        saved = array[i]; text = text + '1';
+    }
+    return 0;
+}
+released(); retained(); savedCharacter(); characterLength(); loadedString(); stringKey();
+unicodeIndex(); changingKey(); loopWrite(); growingString();

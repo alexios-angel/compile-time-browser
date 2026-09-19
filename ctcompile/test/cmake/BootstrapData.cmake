@@ -79,7 +79,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
       VERBATIM)
     set_source_files_properties("${_prefix_cpp}" PROPERTIES COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
     set(_prefix_target "ctcompile-test-host-prefix-${_mode}")
-    add_executable(${_prefix_target} CTNative/HostContract/HostPrefixDifferential.cpp "${_prefix_cpp}" "${_prefix_expected}")
+    list(APPEND CTCOMPILE_HOST_PREFIX_TARGETS "${_prefix_target}")
+    add_executable(${_prefix_target} "${_prefix_cpp}" "${_prefix_expected}")
     target_include_directories(${_prefix_target} PRIVATE "${_prefix_work}")
     target_link_libraries(${_prefix_target} PRIVATE ctbrowser::ctbrowser)
     ctcompile_target(${_prefix_target})
@@ -125,25 +126,14 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
 endif()
 
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-host-contract CTNative/HostContract/HostContract.cpp)
+  add_executable(ctcompile-test-host-contract)
   target_link_libraries(ctcompile-test-host-contract PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-host-contract)
   add_test(NAME ctcompile_host_contract COMMAND ctcompile-test-host-contract)
   # checkSeededMapResults - the seeded/per-key/joined Map result proofs over the
   # shared two-method fixture - has been its own executable since 2026-09-08,
   # when HostContract.cpp reached 1,068 lines. Same fixtures (HostContractFixtures.h).
-  add_executable(ctcompile-test-host-contract-seeded-maps
-    CTNative/HostContract/HostContractSeededMaps/Main.cpp
-    CTNative/HostContract/HostContractSeededMaps/EntryNumericResults.cpp
-    CTNative/HostContract/HostContractSeededMaps/CapturedMapClear.cpp
-    CTNative/HostContract/HostContractSeededMaps/DefiniteMapAbsence.cpp
-    CTNative/HostContract/HostContractSeededMaps/LeafReadbacks.cpp
-    CTNative/HostContract/HostContractSeededMaps/LeafObjectPayloads.cpp
-    CTNative/HostContract/HostContractSeededMaps/NestedMapResults.cpp
-    CTNative/HostContract/HostContractSeededMaps/NullablePayloadResults.cpp
-    CTNative/HostContract/HostContractSeededMaps/NullableMapResults.cpp
-    CTNative/HostContract/HostContractSeededMaps/ConditionalMapResults.cpp
-    CTNative/HostContract/HostContractSeededMaps/SeededMapResults.cpp)
+  add_executable(ctcompile-test-host-contract-seeded-maps)
   target_link_libraries(ctcompile-test-host-contract-seeded-maps PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-host-contract-seeded-maps)
   add_test(NAME ctcompile_host_contract_seeded_maps COMMAND ctcompile-test-host-contract-seeded-maps)

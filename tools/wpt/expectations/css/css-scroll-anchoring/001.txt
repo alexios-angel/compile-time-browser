@@ -1,0 +1,9 @@
+css/css-scroll-anchoring/inheritance.html	FAIL
+css/css-scroll-anchoring/inheritance.html	SUBTEST	FAIL	"Property overflow-anchor does not inherit"
+css/css-scroll-anchoring/inheritance.html	SUBTEST	FAIL	"Property overflow-anchor has initial value auto"
+css/css-scroll-anchoring/parsing/overflow-anchor-computed.html	FAIL
+css/css-scroll-anchoring/parsing/overflow-anchor-computed.html	SUBTEST	FAIL	"Property overflow-anchor value 'auto'"
+css/css-scroll-anchoring/parsing/overflow-anchor-computed.html	SUBTEST	FAIL	"Property overflow-anchor value 'none'"
+css/css-scroll-anchoring/parsing/overflow-anchor-valid.html	FAIL
+css/css-scroll-anchoring/parsing/overflow-anchor-valid.html	SUBTEST	FAIL	"e.style['overflow-anchor'] = \"auto\" should set the property value"
+css/css-scroll-anchoring/parsing/overflow-anchor-valid.html	SUBTEST	FAIL	"e.style['overflow-anchor'] = \"none\" should set the property value"

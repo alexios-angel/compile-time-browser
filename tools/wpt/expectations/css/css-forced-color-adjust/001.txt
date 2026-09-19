@@ -1,0 +1,11 @@
+css/css-forced-color-adjust/inheritance.html	FAIL
+css/css-forced-color-adjust/inheritance.html	SUBTEST	FAIL	"Property forced-color-adjust has initial value auto"
+css/css-forced-color-adjust/inheritance.html	SUBTEST	FAIL	"Property forced-color-adjust inherits"
+css/css-forced-color-adjust/parsing/forced-color-adjust-computed.html	FAIL
+css/css-forced-color-adjust/parsing/forced-color-adjust-computed.html	SUBTEST	FAIL	"Property forced-color-adjust value 'auto'"
+css/css-forced-color-adjust/parsing/forced-color-adjust-computed.html	SUBTEST	FAIL	"Property forced-color-adjust value 'none'"
+css/css-forced-color-adjust/parsing/forced-color-adjust-computed.html	SUBTEST	FAIL	"Property forced-color-adjust value 'preserve-parent-color'"
+css/css-forced-color-adjust/parsing/forced-color-adjust-valid.html	FAIL
+css/css-forced-color-adjust/parsing/forced-color-adjust-valid.html	SUBTEST	FAIL	"e.style['forced-color-adjust'] = \"auto\" should set the property value"
+css/css-forced-color-adjust/parsing/forced-color-adjust-valid.html	SUBTEST	FAIL	"e.style['forced-color-adjust'] = \"none\" should set the property value"
+css/css-forced-color-adjust/parsing/forced-color-adjust-valid.html	SUBTEST	FAIL	"e.style['forced-color-adjust'] = \"preserve-parent-color\" should set the property value"

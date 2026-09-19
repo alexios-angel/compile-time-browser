@@ -1,0 +1,32 @@
+shadow-dom/reference-target/tentative/aria-labelledby.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/commandfor.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/dom-mutation.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/event-path.html	FAIL
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"Constructed events given a source don't become composed"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"Event path includes all shadow hosts and shadow roots up to the root of the source, but non-bubbling event fires only where currentTarget == retargeted original target"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"Event path should go all the way to window if source is not in a shadow, but should only fire when currentTarget == retargeted original target"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"Event path skips root containing neither source nor target. Non-bubbling event fires only where currentTarget == retargeted original target"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"Event propagates to source's shadow tree only; source in deeper shadow root"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"Event propagates to source's shadow tree only; target in deeper shadow root"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"beforetoggle event propagates to source's shadow tree only; target in deeper shadow root"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"beforetoggle event propagates to source's shadow tree only; target in deeper shadow root; showPopover called directly with source option"
+shadow-dom/reference-target/tentative/event-path.html	SUBTEST	FAIL	"submit event propagates to submitter's shadow tree only; target in deeper shadow root"
+shadow-dom/reference-target/tentative/form.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/gethtml-serialization.html	FAIL
+shadow-dom/reference-target/tentative/gethtml-serialization.html	SUBTEST	FAIL	"shadowrootreferencetarget is serialized before shadowrootcustomelementregistry"
+shadow-dom/reference-target/tentative/gethtml-serialization.html	SUBTEST	FAIL	"shadowrootreferencetarget is serialized in the expected order"
+shadow-dom/reference-target/tentative/gethtml-serialization.html	SUBTEST	FAIL	"shadowrootreferencetarget with no value is serialized as empty string"
+shadow-dom/reference-target/tentative/interestfor.tentative.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/label-descendant.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/label-for.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/popovertarget.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/property-reflection-idl-setters.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/property-reflection.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/reference-target-basics.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html	FAIL
+shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html	SUBTEST	FAIL	"Setting shadowRootReferenceTarget to null removes the shadowrootreferencetarget content attribute"
+shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html	SUBTEST	FAIL	"Setting shadowRootReferenceTarget updates the shadowrootreferencetarget content attribute"
+shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html	SUBTEST	FAIL	"shadowRootReferenceTarget getter reflects the shadowrootreferencetarget content attribute"
+shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html	SUBTEST	FAIL	"shadowRootReferenceTarget getter returns null when the content attribute is absent"
+shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html	SUBTEST	FAIL	"shadowRootReferenceTarget is present on HTMLTemplateElement"

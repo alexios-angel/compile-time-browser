@@ -34,8 +34,19 @@
 
 int main() {
     const std::string bundle = read_file("vendor/p5/p5.js");
-    const std::string probes = read_file("test/corpus/p5/p5-api-probe.js");
-    if (bundle.empty() || probes.empty()) {
+    std::string probes = "globalThis.__probes = [];\n";
+    bool missing_probes = false;
+    for (const char * path : {
+             "test/corpus/p5/p5-api-probe/01-drawing.js",
+             "test/corpus/p5/p5-api-probe/02-data-and-io.js",
+             "test/corpus/p5/p5-api-probe/03-saving-and-webgl.js",
+             "test/corpus/p5/p5-api-probe.js",
+         }) {
+        const std::string part = read_file(path);
+        missing_probes |= part.empty();
+        probes += part;
+    }
+    if (bundle.empty() || missing_probes) {
         std::printf("FAIL vendor/p5/p5.js or test/corpus/p5/p5-api-probe.js is missing\n");
         ++ctbrowser_test_failures;
         REPORT("p5_api");

@@ -1,0 +1,900 @@
+css/css-conditional/at-media-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-content-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-content-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-content-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-content-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-dynamic-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-matches-001.html	FAIL
+css/css-conditional/at-media-matches-001.html	SUBTEST	FAIL	"\"@media all\" always matches"
+css/css-conditional/at-media-matches-001.html	SUBTEST	FAIL	"\"@media not all\" never matches"
+css/css-conditional/at-media-matches-002.html	SUBTEST	NOTRUN	"Change iframe height to 90px, @media (max-height: 100px) now matches"
+css/css-conditional/at-media-matches-002.html	SUBTEST	NOTRUN	"Initially, @media (max-height: 100px) doesn't match in an iframe with 200px height"
+css/css-conditional/at-media-matches-002.html	TIMEOUT
+css/css-conditional/at-media-whitespace-optional-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-media-whitespace-optional-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-006.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-007.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-008.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-009.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-010.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-011.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-012.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-013.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-014.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-015.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-016.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-017.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-018.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-019.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-020.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-021.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-022.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-023.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-024.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-025.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-026.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-027.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-028.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-029.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-030.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-031.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-032.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-033.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-034.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-035.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-036.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-037.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-038.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-039.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-043.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-044.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-045.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-046.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-048.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-at-rule-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-at-rule-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-at-rule-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-at-rule-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-at-rule-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-at-rule-006.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-at-rule-serialization.html	FAIL
+css/css-conditional/at-supports-at-rule-serialization.html	SUBTEST	FAIL	"@supports at-rule 1"
+css/css-conditional/at-supports-at-rule-serialization.html	SUBTEST	FAIL	"@supports at-rule 11"
+css/css-conditional/at-supports-at-rule-serialization.html	SUBTEST	FAIL	"@supports at-rule 2"
+css/css-conditional/at-supports-content-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-content-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-content-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-content-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-font-format-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-font-tech-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-matches.html	FAIL
+css/css-conditional/at-supports-matches.html	SUBTEST	FAIL	"Matching @supports rule"
+css/css-conditional/at-supports-matches.html	SUBTEST	FAIL	"Non matching @supports rule"
+css/css-conditional/at-supports-named-feature-001.html	FAIL
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature(  anchor-position-follows-transforms  bar) should be false"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature(  foo   anchor-position-follows-transforms  ) should be false"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature( anchor-position-follows-transforms ) should be undefined"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature(anchor-position-follows-transforms single-axis-scroll-container) should be false"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature(anchor-position-follows-transforms) should be undefined"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature(color) should be false"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature(named-feature) should be false"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"@supports named-feature(unknown-feature) should be false"
+css/css-conditional/at-supports-named-feature-001.html	SUBTEST	FAIL	"can detect whether anchor position follows transforms"
+css/css-conditional/at-supports-namespace-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-namespace-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-details-content-before.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-details-content.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-detecting-invalid-in-logical-combinations.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-file-selector-button.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-picker-icon.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-picker.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-placeholder.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/at-supports-selector-webkit-slider-thumb.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/animation-container-size.html	HARNESS_ERROR
+css/css-conditional/container-queries/animation-container-type-dynamic.html	HARNESS_ERROR
+css/css-conditional/container-queries/animation-nested-animation.html	HARNESS_ERROR
+css/css-conditional/container-queries/animation-nested-transition.html	HARNESS_ERROR
+css/css-conditional/container-queries/aspect-ratio-feature-evaluation.html	HARNESS_ERROR
+css/css-conditional/container-queries/at-container-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/at-container-serialization.html	HARNESS_ERROR
+css/css-conditional/container-queries/at-container-style-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/at-container-style-serialization.html	HARNESS_ERROR
+css/css-conditional/container-queries/auto-scrollbars.html	HARNESS_ERROR
+css/css-conditional/container-queries/backdrop-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/calc-evaluation.html	HARNESS_ERROR
+css/css-conditional/container-queries/canvas-as-container-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/canvas-as-container-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/canvas-as-container-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/canvas-as-container-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/canvas-as-container-005.html	HARNESS_ERROR
+css/css-conditional/container-queries/canvas-as-container-006.html	HARNESS_ERROR
+css/css-conditional/container-queries/change-display-in-container.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/chrome-legacy-skip-recalc.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/column-spanner-in-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/comma-separated-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/comma-separated-skip-invalid.html	HARNESS_ERROR
+css/css-conditional/container-queries/conditional-container-status.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-computed.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-for-cue.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/container-for-shadow-dom.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-ident-function.html	FAIL
+css/css-conditional/container-queries/container-ident-function.html	SUBTEST	FAIL	"Property container value '--c ident(\"--myident\" calc(42 * sign(1em - 1px))) / size'"
+css/css-conditional/container-queries/container-ident-function.html	SUBTEST	FAIL	"Property container value 'ident(\"--myident\" calc(42 * sign(1em - 1px)))'"
+css/css-conditional/container-queries/container-ident-function.html	SUBTEST	FAIL	"Property container-name value '--c ident(\"--myident\" calc(42 * sign(1em - 1px)))'"
+css/css-conditional/container-queries/container-ident-function.html	SUBTEST	FAIL	"Property container-name value 'ident(\"--myident\" calc(42 * sign(1em - 1px)))'"
+css/css-conditional/container-queries/container-inheritance.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-inner-at-rules.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-inside-multicol-with-table.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-longhand-animation-type.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-name-computed.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-name-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-name-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-name-tree-scoped.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-nested.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-rule-cssom.html	FAIL
+css/css-conditional/container-queries/container-rule-cssom.html	SUBTEST	FAIL	".conditions without name"
+css/css-conditional/container-queries/container-rule-cssom.html	SUBTEST	FAIL	".conditions without query"
+css/css-conditional/container-queries/container-rule-cssom.html	SUBTEST	FAIL	".conditions"
+css/css-conditional/container-queries/container-rule-cssom.html	SUBTEST	FAIL	"multiple conditions"
+css/css-conditional/container-queries/container-rule-cssom.html	SUBTEST	FAIL	"style()"
+css/css-conditional/container-queries/container-selection-unknown-features.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-selection.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-size-invalidation-after-load.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-size-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-size-nested-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-size-rem-change.html	FAIL
+css/css-conditional/container-queries/container-size-rem-change.html	SUBTEST	FAIL	"Changing the :root font-size makes 1rem equal 30px, greater than the container's width"
+css/css-conditional/container-queries/container-size-shadow-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-type-computed.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-type-containment.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-type-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-type-layout-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-type-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-animation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-auto.html	FAIL
+css/css-conditional/container-queries/container-units-auto.html	SUBTEST	FAIL	"Resolving cqh against a auto height size container should be 0"
+css/css-conditional/container-queries/container-units-basic.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-computational-independence.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-content-box.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-gradient-invalidation.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/container-units-gradient.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/container-units-in-at-container-dynamic.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-in-at-container-fallback.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-in-at-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-ineligible-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-media-queries.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-rule-cache.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/container-units-selection-pseudo.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/container-units-selection.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-shadow.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-sharing-via-rule-node.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/container-units-small-viewport-fallback.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-svglength.html	HARNESS_ERROR
+css/css-conditional/container-queries/container-units-typed-om.html	HARNESS_ERROR
+css/css-conditional/container-queries/counters-flex-circular.html	HARNESS_ERROR
+css/css-conditional/container-queries/counters-in-container-dynamic.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/counters-in-container.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/crashtests/br-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/canvas-as-container-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-1289718-000-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-1289718-001-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-1346969-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-1362391-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-1429955-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-1505250-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-346264227-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-372358471-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-385317081-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-439886903-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-bug-491994185-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-custom-highlight-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-layout-root-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-quotes-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/chrome-remove-insert-evaluator-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/columns-in-table-001-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/columns-in-table-002-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/container-in-canvas-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/container-query-nested-oof-invalidation-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/container-type-change-chrome-legacy-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/dialog-backdrop-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/dialog-backdrop-display-none-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/dirty-rowgroup-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/flex-in-columns-000-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/flex-in-columns-001-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/flex-in-columns-002-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/flex-in-columns-003-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/focus-inside-content-visibility-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/force-sibling-style-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/grid-in-columns-000-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/grid-in-columns-001-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/grid-in-columns-002-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/grid-in-columns-003-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/iframe-init-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/inline-multicol-inside-container-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/inline-with-columns-000-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/inline-with-columns-001-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/input-column-group-container-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/input-placeholder-inline-size-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/marker-gcs-after-disconnect-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/math-block-container-child-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/mathml-container-type-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/orthogonal-replaced-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/pseudo-container-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/remove-dom-child-change-style.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/reversed-ol-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/size-change-during-transition-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/svg-layout-root-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/svg-resource-in-container-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/svg-text-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/table-in-columns-000-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/table-in-columns-001-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/table-in-columns-002-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/table-in-columns-003-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/table-in-columns-004-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/table-in-columns-005-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/top-layer-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/crashtests/top-layer-nested-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/custom-layout-container-001.https.html	SKIP	https: needs a TLS origin, and there is no server here
+css/css-conditional/container-queries/custom-property-style-queries.html	HARNESS_ERROR
+css/css-conditional/container-queries/custom-property-style-query-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/custom-property-style-query-multiline-var.html	HARNESS_ERROR
+css/css-conditional/container-queries/deep-nested-inline-size-containers.html	HARNESS_ERROR
+css/css-conditional/container-queries/dialog-backdrop-create.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/dialog-backdrop-remove.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/display-contents-dynamic-style-queries.html	HARNESS_ERROR
+css/css-conditional/container-queries/display-contents-style-query-descendant-restyle.html	HARNESS_ERROR
+css/css-conditional/container-queries/display-contents.html	HARNESS_ERROR
+css/css-conditional/container-queries/display-in-container.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/display-none.html	HARNESS_ERROR
+css/css-conditional/container-queries/fieldset-legend-change.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/first-letter-outside-size-container.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/flex-basis-with-container-type.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/font-relative-calc-dynamic.html	HARNESS_ERROR
+css/css-conditional/container-queries/font-relative-units-dynamic.html	HARNESS_ERROR
+css/css-conditional/container-queries/font-relative-units.html	HARNESS_ERROR
+css/css-conditional/container-queries/fragmented-container-001.html	HARNESS_ERROR
+css/css-conditional/container-queries/get-animations.html	HARNESS_ERROR
+css/css-conditional/container-queries/grid-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/grid-item-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/iframe-in-container-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/iframe-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/ineligible-containment.html	HARNESS_ERROR
+css/css-conditional/container-queries/inheritance-from-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/inline-size-and-min-width.html	HARNESS_ERROR
+css/css-conditional/container-queries/inline-size-bfc-floats.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/inline-size-containment-vertical-rl.html	HARNESS_ERROR
+css/css-conditional/container-queries/inline-size-containment.html	HARNESS_ERROR
+css/css-conditional/container-queries/inner-first-line-non-matching.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/layout-dependent-focus.html	HARNESS_ERROR
+css/css-conditional/container-queries/multicol-container-001.html	HARNESS_ERROR
+css/css-conditional/container-queries/multicol-inside-container.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/multiple-conditions-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/multiple-size-containers-comma-separated-queries.html	HARNESS_ERROR
+css/css-conditional/container-queries/multiple-style-containers-comma-separated-queries.html	HARNESS_ERROR
+css/css-conditional/container-queries/nested-query-containers.html	HARNESS_ERROR
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test1 - inline - 0b000"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test10 - contents - 0b001"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test11 - contents - 0b010"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test12 - contents - 0b011"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test13 - contents - 0b100"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test14 - contents - 0b101"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test15 - contents - 0b110"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test16 - contents - 0b111"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test17 - table-cell - 0b000"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test18 - table-cell - 0b001"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test19 - table-cell - 0b010"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test2 - inline - 0b001"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test20 - table-cell - 0b011"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test21 - table-cell - 0b100"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test22 - table-cell - 0b101"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test23 - table-cell - 0b110"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test24 - table-cell - 0b111"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test25 - table - 0b000"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test26 - table - 0b001"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test27 - table - 0b010"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test28 - table - 0b011"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test29 - table - 0b100"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test3 - inline - 0b010"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test30 - table - 0b101"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test31 - table - 0b110"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test32 - table - 0b111"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test4 - inline - 0b011"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test5 - inline - 0b100"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test6 - inline - 0b101"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test7 - inline - 0b110"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test8 - inline - 0b111"
+css/css-conditional/container-queries/nested-query-containers.html	SUBTEST	NOTRUN	"test9 - contents - 0b000"
+css/css-conditional/container-queries/nested-size-style-container-invalidation.html	HARNESS_ERROR
+css/css-conditional/container-queries/nested-style-size-container.html	FAIL
+css/css-conditional/container-queries/nested-style-size-container.html	SUBTEST	FAIL	"Check that nested @container queries match with different candidates in different order"
+css/css-conditional/container-queries/never-match-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/no-layout-containment-abspos-dynamic.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/no-layout-containment-abspos.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/no-layout-containment-baseline.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/no-layout-containment-fixedpos-dynamic.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/no-layout-containment-fixedpos.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/no-layout-containment-scroll.html	FAIL
+css/css-conditional/container-queries/no-layout-containment-scroll.html	SUBTEST	FAIL	"#test 1"
+css/css-conditional/container-queries/no-layout-containment-subgrid-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/orthogonal-wm-container-query.html	HARNESS_ERROR
+css/css-conditional/container-queries/percentage-padding-orthogonal.html	HARNESS_ERROR
+css/css-conditional/container-queries/position-sticky-crash.html	SKIP	not a testharness test
+css/css-conditional/container-queries/pseudo-elements-001.html	HARNESS_ERROR
+css/css-conditional/container-queries/pseudo-elements-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/pseudo-elements-002b.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/pseudo-elements-003.html	HARNESS_ERROR
+css/css-conditional/container-queries/pseudo-elements-004.html	HARNESS_ERROR
+css/css-conditional/container-queries/pseudo-elements-005.html	HARNESS_ERROR
+css/css-conditional/container-queries/pseudo-elements-006.html	HARNESS_ERROR
+css/css-conditional/container-queries/pseudo-elements-007.html	HARNESS_ERROR
+css/css-conditional/container-queries/pseudo-elements-008.html	HARNESS_ERROR
+css/css-conditional/container-queries/pseudo-elements-009.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/pseudo-elements-010.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/pseudo-elements-011.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/pseudo-elements-012.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/pseudo-elements-013.html	HARNESS_ERROR
+css/css-conditional/container-queries/query-container-name-dynamic.html	FAIL
+css/css-conditional/container-queries/query-container-name-dynamic.html	SUBTEST	FAIL	"Initially selects #couter as --foo container, both match"
+css/css-conditional/container-queries/query-container-name-dynamic.html	SUBTEST	FAIL	"Make #cinner a --foo container, #inner starts matching"
+css/css-conditional/container-queries/query-container-name.html	FAIL
+css/css-conditional/container-queries/query-container-name.html	SUBTEST	FAIL	"match ancestor named container"
+css/css-conditional/container-queries/query-container-name.html	SUBTEST	FAIL	"match closest named container"
+css/css-conditional/container-queries/query-container-name.html	SUBTEST	FAIL	"match named container in outer scope"
+css/css-conditional/container-queries/query-container-name.html	SUBTEST	FAIL	"match named container in shadow"
+css/css-conditional/container-queries/query-content-box.html	HARNESS_ERROR
+css/css-conditional/container-queries/query-evaluation-style.html	HARNESS_ERROR
+css/css-conditional/container-queries/query-evaluation.html	HARNESS_ERROR
+css/css-conditional/container-queries/query-style-color.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/reattach-container-with-dirty-child.html	HARNESS_ERROR
+css/css-conditional/container-queries/registered-color-style-queries.html	HARNESS_ERROR
+css/css-conditional/container-queries/resize-while-content-visibility-hidden.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/scroll-state/at-container-scrollable-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/at-container-scrollable-serialization.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/at-container-scrolled-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/at-container-scrolled-serialization.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/at-container-snapped-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/at-container-snapped-serialization.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/at-container-stuck-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/at-container-stuck-serialization.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/container-type-scroll-state-computed.html	FAIL
+css/css-conditional/container-queries/scroll-state/container-type-scroll-state-computed.html	SUBTEST	FAIL	"Property container-type value 'inline-size scroll-state'"
+css/css-conditional/container-queries/scroll-state/container-type-scroll-state-computed.html	SUBTEST	FAIL	"Property container-type value 'scroll-state size'"
+css/css-conditional/container-queries/scroll-state/container-type-scroll-state-computed.html	SUBTEST	FAIL	"Property container-type value 'scroll-state'"
+css/css-conditional/container-queries/scroll-state/container-type-scroll-state-containment.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/container-type-scroll-state-parsing.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/multiple-scroll-state-containers-comma-separated-queries.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-initially-scrollable.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-initially-snapped.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-initially-stuck.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-query-with-var.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-query-with-var.html	SUBTEST	NOTRUN	"Matching --match-registered"
+css/css-conditional/container-queries/scroll-state/scroll-state-query-with-var.html	SUBTEST	NOTRUN	"Matching --match-registered-number"
+css/css-conditional/container-queries/scroll-state/scroll-state-query-with-var.html	SUBTEST	NOTRUN	"Matching --match-unknown"
+css/css-conditional/container-queries/scroll-state/scroll-state-query-with-var.html	SUBTEST	NOTRUN	"Matching --match-unknown-fallback"
+css/css-conditional/container-queries/scroll-state/scroll-state-query-with-var.html	SUBTEST	NOTRUN	"Matching --match-unregistered"
+css/css-conditional/container-queries/scroll-state/scroll-state-query-with-var.html	SUBTEST	NOTRUN	"Matching --match-unregistered-number"
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-axis.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-body-001.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-body-002.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-container-type-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-layout-change-002.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-layout-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-pseudo.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-root.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrollable-wm.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-arrow-key-scroll.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-home-end-scroll.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-hv.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-keyboard-scroll-on-body.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-keyboard-scroll-on-root.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-mouse-drag-scroll.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-multiple-scrollers.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-programmatic-absolute-scrolls.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-programmatic-relative-scrolls.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-pu-pd-scroll.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-scrollbar-button-clicks.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-scrollbar-track-clicks.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-spacebar-scroll.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-user-touch-scroll.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-wheel-scroll.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-scrolled-wm.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-both.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-container-type-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-layout-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-none.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-pseudo.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-snap-changing.html	SKIP	testdriver: needs WebDriver input injection
+css/css-conditional/container-queries/scroll-state/scroll-state-snapped-wm.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-stuck-container-type-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-stuck-layout-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-stuck-pseudo.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-stuck-snapshot-after-scroll.tentative.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-stuck-snapshot.tentative.html	FAIL
+css/css-conditional/container-queries/scroll-state/scroll-state-stuck-snapshot.tentative.html	SUBTEST	FAIL	"Test that the stuck state is updated in the resizeObserver loop"
+css/css-conditional/container-queries/scroll-state/scroll-state-stuck-writing-direction.html	HARNESS_ERROR
+css/css-conditional/container-queries/scroll-state/scroll-state-target-query-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/scrollbar-container-units-block.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/scrollbar-container-units-inline.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/sibling-layout-dependency.html	HARNESS_ERROR
+css/css-conditional/container-queries/size-container-auto-height.html	FAIL
+css/css-conditional/container-queries/size-container-auto-height.html	SUBTEST	FAIL	"auto height size container matches zero height query"
+css/css-conditional/container-queries/size-container-no-principal-box.html	HARNESS_ERROR
+css/css-conditional/container-queries/size-container-popover-change.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/size-container-with-quotes.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/size-container-writing-mode-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/size-feature-evaluation.html	HARNESS_ERROR
+css/css-conditional/container-queries/size-query-with-var.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-change-in-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-container-for-shadow-dom.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-container-invalidation-inheritance.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-negation-with-container-name.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/style-not-sharing-float.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-attr-change-svg.html	FAIL
+css/css-conditional/container-queries/style-query-attr-change-svg.html	SUBTEST	FAIL	"Changing viewBox to '10 10 10 10' in container makes target color green"
+css/css-conditional/container-queries/style-query-attr-change-svg.html	SUBTEST	FAIL	"Changing viewbox to ' ' in container does not affect target"
+css/css-conditional/container-queries/style-query-change-with-ancestor-zoom.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-container-name-change.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-custom-attr-change-named-container.html	FAIL
+css/css-conditional/container-queries/style-query-custom-attr-change-named-container.html	SUBTEST	FAIL	"Changing myAttribute to 'correct' in named container makes target color green"
+css/css-conditional/container-queries/style-query-custom-attr-change.html	FAIL
+css/css-conditional/container-queries/style-query-custom-attr-change.html	SUBTEST	FAIL	"Changing myAttribute to 'correct' in container makes target color green"
+css/css-conditional/container-queries/style-query-document-element.html	FAIL
+css/css-conditional/container-queries/style-query-document-element.html	SUBTEST	FAIL	"style query should evaluate to true"
+css/css-conditional/container-queries/style-query-guaranteed-invalid.tentative.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-no-cycle.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-registered-custom-em-change.html	FAIL
+css/css-conditional/container-queries/style-query-registered-custom-em-change.html	SUBTEST	FAIL	"Changing the container's font-size to 10px makes 1em (10px) + 10px evaluate to 20px. Target matches."
+css/css-conditional/container-queries/style-query-registered-custom-invalid.tentative.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-registered-custom-rem-change.html	FAIL
+css/css-conditional/container-queries/style-query-registered-custom-rem-change.html	SUBTEST	FAIL	"Changing the :root font-size to 10px makes 1rem * 10 evaluate to 100px"
+css/css-conditional/container-queries/style-query-registered-custom-removed-initial.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	FAIL
+css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	SUBTEST	FAIL	"assert_implements_style_container_queries()"
+css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	SUBTEST	FAIL	"rem in container style queries responds to root font size change"
+css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	SUBTEST	FAIL	"rlh in container style queries responds to root line height change"
+css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	SUBTEST	FAIL	"vi, vb in container style queries respond to root writing mode change"
+css/css-conditional/container-queries/style-query-unset-on-root.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-query-with-container-name-custom-change.html	FAIL
+css/css-conditional/container-queries/style-query-with-container-name-custom-change.html	SUBTEST	FAIL	"Container rule matches and inner changes colour"
+css/css-conditional/container-queries/style-query-with-unknown-width.html	HARNESS_ERROR
+css/css-conditional/container-queries/style-range-dynamic.html	FAIL
+css/css-conditional/container-queries/style-range-dynamic.html	SUBTEST	FAIL	"After increasing container font-size for em"
+css/css-conditional/container-queries/style-range-dynamic.html	SUBTEST	FAIL	"After increasing container font-size for lh1"
+css/css-conditional/container-queries/style-range-dynamic.html	SUBTEST	FAIL	"After increasing container line-height"
+css/css-conditional/container-queries/style-range-dynamic.html	SUBTEST	FAIL	"After increasing root font-size"
+css/css-conditional/container-queries/style-range-dynamic.html	SUBTEST	FAIL	"After increasing root line-height"
+css/css-conditional/container-queries/svg-foreignobject-child-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/svg-foreignobject-no-size-container.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/svg-g-no-size-container.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/svg-root-size-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/table-inside-container-changing-display.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/top-layer-dialog-backdrop.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/container-queries/top-layer-dialog-container.html	HARNESS_ERROR
+css/css-conditional/container-queries/top-layer-dialog.html	HARNESS_ERROR
+css/css-conditional/container-queries/top-layer-nested-dialog.html	HARNESS_ERROR
+css/css-conditional/container-queries/transition-scrollbars.html	HARNESS_ERROR
+css/css-conditional/container-queries/transition-style-change-event-002.html	HARNESS_ERROR
+css/css-conditional/container-queries/transition-style-change-event.html	HARNESS_ERROR
+css/css-conditional/container-queries/unsupported-axis.html	HARNESS_ERROR
+css/css-conditional/container-queries/var-evaluation.html	HARNESS_ERROR
+css/css-conditional/container-queries/viewport-units-dynamic.html	HARNESS_ERROR
+css/css-conditional/container-queries/viewport-units.html	HARNESS_ERROR
+css/css-conditional/container-queries/whitespace-update-after-removal.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-conditional/crashtests/supports-malformed.html	SKIP	not a testharness test
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	FAIL
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"align-content: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"align-content: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"align-items: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"align-items: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"align-self: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"align-self: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"all: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-delay: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-delay: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-duration: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-duration: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-iteration-count: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-iteration-count: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-name: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation-name: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"animation: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-attachment: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-attachment: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-clip: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-clip: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-image: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-image: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-origin: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-origin: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-position-x: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-position-x: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-position-y: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-position-y: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-position: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-position: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-repeat: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-repeat: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-size: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background-size: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"background: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"block-size: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"block-size: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-end-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-end-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-end-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-end-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-end-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-end-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-start-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-start-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-start-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-start-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-start-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-block-start-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-left-radius: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-left-radius: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-right-radius: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-right-radius: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-bottom: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-collapse: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-collapse: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-outset: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-outset: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-repeat: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-repeat: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-slice: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-slice: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-source: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-source: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-image: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-end-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-end-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-end-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-end-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-end-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-end-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-start-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-start-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-start-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-start-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-start-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-inline-start-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-left: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-radius: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-radius: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-right: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-spacing: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-spacing: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-left-radius: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-left-radius: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-right-radius: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-right-radius: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-top: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"border: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"bottom: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"box-shadow: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"box-shadow: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"box-sizing: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"box-sizing: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"caption-side: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"caption-side: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"caret-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"caret-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"clear: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"column-gap: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"column-gap: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"column-span: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"column-span: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"content: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"cursor: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"cx: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"cy: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"direction: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"display: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"empty-cells: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"empty-cells: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"filter: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-basis: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-basis: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-direction: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-direction: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-flow: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-flow: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-grow: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-grow: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-shrink: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-shrink: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-wrap: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex-wrap: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"flex: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"float: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-family: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-family: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-feature-settings: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-feature-settings: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-size-adjust: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-size-adjust: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-size: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-size: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-stretch: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-stretch: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-variant-alternates: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-variant-alternates: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-variant: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-variant: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-variation-settings: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-variation-settings: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-weight: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font-weight: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"font: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"gap: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"height: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inline-size: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inline-size: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-block-end: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-block-end: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-block-start: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-block-start: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-block: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-block: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-inline-end: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-inline-end: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-inline-start: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-inline-start: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-inline: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset-inline: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"inset: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"justify-content: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"justify-content: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"left: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"letter-spacing: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"letter-spacing: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"line-height: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"line-height: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style-image: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style-image: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style-position: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style-position: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style-type: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style-type: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"list-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-block-end: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-block-end: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-block-start: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-block-start: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-block: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-block: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-bottom: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-bottom: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-inline-end: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-inline-end: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-inline-start: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-inline-start: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-inline: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-inline: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-left: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-left: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-right: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-right: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-top: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin-top: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"margin: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"max-height: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"max-height: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"max-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"max-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"min-height: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"min-height: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"min-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"min-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"object-fit: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"object-fit: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"object-position: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"object-position: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"offset-distance: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"offset-distance: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"offset-path: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"offset-path: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"opacity: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"order: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"orphans: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-offset: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-offset: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"outline: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"overflow-wrap: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"overflow-wrap: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"overflow-x: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"overflow-x: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"overflow-y: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"overflow-y: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"overflow: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-block-end: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-block-end: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-block-start: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-block-start: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-block: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-block: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-bottom: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-bottom: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-inline-end: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-inline-end: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-inline-start: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-inline-start: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-inline: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-inline: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-left: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-left: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-right: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-right: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-top: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding-top: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"padding: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"pointer-events: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"pointer-events: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"position: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"resize: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"right: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"rotate: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"row-gap: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"row-gap: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"rx: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"ry: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scale: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-bottom: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-bottom: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-left: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-left: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-right: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-right: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-top: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"scroll-padding-top: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"shape-margin: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"shape-margin: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"stroke-dasharray: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"stroke-dasharray: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"stroke-dashoffset: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"stroke-dashoffset: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"stroke-width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"stroke-width: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"tab-size: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"tab-size: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"table-layout: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"table-layout: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-align: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-align: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration-color: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration-color: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration-line: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration-line: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration-style: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration-style: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-decoration: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-indent: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-indent: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-overflow: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-overflow: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-shadow: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-shadow: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-transform: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"text-transform: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"top: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transform-origin: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transform-origin: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transform: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-delay: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-delay: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-duration: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-duration: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-property: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-property: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-timing-function: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition-timing-function: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"transition: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"translate: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"unicode-bidi: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"unicode-bidi: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"user-select: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"user-select: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"vertical-align: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"vertical-align: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"visibility: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"white-space: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"white-space: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"widows: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"width: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"word-break: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"word-break: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"word-spacing: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"word-spacing: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"writing-mode: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"writing-mode: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"x: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"y: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"z-index: _camel_cased_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-CSSStyleDeclaration.html	SUBTEST	FAIL	"z-index: _dashed_attribute v. CSS.supports"
+css/css-conditional/js/CSS-supports-L3.html	FAIL
+css/css-conditional/js/CSS-supports-L3.html	SUBTEST	FAIL	"Single-argument form allows for declarations without enclosing parentheses"
+css/css-conditional/js/CSS-supports-L3.html	SUBTEST	FAIL	"Variable references always parse"
+css/css-conditional/js/CSS-supports-L3.html	SUBTEST	FAIL	"Variable references in an unknown function always parse"
+css/css-conditional/js/CSS-supports-L3.html	SUBTEST	FAIL	"one argument form succeeds for custom property"
+css/css-conditional/js/CSS-supports-L4.html	FAIL
+css/css-conditional/js/CSS-supports-L4.html	SUBTEST	FAIL	"selector() function doesn't accept a selector list"
+css/css-conditional/js/CSS-supports-L4.html	SUBTEST	FAIL	"selector() function rejects unknown webkit pseudo-elements."
+css/css-conditional/js/CSS-supports-L5.html	FAIL
+css/css-conditional/js/CSS-supports-L5.html	SUBTEST	FAIL	"font-format() function accepts a known format"
+css/css-conditional/js/CSS-supports-L5.html	SUBTEST	FAIL	"font-tech() function accepts a known technology"
+css/css-conditional/js/CSS-supports-details-content-pseudo-parsing.html	FAIL
+css/css-conditional/js/CSS-supports-details-content-pseudo-parsing.html	SUBTEST	FAIL	"selector() function accepts ::details-content followed by a state pseudo-class"
+css/css-conditional/js/CSS-supports-details-content-pseudo-parsing.html	SUBTEST	FAIL	"selector() function doesn't accept ::details-content followed by :has()"
+css/css-conditional/js/CSS-supports-details-content-pseudo-parsing.html	SUBTEST	FAIL	"selector() function doesn't accept ::details-content followed by a part"
+css/css-conditional/js/CSS-supports-selector-detecting-invalid-in-logical-combinations.html	FAIL
+css/css-conditional/js/CSS-supports-selector-detecting-invalid-in-logical-combinations.html	SUBTEST	FAIL	":has() always fails inside :has()"
+css/css-conditional/js/CSS-supports-selector-detecting-invalid-in-logical-combinations.html	SUBTEST	FAIL	"Some pseudo elements always fail inside :is(), :where(), :has()"
+css/css-conditional/js/CSS-supports-selector-picker.html	FAIL
+css/css-conditional/js/CSS-supports-selector-picker.html	SUBTEST	FAIL	"::picker with empty argument is not supported"
+css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL

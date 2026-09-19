@@ -1,0 +1,900 @@
+css/selectors/active-after-relayouts.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/active-display-none-001.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/active-observable.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/active-toplayer-001.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/attribute-selectors/attribute-case/cssom.html	FAIL
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[*|foo=\"bar\" s] getting CSSRule#cssText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[*|foo=\"bar\" s] getting CSSRule#cssText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[*|foo=\"bar\" s] getting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[*|foo=\"bar\" s] getting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[*|foo=\"bar\" s] setting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[*|foo=\"bar\" s] setting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" /**/ s] getting CSSRule#cssText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" /**/ s] getting CSSRule#cssText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" /**/ s] getting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" /**/ s] getting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" /**/ s] setting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" /**/ s] setting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" s] getting CSSRule#cssText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" s] getting CSSRule#cssText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" s] getting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" s] getting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" s] setting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\" s] setting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\"/**/s] getting CSSRule#cssText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\"/**/s] getting CSSRule#cssText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\"/**/s] getting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\"/**/s] getting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\"/**/s] setting CSSStyleRule#selectorText in @media"
+css/selectors/attribute-selectors/attribute-case/cssom.html	SUBTEST	FAIL	"[foo=\"bar\"/**/s] setting CSSStyleRule#selectorText"
+css/selectors/attribute-selectors/attribute-case/semantics.html	HARNESS_ERROR
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'A'; [x|foo='' i] <div {a}foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'A'; [x|foo='' s] <div {a}foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'a'; [x|foo='' i] <div {A}foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'a'; [x|foo='' s] <div {A}foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'http://www.w3.org/XML/1998/namespace'; [x|lang='A' i] <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'http://www.w3.org/XML/1998/namespace'; [x|lang='A' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'http://www.w3.org/XML/1998/namespace'; [x|lang='A' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'http://www.w3.org/XML/1998/namespace'; [x|lang='A'] /* sanity check (match) */ <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"@namespace x 'http://www.w3.org/XML/1998/namespace'; [x|lang='A'] /* sanity check (no match) */ <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' i] <div foo=\"BAR\" {a}foo=\"x\" {b}foo=\"x\" {c}foo=\"x\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' i] <div foo=\"BAR\" {a}foo=\"x\" {b}foo=\"x\" {c}foo=\"x\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' i] <div foo=\"x\" {a}foo=\"x\" {b}foo=\"BAR\" {c}foo=\"x\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' i] <div foo=\"x\" {a}foo=\"x\" {b}foo=\"BAR\" {c}foo=\"x\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' s] <div foo=\"BAR\" {a}foo=\"x\" {b}foo=\"x\" {c}foo=\"x\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' s] <div foo=\"bar\" {a}foo=\"x\" {b}foo=\"x\" {c}foo=\"x\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' s] <div foo=\"bar\" {a}foo=\"x\" {b}foo=\"x\" {c}foo=\"x\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' s] <div foo=\"x\" {a}foo=\"x\" {b}foo=\"BAR\" {c}foo=\"x\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' s] <div foo=\"x\" {a}foo=\"x\" {b}foo=\"bar\" {c}foo=\"x\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|foo='bar' s] <div foo=\"x\" {a}foo=\"x\" {b}foo=\"bar\" {c}foo=\"x\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='A' i] <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='A' i] <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='A' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='A' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='A' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='A'] /* sanity check (no match) */ <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='a' i] <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='a' i] <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='a' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='a' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='a' s] <div {http://www.w3.org/XML/1998/namespace}lang=\"a\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[*|lang='a'] /* sanity check (no match) */ <div {http://www.w3.org/XML/1998/namespace}lang=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='LEFT' i] <div align=\"left\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='LEFT' i] <div align=\"left\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='LEFT' s] <div align=\"LEFT\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='LEFT' s] <div align=\"LEFT\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='LEFT' s] <div align=\"left\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='LEFT'] /* sanity check (match HTML) */ <div align=\"left\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='LEFT'] /* sanity check (match HTML) */ <div align=\"left\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left' i] <div align=\"LEFT\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left' i] <div align=\"LEFT\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left' s] <div align=\"LEFT\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left' s] <div align=\"left\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left' s] <div align=\"left\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left'] /* sanity check (match HTML) */ <div align=\"LEFT\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left'] /* sanity check (match HTML) */ <div align=\"LEFT\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left'] /* sanity check (match) */ <div align=\"left\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[align='left'] /* sanity check (match) */ <div align=\"left\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A' i] <div class=\"x a b\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A' i] <div class=\"x a b\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A' s] <div class=\"X A B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A' s] <div class=\"X A B\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A' s] <div class=\"x a b\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A'] /* sanity check (match) */ <div class=\"x A B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A'] /* sanity check (match) */ <div class=\"x A B\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='A'] /* sanity check (no match) */ <div class=\"x a b\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a' i] <div class=\"X A B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a' i] <div class=\"X A B\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a' s] <div class=\"X A B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a' s] <div class=\"x a b\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a' s] <div class=\"x a b\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a'] /* sanity check (match) */ <div class=\"X a b\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a'] /* sanity check (match) */ <div class=\"X a b\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[class~='a'] /* sanity check (no match) */ <div class=\"X A B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo$='A\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"\u00c3\u00a4\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo$='A\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"\u00c3\u00a4\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo$='\u00c3\u0089' i] <div foo=\"\u00c3\u00a9\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo$='\u00c3\u00a9' i] <div foo=\"\u00c3\u0089\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo*='\u00c3\u0089' i] <div foo=\"\u00c3\u00a9\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo*='\u00c3\u00a4' i] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo*='\u00c3\u00a4' s] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo*='\u00c3\u00a9' i] <div foo=\"\u00c3\u0089\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo=' ' i] /* tab in attribute */ <div foo=\"\t\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo=' ' s] /* tab in attribute */ <div foo=\"\t\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' i] /* \\0 in attribute */ <div foo=\"\u0000\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' i] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' i] <div foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' i] <div foo=\"\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' s] /* \\0 in attribute */ <div foo=\"\u0000\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' s] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' s] <div foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='' s] <div foo=\"\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A' i] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A' i] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A' s] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A' s] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A\u00cc\u0088' i] /* COMBINING in both */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A\u00cc\u0088' i] /* COMBINING in both */ <div foo=\"a\u00cc\u0088\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A\u00cc\u0088' s] /* COMBINING in both */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='A\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR' s][foo='BAR' s] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR' s][foo='BAR' s] <div foo=\"BAR\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR' s][foo='bar'] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR'] /* sanity check (match) */ <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR'] /* sanity check (match) */ <div foo=\"BAR\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR'][foo='bar' i] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR'][foo='bar' i] <div foo=\"BAR\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='BAR'][foo='bar' s] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='I' i] <div foo=\"\u00c4\u00b0\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='I' i] <div foo=\"\u00c4\u00b1\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='I' s] <div foo=\"\u00c4\u00b0\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='I' s] <div foo=\"\u00c4\u00b1\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\t' i] /* tab in selector */ <div foo=\" \"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\t' s] /* tab in selector */ <div foo=\" \"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u0000' i] /* \\0 in selector */ <div foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u0000' s] /* \\0 in selector */ <div foo=\"\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u0084' i] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u0084' i] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u0084' i] <div foo=\"\u00c3\u00a4\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u0084' s] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u0084' s] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u0084' s] <div foo=\"\u00c3\u00a4\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u00a4' i] <div foo=\"\u00c3\u0084\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c3\u00a4' s] <div foo=\"\u00c3\u0084\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b0' i] <div foo=\"I\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b0' i] <div foo=\"i\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b0' s] <div foo=\"I\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b0' s] <div foo=\"i\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b1' i] <div foo=\"I\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b1' i] <div foo=\"i\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b1' s] <div foo=\"I\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='\u00c4\u00b1' s] <div foo=\"i\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a' i] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a' i] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a' s] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a' s] /* COMBINING in attribute */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' i] /* COMBINING in both */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' i] /* COMBINING in both */ <div foo=\"A\u00cc\u0088\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"\u00c3\u0084\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' s] /* COMBINING in both */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' s] /* COMBINING in both */ <div foo=\"a\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' s] /* COMBINING in both */ <div foo=\"a\u00cc\u0088\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"A\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"\u00c3\u0084\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='a\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"a\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i] <div FOO=\"bar\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i] <div baz=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i] <div foo=\"BAR\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i] <div foo=\"x\" {a}foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i][foo='BAR'] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i][foo='BAR'] <div foo=\"BAR\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i][foo='bar' i] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i][foo='bar' i] <div foo=\"BAR\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' i][foo='bar'] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s] <div FOO=\"bar\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s] <div baz=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s] <div foo=\"bar\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s] <div foo=\"bar\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s] <div foo=\"x\" {a}foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s][foo='BAR'] <div foo=\"bar\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s][foo='bar' s] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar' s][foo='bar'] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar'] /* sanity check (match) */ <div foo=\"bar\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar'] /* sanity check (match) */ <div foo=\"bar\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar'] /* sanity check (no match) */ <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='bar'][foo='BAR' s] <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='i' i] <div foo=\"\u00c4\u00b0\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='i' i] <div foo=\"\u00c4\u00b1\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='i' s] <div foo=\"\u00c4\u00b0\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo='i' s] <div foo=\"\u00c4\u00b1\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo^='A\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"\u00c3\u0084\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo^='A\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"\u00c3\u0084\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo^='\u00c3\u0089' i] <div foo=\"\u00c3\u00a9\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo^='\u00c3\u00a9' i] <div foo=\"\u00c3\u0089\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo|='\u00c3\u0089' i] <div foo=\"\u00c3\u00a9\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo|='\u00c3\u00a4' i] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo|='\u00c3\u00a4' s] /* COMBINING in attribute */ <div foo=\"A\u00cc\u0088\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo|='\u00c3\u00a9' i] <div foo=\"\u00c3\u0089\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo~='a\u00cc\u0088' i] /* COMBINING in selector */ <div foo=\"\u00c3\u00a4\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[foo~='a\u00cc\u0088' s] /* COMBINING in selector */ <div foo=\"\u00c3\u00a4\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A' i] <div id=\"xa\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A' i] <div id=\"xa\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A' s] <div id=\"XA\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A' s] <div id=\"XA\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A' s] <div id=\"xa\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A'] /* sanity check (match) */ <div id=\"XA\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A'] /* sanity check (match) */ <div id=\"XA\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id$='A'] <div id=\"xa\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a' i] <div id=\"AB\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a' i] <div id=\"AB\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a' s] <div id=\"AB\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a' s] <div id=\"ab\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a' s] <div id=\"ab\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a'] /* sanity check (match) */ <div id=\"ab\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a'] /* sanity check (match) */ <div id=\"ab\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[id^='a'] /* sanity check (no match) */ <div id=\"AB\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A' i] <div lang=\"xab\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A' i] <div lang=\"xab\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A' s] <div lang=\"XAB\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A' s] <div lang=\"XAB\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A' s] <div lang=\"xab\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A'] /* sanity check (match HTML) */ <div lang=\"xab\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A'] /* sanity check (match HTML) */ <div lang=\"xab\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A'] /* sanity check (match) */ <div lang=\"XAB\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang*='A'] /* sanity check (match) */ <div lang=\"XAB\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a' i] <div lang=\"A-B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a' i] <div lang=\"A-B\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a' s] <div lang=\"A-B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a' s] <div lang=\"a-b\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a' s] <div lang=\"a-b\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a'] /* sanity check (match HTML) */ <div lang=\"A-B\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a'] /* sanity check (match HTML) */ <div lang=\"A-B\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a'] /* sanity check (match) */ <div lang=\"a-b\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[lang|='a'] /* sanity check (match) */ <div lang=\"a-b\"> with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[missingattr] /* sanity check (no match) */ <div foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[|foo='bar' i] <div foo=\"x\" {a}foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/semantics.html	SUBTEST	FAIL	"[|foo='bar' s] <div foo=\"x\" {a}foo=\"BAR\"> in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	HARNESS_ERROR
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[*|baz='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[*|foo='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz$='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz*='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' /**/ s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' S] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' \\53] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' \\73] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' \\s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' s /**/ ] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' s ] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux'/**/s/**/] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux'\ns\n] /* \\n */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux'\rs\r] /* \\r */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux'\ts\t] /* \\t */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux'] /* sanity check (valid) */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux's ] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz='quux's] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz=\"quux\" s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz=quux s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz=quux/**/s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz^='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz|='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[baz~='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo i ='bar'] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo$='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo*='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo/**/i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo= i 'bar'] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='BAR'] /* sanity check (valid) */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' 'i'] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' () i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' (i)] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' *] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' *|i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' ,i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' /**/ i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' 1] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' 1i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' I] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' [] i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' [i]] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\*] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\*|i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\49] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\69] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\\\69] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\\\i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \\|i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \u00c4\u00b0] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' \u00c4\u00b1] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i ()] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i /**/ ] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i []] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i ] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i {}] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i()] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i,] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i\u0000] /* \\0 */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' ii] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' ij] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' j] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' url(i)] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' {i}] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' {} i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar' |i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar'/**/i/**/] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar'\ni\n] /* \\n */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar'\ri\r] /* \\r */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar'\ti\t] /* \\t */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar']i in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar']i with querySelector in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar'i ] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo='bar'i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo=\"bar\" i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo=bar i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo=bar/**/i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo[ /* sanity check (invalid) */ in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo^='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo|='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[foo~='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[i foo='bar'] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[|baz='quux' s] in standards mode"
+css/selectors/attribute-selectors/attribute-case/syntax.html	SUBTEST	FAIL	"[|foo='bar' i] in standards mode"
+css/selectors/attribute-selectors/attribute-case/value-case-sensitivity-svg.html	FAIL
+css/selectors/attribute-selectors/attribute-case/value-case-sensitivity-svg.html	SUBTEST	FAIL	"HTML element matches legacy attribute value case-insensitively."
+css/selectors/backdrop-input-crash.html	SKIP	not a testharness test
+css/selectors/caret-color-visited-inheritance.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/child-indexed-no-parent.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/child-indexed-pseudo-class.html	FAIL
+css/selectors/child-indexed-pseudo-class.html	SUBTEST	FAIL	"Expected HTML element to match :last-of-type with matches, querySelector(), and querySelectorAll()"
+css/selectors/child-indexed-pseudo-class.html	SUBTEST	FAIL	"Expected HTML element to match :nth-last-of-type(1) with matches, querySelector(), and querySelectorAll()"
+css/selectors/child-indexed-pseudo-class.html	SUBTEST	FAIL	"Expected HTML element to match :nth-last-of-type(n) with matches, querySelector(), and querySelectorAll()"
+css/selectors/child-indexed-pseudo-class.html	SUBTEST	FAIL	"Expected HTML element to match :only-of-type with matches, querySelector(), and querySelectorAll()"
+css/selectors/chrome-40257746-crash.html	SKIP	not a testharness test
+css/selectors/crashtests/empty-pseudo-with-first-line.html	SKIP	not a testharness test
+css/selectors/dir-pseudo-in-has.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-pseudo-on-input-element.html	FAIL
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"dynamic changes to type of input elements affect whether value is used for dir=auto"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the button state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the email state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the hidden state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the password state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the reset state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the search state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the submit state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the telephone state in a RTL block"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the telephone state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the text state"
+css/selectors/dir-pseudo-on-input-element.html	SUBTEST	FAIL	"input element whose type attribute is in the url state"
+css/selectors/dir-pseudo-update-document-element.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-auto-direction-change-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-auto.html	FAIL
+css/selectors/dir-selector-auto.html	SUBTEST	FAIL	"Initial  directionality of element div3 is ltr"
+css/selectors/dir-selector-auto.html	SUBTEST	FAIL	"Initial  directionality of element div3_2 is ltr"
+css/selectors/dir-selector-auto.html	SUBTEST	FAIL	"Updated  directionality of element div1 is ltr"
+css/selectors/dir-selector-change-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-change-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-change-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-change-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-ltr-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-ltr-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-ltr-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-querySelector.html	FAIL
+css/selectors/dir-selector-querySelector.html	SUBTEST	FAIL	":dir() requires exactly an ident argument"
+css/selectors/dir-selector-rtl-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-selector-white-space-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-style-01a.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-style-01b.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-style-02a.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-style-02b.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-style-03a.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-style-03b.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/dir-style-04.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/eof-right-after-selector-crash.html	SKIP	not a testharness test
+css/selectors/eof-some-after-selector-crash.html	SKIP	not a testharness test
+css/selectors/featureless-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/featureless-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/featureless-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/featureless-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/featureless-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/first-letter-flag-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/first-line-bidi-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/first-line-bidi-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/floating-first-letter-05d0.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/floating-first-letter-feff.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-display-none-001.html	FAIL
+css/selectors/focus-display-none-001.html	SUBTEST	FAIL	"Test ':focus' after 'display:none' on input"
+css/selectors/focus-display-none-001.html	SUBTEST	FAIL	"Test ':focus' after 'display:none' on input's parent"
+css/selectors/focus-in-focus-event-001.html	FAIL
+css/selectors/focus-in-focus-event-001.html	SUBTEST	FAIL	"Checks that ':focus' pseudo-class matches inside 'focus' event handler"
+css/selectors/focus-in-focus-event-001.html	SUBTEST	FAIL	"Checks that ':focus-visible' pseudo-class matches inside 'focus' event handler"
+css/selectors/focus-in-focus-event-001.html	SUBTEST	FAIL	"Checks that ':focus-within' pseudo-class matches inside 'focus' event handler"
+css/selectors/focus-in-focusin-event-001.html	FAIL
+css/selectors/focus-in-focusin-event-001.html	SUBTEST	FAIL	"Checks that ':focus' pseudo-class matches inside 'focusin' event handler"
+css/selectors/focus-in-focusin-event-001.html	SUBTEST	FAIL	"Checks that ':focus-visible' pseudo-class matches inside 'focusin' event handler"
+css/selectors/focus-in-focusin-event-001.html	SUBTEST	FAIL	"Checks that ':focus-within' pseudo-class matches inside 'focusin' event handler"
+css/selectors/focus-visible-001.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-002.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-003.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-004.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-005.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-006.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-007.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-008.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-010.html	FAIL
+css/selectors/focus-visible-010.html	SUBTEST	FAIL	"Programmatic focus on page load should match :focus-visible"
+css/selectors/focus-visible-011.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-012.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-013.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-014.html	FAIL
+css/selectors/focus-visible-014.html	SUBTEST	FAIL	":focus-visible matches after script focus move"
+css/selectors/focus-visible-015.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-016.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-017-2.html	FAIL
+css/selectors/focus-visible-017-2.html	SUBTEST	FAIL	"\":focus-visible\" should be a valid selector"
+css/selectors/focus-visible-017.html	FAIL
+css/selectors/focus-visible-017.html	SUBTEST	FAIL	"By default initial programatic focus matches ':focus-visible', so the element shows a focus ring with 'outline-style: auto'"
+css/selectors/focus-visible-017.html	SUBTEST	FAIL	"\":focus-visible\" should be a valid selector"
+css/selectors/focus-visible-018-2.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-018.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-019.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-020.html	FAIL
+css/selectors/focus-visible-020.html	SUBTEST	FAIL	":focus-visible doesn't match on ShadowRoot"
+css/selectors/focus-visible-020.html	SUBTEST	FAIL	"\":focus-visible\" should be a valid selector"
+css/selectors/focus-visible-021.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-022.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-023.html	FAIL
+css/selectors/focus-visible-023.html	SUBTEST	FAIL	":focus-visible stop matching after blur"
+css/selectors/focus-visible-023.html	SUBTEST	FAIL	"\":focus-visible\" should be a valid selector"
+css/selectors/focus-visible-024.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-025.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-026.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-027.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-028.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-001.html	FAIL
+css/selectors/focus-visible-script-focus-001.html	SUBTEST	FAIL	"Script focus without any previous user interaction matches :focus-visible"
+css/selectors/focus-visible-script-focus-001.html	SUBTEST	FAIL	"\":focus-visible\" should be a valid selector"
+css/selectors/focus-visible-script-focus-002.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-003.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-004.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-005.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-006.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-007.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-008-b.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-008.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-009.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-010.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-011.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-012.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-013.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-014.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-015.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-016.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-017.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-018.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-019.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-visible-script-focus-020.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/focus-within-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-006.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-007.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-008.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-009.html	FAIL
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Attach 'container1' in 'container2'"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Focus 'target1' again"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Focus 'target1' for the last time"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Focus 'target1' once again"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Focus 'target1'"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Focus 'target2' again"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Focus 'target2' once again"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Focus 'target2'"
+css/selectors/focus-within-009.html	SUBTEST	FAIL	"Try to focus 'target1'"
+css/selectors/focus-within-010.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-011.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-012.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-013.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-display-none-001.html	FAIL
+css/selectors/focus-within-display-none-001.html	SUBTEST	FAIL	"Test ':focus-within' after 'display:none' on input"
+css/selectors/focus-within-display-none-001.html	SUBTEST	FAIL	"Test ':focus-within' after 'display:none' on input's parent"
+css/selectors/focus-within-focus-move.html	FAIL
+css/selectors/focus-within-focus-move.html	SUBTEST	FAIL	"Moving focus from its own focus() call doesn't leave stale :focus-within state"
+css/selectors/focus-within-removal.html	FAIL
+css/selectors/focus-within-removal.html	SUBTEST	FAIL	"Removing an element from its own focus() call doesn't leave stale :focus-within state"
+css/selectors/focus-within-shadow-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-shadow-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-shadow-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-shadow-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-shadow-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-shadow-006.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/focus-within-toplayer-001.html	FAIL
+css/selectors/focus-within-toplayer-001.html	SUBTEST	FAIL	"Focusing inside a modal dialog should not propagate :focus-within beyond the dialog."
+css/selectors/focus-within-toplayer-001.html	SUBTEST	FAIL	"Focusing inside a popover should not propagate :focus-within beyond the popover."
+css/selectors/focus-within-toplayer-001.html	SUBTEST	FAIL	"With nested top layer elements, :focus-within should stop at the innermost top layer boundary."
+css/selectors/has-argument-with-explicit-scope.html	FAIL
+css/selectors/has-argument-with-explicit-scope.html	SUBTEST	FAIL	".a:has(:scope) .c and :is(.a :scope .c) returns same elements on scope1"
+css/selectors/has-argument-with-explicit-scope.html	SUBTEST	FAIL	".a:has(:scope) .c matches expected elements on scope1"
+css/selectors/has-display-none-checked.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-focus-display-change.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/has-nth-of-crash.html	SKIP	not a testharness test
+css/selectors/has-relative-argument.html	FAIL
+css/selectors/has-relative-argument.html	SUBTEST	FAIL	".x:has(+ .a ~ .b) matches expected elements"
+css/selectors/has-relative-argument.html	SUBTEST	FAIL	".x:has(+ .d ~ .e) matches expected elements"
+css/selectors/has-sibling-chrome-crash.html	SKIP	not a testharness test
+css/selectors/has-style-sharing-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-006.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-007.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-006.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-007.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-style-sharing-pseudo-008.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/has-visited.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/heading-prefixed.html	FAIL
+css/selectors/heading-prefixed.html	SUBTEST	FAIL	":heading(1) matches <h:h1> in the HTML namespace"
+css/selectors/heading-prefixed.html	SUBTEST	FAIL	":heading(2) matches <h:h2> in the HTML namespace"
+css/selectors/heading-prefixed.html	SUBTEST	FAIL	":heading(3) matches <h:h3> in the HTML namespace"
+css/selectors/heading-prefixed.html	SUBTEST	FAIL	":heading(4) matches <h:h4> in the HTML namespace"
+css/selectors/heading-prefixed.html	SUBTEST	FAIL	":heading(5) matches <h:h5> in the HTML namespace"
+css/selectors/heading-prefixed.html	SUBTEST	FAIL	":heading(6) matches <h:h6> in the HTML namespace"
+css/selectors/heading.html	FAIL
+css/selectors/heading.html	SUBTEST	FAIL	"<h0 data-expect-match=\"\"></h0> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\" aria-level=\"2\"></h1> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\" aria-level=\"2\"></h1> :heading(0, 1, 2)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\" aria-level=\"2\"></h1> :heading(1)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\"></h1> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\"></h1> :heading(0, 1, 2)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\"></h1> :heading(1)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\"></h1> in section :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\"></h1> in section :heading(0, 1, 2)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h1 data-expect-match=\"1\"></h1> in section :heading(1)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h2 data-expect-match=\"2\"></h2> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h2 data-expect-match=\"2\"></h2> :heading(0, 1, 2)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h2 data-expect-match=\"2\"></h2> :heading(2)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h3 data-expect-match=\"3\"></h3> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h3 data-expect-match=\"3\"></h3> :heading(3)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h4 data-expect-match=\"4\"></h4> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h4 data-expect-match=\"4\"></h4> :heading(4)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h5 data-expect-match=\"5\"></h5> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h5 data-expect-match=\"5\"></h5> :heading(5)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h6 data-expect-match=\"6\"></h6> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h6 data-expect-match=\"6\"></h6> :heading(6)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h6 data-expect-match=\"6\"></h6> :heading(6, 7)"
+css/selectors/heading.html	SUBTEST	FAIL	"<h7 data-expect-match=\"\"></h7> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h8 data-expect-match=\"\"></h8> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<h9 data-expect-match=\"\"></h9> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<hgroup data-expect-match=\"\"></hgroup> :heading"
+css/selectors/heading.html	SUBTEST	FAIL	"<p role=\"heading\" aria-level=\"1\" data-expect-match=\"\"></p> :heading"
+css/selectors/hover-002.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/hover-boundary-events.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/hover-toplayer-001.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/i18n/css3-selectors-lang-024.html	FAIL
+css/selectors/i18n/css3-selectors-lang-024.html	SUBTEST	FAIL	"A lang|= value will match a lang attribute value regardless of case differences."
+css/selectors/i18n/css3-selectors-lang-035.html	FAIL
+css/selectors/i18n/css3-selectors-lang-035.html	SUBTEST	FAIL	"A lang|= value will match a lang attribute value regardless of case differences in the script tag."
+css/selectors/i18n/css3-selectors-lang-044.html	FAIL
+css/selectors/i18n/css3-selectors-lang-044.html	SUBTEST	FAIL	"A lang= value will match a lang attribute value regardless of case differences."
+css/selectors/i18n/css3-selectors-lang-055.html	FAIL
+css/selectors/i18n/css3-selectors-lang-055.html	SUBTEST	FAIL	"A lang= value will match a lang attribute value regardless of case differences in the script tag."
+css/selectors/i18n/lang-pseudo-class-across-shadow-boundaries.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/i18n/lang-pseudo-class-empty-attribute.xhtml	FAIL
+css/selectors/i18n/lang-pseudo-class-empty-attribute.xhtml	SUBTEST	FAIL	"Test if empty language attributes are supported"
+css/selectors/invalidation/any-link-attribute-removal.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/attribute-or-elemental-selectors-in-has.html	FAIL
+css/selectors/invalidation/attribute-or-elemental-selectors-in-has.html	SUBTEST	FAIL	"add \"div > descendant\" to #div_subject: div#div_subject.color"
+css/selectors/invalidation/attribute-or-elemental-selectors-in-has.html	SUBTEST	FAIL	"add descendant to #div_subject: div#div_subject.color"
+css/selectors/invalidation/class-id-attr.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/crashtests/has-pseudoclass-only-crash.html	SKIP	not a testharness test
+css/selectors/invalidation/crashtests/nth-child-of-attribute-crash.html	SKIP	not a testharness test
+css/selectors/invalidation/defined-in-has.html	FAIL
+css/selectors/invalidation/defined-in-has.html	SUBTEST	FAIL	"Test :has() invalidation with :defined pseudo-class"
+css/selectors/invalidation/defined.html	FAIL
+css/selectors/invalidation/defined.html	SUBTEST	FAIL	":defined selector is effective"
+css/selectors/invalidation/dir-pseudo-class-in-has.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/empty-pseudo-in-has-display-none.html	FAIL
+css/selectors/invalidation/empty-pseudo-in-has-display-none.html	SUBTEST	FAIL	"Visible after inserting non-empty element into #child"
+css/selectors/invalidation/empty-pseudo-in-has-display-none.html	SUBTEST	FAIL	"Visible after inserting text into #child"
+css/selectors/invalidation/empty-pseudo-in-has-display-none.html	SUBTEST	FAIL	"Visible after inserting text into empty #child"
+css/selectors/invalidation/empty-pseudo-in-has-display-none.html	SUBTEST	FAIL	"Visible again after inserting text into empty #child"
+css/selectors/invalidation/fullscreen-pseudo-class-in-has.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/invalidation/has-append-first-node.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/has-complexity.html	TIMEOUT
+css/selectors/invalidation/has-css-nesting-shared.html	FAIL
+css/selectors/invalidation/has-css-nesting-shared.html	SUBTEST	FAIL	"add .test to trigger1 - check subject1_1"
+css/selectors/invalidation/has-css-nesting-shared.html	SUBTEST	FAIL	"add .test to trigger1 - check subject1_2"
+css/selectors/invalidation/has-css-nesting-shared.html	SUBTEST	FAIL	"add .test to trigger2 - check subject2_1"
+css/selectors/invalidation/has-css-nesting-shared.html	SUBTEST	FAIL	"add .test to trigger2 - check subject2_2"
+css/selectors/invalidation/has-css-nesting-shared.html	SUBTEST	FAIL	"add .test to trigger3 - check subject3_1"
+css/selectors/invalidation/has-css-nesting-shared.html	SUBTEST	FAIL	"add .test to trigger3 - check subject3_2"
+css/selectors/invalidation/has-in-adjacent-position.html	FAIL
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add .test to next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted after next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted before next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted before next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' again to the element inserted after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' again to the element inserted before next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again after next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again before next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again before next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' to the element inserted again after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"add the class 'test' to the element inserted again before next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div.test after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div.test before next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after previous_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after previous_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before previous_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before previous_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div[test_attr] after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div[test_attr] after previous_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div[test_attr] before next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert element div[test_attr] before previous_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert tree div>div.test after next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert tree div>div.test after next_sibling_descendant"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert tree div>div.test before next_sibling_child"
+css/selectors/invalidation/has-in-adjacent-position.html	SUBTEST	FAIL	"insert tree div>div.test before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	FAIL
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add .test to next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted after next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted before next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' again to the element inserted after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' again to the element inserted before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again after next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again before next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' to the element inserted again after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"add the class 'test' to the element inserted again before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div.test after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div.test before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject_ancestor"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject_parent"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before next_sibling"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject_parent"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] after next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] after subject_ancestor"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] after subject_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] after subject_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] after subject_parent"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] before next_sibling"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] before next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] before next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] before subject_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert element div[test_attr] before subject_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert tree div>div.test after next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert tree div>div.test after next_sibling_descendant"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert tree div>div.test before next_sibling_child"
+css/selectors/invalidation/has-in-ancestor-position.html	SUBTEST	FAIL	"insert tree div>div.test before next_sibling_descendant"
+css/selectors/invalidation/has-in-parent-position.html	FAIL
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject_child"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject_descendant"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after subject_parent"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject_child"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject_descendant"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div[test_attr] after subject_child"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div[test_attr] after subject_descendant"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div[test_attr] after subject_parent"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div[test_attr] before subject_child"
+css/selectors/invalidation/has-in-parent-position.html	SUBTEST	FAIL	"insert element div[test_attr] before subject_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	FAIL
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add .test to next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted after next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted before next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' again to the element in the tree inserted before next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' again to the element inserted after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' again to the element inserted before next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again after next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again before next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' to the element in the tree inserted again before next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' to the element inserted again after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"add the class 'test' to the element inserted again before next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div.test after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div.test before next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after previous_sibling"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after previous_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] after previous_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before previous_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before previous_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div>div[test_attr] before subject"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div[test_attr] after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div[test_attr] after previous_sibling"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div[test_attr] after previous_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div[test_attr] before next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div[test_attr] before previous_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert element div[test_attr] before subject"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert tree div>div.test after next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert tree div>div.test after next_sibling_descendant"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert tree div>div.test before next_sibling_child"
+css/selectors/invalidation/has-in-sibling-position.html	SUBTEST	FAIL	"insert tree div>div.test before next_sibling_descendant"
+css/selectors/invalidation/has-invalidation-first-in-sibling-chain.html	FAIL
+css/selectors/invalidation/has-invalidation-first-in-sibling-chain.html	SUBTEST	FAIL	"#subject2 invalidated after adding first sibling"
+css/selectors/invalidation/has-nested-pseudo-001-crash.html	SKIP	not a testharness test
+css/selectors/invalidation/has-nested-pseudo-002-crash.html	SKIP	not a testharness test
+css/selectors/invalidation/has-nested-pseudo-003-crash.html	SKIP	not a testharness test
+css/selectors/invalidation/has-pseudo-element.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/has-sibling.html	FAIL
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"add .test to first_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"add .test to third_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert element div.test after first_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert element div.test after third_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert element div.test before first_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert element div.test before third_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test after first_sibling_child"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test after first_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test after third_sibling_child"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test after third_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test before first_sibling_child"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test before first_sibling_descendant"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test before third_sibling_child"
+css/selectors/invalidation/has-sibling.html	SUBTEST	FAIL	"insert tree div>div.test before third_sibling_descendant"
+css/selectors/invalidation/has-with-nesting-parent-containing-complex.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/invalidation/has-with-nesting-parent-containing-hover.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/invalidation/has-with-nth-child-sibling-remove.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/has-with-pseudo-class.html	HARNESS_ERROR
+css/selectors/invalidation/has-with-pseudo-class.html	SUBTEST	FAIL	"Set checked on checkbox, testing subject"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	FAIL
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"Initial colors: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"Initial colors: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"ancestor with headingoffset removed: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"ancestor with headingoffset removed: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"ancestor[headingoffset=1]: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"ancestor[headingoffset=1]: #has_heading_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"ancestor[headingoffset=2] again: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"ancestor[headingoffset=2]: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1 with headingoffset removed: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1 with headingoffset removed: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1 with headingreset removed: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1.headingOffset = 0: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1.headingOffset = 0: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1.headingOffset = 1: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1.headingOffset = 1: #has_heading_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1.headingReset = false: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1.headingReset = true: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1.headingReset = true: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1[headingoffset=1]: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1[headingoffset=1]: #has_heading_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1[headingoffset=2]: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1[headingreset] (cuts ancestor offset): #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-headingoffset.html	SUBTEST	FAIL	"h1[headingreset] (cuts ancestor offset): #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has-with-slot-reassignment.html	HARNESS_ERROR
+css/selectors/invalidation/heading-pseudo-class-in-has.html	FAIL
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h1 to #ancestor: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h1 to #ancestor: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h2 to #ancestor: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h2 to #ancestor: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h2 to #ancestor: #has_heading_2"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h3 to #ancestor: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h3 to #ancestor: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h3 to #ancestor: #has_heading_2"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Append h3 to #ancestor: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Insert h1 adjacent to #sibling: #adjacent_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Insert h1 adjacent to #sibling: #has_adjacent_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Remove h1 from #ancestor: #has_heading_1_2"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Remove h1 from #ancestor: #has_heading_2"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Remove h1 from #ancestor: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Remove h2 from #ancestor: #has_heading_3"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Replace div with h1 in #ancestor: #has_heading_1"
+css/selectors/invalidation/heading-pseudo-class-in-has.html	SUBTEST	FAIL	"Replace div with h1 in #ancestor: #has_heading_1_2"
+css/selectors/invalidation/host-context-pseudo-class-in-has.html	FAIL
+css/selectors/invalidation/host-context-pseudo-class-in-has.html	SUBTEST	FAIL	"After adding 'a' to #host_parent: Check #subject1 color"
+css/selectors/invalidation/host-context-pseudo-class-in-has.html	SUBTEST	FAIL	"After adding 'a' to #host_parent: Check #subject2 color"
+css/selectors/invalidation/host-context-pseudo-class-in-has.html	SUBTEST	FAIL	"After removing 'a' from #host_parent: Check #subject1 color"
+css/selectors/invalidation/host-context-pseudo-class-in-has.html	SUBTEST	FAIL	"After removing 'a' from #host_parent: Check #subject2 color"
+css/selectors/invalidation/host-context-pseudo-class-in-has.html	SUBTEST	FAIL	"Before adding 'a' to #host_parent: Check #subject1 color"
+css/selectors/invalidation/host-context-pseudo-class-in-has.html	SUBTEST	FAIL	"Before adding 'a' to #host_parent: Check #subject2 color"
+css/selectors/invalidation/host-has-shadow-tree-element-at-nonsubject-position.html	HARNESS_ERROR
+css/selectors/invalidation/host-has-shadow-tree-element-at-subject-position.html	HARNESS_ERROR
+css/selectors/invalidation/host-pseudo-class-in-has.html	FAIL
+css/selectors/invalidation/host-pseudo-class-in-has.html	SUBTEST	FAIL	"After adding 'a' to #host: Check #subject1 color"
+css/selectors/invalidation/host-pseudo-class-in-has.html	SUBTEST	FAIL	"After adding 'a' to #host: Check #subject2 color"
+css/selectors/invalidation/host-pseudo-class-in-has.html	SUBTEST	FAIL	"Before adding 'a' to #host: Check #subject1 color"
+css/selectors/invalidation/host-pseudo-class-in-has.html	SUBTEST	FAIL	"Before adding 'a' to #host: Check #subject2 color"
+css/selectors/invalidation/input-in-range-in-has-with-readonly.html	FAIL
+css/selectors/invalidation/input-in-range-in-has-with-readonly.html	SUBTEST	FAIL	":in-range in :has() invalidation when removing readonly"
+css/selectors/invalidation/input-in-range-in-has-with-readonly.html	SUBTEST	FAIL	":in-range in :has() invalidation when setting readonly"
+css/selectors/invalidation/input-in-range-in-has-with-readonly.html	SUBTEST	FAIL	":out-of-range in :has() invalidation when removing readonly"
+css/selectors/invalidation/input-in-range-in-has-with-readonly.html	SUBTEST	FAIL	":out-of-range in :has() invalidation when setting readonly"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	FAIL
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":checked & :indeterminate invalidation on <input>"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":default invalidation with input[type=checkbox] and assignment to .checked"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":default invalidation with input[type=radio]"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":indeterminate invalidation on <progress>"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":out-of-range invalidation"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":placeholder-shown invalidation"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":read-only invalidation"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":required invalidation"
+css/selectors/invalidation/input-pseudo-classes-in-has.html	SUBTEST	FAIL	":valid invalidation"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	FAIL
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #parent_previous.classList.add('c_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #parent_previous.classList.add('c_indirect_next') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #previous.classList.add('c_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #previous.classList.add('c_indirect_next') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #parent_previous) : (insertion) check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #parent_previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #previous) : (insertion) check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #parent_previous) : (removal) check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #parent_previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #previous) : (removal) check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:is(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkred:has(#descendant:is(.a_indirect_next .b)) ~ #indirect_next ] #child.classList.add('a_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkred:has(#descendant:is(.a_indirect_next .b)) ~ #indirect_next ] #has_scope.classList.add('a_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkred:has(#descendant:is(.a_indirect_next .b)) ~ #indirect_next ] #parent.classList.add('a_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] #parent_previous.classList.add('c_has_scope') : check #has_scope color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] #parent_previous.classList.add('c_has_scope') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] #previous.classList.add('c_has_scope') : check #has_scope color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] #previous.classList.add('c_has_scope') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #parent_previous) : (insertion) check #has_scope color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #parent_previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #previous) : (insertion) check #has_scope color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #parent_previous) : (removal) check #has_scope color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #parent_previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #previous) : (removal) check #has_scope color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:is(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .greenyellow:has(~ #indirect_next:is(.h_indirect_next .i)) ~ #indirect_next ] #parent.classList.add('h_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] #parent_previous.classList.add('c_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] #parent_previous.classList.add('c_descendant') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] #previous.classList.add('c_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] #previous.classList.add('c_descendant') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #parent_previous) : (insertion) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #parent_previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #previous) : (insertion) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #parent_previous) : (removal) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #parent_previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #previous) : (removal) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:is(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orangered:has(#descendant:is(.a_descendant .b)) #descendant ] #child.classList.add('a_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orangered:has(#descendant:is(.a_descendant .b)) #descendant ] #has_scope.classList.add('a_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orangered:has(#descendant:is(.a_descendant .b)) #descendant ] #parent.classList.add('a_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orchid:has(~ #indirect_next:is(.p + .j_indirect_next ~ .k .l)) ~ #indirect_next ] #parent_previous.classList.add('j_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orchid:has(~ #indirect_next:is(.p + .j_indirect_next ~ .k .l)) ~ #indirect_next ] insert/remove .invalid before #parent_previous) : (removal) check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orchid:has(~ #indirect_next:is(.p + .j_indirect_next ~ .k .l)) ~ #indirect_next ] insert/remove .j_indirect_next before #parent_previous) : (insertion) check #indirect_next color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .plum:has(~ #indirect_next:is(.p + .j_indirect_next_child ~ .k .l)) ~ #indirect_next #indirect_next_child ] #parent_previous.classList.add('j_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .plum:has(~ #indirect_next:is(.p + .j_indirect_next_child ~ .k .l)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #parent_previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .plum:has(~ #indirect_next:is(.p + .j_indirect_next_child ~ .k .l)) ~ #indirect_next #indirect_next_child ] insert/remove .j_indirect_next_child before #parent_previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:is(.p + .f_descendant ~ .g)) #descendant ] #direct_next.classList.add('f_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:is(.p + .f_descendant ~ .g)) #descendant ] #has_scope.classList.add('f_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:is(.p + .f_descendant ~ .g)) #descendant ] #previous.classList.add('f_descendant') : check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:is(.p + .f_descendant ~ .g)) #descendant ] insert/remove .f_descendant before #direct_next) : (insertion) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:is(.p + .f_descendant ~ .g)) #descendant ] insert/remove .f_descendant before #previous) : (insertion) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:is(.p + .f_descendant ~ .g)) #descendant ] insert/remove .invalid before #direct_next) : (removal) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:is(.p + .f_descendant ~ .g)) #descendant ] insert/remove .invalid before #previous) : (removal) check #descendant color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #child_previous.classList.add('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #parent_previous.classList.add('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #parent_previous.classList.add('c_indirect_next_child') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #previous.classList.add('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #previous.classList.add('c_indirect_next_child') : check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #child_previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #parent_previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #parent_previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #previous) : (insertion) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #child_previous) : (removal) check #indirect_next_child color"

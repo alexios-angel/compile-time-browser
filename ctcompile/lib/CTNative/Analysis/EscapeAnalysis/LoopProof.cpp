@@ -1,0 +1,365 @@
+#include "LoopProof.hpp"
+
+namespace ctcompile::ctnative::escape_detail {
+
+ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * body,
+                                            mlir::ValueRange initial, mlir::Value condition,
+                                            mlir::ValueRange intoBody, mlir::ValueRange backedge) {
+    constexpr auto unsupported = ArrayContentsFailure::UnsupportedControlFlow;
+    if (state.loop || body == header || initial.size() != header->getNumArguments() ||
+        intoBody.size() != body->getNumArguments() ||
+        backedge.size() != header->getNumArguments()) {
+        return unsupported;
+    }
+    auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
+    auto negation = truthy ? truthy.getValue().getDefiningOp<ctjs::UnaryOp>() : ctjs::UnaryOp{};
+    auto compare = truthy ? (negation ? negation.getOperand() : truthy.getValue())
+                                .getDefiningOp<ctjs::CompareOp>()
+                          : ctjs::CompareOp{};
+    const auto forwardKind = negation ? ctjs::CompareKind::Ge : ctjs::CompareKind::Lt;
+    const auto reversedKind = negation ? ctjs::CompareKind::Le : ctjs::CompareKind::Gt;
+    if (!compare || (compare.getKind() != forwardKind && compare.getKind() != reversedKind) ||
+        (negation &&
+         (negation.getKind() != ctjs::UnaryKind::Not || negation->getBlock() != header)) ||
+        truthy->getBlock() != header || compare->getBlock() != header) {
+        return unsupported;
+    }
+    // Normalize only the proof operands. The original comparison and its
+    // evaluation order stay intact. Negated inclusive comparisons require
+    // both operands independently proved bounded Numbers below: NaN would
+    // invalidate !(index >= length) == (index < length).
+    const bool reversed = compare.getKind() == reversedKind;
+    auto index =
+        llvm::dyn_cast<mlir::BlockArgument>(reversed ? compare.getRhs() : compare.getLhs());
+    auto length =
+        (reversed ? compare.getLhs() : compare.getRhs()).getDefiningOp<ctjs::GetPropertyOp>();
+    const mlir::Value array = length ? length.getObject() : mlir::Value{};
+    auto carriedArray = llvm::dyn_cast_if_present<mlir::BlockArgument>(array);
+    auto directArray = array ? array.getDefiningOp<ctjs::CreateArrayOp>() : ctjs::CreateArrayOp{};
+    if (!index || index.getOwner() != header ||
+        (!(carriedArray && carriedArray.getOwner() == header) && !directArray) ||
+        length->getBlock() != header ||
+        ownObjectKey(length->getOperand(1)) !=
+            mlir::StringAttr::get(function.getContext(), "length")) {
+        return unsupported;
+    }
+    // Read actual/formal transport, not register numbers or source names.
+    const auto fromHeader = [&](mlir::Value value) -> mlir::Value {
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+        if (!argument || argument.getOwner() != body) { return {}; }
+        return intoBody[argument.getArgNumber()];
+    };
+    const auto unchanged = [&](mlir::Value value) {
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+        if (!argument || argument.getOwner() != header) { return true; }
+        const mlir::Value next = backedge[argument.getArgNumber()];
+        return next == value || fromHeader(next) == value;
+    };
+    const mlir::Value base = origin(array);
+    const auto * guardSite = base ? base.getDefiningOp() : nullptr;
+    auto invariantFailure = unsupported;
+    llvm::SmallDenseSet<std::size_t, 4> guardReloads;
+    const auto invariant = [&](auto && self, mlir::Value operand,
+                               unsigned depth) -> std::optional<ContentsValue> {
+        if (!spend()) {
+            invariantFailure = ArrayContentsFailure::WorkLimit;
+            return std::nullopt;
+        }
+        if (mlir::Value forwarded = fromHeader(operand)) { operand = forwarded; }
+        if (!unchanged(operand)) { return std::nullopt; }
+        auto literal = operand.getDefiningOp<ctjs::ConstantOp>();
+        if (literal) {
+            return ContentsValue{operand, llvm::isa<ctjs::StringAttr>(literal.getValue())
+                                              ? ContentsKind::String
+                                              : ContentsKind::Identity};
+        }
+        auto * definition = operand.getDefiningOp();
+        if (!definition || (definition->getBlock() != header && definition->getBlock() != body)) {
+            return held(operand);
+        }
+        // Every visited value spends the shared proof budget. Keep a stack
+        // ceiling; repeated reads need unchanged base and key identities.
+        if (depth == 64) { return std::nullopt; }
+        ContentsValue result{operand, ContentsKind::NonBigInt};
+        if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(definition)) {
+            const auto base = self(self, load.getObject(), depth + 1);
+            const auto key = self(self, load->getOperand(1), depth + 1);
+            if (!base || !key || !base->origin() || !key->origin()) { return std::nullopt; }
+            if (const auto string = boundedStringRead(*base, *key, operand)) { return string; }
+            const auto array = state.arrays.find(base->origin().getDefiningOp());
+            if (array == state.arrays.end()) { return std::nullopt; }
+            // The complete loop census below rejects effects and any writes
+            // when a proof operand depends on an element that could change.
+            // Replay still checks every own read and snapshots its value.
+            const auto name = ownObjectKey(key->origin());
+            if (name && name.getValue() == "length") {
+                if (array->second.size() > 4294967295ULL) { return std::nullopt; }
+                result.integerNumber = array->second.size();
+                return result;
+            }
+            const auto position = ownArrayIndex(*key);
+            if (!position || *position >= array->second.size()) { return std::nullopt; }
+            // Check every recursive read against the exact allocation, so
+            // a distinct outer array cannot hide a selected guard alias.
+            if (array->first == guardSite) { guardReloads.insert(*position); }
+            // Retaining the original element keeps primitive keys intact.
+            return array->second[*position];
+        } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
+            if (unary.getKind() != ctjs::UnaryKind::Plus &&
+                unary.getKind() != ctjs::UnaryKind::Neg &&
+                unary.getKind() != ctjs::UnaryKind::BitNot) {
+                return std::nullopt;
+            }
+            const auto input = self(self, unary.getOperand(), depth + 1);
+            if (!input) { return std::nullopt; }
+            if (unary.getKind() == ctjs::UnaryKind::BitNot) {
+                boundedNumberComplement(*input, result);
+            } else {
+                result.integerNumber = boundedConvertedNumber(*input);
+                if (!result.integerNumber) {
+                    result.negativeIntegerNumber = boundedConvertedNumber(*input, true);
+                }
+                if (unary.getKind() == ctjs::UnaryKind::Neg && result.integerNumber != 0) {
+                    std::swap(result.integerNumber, result.negativeIntegerNumber);
+                }
+            }
+        } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition);
+                   binary && (binary.getKind() == ctjs::BinaryKind::Add ||
+                              binary.getKind() == ctjs::BinaryKind::Sub ||
+                              binary.getKind() == ctjs::BinaryKind::Mul ||
+                              binary.getKind() == ctjs::BinaryKind::Div ||
+                              binary.getKind() == ctjs::BinaryKind::Mod ||
+                              binary.getKind() == ctjs::BinaryKind::Pow)) {
+            const auto left = self(self, binary.getLhs(), depth + 1);
+            const auto right = self(self, binary.getRhs(), depth + 1);
+            if (!left || !right) { return std::nullopt; }
+            if (binary.getKind() == ctjs::BinaryKind::Add) {
+                boundedNumberSum(*left, *right, result);
+            } else if (binary.getKind() == ctjs::BinaryKind::Sub) {
+                boundedNumberDifference(*left, *right, result);
+            } else if (binary.getKind() == ctjs::BinaryKind::Mul) {
+                boundedNumberProduct(*left, *right, result);
+            } else if (binary.getKind() == ctjs::BinaryKind::Pow) {
+                boundedNumberPower(*left, *right, result);
+            } else {
+                boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
+                                      result);
+            }
+        } else if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(definition)) {
+            const auto left = self(self, binary.getLhs(), depth + 1);
+            const auto right = self(self, binary.getRhs(), depth + 1);
+            if (!left || !right) { return std::nullopt; }
+            boundedNumberBitwise(*left, *right, binary.getKind(), result);
+        } else {
+            return std::nullopt;
+        }
+        return result;
+    };
+    auto * step = backedge[index.getArgNumber()].getDefiningOp();
+    auto dynamic = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step);
+    auto numeric = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step);
+    if ((!dynamic && !numeric) || step->getBlock() != body ||
+        (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
+        return unsupported;
+    }
+    const bool subtract = dynamic && dynamic.getKind() == ctjs::BinaryKind::Sub;
+    if (!subtract && (dynamic ? dynamic.getKind() : numeric.getKind()) != ctjs::BinaryKind::Add) {
+        return unsupported;
+    }
+    // Normalize only Add proof operands; subtraction requires index - stride.
+    // The original source order and exact Number requirements stay intact.
+    const unsigned indexOperand = subtract || fromHeader(step->getOperand(0)) == index ? 0U : 1U;
+    if (fromHeader(step->getOperand(indexOperand)) != index) { return unsupported; }
+    // A held positive step must survive every backedge unchanged. Read a body
+    // formal through its actual header operand before the body has executed.
+    // Add excludes String concatenation; Sub converts a bounded negative primitive.
+    const auto value = invariant(invariant, step->getOperand(1U - indexOperand), 0);
+    if (!value) { return invariantFailure; }
+    const auto stride =
+        subtract || !value->string() ? boundedConvertedNumber(*value, subtract) : std::nullopt;
+    if (!stride || *stride == 0) { return unsupported; }
+    // Initialization may be a saved length or an exact arithmetic result.
+    // The original input and its transported snapshot must independently
+    // supply the same bounded Number on this exact path.
+    std::optional<std::size_t> start;
+    for (mlir::Value value : {initial[index.getArgNumber()], mlir::Value{index}}) {
+        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+        const ContentsValue input = held(value);
+        const auto number =
+            input.integerNumber ? input.integerNumber : boundedNumber(input.origin());
+        if (!number || (start && start != number)) { return unsupported; }
+        start = number;
+    }
+    auto found = state.arrays.find(base ? base.getDefiningOp() : nullptr);
+    if (found == state.arrays.end() || found->second.size() > 4294967295ULL) { return unsupported; }
+    const std::size_t size = found->second.size();
+    const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
+    // ponytail: one header/body pair, with writes only to its current,
+    // invariant, Number-offset or exact-quotient own element. Other mutations
+    // need a termination proof.
+    // Primitive kinds and every element still pass the ordinary operation transfers.
+    llvm::SmallDenseSet<std::size_t, 4> guardStores;
+    struct StoreRange {
+        std::size_t first, last, stride;
+    };
+    llvm::SmallVector<StoreRange, 4> guardStoreRanges;
+    for (mlir::Block * block : {header, body}) {
+        for (mlir::Operation & operation : *block) {
+            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+            if (&operation == block->getTerminator()) { continue; }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                if (block != body) { return unsupported; }
+                if (fromHeader(store.getKey()) == index) {
+                    if (*start < size) { guardStoreRanges.push_back({*start, last, *stride}); }
+                } else {
+                    auto * expression = store.getKey().getDefiningOp();
+                    auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
+                    auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
+                    const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
+                    const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
+                    if (expression && expression->getBlock() == body &&
+                        (subtract || divide ||
+                         (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
+                         (addition && addition.getKind() == ctjs::BinaryKind::Add)) &&
+                        (fromHeader(expression->getOperand(0)) == index ||
+                         (!subtract && !divide &&
+                          fromHeader(expression->getOperand(1)) == index))) {
+                        const unsigned offsetOperand =
+                            fromHeader(expression->getOperand(0)) == index ? 1U : 0U;
+                        const auto offset =
+                            invariant(invariant, expression->getOperand(offsetOperand), 0);
+                        if (!offset) { return invariantFailure; }
+                        // Only exact Numbers: String Add concatenates, and
+                        // other primitive conversions need their own source proof.
+                        if (!offset->integerNumber && !offset->negativeIntegerNumber &&
+                            !boundedNumber(offset->origin()) &&
+                            !boundedNumber(offset->origin(), true)) {
+                            return unsupported;
+                        }
+                        StoreRange range{0, 0, *stride};
+                        if (divide) {
+                            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                            const auto divisor = boundedConvertedNumber(*offset);
+                            // Every visited quotient must be integral. Endpoints alone
+                            // would miss fractional intermediate property names.
+                            if (!divisor || *divisor == 0 || *start % *divisor != 0 ||
+                                *stride % *divisor != 0) {
+                                return unsupported;
+                            }
+                            range.stride /= *divisor;
+                        }
+                        for (auto [endpoint, position] :
+                             {std::pair{*start, &range.first}, std::pair{last, &range.last}}) {
+                            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                            ContentsValue result;
+                            const ContentsValue current{index, ContentsKind::NonBigInt, endpoint};
+                            if (divide) {
+                                boundedNumberDivision(current, *offset, false, result);
+                            } else if (subtract) {
+                                boundedNumberDifference(current, *offset, result);
+                            } else {
+                                boundedNumberSum(current, *offset, result);
+                            }
+                            if (*start < size) {
+                                if (!result.integerNumber || *result.integerNumber >= size) {
+                                    return unsupported;
+                                }
+                                *position = *result.integerNumber;
+                            }
+                        }
+                        if (*start < size) { guardStoreRanges.push_back(range); }
+                    } else {
+                        const auto key = invariant(invariant, store.getKey(), 0);
+                        if (!key) { return invariantFailure; }
+                        const auto position = ownArrayIndex(*key);
+                        if (!position || *position >= size) { return unsupported; }
+                        guardStores.insert(*position);
+                    }
+                }
+                // A saved or reloaded receiver must keep the same allocation
+                // across transport, without reading an overwritten element.
+                const auto receiver = invariant(invariant, store.getObject(), 0);
+                if (!receiver) { return invariantFailure; }
+                if (receiver->origin() != base) { return unsupported; }
+                continue;
+            }
+            if (!llvm::isa<ctjs::ConstantOp, ctjs::GetPropertyOp, ctjs::CompareOp, ctjs::TruthyOp,
+                           ctjs::UnaryOp, ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::ConvertOp,
+                           ctjs::RootOp>(&operation)) {
+                return unsupported;
+            }
+        }
+    }
+    // Check after every key and receiver was resolved: a later store can
+    // reveal a reload overlapping an earlier write. Each range carries the
+    // actual stride between its proved first/last own positions.
+    for (const auto position : guardReloads) {
+        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+        if (guardStores.contains(position)) { return unsupported; }
+        for (const auto & [first, last, writeStride] : guardStoreRanges) {
+            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+            if (position >= first && position <= last && (position - first) % writeStride == 0) {
+                return unsupported;
+            }
+        }
+    }
+    // SCF can eliminate an invariant array parameter. A direct allocation
+    // already executed on this exact path needs no backedge transport;
+    // the body census above still excludes repeated allocation and resizing.
+    if (directArray &&
+        (base != array || directArray->getBlock() == header || directArray->getBlock() == body)) {
+        return unsupported;
+    }
+    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+    // A zero-trip loop preserves its original index. Otherwise find the last
+    // visited index relative to the start, and bound its final update before
+    // addition; overshooting length must stay in the exact Number range.
+    std::size_t finalIndex = *start;
+    if (*start < size) {
+        if (*stride > 4294967295ULL - last) { return unsupported; }
+        finalIndex = last + *stride;
+    }
+    state.loop = CountedLoop{header, body, index, array, found->first, size, finalIndex};
+    return ArrayContentsFailure::None;
+}
+ArrayContentsFailure LoopProof::cfgCountedLoop(mlir::cf::CondBranchOp branch,
+                                               mlir::cf::BranchOp latch) {
+    constexpr auto unsupported = ArrayContentsFailure::UnsupportedControlFlow;
+    mlir::Block * header = branch->getBlock();
+    mlir::Block * body = branch.getTrueDest();
+    if (branch.getFalseDest() == header || branch.getFalseDest() == body ||
+        body->getParent() != &function.getBody()) {
+        return unsupported;
+    }
+    mlir::Block * entry = nullptr;
+    unsigned predecessors = 0;
+    for (mlir::Block * predecessor : header->getPredecessors()) {
+        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+        ++predecessors;
+        if (predecessor != body) { entry = predecessor; }
+    }
+    if (predecessors != 2 || entry == nullptr) { return unsupported; }
+    predecessors = 0;
+    for (mlir::Block * predecessor : body->getPredecessors()) {
+        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+        if (predecessor != header) { return unsupported; }
+        ++predecessors;
+    }
+    if (predecessors != 1) { return unsupported; }
+    auto incoming = llvm::dyn_cast<mlir::cf::BranchOp>(entry->getTerminator());
+    if (!incoming || incoming.getDest() != header) { return unsupported; }
+    return countedLoop(header, body, incoming.getDestOperands(), branch.getCondition(),
+                       branch.getTrueDestOperands(), latch.getDestOperands());
+}
+std::optional<bool> LoopProof::loopContinues() {
+    const CountedLoop & loop = *state.loop;
+    const ContentsValue index = held(loop.index);
+    const auto number = index.integerNumber ? index.integerNumber : boundedNumber(index.origin());
+    const mlir::Value base = origin(loop.array);
+    if (!number || *number > loop.finalIndex || !base || base.getDefiningOp() != loop.site) {
+        return std::nullopt;
+    }
+    return *number < loop.length;
+}
+
+} // namespace ctcompile::ctnative::escape_detail

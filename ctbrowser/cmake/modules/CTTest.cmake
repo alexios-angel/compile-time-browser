@@ -72,14 +72,16 @@ function(ctbrowser_test path)
       target_link_libraries(ctbrowser-test-${name} PRIVATE dbghelp)
     endif()
   endif()
-  target_link_libraries(ctbrowser-test-${name} PRIVATE ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
+  # Shared test headers precede engine headers, preserving their include lookup order.
+  target_link_libraries(ctbrowser-test-${name} PRIVATE ctbrowser-test-support ctbrowser::core ctbrowser::dom ctbrowser::script ctbrowser::style ctbrowser::layout ctbrowser::paint ctbrowser::raster ctbrowser::shell ctbrowser::ctbrowser)
   ctbrowser_target(ctbrowser-test-${name})
+  # Keep support first even when a test adds direct reference-parser includes.
+  # The directory remains owned by the support target.
+  target_include_directories(ctbrowser-test-${name} BEFORE PRIVATE
+    "$<TARGET_PROPERTY:ctbrowser-test-support,INTERFACE_INCLUDE_DIRECTORIES>")
   # -g, so a test that dies without reporting a failure says WHERE: cpptrace
   # names nothing without debug info. Tests are not shipped, so the size is free.
   target_compile_options(ctbrowser-test-${name} PRIVATE -g)
-  # ONE support directory for all three trees, named absolutely: a unittest
-  # says #include "check.hpp" from a different directory than a corpus test.
-  target_include_directories(ctbrowser-test-${name} PRIVATE "${CTBROWSER_TEST_SUPPORT_DIR}")
   add_dependencies(ctbrowser-tests ctbrowser-test-${name})
   # The source root, so goldens and other project-relative paths resolve.
   add_test(NAME ${name} COMMAND ctbrowser-test-${name}

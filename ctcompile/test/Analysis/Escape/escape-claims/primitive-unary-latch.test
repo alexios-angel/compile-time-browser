@@ -1,0 +1,97 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name primitive-unary-latch
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-primitive-unary-latch.claims
+
+// Original unary literal conversions occur inside the latch. Returned children
+// still escape; zero, noncanonical and original property-key controls stay strict.
+// IMPORT-LABEL: ctjs.func @booleanPlus$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @booleanNeg$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @stringPlus$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @stringNeg$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @negativeStringNeg$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @zero$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @noncanonical$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @originalKey$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function booleanPlus() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += +true) saved = array[i];
+    return 0;
+}
+function booleanNeg() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= -true) saved = array[i];
+    return 0;
+}
+function stringPlus() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += +'1') saved = array[i];
+    return 0;
+}
+function stringNeg() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= -'1') saved = array[i];
+    return saved;
+}
+function negativeStringNeg() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += -'-1') saved = array[i];
+    return 0;
+}
+function zero() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 1; i < array.length; i += +null) saved = array[i];
+    return 0;
+}
+function noncanonical() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += +'01') saved = array[i];
+    return 0;
+}
+function originalKey() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += +true) saved = array[i];
+    return array[true];
+}
+booleanPlus();
+booleanNeg();
+stringPlus();
+var heldstringNeg = stringNeg();
+negativeStringNeg();
+zero();
+noncanonical();
+var heldoriginalKey = originalKey();

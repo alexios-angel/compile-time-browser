@@ -1,0 +1,3 @@
+selection/bidi/modify-extend-by-character.html	HARNESS_ERROR
+selection/bidi/modify-move-by-character.html	HARNESS_ERROR
+selection/bidi/modify.tentative.html	HARNESS_ERROR

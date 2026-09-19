@@ -21,9 +21,20 @@ import re
 import sys
 from pathlib import Path
 
+
+def table_text(path):
+    text = path.read_text()
+    return re.sub(
+        r'^#include "([^\"]+)"$',
+        lambda match: table_text(path.parent / match[1]),
+        text,
+        flags=re.M,
+    )
+
+
 definition, root = Path(sys.argv[1]), Path(sys.argv[2]) / "ctbrowser"
 citations = sorted(
-    set(re.findall(r"[A-Za-z_0-9]+\.(?:cpp|hpp|def|h):[0-9]+", definition.read_text()))
+    set(re.findall(r"[A-Za-z_0-9]+\.(?:cpp|hpp|def|h):[0-9]+", table_text(definition)))
 )
 wanted = {citation.rsplit(":", 1)[0] for citation in citations}
 files = {}  # one walk of the tree, indexed by basename

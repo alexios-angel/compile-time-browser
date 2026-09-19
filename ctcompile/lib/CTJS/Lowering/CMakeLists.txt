@@ -2,22 +2,10 @@
 # hand-written C++ and generates nothing.
 add_library(ctcompile-ctjs-lowering
   CTJSToEmitC.cpp
-  EmitC/Module.cpp
-  EmitC/Functions.cpp
-  EmitC/Status.cpp
-  EmitC/Values.cpp
-  EmitC/RuntimeOps.cpp
-  EmitC/Operations.cpp
-  EmitC/Roots.cpp
-  EmitC/Constants.cpp
-  EmitC/Support.cpp
-  EmitC/Admission.cpp
   DropUncompiled.cpp
   EmitCBlockArguments.cpp
   LiftToSCF.cpp
-  ResolveGlobals.cpp
-  Globals/RegisterFlow.cpp
-  Globals/Effects.cpp)
+  ResolveGlobals.cpp)
 ctcompile_target(ctcompile-ctjs-lowering)
 add_dependencies(ctcompile-ctjs-lowering MLIRCTJSOpsIncGen CTJSTransformsPassIncGen)
 
@@ -36,3 +24,6 @@ target_link_libraries(ctcompile-ctjs-lowering
     MLIRTransforms)
 
 add_library(ctcompile::ctjs-lowering ALIAS ctcompile-ctjs-lowering)
+
+add_subdirectory(EmitC)
+add_subdirectory(Globals)

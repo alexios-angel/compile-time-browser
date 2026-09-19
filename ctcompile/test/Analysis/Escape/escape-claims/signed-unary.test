@@ -4,7 +4,7 @@
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-unary.claims
 
 // Plus preserves a held negative Number; a second Neg restores its magnitude.
-// Saved values survive source mutation. Coercible String inputs prove neither.
+// Saved values survive source mutation; canonical decimal Strings convert exactly.
 // IMPORT-LABEL: ctjs.func @plusReleased$
 // IMPORT: ctjs.unary neg
 // IMPORT: ctjs.unary plus
@@ -39,10 +39,21 @@
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
+
+// IMPORT-LABEL: ctjs.func @stringReturned$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @noncanonicalPlus$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.unary plus
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
 
 //--- source.js
 function plusReleased() {
@@ -97,9 +108,27 @@ function coercibleNeg() {
     }
     return 0;
 }
+function stringReturned() {
+    var child = {}, array = [child, child, child], saved = 0, magnitude = "2";
+    var negative = -magnitude, step = +negative;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function noncanonicalPlus() {
+    var child = {}, array = [child, child, child], saved = 0, magnitude = "02";
+    var negative = -magnitude, step = +negative;
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
 plusReleased();
 var plusRetained = plusReturned();
 doubleNegReleased();
 var doubleNegRetained = doubleNegReturned();
 coerciblePlus();
 coercibleNeg();
+var stringRetained = stringReturned();
+noncanonicalPlus();

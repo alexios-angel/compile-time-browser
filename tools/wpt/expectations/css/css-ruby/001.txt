@@ -1,0 +1,26 @@
+css/css-ruby/inheritance.html	FAIL
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-align has initial value space-around"
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-align inherits"
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-merge has initial value separate"
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-merge inherits"
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-overhang has initial value auto"
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-overhang inherits"
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-position has initial value alternate"
+css/css-ruby/inheritance.html	SUBTEST	FAIL	"Property ruby-position inherits"
+css/css-ruby/parsing/ruby-align-valid.html	FAIL
+css/css-ruby/parsing/ruby-align-valid.html	SUBTEST	FAIL	"e.style['ruby-align'] = \"center\" should set the property value"
+css/css-ruby/parsing/ruby-align-valid.html	SUBTEST	FAIL	"e.style['ruby-align'] = \"space-around\" should set the property value"
+css/css-ruby/parsing/ruby-align-valid.html	SUBTEST	FAIL	"e.style['ruby-align'] = \"space-between\" should set the property value"
+css/css-ruby/parsing/ruby-align-valid.html	SUBTEST	FAIL	"e.style['ruby-align'] = \"start\" should set the property value"
+css/css-ruby/parsing/ruby-merge-valid.html	FAIL
+css/css-ruby/parsing/ruby-merge-valid.html	SUBTEST	FAIL	"e.style['ruby-merge'] = \"auto\" should set the property value"
+css/css-ruby/parsing/ruby-merge-valid.html	SUBTEST	FAIL	"e.style['ruby-merge'] = \"merge\" should set the property value"
+css/css-ruby/parsing/ruby-merge-valid.html	SUBTEST	FAIL	"e.style['ruby-merge'] = \"separate\" should set the property value"
+css/css-ruby/parsing/ruby-overhang-valid.html	FAIL
+css/css-ruby/parsing/ruby-overhang-valid.html	SUBTEST	FAIL	"e.style['ruby-overhang'] = \"auto\" should set the property value"
+css/css-ruby/parsing/ruby-overhang-valid.html	SUBTEST	FAIL	"e.style['ruby-overhang'] = \"none\" should set the property value"
+css/css-ruby/parsing/ruby-overhang-valid.html	SUBTEST	FAIL	"e.style['ruby-overhang'] = \"spaces\" should set the property value"
+css/css-ruby/parsing/ruby-position-valid.html	FAIL
+css/css-ruby/parsing/ruby-position-valid.html	SUBTEST	FAIL	"e.style['ruby-position'] = \"inter-character\" should set the property value"
+css/css-ruby/parsing/ruby-position-valid.html	SUBTEST	FAIL	"e.style['ruby-position'] = \"over\" should set the property value"
+css/css-ruby/parsing/ruby-position-valid.html	SUBTEST	FAIL	"e.style['ruby-position'] = \"under\" should set the property value"

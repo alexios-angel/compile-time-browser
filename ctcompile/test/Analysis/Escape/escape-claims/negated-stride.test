@@ -4,7 +4,7 @@
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-negated-stride.claims
 
 // The source keeps its computed Neg and Sub. Saved magnitudes retain the
-// original Number value; coercible String input supplies no bounded fact.
+// original value; canonical String Neg supplies its exact bounded Number result.
 // IMPORT-LABEL: ctjs.func @released$
 // IMPORT: ctjs.unary neg
 // IMPORT: ctjs.binary sub
@@ -30,8 +30,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
 
 //--- source.js
 function released() {

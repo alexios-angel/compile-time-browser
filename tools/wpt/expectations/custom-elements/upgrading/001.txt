@@ -1,0 +1,15 @@
+custom-elements/upgrading/Node-cloneNode-customized-builtins.html	FAIL
+custom-elements/upgrading/Node-cloneNode-customized-builtins.html	SUBTEST	FAIL	"Node.prototype.cloneNode(false) must be able to clone as a customized built-in element when it has an inconsistent \"is\" attribute"
+custom-elements/upgrading/Node-cloneNode.html	FAIL
+custom-elements/upgrading/Node-cloneNode.html	SUBTEST	FAIL	"HTMLElement constructor must throw an TypeError when the top of the construction stack is marked AlreadyConstructed due to a custom element constructor constructing itself after super() call"
+custom-elements/upgrading/Node-cloneNode.html	SUBTEST	FAIL	"HTMLElement constructor must throw an TypeError when the top of the construction stack is marked AlreadyConstructed due to a custom element constructor constructing itself before super() call"
+custom-elements/upgrading/Node-cloneNode.html	SUBTEST	FAIL	"Inserting an element must not try to upgrade a custom element when it had already failed to upgrade once"
+custom-elements/upgrading/Node-cloneNode.html	SUBTEST	FAIL	"Node.prototype.cloneNode(false) must be able to clone a custom element"
+custom-elements/upgrading/Node-cloneNode.html	SUBTEST	FAIL	"Node.prototype.cloneNode(false) must be able to clone as a autonomous custom element when it contains is attribute"
+custom-elements/upgrading/Node-cloneNode.html	SUBTEST	FAIL	"Upgrading a custom element must throw TypeError when the custom element's constructor returns another element"
+custom-elements/upgrading/upgrading-parser-created-element.html	FAIL
+custom-elements/upgrading/upgrading-parser-created-element.html	SUBTEST	FAIL	"HTMLElement constructor must throw an TypeError when the top of the construction stack is marked AlreadyConstructed due to a custom element constructor constructing itself after super() call"
+custom-elements/upgrading/upgrading-parser-created-element.html	SUBTEST	FAIL	"HTMLElement constructor must throw an TypeError when the top of the construction stack is marked AlreadyConstructed due to a custom element constructor constructing itself before super() call"
+custom-elements/upgrading/upgrading-parser-created-element.html	SUBTEST	FAIL	"Upgrading a custom element must throw an TypeError when the returned element is not SameValue as the upgraded element"
+custom-elements/upgrading/upgrading-parser-created-element.html	SUBTEST	FAIL	"Upgrading a custom element whose constructor returns a Text node must throw"
+custom-elements/upgrading/upgrading-parser-created-element.html	SUBTEST	FAIL	"Upgrading a custom element whose constructor returns an Element must throw"

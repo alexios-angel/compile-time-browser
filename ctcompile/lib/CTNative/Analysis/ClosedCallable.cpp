@@ -3,6 +3,167 @@
 
 namespace ctcompile::ctnative {
 
+static llvm::Expected<CallableObject> analyzeCallableObject(
+    ctjs::CreateObjectOp object, ctjs::StoreGlobalOp publication, llvm::function_ref<bool()> spend,
+    llvm::function_ref<llvm::SmallVector<mlir::OpOperand *>(mlir::Value)> projectedUses = {}) {
+    const auto error = [](llvm::StringRef message) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
+    };
+    CallableObject result;
+    if (publication) {
+        auto entry = publication->getParentOfType<ctjs::FuncOp>();
+        if (!entry || functionIndex(entry) != 0 || !llvm::hasSingleElement(entry.getBody()) ||
+            publication->getBlock() != &entry.getBody().front() ||
+            object->getBlock() != publication->getBlock() ||
+            !object->isBeforeInBlock(publication)) {
+            return error("global callable holder requires unconditional entry publication");
+        }
+        // ponytail: require an inert entry prefix; widen with a complete caller
+        // graph if holders must be initialized after source calls. With no
+        // reentry here, even transitive calls in other functions follow publication.
+        for (mlir::Operation & op : entry.getBody().front()) {
+            if (!spend()) { return error("DOM helper work budget exhausted"); }
+            if (&op == publication.getOperation()) { break; }
+            if (llvm::isa<ctjs::FrameEnterOp, ctjs::ConstantOp, ctjs::CreateClosureOp,
+                          ctjs::StoreGlobalOp, ctjs::CreateObjectOp, ctjs::RootOp>(op)) {
+                continue;
+            }
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            auto made = store ? store.getObject().getDefiningOp<ctjs::CreateObjectOp>()
+                              : ctjs::CreateObjectOp{};
+            if (!made || made->getBlock() != publication->getBlock() ||
+                !made->isBeforeInBlock(store) || !ctjs::ordinaryKey(store.getKey())) {
+                return error("global callable holder publication follows a possible source call");
+            }
+        }
+        unsigned publications = 0;
+        auto walked =
+            publication->getParentOfType<mlir::ModuleOp>().walk([&](mlir::Operation * op) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
+                    store && store.getName() == publication.getName()) {
+                    ++publications;
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+                    load && load.getName() == publication.getName()) {
+                    result.loads.push_back(load);
+                }
+                return mlir::WalkResult::advance();
+            });
+        if (walked.wasInterrupted()) { return error("DOM helper work budget exhausted"); }
+        if (publications != 1) { return error("global callable holder binding is replaced"); }
+        for (ctjs::LoadGlobalOp load : result.loads) {
+            if (!spend()) { return error("DOM helper work budget exhausted"); }
+            if (load->getParentOfType<ctjs::FuncOp>() == entry) {
+                auto * anchor = load.getOperation();
+                while (anchor->getParentOp() != entry) {
+                    if (!spend()) { return error("DOM helper work budget exhausted"); }
+                    anchor = anchor->getParentOp();
+                }
+                if (!publication->isBeforeInBlock(anchor)) {
+                    return error("global callable holder load precedes publication");
+                }
+            }
+        }
+    }
+    llvm::DenseMap<mlir::Attribute, ctjs::SetPropertyOp> slots;
+    llvm::SmallVector<ctjs::GetPropertyOp> reads;
+    const auto key = [](mlir::Value value) {
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
+                        : ctjs::StringAttr{};
+    };
+    // Callers prove standard Object.prototype and exclude prototype mutation,
+    // unknown calls and script reentry. Only __proto__ has an inherited setter.
+    llvm::SmallVector<mlir::Value> aliases{object.getResult()};
+    for (ctjs::LoadGlobalOp load : result.loads) { aliases.push_back(load.getResult()); }
+    for (mlir::Value value : aliases) {
+        llvm::SmallVector<mlir::OpOperand *> uses;
+        if (projectedUses) {
+            uses = projectedUses(value);
+        } else {
+            for (mlir::OpOperand & use : value.getUses()) {
+                if (!spend()) { return error("DOM helper work budget exhausted"); }
+                uses.push_back(&use);
+            }
+        }
+        for (mlir::OpOperand * operand : uses) {
+            auto & use = *operand;
+            auto alias = use.get();
+            if (!spend()) { return error("DOM helper work budget exhausted"); }
+            auto * operation = use.getOwner();
+            auto * definition = alias.getDefiningOp();
+            if (operation->getBlock() != definition->getBlock() ||
+                !definition->isBeforeInBlock(operation)) {
+                return error("DOM helper object has nonlocal or unordered uses");
+            }
+            if (llvm::isa<ctjs::RootOp>(operation)) { continue; }
+            if (publication && operation == publication && alias == object.getResult()) {
+                continue;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                auto name = key(store.getKey());
+                auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+                if (alias != object.getResult() ||
+                    (publication && !store->isBeforeInBlock(publication)) ||
+                    use.getOperandNumber() != 0 || !name || name.getValue() == "__proto__" ||
+                    !closure || closure->getBlock() != object->getBlock() ||
+                    !closure->isBeforeInBlock(store) || !slots.try_emplace(name, store).second) {
+                    return error("DOM helper object requires unique own callable slots");
+                }
+            } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                       read && use.getOperandNumber() == 0) {
+                reads.push_back(read);
+            } else {
+                auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                mlir::Value callee;
+                if (call && use.getOperandNumber() == 1) { callee = call.getCallee(); }
+                if (direct && use.getOperandNumber() == 0) { callee = direct.getCalleeValue(); }
+                auto methodRead =
+                    callee ? callee.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+                if (!methodRead || methodRead.getObject() != alias ||
+                    methodRead->getBlock() != definition->getBlock() ||
+                    !methodRead->isBeforeInBlock(operation)) {
+                    return error("DOM helper object escapes or observes its identity");
+                }
+                result.calls.push_back(operation);
+            }
+        }
+    }
+    if (slots.empty()) { return error("DOM helper object has no callable slots"); }
+    for (ctjs::GetPropertyOp read : reads) {
+        if (!spend()) { return error("DOM helper work budget exhausted"); }
+        auto name = key(read.getKey());
+        auto store = name ? slots.lookup(name) : ctjs::SetPropertyOp{};
+        if (!store || (read.getObject() == object.getResult() && !store->isBeforeInBlock(read))) {
+            return error("DOM helper object read lacks a preceding own callable slot");
+        }
+        result.reads.emplace_back(read, store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+    }
+    for (auto [name, store] : slots) {
+        (void)name;
+        result.stores.push_back(store);
+    }
+    return result;
+}
+
+llvm::Expected<CallableObject> analyzeLocalCallableObject(
+    ctjs::CreateObjectOp object, llvm::function_ref<bool()> spend,
+    llvm::function_ref<llvm::SmallVector<mlir::OpOperand *>(mlir::Value)> uses) {
+    return analyzeCallableObject(object, {}, spend, uses);
+}
+
+llvm::Expected<CallableObject> analyzeGlobalCallableObject(ctjs::StoreGlobalOp publication,
+                                                           llvm::function_ref<bool()> spend) {
+    auto object = publication.getValue().getDefiningOp<ctjs::CreateObjectOp>();
+    if (!object) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       "global callable holder is not a fresh object");
+    }
+    return analyzeCallableObject(object, publication, spend);
+}
+
 bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
     if (!direct || use.getOperandNumber() != 2) { return false; }

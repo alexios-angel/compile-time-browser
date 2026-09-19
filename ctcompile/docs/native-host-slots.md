@@ -1,5 +1,56 @@
 # Checked host roots and publication-slot flow
 
+## Dynamic String replacement proof, 2026-09-19 UTC
+
+**84b3357a** retains original Bootstrap F callbacks for proved dynamic String
+inputs. Both DOM providers require initial String/RegExp authority, exact
+`/[A-Z]/g`, the entire original callback, matching receivers/enclosures and a
+complete invocation census. Emitted C++ uses ordinary String owners and public
+Core lowercase. Three refreshed-fingerprint forgeries per provider cover callback
+enclosure, replacement receiver and lowercase receiver; eight transaction controls
+per provider cover publication and unchanged source/contract on refusal.
+
+Temporary iterator prefixes remove only callbacks without numeric or symbolic
+uses there. The original candidate retains every body for final proof. No browser
+or Script behavior changed. Focused transaction **1/1 (4.51s)**, host **1/1 (0.48s
+total)**, class DOM **1/1 (251.87s; 584 observations/eight executions/4,446 refusals)**
+and RegExp **1/1 (12.93s; 24 observations/four executions/169 checks)** pass.
+Commands, baseline formatting, failures and skipped broad coverage are in HANDOFF.
+
+Original full H still refuses at the unused helper-body proof. Independent
+parameterized H-body proof remains before publication; dynamic F grants no facts
+about unknown parameters and does not permit erasing unproved siblings.
+
+## Known matching replacement inputs, 2026-09-19 UTC
+
+**5b01f648** finishes the interrupted 08:55 F fixtures abandoned at 08:58:27.
+Known matching inputs to original Bootstrap F now retain the full all-call input
+census and prove the entire `'-' + t.toLowerCase()` callback. Only `/[A-Z]/g`
+matching is added; public Core `ascii_lower` computes constant outputs, with
+ordinary String comparisons selecting the proved result. Non-ASCII bytes stay
+unchanged. Unknown inputs, changed callbacks, captures/effects and intrinsic
+mutation still refuse. All 388 prior class bodies, 17 raw C++ JS bodies and 49
+standalone RegExp refusal bodies stay intact; 11 matching standalone bodies now
+have return-value and attribute-state differential checks.
+
+Focused transaction **1/1 (4.48s total)**, host contract **1/1 (0.47s)**,
+class DOM **1/1 (245.16s; 568 observations, eight executions, 4,290 refusals)**,
+new RegExp-only lit **1/1 (12.95s; 24 observations, four executions, 169 checks)**.
+All ten native/escape hashes match; emitted C++ and Script exclusions pass.
+Formatting retains 26 baseline diagnostics/nine unchanged files; changed checks
+pass. Parallel **da3602e3** finishes bounded ASCII String-index escape snapshots.
+Exact commands, initial expectation/harness failures and skipped coverage are in
+HANDOFF and `/tmp/ctcompile-h-0903/`; full suites/broad matrices were skipped.
+
+**Next:** original `class_filter_full_h` still refuses at the DOM class-method
+proof's `DOM direct helper contains an unproved closure or capture` (fresh probe).
+Unused parameterized H slots still pass unknown keys to F; dynamic String
+replacement and independent original H-body proof remain before publication.
+Do not insert calls or delete unproved siblings. Object definitions, W operations,
+nested iterators, complex completion and the application driver remain. No
+browser/Script behavior changed and no whole-Bootstrap gain is claimed.
+
+
 `ctnative-host-contract` implements the first proof boundary proposed by
 [the Bootstrap host contract](native-bootstrap-host-contract.md). It is an
 opt-in analysis pass. It does not change runtime operations, native admission,
@@ -40,7 +91,18 @@ authorize the complete slot query when another obligation fails.
 class-descriptor initialization helper. This is an explicit initial identity,
 not an exemption based on a global's spelling. Source replacement and escaping
 uses still fail validation. The other host analyses do not interpret its effects.
-It also accepts `Error` for construction with one literal string and the exact
+
+The declarations also accept `__ctbrowser_class_heritage` (three arguments),
+`__ctbrowser_bind_this` (one), `__ctbrowser_init_fields` (two), and
+`__ctbrowser_super_get` (three). Their identities may only reach direct calls
+with an undefined receiver and that exact arity. Source replacement, reflection,
+and passing the helper itself still refuse. Argument values, heritage, receiver
+rebinding, fields and super lookup need separate semantic proofs. Class preparation
+can consume ordered local heritage and its proved explicit-super initialization;
+other helper uses remain unsupported. Declaring an identity alone authorizes
+neither execution nor deletion.
+
+`initial_intrinsics` also accepts `Error` for construction with one literal string and the exact
 same constructor/new-target identity. This declares no general exception or
 payload representation support.
 
@@ -49,8 +111,14 @@ Prepare source with `ctjs-resolve-globals` and `ctjs-lift-to-scf`, fingerprint
 the resulting module, and bind a `closed-source-v1` manifest with
 `initial_intrinsics: ["__ctbrowser_class_defined"]`, empty absent/undefined
 bindings, and no realm receiver declaration. Existing roots/observations remain
-declarations; this pass grants no publication or ownership proof.
+declarations; a global callable holder requested by either cannot be removed.
+This pass grants no publication or ownership proof.
 The manifest may additionally declare `Error` for a local throwing static getter.
+It may select an explicit imported function when the script is its proved inert
+declaration wrapper. Every explicit parameter must be unused; the receiver,
+new.target and callee identity remain unobserved except for creating local
+closures. The wrapper and publication remain intact. This permits class
+preparation for a library entry, but adds no DOM provider or parameter authority.
 
 ```sh
 ctjs-opt prepared.mlir \
@@ -59,13 +127,21 @@ ctjs-opt prepared.mlir \
 ```
 
 The bounded census admits local base constructors and fresh prototypes with
-unique ordinary methods. Methods have no captures, identity or lexical-home
-observations; their receivers read/write ordinary fields or call another proved
-method on that same receiver. Method reads must be used only as direct callees;
+unique ordinary methods. Methods may capture their own fixed local constructor
+solely for proved static-getter reads. Other identity and lexical-home observations
+refuse; receivers read/write ordinary fields or call another proved method on
+that same receiver. Method reads must be used only as direct callees;
 passing or returning the receiver and observing a method identity still refuse.
 Every instance method read must feed its own receiver call. Constructors may call
 those immutable methods on the same receiver and must return a primitive constant
 when methods exist. Method writes and replacement return objects remain excluded.
+Explicit-super chains select the nearest ordinary method definition for each
+constructed leaf. Every ancestor body, including shadowed methods, retains the
+complete receiver and effect census. Only afterwards may an unused base or
+shadowed callable disappear, with both callable and symbol uses checked first.
+Separate receiver origins must still agree on each method-call target; differing
+leaf overrides can therefore remain a native refusal. Calls after a derived
+constructor's own `super()` and lexical-super method selection need further proof.
 Methods may contain structured `if`, `for` and `while` regions, including lifted
 break/continue/return dispatch and static numeric increment/decrement counters.
 Native admission independently requires Number counter operands. Ordinary methods
@@ -78,7 +154,7 @@ iterator or native completion authority. Outer switch/throw exits remain for
 native lowering to prove. Mutual method calls use the same proof. Constructors,
 class setup and static getter expansion remain linear with one outer block.
 Every call stays within the supplied source; unresolved bindings, dynamic keys,
-reflection, captured functions and other nested regions fail closed.
+reflection, other captured values and unchecked nested regions fail closed.
 
 Parameterized local helpers use the same complete effect census. Every direct
 call rechecks its source closure and target, with unused receiver and new.target.
@@ -89,6 +165,301 @@ keys are accepted without granting native field/index representation. An arrow m
 capture an unused lexical `this`; observing it still refuses. This supplies no
 authority for unresolved browser calls, helper replacement or ambient effects
 inside an uncalled helper.
+
+Fresh local callable holders use the same identity/order proof as DOM source
+preparation. Each slot has one preceding closure store; reads may only call that
+slot on its original holder. Class preparation additionally requires ordinary
+keys, one closure storage use and unobserved receiver, new.target and callee.
+Every slot body, including unused slots, keeps the complete effect census.
+Holder calls are proved before their enclosing direct callers, whose lexical
+receiver may be saved by an unused-this arrow. Holder operations stay intact for
+normal closure lowering.
+
+For typed DOM preparation, each direct sibling's complete String-argument
+census runs before expansion reaches their shared callees. This admits original
+H/M/F with all four H slots invoked from the entry, including distinct literal
+keys. Dynamic F inputs require proved Strings and the original exact callback;
+unused slots still need independent body proof. Complete H also works inside
+instance methods when every slot has actual calls. Closure lifting separately
+excludes writes whose receiver is a direct fresh allocation distinct from the
+prototype or constructed instance; unknown aliases and formals still count.
+Constructor-stored DOM fields and fixed fresh-result aliases retain their original
+receiver proofs. Uncalled, uncaptured conditional bodies prove independently:
+literals, identity returns, typeof/Not/Void, strict equality and truth tests need
+no parameter facts. Every arm is checked, including discarded values and
+constant-dead arms. The completion normalizer proves every original early-return
+path before this census; inactive poison is never treated as a value.
+
+Local cells may retain and change arbitrary values. Their identities can only be
+rooted, read or written directly in the same function; every read's consumers
+still need the complete body proof. Uncalled nested declarations require unique,
+uncaptured closure identities, root-only uses, no symbol references and the same
+recursive body proof. Neither rule supplies parameter types. Original dominance,
+completion, frame, depth, work and implicit-argument checks remain. A slot retired
+by class lifting additionally requires no remaining numeric closure or symbol use.
+Invoked or escaping children, coercions, properties, captures and loops still
+refuse. Standalone helper declarations retain class initialization's separate
+census; the local-holder path reaches this shared DOM proof.
+
+The unchanged `class_filter_full_h` still needs the complete fresh-result,
+iterator and callback proof in original `H.getDataAttributes`. Its unknown `t`
+has no DOM authority; unused setters likewise lack actual calls establishing
+DOM receivers and String keys. A property name cannot supply that authority:
+an unknown object could expose arbitrary JavaScript there. Dynamic F already
+works for proved Strings. Further inert operators cannot discharge this missing
+operand proof. Do not insert calls or erase unproved sibling bodies.
+
+Global callable holders additionally require a unique publication from the closed
+script entry, after every fixed callable slot is initialized. Before publication,
+only constants, closure/object creation, ordinary stores to fresh objects, global
+stores and inert frame/root operations are permitted. The provider makes global
+stores ordinary own-data writes; this prefix cannot invoke source code, so reads
+through subsequent calls also follow publication. All binding writes and uses of
+every global load are checked. Earlier calls, even unrelated ones, remain outside
+this bounded proof; widening requires a complete caller-order analysis. The global
+holder must also be absent from the manifest's roots and observations. After
+all checks, capture-free helpers with unused receiver, new.target and callee
+become direct calls at their original positions. Missing arguments are padded
+with undefined; surplus arguments remain outside this bounded rule. Ordinary
+argument evaluation and helper effects remain in order. Recorded loads and
+property reads follow private method clones through dispatch normalization.
+
+Only then are the holder's slots, global publication, loads and closures removed.
+Unused helper definitions are removed after all holders have been expanded and
+both module and body symbol scans find no references. No global object carrier is
+needed. Normal native admission must still prove each direct function; this
+preparation supplies neither ownership nor DOM effect authority. DOM composition
+uses the separate transaction described below.
+
+`HostContract/prepareDOMEntry` owns the DOM preparation transaction: class
+initialization, URI completion, source helper expansion, element guards, iteration, wrapper and
+optional-force normalization, then complete source reproof. It publishes the
+normalized module and refreshed contract together; refusal preserves both.
+`LowerToEmitC` calls that shared seam. It grants no ownership authority.
+DOM helper expansion also accepts already normalized direct calls to exact private
+capture-free targets with no live closure creation, exact arity and undefined
+callee/new.target. It binds the actual receiver separately at each call. Receiver
+observations on this route survive into complete DOM reproof. Exact String
+arguments are collected from every symbol caller before specialization; unknown
+inputs invalidate the whole formal. Original nested closure identities are checked
+before the existing no-match replacement proof runs. A surviving closure needs
+the confined filter-callback proof described below; other closures/captures,
+callee/new.target observations, recursion and unvisited source functions refuse.
+Existing live closure and lexical receiver rules remain unchanged.
+This normalization supplies no constructor/prototype or class-provider proof.
+
+After direct receiver expansion, fresh confined objects with initialized ordinary
+constant-key fields forward each read's source-position value. Every object use
+must be an ordered root/read/write. Roots and writes stay in the original block;
+reads may occur inside a later structured branch or loop. Those regions cannot
+write the object, so reads retain the enclosing operation's field snapshot.
+Aliases that escape, identity observations, self-stores, missing writes,
+reserved/dynamic keys and conditional field writes remain outside this rule.
+Field operations and the allocation disappear while
+all value producers remain for complete DOM reproof. This also carries element
+fields as ordinary borrowed DOM operands. Empty String keys remain valid.
+Objects passed to live closures still reach holder classification before their
+calls expand; JSON aggregate behavior is unchanged.
+
+Class/DOM composition now reuses the complete original class proof in that private
+transaction. The public class pass remains closed-source-only with unused entry
+parameters. A DOM request may supply `__ctbrowser_class_defined` and optional
+unique `Error` alongside existing DOM intrinsic declarations. It may also declare
+the four heritage/super helpers above when `__ctbrowser_class_defined` is present.
+Those declarations remain until their operations have a semantic normalization.
+The class helper and Error bindings and complete original getter bodies are proved before only
+those declarations are consumed. DOM identities survive every method probe and
+final typed reproof. The original source census rejects declared intrinsic
+replacement before any method can disappear. Unused literal-message Error
+getters may then disappear; referenced throws still require final typed DOM
+proof and currently refuse.
+
+Declared DOM loads and `toString` reads in entry/method bodies defer to that
+complete typed proof. Exact capture-free helpers created and called in the entry
+also defer, whether their original call is ordinary or already resolved. Their
+calls survive class rewriting; all global-holder targets retain the stricter
+census because unused slots can be removed earlier. Original helper exception
+CFGs stay intact for the existing URI/JSON normalization and final typed proof.
+Before checking a direct entry helper's receiver, the census proves every
+original callee use as an inert replacement/filter callback enclosure. Only
+then may either call shape become a direct call with an unobserved callee operand;
+ordinary calls retain their arguments, pad missing formals and refuse excess
+arguments. The existing
+captured-helper cleanup removes a closure only when no observable use remains.
+Callback bodies and actual arguments still pass complete DOM proof. This lets
+an entry-local dataset loop compose with class methods without weakening the
+receiver, callback identity, binding-replacement or unused-body checks.
+
+Entry-local callable holders can use the same DOM transaction when every slot
+has an exact target and all holder reads/calls are ordered after their alias
+definition. Class methods may capture an earlier holder through fixed local cells
+and aliases; every slot must precede capture. Writes require the original object.
+Slots may capture fixed sibling helpers through the proof below. Confined
+replacement/filter callback premises are checked on the original bodies.
+Capture metadata is cleared before holder closures are erased, and the holder
+object remains until its proved capture and cell transport has been removed.
+The holder then becomes direct calls before ordinary closure lifting, but
+**every slot function stays** for complete invocation and typed DOM
+proof. Uncalled inert leaves may use the independent proof above; other uncalled
+bodies still refuse. Missing arguments are budgeted and surplus arguments refuse. Other object captures, unordered uses, replacement and
+identity escape remain outside this rule. One slot may combine fixed sibling
+captures and confined callback creation: every original callee use independently
+passes its capture or callback proof. No other use is skipped. Global holders
+keep their strict source census and wrapper requirements.
+
+Entry-local helpers compose unchanged Bootstrap M with `M(shape.read())` or with
+a method as M's only caller. DOM class methods and local holder slots may capture
+an earlier sibling helper through a proved fixed local cell. The helper must
+capture nothing; every captured read must feed only an ordinary call with
+undefined receiver.
+Its callee may only supply the enclosing identity of an uncaptured replacement
+or single-parameter filter callback whose own implicit arguments are unused.
+Saving the helper's lexical receiver in that callback is inert. The original
+callback and helper-local cells survive for the existing DOM source proof.
+This admits original Bootstrap F for proved lowercase inputs, with the reserved
+RegExp factory explicitly declared; matching or unknown inputs still refuse.
+DOM class methods use the same confined-callback proof when an arrow saves
+lexical `this` but its original body never reads it. Only after the complete
+source census does normalization clear that inert receiver operand. Fixed local
+method cells reuse the ordered cell proof; earlier reads cannot borrow later
+writes. Reads may cross later branches, loops and completion switches; writes
+and captures still require their original ordered block. Cell and callback
+identities are remapped through private method clones,
+so early-return normalization preserves the original witnesses. This adds no
+receiver-capture or parameter authority: actual calls, every callback use and
+every unused method still require complete typed DOM proof.
+
+A confined filter callback instead survives direct-helper expansion. After
+checking its original enclosure, expansion rebinds its inert metadata to the
+caller's enclosing function while retaining its source position and branch.
+The complete DOM proof still checks the callback body, Array/String identities,
+dataset authority and every use. Other implicit-argument observations remain
+outside this proof. Missing arguments are padded under the
+work budget; surplus arguments refuse. Complete method probes still check every
+unused body before removal. The original calls become direct calls at the same
+source position, and only an unobserved helper closure disappears.
+This composes original H.getDataAttribute with M/F and class results, including
+repeated calls and JSON/URI fallback. A bounded slot can also combine original M
+with the dataset filter predicate, including through a captured H class method.
+Dynamic property operations in DOM entries, methods and retained local helpers
+stay intact for the shared typed DOM proof. Dataset reads require a live member
+key from the same element; fresh-result writes retain their existing key and
+mutation-order proof. Class and holder identity uses remain separately checked.
+A constructor-only class or a class method composes with sequential original
+for-of loops in local H slots, including captured holders and stored DOM receivers.
+Each iterator reuses the complete snapshot-prefix proof in source order, retaining
+all prior loops, saved results and intervening effects. Iterators inside structured
+conditional arms keep the original condition producers and dominating operations
+in a private path-prefix proof. The final complete entry proof still checks both
+original arms and joined scalar state, including untaken effects and mutations.
+Constructor method-value checks distinguish unrelated SSA values from the closed
+instance; parameter aliases and prototype observations remain conservative.
+Original reached methods share a complete proof of their actual calls; only
+uncalled zero-argument methods receive synthetic proof invocations. Source loops
+use the existing exact completion proof even without a completion switch.
+Loop-nested iterators and unused H slots remain separate boundaries; slots cannot
+borrow authority from another invocation.
+Direct helpers called before and after an entry early return share this proof.
+Each conditional arm checks its own frame state; both must reach the same state
+at the join. Missing, repeated or loop-nested frame exits refuse. More complex
+entry completion arithmetic remains outside the class census.
+Prefix-stripped output keys retain their existing proof.
+
+With the declared initial `String` identity, a proved primitive String may use
+`charAt(0)` and `slice(1)`. Emission calls the public Core WTF-8/UTF-16 converters
+and slices an owning `std::u16string`; the suffix of an empty input is empty.
+Lone surrogates survive, and existing String concatenation rejoins split pairs.
+A strict null comparison refines an original optional String only in its
+non-null arm, including reversed comparisons and negation. Receiver identity
+and literal indices are checked before emission. Other indices,
+coercions and unrefined nullable inputs remain unsupported.
+A proved `charAt(0)` result may call `toLowerCase()` with no arguments. Empty
+results remain empty; nonempty results call public Core
+`unicode_lowercase_unit`, using pinned Unicode 17 full lowercase, including
+U+0130 expansion and unchanged lone surrogates. Whole-string and contextual
+casing remain outside this proof. The VM's byte indexing and ASCII casing are
+recorded separately from Node/native results.
+
+The exact `i.charAt(0).toLowerCase() + i.slice(1)` expression may supply an output
+key when both operands use the same proved prefix-stripped snapshot member.
+Only underscore lowercases to underscore, so `__proto__` retains exactly one
+original `bs__proto__` preimage. Ordinary collisions overwrite in source order
+through the existing snapshot assignment helper. Sole-writer and single-traversal
+checks remain; normalization never grants membership in the original dataset.
+The unchanged original `H.getDataAttributes` method, including M, uses this proof.
+
+`toString` requires an actual Number receiver; arbitrary
+coercion hooks remain unsupported. Even a method with only an intrinsic load
+requires a probe; deferred helper operations also force the complete method
+probes. An ignored pure intrinsic result is inert, while observable
+identity uses, unknown effects and unsupported inputs still refuse. Constructors,
+getters and other helpers retain their existing stricter census. Lifted helpers
+discard their direct-call callee operand only when it names the exact lifted
+target and that target does not observe its callee argument. All premises are
+checked before deleting any closure, so child deletion order cannot authorize a
+parent. Nested ordinary helper dependencies remain refused; replacement and
+filter callbacks use the separate original-body proofs above. Full Bootstrap H
+still needs its unused-slot proof and publication boundary;
+no slot bypasses the census merely because another slot is called.
+Selected-entry parameter uses, unknown entry calls and short-circuit `if`/`yield`
+results defer to final typed DOM proof, which checks both source branches.
+Unknown calls in zero-parameter class methods instead require independent
+private probes at every actual entry-local construction. Every such method is
+probed, including unused and transitive callers that can replace a receiver field. The
+constructor/getter and other helper effect censuses remain unchanged. Probe
+eligibility is checked before normalization can replace method bodies.
+
+Parameterized methods require reachability from original entry calls or the
+original constructor body for each actual instance. The bounded census follows
+exact `this.method(...)` calls through that instance's own method definitions,
+including calls made during initialization; synthetic unused-body
+probes cannot establish reachability. One private proof retains all original
+calls, arguments and field state in source order. Unused parameterized methods,
+missing host authority, bad later calls, uncalled second instances, recursion and
+invalid calls in dead branches still refuse; no formal receives invented host
+authority. The existing lifter supplies JavaScript undefined for omitted arguments.
+Complete typed DOM proof establishes exact strict-undefined comparisons and
+their truth conversions, while still checking both default branches and all
+argument/default producers. Only then may the private candidate fold a decided
+branch, preserving the selected operations in source order. Null does not trigger
+a default; unknown effects in a skipped default still refuse. Literal and proved
+static-getter defaults, including fresh empty `DefaultType` objects, now compose
+through transitive calls. Complete original W/r/H effects remain the next Config
+boundary.
+
+DOM attribute writes have the proved JavaScript undefined result; consumers
+receive the same typed proof as other values. An entry proved to return only
+undefined emits a C++ `void` signature and return, preserving its write effects
+without a nullable scalar carrier. `setAttribute` also accepts the
+optional String returned by `getAttribute`: a small native conversion passes
+either its String or `"null"` to the existing ctbrowser DOM API. This uses ordinary
+`std::optional<std::string>` ownership and adds no VM or browser implementation.
+
+The existing constructor/method lifter runs under a quadratic IR-size ceiling;
+only freshly proved lifted closures with inert root uses are removed. Input native
+reports cannot authorize erasure. Independent direct-receiver, confined-field and
+typed DOM proofs must all succeed before the source and contract are published.
+The original `class_key` and `class_order` now execute with both DOM providers.
+The captured getter-key case also executes with both providers. The preserved
+`class_element` now executes its `classList.toggle` and `getAttribute` calls
+through constructor-stored `this.element` and captured `Button.NAME`. Unread
+method definitions may be omitted from other private probes, then from the
+emitted candidate only after all their original bodies pass typed DOM proof.
+A module-wide key-read census and symbol-use check keep that omission conservative;
+proof-only invocations never enter emitted code. Uncalled parameterized methods
+and construction outside the entry remain unsupported by this composition.
+The original `unused_key_dom_method` control retains its parameter-provenance refusal.
+
+Local cells in class setup functions may carry a fixed value when every write
+stores the same SSA value. Writes and captures remain ordered in the original
+block; reads may also occur in a later `scf.if` arm. Reads and captures must
+follow initialization; repeated identical constructor writes are inert.
+Chained aliases retain the full constructor and receiver-use census.
+Constructor captures require local slot metadata and only ordinary static-getter
+reads; the existing getter dependency proof checks those reads and unused bodies.
+DOM composition also admits the exact sibling helper calls described above.
+After all source checks, expansion removes the proved capture loads, closure
+slots and cell plumbing. Shared immutable-capture rules are unchanged.
 
 An exact local instance or method/constructor receiver may select these getters
 through its `constructor` property. That intermediate identity may feed only

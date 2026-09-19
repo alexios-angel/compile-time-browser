@@ -1,0 +1,2 @@
+# Focus on original Bootstrap replacement bodies, keys, effects and provenance.
+# RUN: python3 %S/native_dom_strings.py --regexp-only --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference

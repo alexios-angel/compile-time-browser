@@ -1,0 +1,7 @@
+    {"Basic_Emoji", 23045, 80, 0, 207},
+    {"Emoji_Keycap_Sequence", 23125, 0, 621, 12},
+    {"RGI_Emoji", 23125, 80, 669, 2760},
+    {"RGI_Emoji_Flag_Sequence", 23205, 0, 14625, 259},
+    {"RGI_Emoji_Modifier_Sequence", 23205, 0, 15402, 665},
+    {"RGI_Emoji_Tag_Sequence", 23205, 0, 17397, 3},
+    {"RGI_Emoji_ZWJ_Sequence", 23205, 0, 17421, 1614},

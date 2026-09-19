@@ -6,6 +6,7 @@
 // the shared two-method Map fixture builders moved to HostContractFixtures.h.
 // Everything else is verbatim, in its original order.
 
+#include "ClassIntrinsics.h"
 #include "DOMBranchFilter.h"
 #include "DOMDataset.h"
 #include "DOMIteration.h"
@@ -112,6 +113,37 @@ module {
               parsed->elementParameters == contract.elementParameters && parsed->roots.empty(),
           "DOM manifest declares only the selected function and its typed parameter positions");
     if (!parsed) { llvm::consumeError(parsed.takeError()); }
+    for (const auto provider : {"ctbrowser-dom-v1", "ctbrowser-dom-session-v1"}) {
+        for (const auto identities :
+             {"[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
+              "[\"Error\",\"__ctbrowser_class_defined\"]", "[\"Error\"]",
+              "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]",
+              "[\"__ctbrowser_class_defined\",\"Error\",\"Error\"]",
+              "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]",
+              "[\"__ctbrowser_class_defined\",\"Math\"]",
+              "[\"__ctbrowser_class_defined\",\"Number\",\"Number\"]"}) {
+            const auto request = replaced(
+                replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
+                (std::string("\"initial_intrinsics\":") + identities + ",\"element_parameters\""));
+            auto classes = parseHostContract(request);
+            const bool allowed =
+                std::string_view(identities) == "[\"__ctbrowser_class_defined\"]" ||
+                std::string_view(identities) == "[\"__ctbrowser_class_defined\",\"Error\"]" ||
+                std::string_view(identities) == "[\"Error\",\"__ctbrowser_class_defined\"]" ||
+                std::string_view(identities) ==
+                    "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]" ||
+                std::string_view(identities) ==
+                    "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]";
+            check(static_cast<bool>(classes) == allowed,
+                  "DOM class declarations compose unique existing intrinsic identities");
+            if (classes) {
+                check(!DOMEntryAnalysis(*module, *classes).proved(),
+                      "class declarations require preparation before typed DOM admission");
+            } else {
+                llvm::consumeError(classes.takeError());
+            }
+        }
+    }
     for (llvm::StringRef change :
          {"[]", "[1]", "[0,0]", "[0,-1]", "[0,1.5]", "[4294967296]", "[\"0\"]", "null"}) {
         auto invalid = parseHostContract(replaced(json, "[0]", change));
@@ -842,6 +874,7 @@ int main() {
     checkCallables(context);
     checkCapturedCallables(context);
     checkFingerprint(context);
+    checkClassIntrinsics(context);
     checkDOMEntry(context);
     checkDOMNumbers(context);
     checkDOMDataset(context);

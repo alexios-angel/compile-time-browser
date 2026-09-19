@@ -403,6 +403,9 @@ def do_coverage(c):
     probe for is not passing and not failing - it is UNMEASURED, which is the
     state every bug found so far was hiding in."""
     probes = c.probes.read_text(errors="replace")
+    probes += "".join(
+        part.read_text(errors="replace") for part in sorted(c.probes.with_suffix("").glob("*.js"))
+    )
     if c.coverage == "functions":
         declared = sorted(set(PUBLIC.findall(c.bundle.read_text(errors="replace"))))
         public = [n for n in declared if not n.startswith("_")]

@@ -1,0 +1,23 @@
+custom-elements/parser/parser-constructs-custom-element-in-document-write.html	FAIL
+custom-elements/parser/parser-constructs-custom-element-in-document-write.html	SUBTEST	FAIL	"HTML parser should call connectedCallback before appending child nodes inside document.write"
+custom-elements/parser/parser-constructs-custom-element-synchronously.html	FAIL
+custom-elements/parser/parser-constructs-custom-element-synchronously.html	SUBTEST	FAIL	"HTML parser must only append nodes that appear before a custom element before instantiating the custom element"
+custom-elements/parser/parser-fallsback-to-unknown-element.html	FAIL
+custom-elements/parser/parser-fallsback-to-unknown-element.html	SUBTEST	FAIL	"HTML parser must create a fallback HTMLUnknownElement when a custom element constructor does not call super()"
+custom-elements/parser/parser-fallsback-to-unknown-element.html	SUBTEST	FAIL	"HTML parser must create a fallback HTMLUnknownElement when a custom element constructor returns a Text node"
+custom-elements/parser/parser-fallsback-to-unknown-element.html	SUBTEST	FAIL	"HTML parser must create a fallback HTMLUnknownElement when a custom element constructor returns non-Element object"
+custom-elements/parser/parser-fallsback-to-unknown-element.html	SUBTEST	FAIL	"HTML parser must create a fallback HTMLUnknownElement when a custom element constructor throws an exception"
+custom-elements/parser/parser-sets-attributes-and-children.html	FAIL
+custom-elements/parser/parser-sets-attributes-and-children.html	SUBTEST	FAIL	"HTML parser must enqueue attributeChanged reactions"
+custom-elements/parser/parser-sets-attributes-and-children.html	SUBTEST	FAIL	"HTML parser must set the attributes or append children before calling constructor"
+custom-elements/parser/parser-sets-attributes-and-children.html	SUBTEST	FAIL	"HTML parser should call connectedCallback before appending child nodes."
+custom-elements/parser/parser-uses-constructed-element.html	FAIL
+custom-elements/parser/parser-uses-constructed-element.html	SUBTEST	FAIL	"HTML parser must use the returned value of the custom element constructor instead using the one created in super() call"
+custom-elements/parser/parser-uses-registry-of-owner-document.html	FAIL
+custom-elements/parser/parser-uses-registry-of-owner-document.html	SUBTEST	FAIL	"HTML parser must not instantiate a custom element defined inside an frame in frame element's owner document"
+custom-elements/parser/parser-uses-registry-of-owner-document.html	SUBTEST	FAIL	"HTML parser must not instantiate custom elements inside template elements"
+custom-elements/parser/parser-uses-registry-of-owner-document.html	SUBTEST	FAIL	"HTML parser must use the registry of the content document inside an iframe"
+custom-elements/parser/parser-uses-registry-of-owner-document.html	SUBTEST	FAIL	"HTML parser must use the registry of window.document in a document created by XMLHttpRequest"
+custom-elements/parser/serializing-html-fragments-customized-builtins.html	FAIL
+custom-elements/parser/serializing-html-fragments-customized-builtins.html	SUBTEST	FAIL	"\"is\" value should be serialized even for an undefined element"
+custom-elements/parser/serializing-html-fragments-customized-builtins.html	SUBTEST	FAIL	"\"is\" value should be serialized if the custom element has no \"is\" content attribute"

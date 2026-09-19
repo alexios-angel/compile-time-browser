@@ -1,0 +1,20 @@
+dom/lists/DOMTokenList-Iterable.html	FAIL
+dom/lists/DOMTokenList-Iterable.html	SUBTEST	FAIL	"DOMTokenList has Symbol.iterator."
+dom/lists/DOMTokenList-Iterable.html	SUBTEST	FAIL	"DOMTokenList has entries method."
+dom/lists/DOMTokenList-Iterable.html	SUBTEST	FAIL	"DOMTokenList has forEach method."
+dom/lists/DOMTokenList-Iterable.html	SUBTEST	FAIL	"DOMTokenList has values method."
+dom/lists/DOMTokenList-coverage-for-attributes.html	FAIL
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"a.relList in http://www.w3.org/1998/Math/MathML namespace should be DOMTokenList."
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"a.relList in http://www.w3.org/1999/xhtml namespace should be DOMTokenList."
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"a.relList in http://www.w3.org/2000/svg namespace should be DOMTokenList."
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"area.relList in http://www.w3.org/1999/xhtml namespace should be DOMTokenList."
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"iframe.sandbox in http://www.w3.org/1999/xhtml namespace should be DOMTokenList."
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"link.relList in http://www.w3.org/1999/xhtml namespace should be DOMTokenList."
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"link.sizes in http://www.w3.org/1999/xhtml namespace should be DOMTokenList."
+dom/lists/DOMTokenList-coverage-for-attributes.html	SUBTEST	FAIL	"output.htmlFor in http://www.w3.org/1999/xhtml namespace should be DOMTokenList."
+dom/lists/DOMTokenList-iteration.html	FAIL
+dom/lists/DOMTokenList-iteration.html	SUBTEST	FAIL	"classList inheritance from Array.prototype"
+dom/lists/DOMTokenList-iteration.html	SUBTEST	FAIL	"classList.entries"
+dom/lists/DOMTokenList-iteration.html	SUBTEST	FAIL	"classList.forEach"
+dom/lists/DOMTokenList-iteration.html	SUBTEST	FAIL	"classList.keys"
+dom/lists/DOMTokenList-iteration.html	SUBTEST	FAIL	"classList.values"

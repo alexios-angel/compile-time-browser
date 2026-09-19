@@ -454,10 +454,13 @@ void closureLifter::methodCensus() {
             if (writes[entry.first()] != 1) { continue; }
             bool stable = true;
             if (constructed) {
-                // ponytail: a whole-module key census conservatively includes
-                // unrelated objects; use an alias proof if that ceiling matters.
-                // In particular, constructor and borrowed receiver writes count.
+                // Distinct fresh literals cannot be the constructed receiver.
+                // Unknown aliases, including every formal, still count.
                 module.walk([&](ctjs::SetPropertyOp set) {
+                    if (set.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
+                        set.getObject() != object) {
+                        return;
+                    }
                     const auto key = ctjs::constantKey(set.getKey());
                     if (key.empty() || (key == entry.first() && !instanceStores.contains(set))) {
                         stable = false;
@@ -487,6 +490,10 @@ void closureLifter::methodCensus() {
             bool stable = true;
             // As with post-construction methods, all receiver writes count.
             module.walk([&](ctjs::SetPropertyOp set) {
+                if (set.getObject().getDefiningOp<ctjs::CreateObjectOp>() &&
+                    set.getObject() != origin) {
+                    return;
+                }
                 auto written = ctjs::constantKey(set.getKey());
                 if (written.empty() || (written == key && set != field)) { stable = false; }
             });

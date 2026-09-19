@@ -45,8 +45,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
       "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Specialization/compile-dispatch.cmake" VERBATIM)
   set_source_files_properties("${_dispatch_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-specialization-dispatch
-    CTNative/Specialization/Dispatch.cpp "${_dispatch_cpp}" "${_dispatch_inc}")
+  add_executable(ctcompile-test-specialization-dispatch "${_dispatch_cpp}" "${_dispatch_inc}")
   target_include_directories(ctcompile-test-specialization-dispatch PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-specialization-dispatch PRIVATE ctbrowser::script)

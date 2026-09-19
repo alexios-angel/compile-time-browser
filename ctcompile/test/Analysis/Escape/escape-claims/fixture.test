@@ -2,9 +2,9 @@
 # says what is asserted). Budgets follow 25-escape-analysis.md §5: unlimited on
 # the fixture and bootstrap, bounded on the two big bundles, where every frame
 # pop otherwise costs a full mark.
-# The fixture is three files concatenated byte for byte, so the complete
-# JavaScript source bytes and allocation identities are what expected.txt
+# The fixture groups are concatenated byte for byte, so the complete
+# JavaScript source bytes and allocation identities are what the expected/ snapshot parts
 # names; --strict is the stopped-clock guard and the snapshot, which only the
 # fixture - calling every one of its confined sites - can carry.
-# RUN: cat %S/fixture/contents.js %S/fixture/primitives.js %S/fixture/escapes.js > %t.js
+# RUN: cat %S/fixture/contents/*.js %S/fixture/primitives/*.js %S/fixture/escapes/*.js > %t.js
 # RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t.js --work %t --name fixture --strict

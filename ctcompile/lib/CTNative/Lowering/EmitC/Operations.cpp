@@ -611,6 +611,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             mlir::Value zero = ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 32),
                                                       b.getI32IntegerAttr(0));
             ec::ReturnOp::create(b, where, zero);
+        } else if (llvm::isa<mlir::NoneType>(returnType)) {
+            ec::ReturnOp::create(b, where, mlir::Value{});
         } else {
             ec::ReturnOp::create(b, where, convertScalar(b, where, ret.getValue(), returnType));
         }

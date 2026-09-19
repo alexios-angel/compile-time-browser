@@ -1,0 +1,5 @@
+add_subdirectory(p5)
+add_subdirectory(phaser)
+add_subdirectory(babylon)
+add_subdirectory(webgl2)
+add_subdirectory(modules)

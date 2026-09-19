@@ -4,6 +4,12 @@
 # The full set the plan lays out is Application, CodeGen, CSS, CTJS, HTML,
 # JavaScript, Lowering, Packaging and Support. They arrive as the phases that
 # need them do; a directory with nothing in it is not architecture.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_subdirectory(CTJS)
+  add_subdirectory(CTNative)
+  add_subdirectory(Target)
+endif()
+
 add_subdirectory(Support)
 add_subdirectory(HTML)
 add_subdirectory(CSS)

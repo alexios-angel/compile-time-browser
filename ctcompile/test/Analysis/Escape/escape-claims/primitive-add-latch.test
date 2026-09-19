@@ -1,0 +1,131 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name primitive-add-latch
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-primitive-add-latch.claims
+
+// Original Boolean latches convert only at Add. Saved values survive source
+// replacement; both operand orders retain returned children. String, zero,
+// changing and original property-key controls keep their conservative claims.
+// IMPORT-LABEL: ctjs.func @released$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @returned$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @snapshotReleased$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @snapshotReturned$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @commutedReleased$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @commutedReturned$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @concatenated$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @zeroStride$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @nullStride$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @changing$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @originalKey$
+// IMPORT: ctjs.binary add
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function released() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += true) saved = array[i];
+    return 0;
+}
+function returned() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += true) saved = array[i];
+    return saved;
+}
+function snapshotReleased() {
+    var child = {}, array = [child, child], inputs = [true], saved = 0;
+    var step = inputs[0];
+    inputs[0] = child;
+    for (var i = 0; i < array.length; i += step) saved = array[i];
+    return 0;
+}
+function snapshotReturned() {
+    var child = {}, array = [child, child], inputs = [true], saved = 0;
+    var step = inputs[0];
+    inputs[0] = child;
+    for (var i = 0; i < array.length; i += step) saved = array[i];
+    return saved;
+}
+function commutedReleased() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i = true + i) saved = array[i];
+    return 0;
+}
+function commutedReturned() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i = true + i) saved = array[i];
+    return saved;
+}
+function concatenated() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += '1') saved = array[i];
+    return 0;
+}
+function zeroStride() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 1; i < array.length; i += false) saved = array[i];
+    return 0;
+}
+function nullStride() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 1; i < array.length; i += null) saved = array[i];
+    return 0;
+}
+function changing() {
+    var child = {}, array = [child, child, child], step = true, saved = 0;
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+        step = i < 1 ? true : 2;
+    }
+    return 0;
+}
+function originalKey() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += true) saved = array[i];
+    return array[true];
+}
+released();
+var retained = returned();
+snapshotReleased();
+var snapshotRetained = snapshotReturned();
+commutedReleased();
+var commutedRetained = commutedReturned();
+concatenated();
+zeroStride();
+nullStride();
+changing();
+originalKey();

@@ -344,6 +344,68 @@ void test_decode_utf8() {
     CHECK_EQ(at, std::size_t{1});
 }
 
+void test_wtf8_utf16() {
+    using namespace std::literals;
+    CHECK(wtf8_to_utf16("").empty());
+    CHECK(utf16_to_wtf8(u"").empty());
+    const auto text = "a\0é資料🌠"sv;
+    const auto units = u"a\0é資料🌠"sv;
+    CHECK(wtf8_to_utf16(text) == units);
+    CHECK(utf16_to_wtf8(units) == text);
+
+    // CharacterData can split a pair and later join its two WTF-8 halves.
+    const std::u16string star = wtf8_to_utf16("🌠");
+    CHECK_EQ(star.size(), std::size_t{2});
+    const std::string high = utf16_to_wtf8(std::u16string_view{star}.substr(0, 1));
+    const std::string low = utf16_to_wtf8(std::u16string_view{star}.substr(1));
+    CHECK_EQ(high, "\xED\xA0\xBC");
+    CHECK_EQ(low, "\xED\xBC\xA0");
+    CHECK(wtf8_to_utf16(high + low) == star);
+    CHECK_EQ(utf16_to_wtf8(wtf8_to_utf16(high + low)), "🌠");
+    CHECK(wtf8_to_utf16(utf16_to_wtf8(u"\xDC00x\xD800")) == u"\xDC00x\xD800");
+
+    // Preserve the historical continuation-only decoder, not replacement
+    // characters or rejection. These bytes need not round-trip unchanged.
+    CHECK(wtf8_to_utf16("\xE2\x82") == u"\xE2\x82");
+    CHECK(wtf8_to_utf16("\xC3\x41") == u"\xC3\x41");
+    CHECK(wtf8_to_utf16("\xFF\x80") == u"\xFF\x80");
+    CHECK(wtf8_to_utf16("\xC0\x80") == u"\0"sv);
+    CHECK(wtf8_to_utf16("\xF4\x90\x80\x80") == u"\xDC00\xDC00");
+}
+
+void test_unicode_lowercase_unit() {
+    CHECK(unicode_lowercase_unit(u'A') == u"a");
+    CHECK(unicode_lowercase_unit(u'\u00C9') == u"\u00E9");
+    CHECK(unicode_lowercase_unit(u'\u0100') == u"\u0101");
+    CHECK(unicode_lowercase_unit(u'\u0101') == u"\u0101"); // gap in a strided range
+    CHECK(unicode_lowercase_unit(u'\u0130') == u"i\u0307");
+    CHECK(unicode_lowercase_unit(u'\u03A3') == u"\u03C3"); // no preceding cased unit
+    CHECK(unicode_lowercase_unit(u'\u03C2') == u"\u03C2"); // lower, not case folding
+    CHECK(unicode_lowercase_unit(u'\u042F') == u"\u044F");
+    CHECK(unicode_lowercase_unit(u'\u1F88') == u"\u1F80");
+    CHECK(unicode_lowercase_unit(u'\u1E9E') == u"\u00DF");
+    CHECK(unicode_lowercase_unit(u'\u212A') == u"k");
+    CHECK(unicode_lowercase_unit(u'\u212B') == u"\u00E5");
+    CHECK(unicode_lowercase_unit(u'\uA7CE') == u"\uA7CF"); // Unicode 17
+    CHECK(unicode_lowercase_unit(u'\uFF21') == u"\uFF41");
+    CHECK(unicode_lowercase_unit(u'\0') == std::u16string(1, u'\0'));
+    CHECK(unicode_lowercase_unit(static_cast<char16_t>(0xD800)) == u"\xD800");
+    CHECK(unicode_lowercase_unit(static_cast<char16_t>(0xDFFF)) == u"\xDFFF");
+
+    // Independent UCD output checksum from tools/gen/unicode_lowercase.py:
+    // every unit, including identity mappings, holes and all lone surrogates.
+    std::uint64_t checksum = 14695981039346656037ull;
+    for (std::uint32_t cp = 0; cp < 0x10000; ++cp) {
+        const auto lower = unicode_lowercase_unit(static_cast<char16_t>(cp));
+        checksum = (checksum ^ lower.size()) * 1099511628211ull;
+        for (const char16_t unit : lower) { checksum = (checksum ^ unit) * 1099511628211ull; }
+        // Normalizing the first unit cannot create a new __proto__ key.
+        if (lower == u"_") { CHECK_EQ(cp, 0x5Fu); }
+    }
+    CHECK_EQ(checksum, 0xF2609FB49FD3FC34ull);
+    CHECK_EQ(ascii_lower_copy("\u00C9I\u0130"), "\u00C9i\u0130");
+}
+
 void test_allocator_is_mimalloc() {
     // The DEFAULT build uses mimalloc; -DCTBROWSER_USE_MIMALLOC=OFF is a
     // supported configuration and says "system" honestly rather than being
@@ -361,6 +423,8 @@ void test_allocator_is_mimalloc() {
 int main() {
     test_base64_leniency();
     test_decode_utf8();
+    test_wtf8_utf16();
+    test_unicode_lowercase_unit();
     test_allocator_is_mimalloc();
     test_handle();
     test_slab_basics();

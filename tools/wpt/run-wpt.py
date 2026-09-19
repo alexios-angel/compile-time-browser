@@ -38,6 +38,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from expectations import parse_expectations, write_expectations
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 DEFAULT_WPT = Path(os.environ.get("WPT_DIR", Path.home() / ".cache" / "wpt"))
@@ -240,7 +242,8 @@ def plan_for(path: Path, wpt: Path) -> list[Plan]:
         for m in VARIANT_RE.findall(path.read_bytes() if b"variant" in head else b"")
     ]
     return with_variants(
-        Plan(rel, page=path, timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL), variants
+        Plan(rel, page=path, timeout=TIMEOUT_LONG if long_timeout else TIMEOUT_NORMAL),
+        variants,
     )
 
 
@@ -504,7 +507,10 @@ def classify(payload: str, log: str, seconds: float) -> DriverResult:
         state = json.loads(payload)
     except json.JSONDecodeError as bad:
         return DriverResult(
-            Outcome.HARNESS_ERROR, f"unreadable report payload: {bad}", log=log, seconds=seconds
+            Outcome.HARNESS_ERROR,
+            f"unreadable report payload: {bad}",
+            log=log,
+            seconds=seconds,
         )
     harness = state.get("harness", "UNKNOWN")
     subtests = state.get("subtests", [])
@@ -525,7 +531,10 @@ def classify(payload: str, log: str, seconds: float) -> DriverResult:
     # a PASS is exactly the mistake this whole file exists to avoid.
     if not subtests:
         return DriverResult(
-            Outcome.HARNESS_ERROR, "harness OK but reported no subtests", log=log, seconds=seconds
+            Outcome.HARNESS_ERROR,
+            "harness OK but reported no subtests",
+            log=log,
+            seconds=seconds,
         )
     worst = Outcome.PASS
     for one in subtests:
@@ -563,16 +572,6 @@ def expectation_lines(results):
                     f"{result.rel}\tSUBTEST\t{one['status']}\t" f"{json.dumps(one.get('name', ''))}"
                 )
     return lines
-
-
-def parse_expectations(path: Path):
-    if not path.exists():
-        return set()
-    return {
-        line
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line and not line.startswith("#")
-    }
 
 
 def gate(results, path: Path):
@@ -666,7 +665,8 @@ def pinned_commit():
     if not FETCH_SCRIPT.exists():
         return None
     found = re.search(
-        r'WPT_COMMIT="\$\{WPT_COMMIT:-([0-9a-f]{40})\}"', FETCH_SCRIPT.read_text(encoding="utf-8")
+        r'WPT_COMMIT="\$\{WPT_COMMIT:-([0-9a-f]{40})\}"',
+        FETCH_SCRIPT.read_text(encoding="utf-8"),
     )
     return found.group(1) if found else None
 
@@ -732,7 +732,10 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--dir", action="append", default=[], help="a WPT directory, e.g. dom/nodes (repeatable)"
+        "--dir",
+        action="append",
+        default=[],
+        help="a WPT directory, e.g. dom/nodes (repeatable)",
     )
     parser.add_argument(
         "--gate",
@@ -740,7 +743,9 @@ def main():
         help="run the fixed ctest subset and check it against " "the expectations",
     )
     parser.add_argument(
-        "--selftest", action="store_true", help="run tools/wpt/selftest/ and assert each outcome"
+        "--selftest",
+        action="store_true",
+        help="run tools/wpt/selftest/ and assert each outcome",
     )
     parser.add_argument("--filter", help="only tests whose path contains this")
     parser.add_argument("--limit", type=int, help="stop after this many tests")
@@ -751,7 +756,10 @@ def main():
         help="parallel drivers (default 4: the box has 8 vCPUs " "and shares them)",
     )
     parser.add_argument(
-        "--memory-mb", type=int, default=4096, help="per-driver address-space cap (ulimit -v)"
+        "--memory-mb",
+        type=int,
+        default=4096,
+        help="per-driver address-space cap (ulimit -v)",
     )
     parser.add_argument("--wpt-dir", type=Path, default=DEFAULT_WPT)
     parser.add_argument("--driver", type=Path, default=ROOT / "build" / "tools" / "ctdrive")
@@ -764,7 +772,9 @@ def main():
         help="rewrite the expectations file from this run",
     )
     parser.add_argument(
-        "--check", action="store_true", help="fail on any difference from the expectations"
+        "--check",
+        action="store_true",
+        help="fail on any difference from the expectations",
     )
     args = parser.parse_args()
 
@@ -859,7 +869,10 @@ def main():
         for one in sorted(crashes, key=lambda r: r.rel)[:20]:
             print(f"  {one.rel}: {one.message}")
     causes([r.message for r in crashes], "crash sites")
-    causes([r.message for r in results if r.status == Outcome.HARNESS_ERROR], "harness errors")
+    causes(
+        [r.message for r in results if r.status == Outcome.HARNESS_ERROR],
+        "harness errors",
+    )
     causes(
         [
             one.get("message", "")
@@ -950,7 +963,12 @@ def main():
             f"{len(kept)} line(s) carried over from suites this run did not touch",
             "",
         ]
-        args.expectations.write_text("\n".join(header + lines) + "\n", encoding="utf-8")
+        write_expectations(
+            args.expectations,
+            header,
+            lines,
+            split=args.expectations.resolve() == EXPECTATIONS.resolve(),
+        )
         print(f"wrote {args.expectations} ({len(lines)} lines, {len(kept)} carried over)")
         return 0
 

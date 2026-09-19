@@ -84,13 +84,12 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   # THE BLINDED ARM, and it is the same source file. Nothing generated is linked
   # into it, so it can only interpret - which is what makes the counters the
   # compiled arm reports mean anything at all.
-  add_executable(ctcompile-test-launcher-vm Runtime/Launcher/Application.cpp "${_app_inc}")
+  add_executable(ctcompile-test-launcher-vm "${_app_inc}")
   target_include_directories(ctcompile-test-launcher-vm PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-launcher-vm PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-launcher-vm)
 
-  add_executable(ctcompile-test-launcher-aot
-    Runtime/Launcher/Application.cpp "${_app_cpp}" "${_app_table}" "${_app_inc}")
+  add_executable(ctcompile-test-launcher-aot "${_app_cpp}" "${_app_table}" "${_app_inc}")
   target_include_directories(ctcompile-test-launcher-aot PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   # THE TABLE'S NAME IS A BUILD PARAMETER, not a fixed symbol, because an
   # application with several compiled scripts has one table each and they cannot
@@ -168,13 +167,12 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
     CTCOMPILE_LAUNCHER_PAGE="${_page_html}"
     CTCOMPILE_LAUNCHER_ASSET_ROOT="${CTBROWSER_MONOREPO_ROOT}/ctbrowser")
 
-  add_executable(ctcompile-test-launcher-page-vm Runtime/Launcher/Page.cpp)
+  add_executable(ctcompile-test-launcher-page-vm)
   target_compile_definitions(ctcompile-test-launcher-page-vm PRIVATE ${_page_defs})
   target_link_libraries(ctcompile-test-launcher-page-vm PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-launcher-page-vm)
 
-  add_executable(ctcompile-test-launcher-page-aot
-    Runtime/Launcher/Page.cpp "${_page_cpp}" "${_page_table}")
+  add_executable(ctcompile-test-launcher-page-aot "${_page_cpp}" "${_page_table}")
   target_compile_definitions(ctcompile-test-launcher-page-aot PRIVATE ${_page_defs}
     CTCOMPILE_LAUNCHER_AOT=1 CTCOMPILE_LAUNCHER_TABLE=ctc_invaders_entries)
   target_link_libraries(ctcompile-test-launcher-page-aot PRIVATE ctbrowser::ctbrowser)
@@ -200,7 +198,7 @@ endif()
 find_package(Boost CONFIG QUIET COMPONENTS json regex)
 
 if(TARGET Boost::json AND TARGET Boost::regex)
-  add_executable(ctcompile-test-stdlib_map Runtime/StdLibMap.cpp)
+  add_executable(ctcompile-test-stdlib_map)
   target_link_libraries(ctcompile-test-stdlib_map
     PRIVATE ctbrowser::script Boost::json Boost::regex)
   ctcompile_target(ctcompile-test-stdlib_map)
@@ -235,7 +233,7 @@ endif()
 # point - part 24 §A.2, "Every phase's gate is a comparison against the
 # interpreter."
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-ctnative-lattice Analysis/Types/Lattice.cpp)
+  add_executable(ctcompile-test-ctnative-lattice)
   # MLIRAsmParser IS NOT OPTIONAL AND ITS ABSENCE LOOKS LIKE NOTHING. The meet
   # table spells its types the way a .mlir file does and calls mlir::parseType,
   # which lives there and not in MLIRIR: without it every line COMPILES and the

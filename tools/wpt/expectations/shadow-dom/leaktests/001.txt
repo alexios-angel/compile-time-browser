@@ -1,0 +1,5 @@
+shadow-dom/leaktests/html-collection.html	FAIL
+shadow-dom/leaktests/html-collection.html	SUBTEST	FAIL	"document.all should not contain shadow nodes"
+shadow-dom/leaktests/selection.html	SKIP	testdriver: needs WebDriver input injection
+shadow-dom/leaktests/window-frames.html	FAIL
+shadow-dom/leaktests/window-frames.html	SUBTEST	FAIL	"window.frames should not leak frames in Shadow DOM."

@@ -1,0 +1,1 @@
+ctbrowser_test(module_ratchet)

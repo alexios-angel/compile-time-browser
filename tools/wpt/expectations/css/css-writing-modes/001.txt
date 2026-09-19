@@ -1,0 +1,22 @@
+css/css-writing-modes/inheritance.html	FAIL
+css/css-writing-modes/inheritance.html	SUBTEST	FAIL	"Property text-combine-upright has initial value none"
+css/css-writing-modes/inheritance.html	SUBTEST	FAIL	"Property text-combine-upright inherits"
+css/css-writing-modes/inheritance.html	SUBTEST	FAIL	"Property text-orientation has initial value mixed"
+css/css-writing-modes/inheritance.html	SUBTEST	FAIL	"Property text-orientation inherits"
+css/css-writing-modes/parsing/text-combine-upright-computed.html	FAIL
+css/css-writing-modes/parsing/text-combine-upright-computed.html	SUBTEST	FAIL	"Property text-combine-upright value 'all'"
+css/css-writing-modes/parsing/text-combine-upright-computed.html	SUBTEST	FAIL	"Property text-combine-upright value 'none'"
+css/css-writing-modes/parsing/text-combine-upright-valid.html	FAIL
+css/css-writing-modes/parsing/text-combine-upright-valid.html	SUBTEST	FAIL	"e.style['text-combine-upright'] = \"all\" should set the property value"
+css/css-writing-modes/parsing/text-combine-upright-valid.html	SUBTEST	FAIL	"e.style['text-combine-upright'] = \"none\" should set the property value"
+css/css-writing-modes/parsing/text-orientation-computed.html	FAIL
+css/css-writing-modes/parsing/text-orientation-computed.html	SUBTEST	FAIL	"Property text-orientation value 'mixed'"
+css/css-writing-modes/parsing/text-orientation-computed.html	SUBTEST	FAIL	"Property text-orientation value 'sideways'"
+css/css-writing-modes/parsing/text-orientation-computed.html	SUBTEST	FAIL	"Property text-orientation value 'upright'"
+css/css-writing-modes/parsing/text-orientation-valid.html	FAIL
+css/css-writing-modes/parsing/text-orientation-valid.html	SUBTEST	FAIL	"e.style['text-orientation'] = \"mixed\" should set the property value"
+css/css-writing-modes/parsing/text-orientation-valid.html	SUBTEST	FAIL	"e.style['text-orientation'] = \"sideways\" should set the property value"
+css/css-writing-modes/parsing/text-orientation-valid.html	SUBTEST	FAIL	"e.style['text-orientation'] = \"upright\" should set the property value"
+css/css-writing-modes/parsing/unicode-bidi-invalid.html	FAIL
+css/css-writing-modes/parsing/unicode-bidi-invalid.html	SUBTEST	FAIL	"e.style['unicode-bidi'] = \"auto\" should not set the property value"
+css/css-writing-modes/parsing/unicode-bidi-invalid.html	SUBTEST	FAIL	"e.style['unicode-bidi'] = \"isolate plaintext\" should not set the property value"

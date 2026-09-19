@@ -1,0 +1,39 @@
+encoding/legacy-mb-tchinese/big5/big5-decode-big5-hkscs.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-decode-cn-big5.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-decode-csbig5.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	FAIL
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0xFE: AB AB FF"
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0xFE: FF"
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: AB AB AB"
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: AB B5 AB"
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: AB"
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"pointer is null: C8 F2"
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0x41-0xFE: AB 31"
+encoding/legacy-mb-tchinese/big5/big5-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0x41-0xFE: AB FF"
+encoding/legacy-mb-tchinese/big5/big5-decode-extra.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-decode-x-x-big5.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-decode.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-enc-ascii.html	FAIL
+encoding/legacy-mb-tchinese/big5/big5-enc-ascii.html	SUBTEST	FAIL	"big5 encoder: test for ASCII codepoint 0x25 %"
+encoding/legacy-mb-tchinese/big5/big5-encode-form-big5-hkscs.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-cn-big5.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-csbig5.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-extBa.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-extBb.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-pua.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form-x-x-big5.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-form.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-href-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-href-errors-hangul.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-href-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5-encode-href.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-tchinese/big5/big5_chars-big5-hkscs.html	SKIP	not a testharness test
+encoding/legacy-mb-tchinese/big5/big5_chars-cn-big5.html	SKIP	not a testharness test
+encoding/legacy-mb-tchinese/big5/big5_chars-csbig5.html	SKIP	not a testharness test
+encoding/legacy-mb-tchinese/big5/big5_chars-x-x-big5.html	SKIP	not a testharness test
+encoding/legacy-mb-tchinese/big5/big5_chars.html	SKIP	not a testharness test
+encoding/legacy-mb-tchinese/big5/big5_chars_extra.html	SKIP	not a testharness test
+encoding/legacy-mb-tchinese/big5/big5_errors.html	SKIP	not a testharness test

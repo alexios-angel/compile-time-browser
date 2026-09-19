@@ -1,0 +1,152 @@
+css/css-nesting/block-skipping.html	FAIL
+css/css-nesting/block-skipping.html	SUBTEST	FAIL	"CSS Nesting bug: Block ignored after lack of whitespace"
+css/css-nesting/conditional-properties.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/conditional-rules.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/contextually-invalid-selectors-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/contextually-invalid-selectors-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/contextually-invalid-selectors-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/cssom.html	FAIL
+css/css-nesting/cssom.html	SUBTEST	FAIL	"CSSStyleRule is a CSSGroupingRule"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Manipulation of nested declarations through CSSOM"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Mutating the selectorText of outer rule invalidates inner rules"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 1"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 10"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 2"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 3"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 4"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 5"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 6"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 7"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 8"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 9"
+css/css-nesting/cssom.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules"
+css/css-nesting/delete-other-rule-crash.html	SKIP	not a testharness test
+css/css-nesting/double-parent-pseudo-in-placeholder-crash.html	SKIP	not a testharness test
+css/css-nesting/has-nesting.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/host-nesting-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/host-nesting-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/host-nesting-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/host-nesting-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/host-nesting-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/implicit-nesting-ident.html	FAIL
+css/css-nesting/implicit-nesting-ident.html	SUBTEST	FAIL	"Nested rule starting with tag"
+css/css-nesting/implicit-nesting.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/implicit-parent-insertion-crash.html	SKIP	not a testharness test
+css/css-nesting/invalid-inner-rules.html	FAIL
+css/css-nesting/invalid-inner-rules.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules 1"
+css/css-nesting/invalid-inner-rules.html	SUBTEST	FAIL	"Simple CSSOM manipulation of subrules"
+css/css-nesting/invalidation-001.html	FAIL
+css/css-nesting/invalidation-001.html	SUBTEST	FAIL	"CSS Selectors nested invalidation on changed parent"
+css/css-nesting/invalidation-002.html	FAIL
+css/css-nesting/invalidation-002.html	SUBTEST	FAIL	"CSS Selectors nested invalidation on changed child"
+css/css-nesting/invalidation-003.html	FAIL
+css/css-nesting/invalidation-003.html	SUBTEST	FAIL	"CSS Selectors nested invalidation with :has()"
+css/css-nesting/invalidation-004.html	FAIL
+css/css-nesting/invalidation-004.html	SUBTEST	FAIL	"CSS Selectors nested invalidation through @media by selectorText"
+css/css-nesting/mixed-declarations-rules.html	FAIL
+css/css-nesting/mixed-declarations-rules.html	SUBTEST	FAIL	"Nested declarations and rules should be handled correctly"
+css/css-nesting/nest-containing-forgiving.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL
+css/css-nesting/nested-declarations-cssom-whitespace.html	SUBTEST	FAIL	"Empty CSSNestedDeclarations do not affect outer serialization (nested grouping rule)"
+css/css-nesting/nested-declarations-cssom-whitespace.html	SUBTEST	FAIL	"Empty CSSNestedDeclarations do not affect outer serialization"
+css/css-nesting/nested-declarations-cssom.html	FAIL
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Attempting to insert a CSSNestedDeclaration rule, all invalid declarations"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Attempting to insert a CSSNestedDeclaration rule, empty block"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"CSSNestedDeclarations.style"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Inner rule starting with an ident"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Inserting a CSSNestedDeclaration rule into nested group rule"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Inserting a CSSNestedDeclaration rule into style rule"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Mixed declarations"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Nested @scope rule"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Nested group rule"
+css/css-nesting/nested-declarations-cssom.html	SUBTEST	FAIL	"Trailing declarations"
+css/css-nesting/nested-declarations-matching.html	FAIL
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Bare declartaion in nested grouping rule can match pseudo-element"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Nested @scope rules behave like :where(:scope) (trailing)"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Nested @scope rules behave like :where(:scope)"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Nested declarations rule has same specificity as outer selector"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Nested declarations rule has top-level specificity behavior (max matching)"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Nested declarations rule has top-level specificity behavior"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Nested declarations rule responds to parent selector text change"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Nested group rules have top-level specificity behavior"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Trailing declarations apply after any preceding rules (multiple)"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Trailing declarations apply after any preceding rules (no leading)"
+css/css-nesting/nested-declarations-matching.html	SUBTEST	FAIL	"Trailing declarations apply after any preceding rules"
+css/css-nesting/nested-error-recovery.html	FAIL
+css/css-nesting/nested-error-recovery.html	SUBTEST	FAIL	"CSS Nesting: Error recovery 1"
+css/css-nesting/nested-error-recovery.html	SUBTEST	FAIL	"CSS Nesting: Error recovery 2"
+css/css-nesting/nested-error-recovery.html	SUBTEST	FAIL	"CSS Nesting: Error recovery 3"
+css/css-nesting/nested-rule-cssom-invalidation.html	FAIL
+css/css-nesting/nested-rule-cssom-invalidation.html	SUBTEST	FAIL	"Nested rule responds to parent selector text change"
+css/css-nesting/nesting-basic.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/nesting-layer.html	FAIL
+css/css-nesting/nesting-layer.html	SUBTEST	FAIL	"@layer can be nested"
+css/css-nesting/nesting-revert-rule.html	FAIL
+css/css-nesting/nesting-revert-rule.html	SUBTEST	FAIL	"The revert-rule keyword can revert from a CSSNestedDeclarationsRule"
+css/css-nesting/nesting-revert-rule.html	SUBTEST	FAIL	"The revert-rule keyword can revert to a CSSNestedDeclarationsRule"
+css/css-nesting/nesting-revert-rule.html	SUBTEST	FAIL	"The revert-rule keyword can revert to a nested rule"
+css/css-nesting/nesting-revert-rule.html	SUBTEST	FAIL	"The revert-rule keyword can revert to scoped declarations"
+css/css-nesting/nesting-type-selector.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/parent-pseudo-in-placeholder-crash.html	SKIP	not a testharness test
+css/css-nesting/parsing.html	FAIL
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { #id& { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { & .bar & .baz & .qux { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { & .bar { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { & > .bar { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { & > section, & > article { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { & { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &#id { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { && { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &.bar { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &.class { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &:hover { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &:is(.bar, &.baz) { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &:is(.bar, .baz) { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &:is(div) { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { &[attr] { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { + .bar & { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { + .bar, .foo, > .baz { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { .class& { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { .foo { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { .foo, .bar { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { .foo, .foo & { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { .test > & .bar { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { :hover& { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { :is(.bar, &.baz) { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { :is(.bar, .baz) { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { :is(div)& { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { > & .bar { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { > .bar { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { [attr]& { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo { div& { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	".foo, .bar { & + .baz, &.qux { color: green; }}"
+css/css-nesting/parsing.html	SUBTEST	FAIL	"INVALID: .foo { &div { color: green; }}"
+css/css-nesting/pseudo-part-crash.html	SKIP	not a testharness test
+css/css-nesting/pseudo-where-crash.html	SKIP	not a testharness test
+css/css-nesting/serialize-group-rules-with-decls.html	FAIL
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Empty conditional inside style rule"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit + empty hover rule"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit like rule after decls"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit like rule after decls, missing closing braces"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit like rule not in first position"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit like rule with other selectors"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit rule is serialized"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit rule not removed"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Implicit-like rule in style rule"
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Mixed declarations/rules are on two lines."
+css/css-nesting/serialize-group-rules-with-decls.html	SUBTEST	FAIL	"Two implicit-like rules"
+css/css-nesting/set-selector-text.html	FAIL
+css/css-nesting/set-selector-text.html	SUBTEST	FAIL	"Outer selectorText text mutation with inner @container rule"
+css/css-nesting/set-selector-text.html	SUBTEST	FAIL	"Outer selectorText text mutation with inner @layer rule"
+css/css-nesting/set-selector-text.html	SUBTEST	FAIL	"Outer selectorText text mutation with inner @media rule"
+css/css-nesting/set-selector-text.html	SUBTEST	FAIL	"Outer selectorText text mutation with inner @scope rule"
+css/css-nesting/set-selector-text.html	SUBTEST	FAIL	"Outer selectorText text mutation with inner @supports rule"
+css/css-nesting/set-selector-text.html	SUBTEST	FAIL	"Outer selectorText text mutation with inner nested decl. rule"
+css/css-nesting/set-selector-text.html	SUBTEST	FAIL	"Outer selectorText text mutation with inner style rule"
+css/css-nesting/supports-is-consistent.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/supports-rule.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-nesting/top-level-is-scope.html	FAIL
+css/css-nesting/top-level-is-scope.html	SUBTEST	FAIL	"& as direct ancestor"
+css/css-nesting/top-level-is-scope.html	SUBTEST	FAIL	"& matches scoped element only, not everything"
+css/css-nesting/top-level-parent-pseudo-specificity.html	FAIL
+css/css-nesting/top-level-parent-pseudo-specificity.html	SUBTEST	FAIL	"CSS Nesting: Specificity of top-level '&'"

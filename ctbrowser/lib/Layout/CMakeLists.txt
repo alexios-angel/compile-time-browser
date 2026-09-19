@@ -5,7 +5,15 @@
 # but NOT the other way round: nothing upstream knows layout exists, which is
 # what keeps the pipeline acyclic.
 add_library(ctbrowser-layout)
-ctbrowser_subsystem_sources(ctbrowser-layout layout)
+target_sources(ctbrowser-layout PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
+target_sources(ctbrowser-layout PRIVATE
+  algorithm.cpp
+  box.cpp
+  engine.cpp
+  flex.cpp
+  overflow.cpp
+  position.cpp
+)
 target_compile_features(ctbrowser-layout PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-layout)
 target_link_libraries(ctbrowser-layout PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style)

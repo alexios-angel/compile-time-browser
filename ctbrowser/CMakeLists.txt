@@ -35,7 +35,8 @@ set(PROJECT_DESCRIPTION "A browser engine: HTML, CSS and JavaScript, rendered wi
 # The monorepo root. Every reach OUT of this project goes through this variable
 # rather than through a bare `..`, so the handful of shared directories are
 # searchable by name and a standalone install of ctbrowser needs none of them.
-get_filename_component(CTBROWSER_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}/.." ABSOLUTE)
+get_filename_component(CTBROWSER_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}" DIRECTORY)
+set(CTBROWSER_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")
 
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
@@ -220,10 +221,11 @@ else()
 endif()
 
 add_subdirectory(lib)
+add_subdirectory(include)
 
 # examples/, tools/ and the test trees ARE PROJECT-LEVEL, and until 2026-08-09
-# they were not: the engine subtree reached back out to `../examples` and
-# `../tests`, so it pulled in its own siblings. They only need
+# they were not: the engine subtree reached out to the examples and test
+# directories, so it pulled in its own siblings. They only need
 # ctbrowser_target() and the targets, both of which exist by now.
 #
 # tools/ is where the two CLIs live now: `lib/` is reusable implementation and

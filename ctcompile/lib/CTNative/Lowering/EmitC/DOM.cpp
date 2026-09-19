@@ -26,6 +26,9 @@ std::string lowering::domDataDefinition() const {
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     needsDOM = true;
+    if (entry.returnsUndefined()) {
+        resultTypes[entry.entry().getSymName()] = mlir::NoneType::get(context);
+    }
     domStringResults.insert(entry.stringResults().begin(), entry.stringResults().end());
     domStringRefinements.assign(entry.stringRefinements().begin(), entry.stringRefinements().end());
     domOptionalStrings.insert(entry.optionalStringJoins().begin(),
@@ -394,6 +397,16 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         swap(value.getResult(0));
         return true;
     }
+    if (edge.kind == HostDOMMethod::replaceUppercase) {
+        auto callback = edge.callback;
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            at.getStringAttr("ctnative::replace_uppercase<" + names.lookup(callback.getSymName()) +
+                             ">"),
+            mlir::ValueRange{call.getReceiver()});
+        swap(value.getResult(0));
+        return true;
+    }
     if (edge.kind == HostDOMMethod::filterStrings) {
         auto callback = edge.callback;
         auto value = callWithConstValueOperands(
@@ -401,6 +414,59 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             at.getStringAttr("ctnative::filter_strings<" + names.lookup(callback.getSymName()) +
                              ">"),
             mlir::ValueRange{call.getReceiver()});
+        swap(value.getResult(0));
+        return true;
+    }
+    if (edge.kind == HostDOMMethod::stringLowercaseUnit) {
+        const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
+        auto units = callWithConstValueOperands(at, where, mlir::TypeRange{unitsType},
+                                                at.getStringAttr("ctbrowser::wtf8_to_utf16"),
+                                                mlir::ValueRange{call.getReceiver()});
+        auto empty = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{at.getI1Type()}, units.getResult(0),
+            at.getStringAttr("empty"), mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
+        auto branch = mlir::scf::IfOp::create(at, where, mlir::TypeRange{unitsType},
+                                              empty.getResult(0), true);
+        mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&branch.getThenRegion().front());
+        mlir::scf::YieldOp::create(inside, where, units.getResults());
+        inside.setInsertionPointToStart(&branch.getElseRegion().front());
+        auto first = ec::MemberCallOpaqueOp::create(
+            inside, where, mlir::TypeRange{ec::OpaqueType::get(context, "char16_t")},
+            units.getResult(0), inside.getStringAttr("front"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        auto lowered = callWithConstValueOperands(
+            inside, where, mlir::TypeRange{unitsType},
+            inside.getStringAttr("ctbrowser::unicode_lowercase_unit"), first.getResults());
+        mlir::scf::YieldOp::create(inside, where, lowered.getResults());
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            at.getStringAttr("ctbrowser::utf16_to_wtf8"), branch.getResults());
+        swap(value.getResult(0));
+        return true;
+    }
+    if (edge.kind == HostDOMMethod::stringCharAt || edge.kind == HostDOMMethod::stringSlice) {
+        const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
+        auto units = callWithConstValueOperands(at, where, mlir::TypeRange{unitsType},
+                                                at.getStringAttr("ctbrowser::wtf8_to_utf16"),
+                                                mlir::ValueRange{call.getReceiver()});
+        const auto indexType = ec::OpaqueType::get(context, "std::size_t");
+        auto zero = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"));
+        auto one = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1"));
+        llvm::SmallVector<mlir::Value> range{zero, one};
+        if (edge.kind == HostDOMMethod::stringSlice) {
+            auto empty = ec::MemberCallOpaqueOp::create(
+                at, where, mlir::TypeRange{at.getI1Type()}, units.getResult(0),
+                at.getStringAttr("empty"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                mlir::ValueRange{});
+            range = {
+                ec::ConditionalOp::create(at, where, indexType, empty.getResult(0), zero, one)};
+        }
+        auto part = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{unitsType},
+                                                   units.getResult(0), at.getStringAttr("substr"),
+                                                   mlir::ArrayAttr{}, mlir::ArrayAttr{}, range);
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            at.getStringAttr("ctbrowser::utf16_to_wtf8"), mlir::ValueRange{part.getResult(0)});
         swap(value.getResult(0));
         return true;
     }
@@ -422,7 +488,10 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     switch (edge.kind) {
     case HostDOMMethod::datasetKeys: callee = "ctnative::dataset_keys"; break;
     case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
-    case HostDOMMethod::setAttribute: callee = "ctnative::set_attribute"; break;
+    case HostDOMMethod::setAttribute:
+        callee = call.getArgs()[1].getType() == optionalString ? "ctnative::set_optional_attribute"
+                                                               : "ctnative::set_attribute";
+        break;
     case HostDOMMethod::getAttribute: callee = "ctnative::get_attribute"; break;
     case HostDOMMethod::toggleAttribute: callee = "ctnative::toggle_attribute"; break;
     case HostDOMMethod::hasAttribute: callee = "ctnative::has_attribute"; break;
@@ -436,7 +505,11 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         break;
     case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
     case HostDOMMethod::filterStrings:
+    case HostDOMMethod::replaceUppercase:
     case HostDOMMethod::removeStringPrefix:
+    case HostDOMMethod::stringCharAt:
+    case HostDOMMethod::stringSlice:
+    case HostDOMMethod::stringLowercaseUnit:
     case HostDOMMethod::startsWith: llvm_unreachable("String filter handled above");
     case HostDOMMethod::decodeURIComponent:
     case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");

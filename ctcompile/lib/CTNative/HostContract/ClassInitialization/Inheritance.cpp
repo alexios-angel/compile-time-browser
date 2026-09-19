@@ -1,0 +1,610 @@
+#include "Proof.hpp"
+
+namespace ctcompile::ctnative::class_detail {
+
+bool classInitialization::proveHeritage(const HostContract & contract) {
+    llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
+    for (ctjs::CallOp call : calls) {
+        if (!step()) { return false; }
+        if (call.getArgs().size() != 1) { continue; }
+        auto [at, fresh] = completed.try_emplace(sourceValue(call.getArgs().front()), call);
+        if (!fresh) { at->second = {}; }
+    }
+    const auto walked = module.walk([&](ctjs::CallOp call) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!load || load.getName() != "__ctbrowser_class_heritage") {
+            return mlir::WalkResult::advance();
+        }
+        if (!llvm::is_contained(contract.initialIntrinsics, load.getName()) ||
+            call.getArgs().size() != 3 || !undefined(call.getReceiver()) ||
+            !call.getResult().use_empty()) {
+            refuse("class heritage needs its declared direct helper and unused result");
+            return mlir::WalkResult::interrupt();
+        }
+        const auto derived = sourceValue(call.getArgs()[0]);
+        const auto base = sourceValue(call.getArgs()[1]);
+        const auto derivedClosure = derived.getDefiningOp<ctjs::CreateClosureOp>();
+        const auto baseClosure = base.getDefiningOp<ctjs::CreateClosureOp>();
+        const auto derivedDone = completed.lookup(derived);
+        const auto baseDone = completed.lookup(base);
+        auto prototype = call.getArgs()[2].getDefiningOp<ctjs::CreateObjectOp>();
+        if (derived == base || !target(derivedClosure) || !target(baseClosure) || !derivedDone ||
+            !baseDone || !prototype || derivedClosure->getBlock() != call->getBlock() ||
+            baseClosure->getBlock() != call->getBlock() ||
+            derivedDone->getBlock() != call->getBlock() ||
+            baseDone->getBlock() != call->getBlock() || prototype->getBlock() != call->getBlock() ||
+            !derivedClosure->isBeforeInBlock(call) || !prototype->isBeforeInBlock(call) ||
+            !baseDone->isBeforeInBlock(call) || !call->isBeforeInBlock(derivedDone) ||
+            !heritage.try_emplace(derived, call).second) {
+            refuse("class heritage needs an earlier completed local base and fresh derived "
+                   "prototype");
+            return mlir::WalkResult::interrupt();
+        }
+        // Strict source order rules out cycles. Every base's exact home,
+        // prototype, captures and complete use census still pass examine.
+        baseClasses.insert(base);
+        return mlir::WalkResult::advance();
+    });
+    return !walked.wasInterrupted();
+}
+
+bool classInitialization::heritageUse(mlir::OpOperand & use, mlir::Value constructor) {
+    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    if (!call || call.getArgs().size() != 3 ||
+        heritage.lookup(sourceValue(call.getArgs()[0])) != call) {
+        return false;
+    }
+    return (use.getOperandNumber() == 2 || use.getOperandNumber() == 3) &&
+           sourceValue(use.get()) == constructor;
+}
+
+bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base,
+                                         const HostContract & contract) {
+    auto & original = function.getBody().front();
+    if (!llvm::hasSingleElement(base.getBody()) ||
+        !original.getArgument(ctjs::arg_new_target).use_empty() ||
+        !original.getArgument(ctjs::arg_callee).use_empty()) {
+        return refuse("derived class requires receiver-preserving super normalization");
+    }
+    auto returned = llvm::dyn_cast<ctjs::ReturnOp>(base.getBody().front().getTerminator());
+    if (!returned || !undefined(returned.getValue())) {
+        return refuse("super base requires an undefined constructor return");
+    }
+    for (llvm::StringRef name : {"__ctbrowser_bind_this", "__ctbrowser_init_fields"}) {
+        if (!llvm::is_contained(contract.initialIntrinsics, name)) {
+            return refuse("super initialization requires declared helper identities");
+        }
+    }
+    // Other class/helper/global records borrow original operations. Keep
+    // this first constructor slice free of declarations/publications instead
+    // of invalidating those records while replacing its private body.
+    for (auto fn : {function, base}) {
+        const auto census = fn.walk([&](mlir::Operation * op) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp>(op)) {
+                refuse("super constructor declarations and global writes remain unsupported");
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (census.wasInterrupted()) { return false; }
+    }
+    ctjs::CreateCellOp guard;
+    for (auto cell : original.getOps<ctjs::CreateCellOp>()) {
+        if (!step() || guard) { return refuse("super requires one private Boolean guard"); }
+        auto value = cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
+        auto bit =
+            value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue()) : ctjs::BooleanAttr{};
+        if (!bit || bit.getValue()) { return refuse("super guard must begin false"); }
+        guard = cell;
+    }
+    if (!guard) { return refuse("derived class requires receiver-preserving super normalization"); }
+    for (auto & use : guard.getResult().getUses()) {
+        if (!step()) { return false; }
+        if (use.getOperandNumber() != 0 ||
+            !llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp, ctjs::RootOp>(use.getOwner())) {
+            return refuse("super guard escapes its private reads and write");
+        }
+    }
+    auto counted = function.walk([&](mlir::Operation * op) {
+        const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
+        if (cost > remaining) {
+            refuse("class initialization work budget exhausted");
+            return mlir::WalkResult::interrupt();
+        }
+        remaining -= static_cast<unsigned>(cost);
+        return mlir::WalkResult::advance();
+    });
+    if (counted.wasInterrupted()) { return false; }
+    mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->cloneWithoutRegions()));
+    auto * output = new mlir::Block;
+    copy->getBody().push_back(output);
+    mlir::IRMapping mapping;
+    for (auto argument : original.getArguments()) {
+        mapping.map(argument, output->addArgument(argument.getType(), argument.getLoc()));
+    }
+    mlir::OpBuilder at(function.getContext());
+    at.setInsertionPointToEnd(output);
+    auto absent = ctjs::ConstantOp::create(at, function.getLoc(),
+                                           ctjs::UndefinedAttr::get(module.getContext()));
+    const auto receiver = original.getArgument(ctjs::arg_receiver);
+    const auto integer = [&](mlir::Value value) -> std::optional<int64_t> {
+        auto constant = mapping.lookupOrDefault(value).getDefiningOp<mlir::arith::ConstantOp>();
+        auto number =
+            constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue()) : mlir::IntegerAttr{};
+        return number ? std::optional<int64_t>(number.getInt()) : std::nullopt;
+    };
+    unsigned phase = 0; // base call, guard write, bind-this, fields, completion.
+    bool initialized = false, finished = false;
+    ctjs::CallOp baseCall;
+    llvm::DenseSet<mlir::Block *> visited;
+    const auto visit = [&](auto && self, mlir::Block & block,
+                           llvm::SmallVectorImpl<mlir::Value> & yielded, unsigned depth) -> bool {
+        if (!step() || depth == 64 || !visited.insert(&block).second) {
+            return refuse("super initialization has cyclic control flow");
+        }
+        for (mlir::Operation & op : block) {
+            if (!step()) { return false; }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
+                const auto bit = integer(branch.getCondition());
+                if (!bit) { return refuse("super initialization has an unproved branch"); }
+                auto & region = *bit ? branch.getThenRegion() : branch.getElseRegion();
+                if (!region.hasOneBlock()) { return refuse("super branch is not linear"); }
+                llvm::SmallVector<mlir::Value> values;
+                if (!self(self, region.front(), values, depth + 1) ||
+                    values.size() != branch.getNumResults()) {
+                    return false;
+                }
+                mapping.map(branch.getResults(), values);
+                continue;
+            }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(op)) {
+                const auto key = integer(branch.getArg());
+                if (!key) { return refuse("super completion has an unproved switch"); }
+                auto * region = &branch.getDefaultRegion();
+                for (auto [i, value] : llvm::enumerate(branch.getCases())) {
+                    if (!step()) { return false; }
+                    if (value == *key) { region = &branch.getCaseRegions()[i]; }
+                }
+                if (!region->hasOneBlock()) { return refuse("super completion is not linear"); }
+                llvm::SmallVector<mlir::Value> values;
+                if (!self(self, region->front(), values, depth + 1) ||
+                    values.size() != branch.getNumResults()) {
+                    return false;
+                }
+                mapping.map(branch.getResults(), values);
+                continue;
+            }
+            if (auto branch = llvm::dyn_cast<mlir::cf::SwitchOp>(op)) {
+                const auto key = integer(branch.getFlag());
+                if (!key) { return refuse("super exit has an unproved switch"); }
+                auto * destination = branch.getDefaultDestination();
+                mlir::ValueRange operands = branch.getDefaultOperands();
+                if (auto cases = branch.getCaseValues()) {
+                    for (auto [i, value] : llvm::enumerate(cases->getValues<llvm::APInt>())) {
+                        if (!step()) { return false; }
+                        if (value.getSExtValue() == *key) {
+                            destination = branch.getCaseDestinations()[i];
+                            operands = branch.getCaseOperands(static_cast<unsigned>(i));
+                        }
+                    }
+                }
+                for (auto [argument, value] : llvm::zip(destination->getArguments(), operands)) {
+                    mapping.map(argument, mapping.lookupOrDefault(value));
+                }
+                return self(self, *destination, yielded, depth + 1);
+            }
+            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
+                for (auto value : yield.getOperands()) {
+                    yielded.push_back(mapping.lookupOrDefault(value));
+                }
+                return true;
+            }
+            if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
+                if (phase != 4 ||
+                    mapping.lookupOrDefault(returned.getValue()) != mapping.lookup(receiver)) {
+                    return refuse("derived completion requires its initialized receiver");
+                }
+                ctjs::ReturnOp::create(at, returned.getLoc(), absent);
+                finished = true;
+                return true;
+            }
+            if (&op == guard) { continue; }
+            if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
+                if (read.getCell() != guard.getResult()) {
+                    return refuse("super reads an unrelated cell");
+                }
+                mapping.map(
+                    read.getResult(),
+                    ctjs::ConstantOp::create(
+                        at, read.getLoc(), ctjs::BooleanAttr::get(module.getContext(), initialized))
+                        .getResult());
+                continue;
+            }
+            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
+                auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
+                auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
+                                 : ctjs::BooleanAttr{};
+                if (phase != 1 || write.getCell() != guard.getResult() || !bit || !bit.getValue()) {
+                    return refuse("super guard requires one true write after the base call");
+                }
+                initialized = true;
+                phase = 2;
+                continue;
+            }
+            if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
+                auto value =
+                    mapping.lookupOrDefault(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
+                auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
+                                 : ctjs::BooleanAttr{};
+                if (!bit) { return refuse("super condition is not a proved Boolean"); }
+                mapping.map(truth.getResult(), mlir::arith::ConstantIntOp::create(
+                                                   at, truth.getLoc(), bit.getValue(), 1)
+                                                   .getResult());
+                continue;
+            }
+            if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(op)) {
+                const auto value = integer(cast.getIn());
+                if (!value || *value < 0) { return refuse("super completion index is not proved"); }
+                mapping.map(
+                    cast.getResult(),
+                    mlir::arith::ConstantIndexOp::create(at, cast.getLoc(), *value).getResult());
+                continue;
+            }
+            if (auto pass = llvm::dyn_cast<ctjs::PassNewTargetOp>(op)) {
+                if (phase != 0 || !llvm::isa_and_nonnull<ctjs::CallOp>(pass->getNextNode())) {
+                    return refuse("super new.target must immediately precede its base call");
+                }
+                continue;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                auto proto =
+                    read ? read.getObject().getDefiningOp<ctjs::GetProtoOp>() : ctjs::GetProtoOp{};
+                if (proto && proto->getOperand(0).getDefiningOp<ctjs::LoadHomeOp>() &&
+                    ctjs::constantKey(read.getKey()) == "constructor") {
+                    if (phase != 0 || call.getReceiver() != receiver ||
+                        !llvm::isa_and_nonnull<ctjs::PassNewTargetOp>(call->getPrevNode()) ||
+                        call.getArgs().size() + ctjs::implicit_arguments >
+                            base.getBody().front().getNumArguments()) {
+                        return refuse("super requires one exact ordered base call");
+                    }
+                    for (auto & use : call.getResult().getUses()) {
+                        if (!step()) { return false; }
+                        auto bind = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                        auto load = bind ? bind.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()
+                                         : ctjs::LoadGlobalOp{};
+                        if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                            (!load || load.getName() != "__ctbrowser_bind_this" ||
+                             use.getOperandNumber() != 2)) {
+                            return refuse("super result escapes its receiver binding");
+                        }
+                    }
+                    mlir::IRMapping arguments;
+                    auto & body = base.getBody().front();
+                    arguments.map(body.getArgument(ctjs::arg_receiver), mapping.lookup(receiver));
+                    arguments.map(body.getArgument(ctjs::arg_new_target),
+                                  mapping.lookup(original.getArgument(ctjs::arg_new_target)));
+                    arguments.map(body.getArgument(ctjs::arg_callee), absent);
+                    for (auto [i, formal] : llvm::enumerate(
+                             body.getArguments().drop_front(ctjs::implicit_arguments))) {
+                        if (!step()) { return false; }
+                        arguments.map(formal, i < call.getArgs().size()
+                                                  ? mapping.lookupOrDefault(call.getArgs()[i])
+                                                  : absent.getResult());
+                    }
+                    for (mlir::Operation & operation : body) {
+                        if (!step()) { return false; }
+                        if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(
+                                operation)) {
+                            at.clone(operation, arguments);
+                        }
+                    }
+                    mapping.map(call.getResult(), absent);
+                    baseCall = call;
+                    phase = 1;
+                    continue;
+                }
+                auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (load && undefined(call.getReceiver()) && call.getResult().use_empty()) {
+                    if (load.getName() == "__ctbrowser_bind_this" && phase == 2 &&
+                        call.getArgs().size() == 1 && call.getArgs()[0] == baseCall.getResult()) {
+                        phase = 3;
+                        continue;
+                    }
+                    if (load.getName() == "__ctbrowser_init_fields" && phase == 3 &&
+                        call.getArgs().size() == 2 && call.getArgs()[0] == receiver &&
+                        call.getArgs()[1].getDefiningOp<ctjs::LoadHomeOp>()) {
+                        phase = 4;
+                        continue;
+                    }
+                }
+                return refuse("super initialization contains an unproved call");
+            }
+            if (llvm::isa<ctjs::RootOp>(op) && op.getOperand(0) == guard.getResult()) { continue; }
+            if (phase != 4 && llvm::is_contained(op.getOperands(), receiver)) {
+                return refuse("derived receiver is used before super initialization");
+            }
+            if (op.getNumRegions() || op.hasTrait<mlir::OpTrait::IsTerminator>()) {
+                return refuse("super initialization contains unsupported control flow");
+            }
+            at.clone(op, mapping);
+        }
+        return false;
+    };
+    llvm::SmallVector<mlir::Value> unused;
+    if (!visit(visit, original, unused, 0) || !finished) {
+        return refuse("derived class requires receiver-preserving super normalization");
+    }
+    // Only unobserved super metadata and pure transport can disappear. Any
+    // unexpected use keeps the operation for the complete class census.
+    for (mlir::Operation & op : llvm::make_early_inc_range(llvm::reverse(*output))) {
+        if (!step()) { return false; }
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        const auto proto = read ? read.getObject().getDefiningOp<ctjs::GetProtoOp>()
+                                : llvm::dyn_cast<ctjs::GetProtoOp>(op);
+        auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+        const bool metadata = (proto && proto->getOperand(0).getDefiningOp<ctjs::LoadHomeOp>() &&
+                               (!read || ctjs::constantKey(read.getKey()) == "constructor")) ||
+                              (load && (load.getName() == "__ctbrowser_bind_this" ||
+                                        load.getName() == "__ctbrowser_init_fields"));
+        if (op.use_empty() &&
+            (metadata || llvm::isa<ctjs::LoadHomeOp, ctjs::ConstantOp, mlir::arith::ConstantOp,
+                                   mlir::ub::PoisonOp>(op))) {
+            op.erase();
+        }
+    }
+    function.getBody().takeBody(copy->getBody());
+    return true;
+}
+
+bool classInitialization::examine(ctjs::CallOp call, const HostContract & contract, bool domEntry) {
+    if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
+        !call.getResult().use_empty()) {
+        return refuse("class helper needs one local constructor and an unused result");
+    }
+    auto closure = call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
+    auto function = target(closure);
+    if (!function || !undefined(closure.getEnclosingThis()) || !closure.getUpvalues().empty() ||
+        closure->getBlock() != call->getBlock() || !closure->isBeforeInBlock(call)) {
+        return refuse("class constructor lacks a local ordinary closure identity");
+    }
+    ctjs::SetPropertyOp attachment, home, backedge;
+    llvm::SmallVector<ctjs::ConstructOp> instances;
+    llvm::StringMap<ctjs::DefineAccessorOp> staticDefinitions;
+    llvm::SmallVector<ctjs::GetPropertyOp> staticReads;
+    llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
+    for (mlir::OpOperand * sourceUse : sourceUses(closure.getResult())) {
+        auto & use = *sourceUse;
+        if (!step()) { return false; }
+        auto * op = use.getOwner();
+        if (op == call && use.getOperandNumber() == 2) { continue; }
+        if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+        if (heritageUse(use, closure.getResult())) { continue; }
+        if (auto definition = llvm::dyn_cast<ctjs::DefineAccessorOp>(op)) {
+            if (use.getOperandNumber() != 0 || definition->getBlock() != call->getBlock() ||
+                !definition->isBeforeInBlock(call) ||
+                !staticDefinitions.try_emplace(definition.getName(), definition).second) {
+                return refuse("static accessor setup is repeated or outside initialization");
+            }
+            continue;
+        }
+        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+            if (use.getOperandNumber() != 0 || read->getBlock() != call->getBlock() ||
+                !call->isBeforeInBlock(read)) {
+                return refuse("static getter read lacks completed local initialization");
+            }
+            staticReads.push_back(read);
+            continue;
+        }
+        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
+            if (use.getOperandNumber() >= 2 ||
+                sourceValue(made.getCallee()) != closure.getResult() ||
+                sourceValue(made.getNewTarget()) != closure.getResult() ||
+                made->getBlock() != call->getBlock() || !call->isBeforeInBlock(made)) {
+                return refuse("class construction escapes or lacks exact local new.target");
+            }
+            if (use.getOperandNumber() == 0) { instances.push_back(made); }
+            continue;
+        }
+        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+        if (!write || write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
+            auto invocation = llvm::dyn_cast<ctjs::CallOp>(op);
+            auto load = invocation ? invocation.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()
+                                   : ctjs::LoadGlobalOp{};
+            if (load && load.getName() == "__ctbrowser_class_heritage") {
+                return refuse("class inheritance requires proved heritage, receiver and "
+                              "super initialization");
+            }
+            return refuse("class constructor has an observable use outside its setup");
+        }
+        const auto key = ctjs::constantKey(write.getKey());
+        if (use.getOperandNumber() == 0 && key == "prototype" && !attachment) {
+            attachment = write;
+        } else if (use.getOperandNumber() == 0 && key == "__home" && !home) {
+            home = write;
+        } else if (use.getOperandNumber() == 2 && key == "constructor" && !backedge) {
+            backedge = write;
+        } else if (use.getOperandNumber() == 2 && key == "__home") {
+            getterHomes.push_back(write); // Rechecked against exact getters below.
+        } else {
+            return refuse("class methods, static fields or repeated setup remain unsupported");
+        }
+    }
+    auto prototype = attachment ? attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>()
+                                : ctjs::CreateObjectOp{};
+    if (!prototype || !home || !backedge ||
+        (instances.empty() && !baseClasses.contains(closure.getResult())) ||
+        prototype->getBlock() != call->getBlock() || home.getValue() != prototype.getResult() ||
+        backedge.getObject() != prototype.getResult()) {
+        return refuse("class setup needs its exact fresh prototype, constructor and home");
+    }
+    if (auto inherited = heritage.lookup(closure.getResult());
+        inherited && inherited.getArgs()[2] != prototype.getResult()) {
+        return refuse("class heritage prototype differs from its attached prototype");
+    }
+    const auto firstConstructorRead = constructorReads.size();
+    llvm::StringSet<> methodKeys;
+    llvm::SmallVector<ctjs::SetPropertyOp> definitions;
+    for (mlir::OpOperand & use : prototype.getResult().getUses()) {
+        if (!step()) { return false; }
+        auto * op = use.getOwner();
+        if ((op == attachment || op == home) && use.getOperandNumber() == 2) { continue; }
+        if (op == backedge && use.getOperandNumber() == 0) { continue; }
+        if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+        if (op == heritage.lookup(closure.getResult()) && use.getOperandNumber() == 4) { continue; }
+        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+        if (!write || write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
+            return refuse("class prototype is observed or mutated outside initialization");
+        }
+        if (use.getOperandNumber() == 2 && ctjs::constantKey(write.getKey()) == "__home") {
+            continue; // Rechecked against the exact method closure below.
+        }
+        if (use.getOperandNumber() != 0 || !ctjs::ordinaryKey(write.getKey()) ||
+            !methodKeys.insert(ctjs::constantKey(write.getKey())).second) {
+            return refuse("class prototype needs unique ordinary method definitions");
+        }
+        definitions.push_back(write);
+    }
+    llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions, selectedBaseDefinitions;
+    if (auto inherited = heritage.lookup(closure.getResult())) {
+        auto base = inheritedMethods.find(sourceValue(inherited.getArgs()[1]));
+        if (base == inheritedMethods.end()) {
+            return refuse("class heritage base setup has not been proved");
+        }
+        baseDefinitions = base->second;
+        for (ctjs::SetPropertyOp definition : baseDefinitions) {
+            if (!step()) { return false; }
+            // Own definitions precede each ancestor's definitions. Only
+            // the nearest binding enters the leaf table; every shadowed
+            // body stays in baseDefinitions for the receiver/source census.
+            if (methodKeys.insert(ctjs::constantKey(definition.getKey())).second) {
+                selectedBaseDefinitions.push_back(definition);
+            }
+        }
+    }
+    llvm::DenseSet<mlir::Operation *> methodHomes;
+    for (ctjs::SetPropertyOp definition : definitions) {
+        auto method = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        auto fn = target(method);
+        if (!step() || !fn || method->getBlock() != call->getBlock() ||
+            !method->isBeforeInBlock(definition) || !undefined(method.getEnclosingThis())) {
+            return refuse("class method needs a local ordinary closure");
+        }
+        if (!methodCaptures(method, closure, staticReads, domEntry)) { return false; }
+        ctjs::SetPropertyOp methodHome;
+        for (mlir::OpOperand & use : method.getResult().getUses()) {
+            if (!step()) { return false; }
+            auto * op = use.getOwner();
+            if (op == definition && use.getOperandNumber() == 2) { continue; }
+            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            if (methodHome || !write || use.getOperandNumber() != 0 ||
+                ctjs::constantKey(write.getKey()) != "__home" ||
+                write.getValue() != prototype.getResult() ||
+                write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
+                return refuse("class method identity or lexical home escapes initialization");
+            }
+            methodHome = write;
+        }
+        auto & block = fn.getBody().front();
+        if (domEntry && !proveCells(fn)) { return false; }
+        if (!methodHome || !block.getArgument(ctjs::arg_new_target).use_empty() ||
+            !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
+            return refuse("class method observes its identity, home or an unproved receiver");
+        }
+        methods.insert(fn);
+        methodHomes.insert(methodHome);
+        setup.insert(methodHome);
+    }
+    for (mlir::OpOperand & use : prototype.getResult().getUses()) {
+        if (!step()) { return false; }
+        if (use.getOperandNumber() == 2 && use.getOwner() != attachment && use.getOwner() != home &&
+            !methodHomes.contains(use.getOwner())) {
+            return refuse("class prototype reaches an unrelated lexical home");
+        }
+    }
+    for (ctjs::ConstructOp made : instances) {
+        if (!fieldsOnly(made.getResult(), methodKeys, staticReads, true)) { return false; }
+        for (ctjs::SetPropertyOp definition : definitions) {
+            if (!step()) { return false; }
+            methodProbes.emplace_back(made, definition);
+        }
+    }
+    if (auto inherited = heritage.lookup(closure.getResult())) {
+        if (!staticDefinitions.empty() || !staticReads.empty()) {
+            return refuse("derived class requires receiver-preserving super normalization");
+        }
+        // Recheck inherited receiver uses against the final method table:
+        // a base field write must not shadow a method added by the leaf.
+        // ponytail: DOM and receiver-selected getters need per-leaf body
+        // proofs; lexical super remains a separate boundary.
+        if (domEntry && !methodKeys.empty()) {
+            return refuse("inherited DOM methods require per-leaf body proof");
+        }
+        for (ctjs::SetPropertyOp definition : baseDefinitions) {
+            auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+            llvm::SmallVector<ctjs::GetPropertyOp> receiverReads;
+            const auto before = constructorReads.size();
+            if (!step() || !fieldsOnly(fn.getBody().front().getArgument(ctjs::arg_receiver),
+                                       methodKeys, receiverReads, true)) {
+                return false;
+            }
+            if (!receiverReads.empty() || constructorReads.size() != before) {
+                return refuse("inherited receiver getters require per-leaf target proof");
+            }
+        }
+        auto base =
+            target(sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>());
+        if (!constructors.contains(base) || !normalizeSuper(function, base, contract)) {
+            return false;
+        }
+        setup.insert(inherited);
+        retainedSetup.insert(inherited.getCallee().getDefiningOp());
+    }
+    if (!definitions.empty() || constructorReads.size() != firstConstructorRead) {
+        for (ctjs::ReturnOp returned : function.getBody().front().getOps<ctjs::ReturnOp>()) {
+            if (!step() || !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+                return refuse(
+                    "class receiver getter or method needs a primitive constructor return");
+            }
+        }
+    }
+    auto & entry = function.getBody().front();
+    if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
+        !entry.getArgument(ctjs::arg_callee).use_empty() ||
+        !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
+        return refuse("class constructor observes new.target, lexical home or receiver identity");
+    }
+    if (!staticGetters(staticDefinitions, staticReads, call)) { return false; }
+    for (ctjs::SetPropertyOp write : getterHomes) {
+        if (!step()) { return false; }
+        if (!setup.contains(write)) {
+            return refuse("class constructor reaches an unrelated getter home");
+        }
+    }
+    constructors.insert(function);
+    // Keep method definitions on the prototype until constructor lowering.
+    // They must already be available when the constructor body runs.
+    if (instances.empty()) {
+        setup.insert(attachment);
+        for (ctjs::SetPropertyOp definition : definitions) { setup.insert(definition); }
+    } else if (methodKeys.empty()) {
+        setup.insert(attachment);
+    } else {
+        retainedSetup.insert(attachment);
+        for (ctjs::SetPropertyOp definition : selectedBaseDefinitions) {
+            if (!step()) { return false; }
+            inheritedSlots.emplace_back(heritage.lookup(closure.getResult()), definition);
+        }
+    }
+    setup.insert(home);
+    setup.insert(backedge);
+    auto & allDefinitions = inheritedMethods[closure.getResult()];
+    allDefinitions = definitions;
+    allDefinitions.append(baseDefinitions);
+    return true;
+}
+
+} // namespace ctcompile::ctnative::class_detail

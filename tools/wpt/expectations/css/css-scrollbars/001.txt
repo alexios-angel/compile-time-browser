@@ -1,0 +1,5 @@
+css/css-scrollbars/inheritance.html	FAIL
+css/css-scrollbars/inheritance.html	SUBTEST	FAIL	"Property scrollbar-color has initial value auto"
+css/css-scrollbars/inheritance.html	SUBTEST	FAIL	"Property scrollbar-color inherits"
+css/css-scrollbars/inheritance.html	SUBTEST	FAIL	"Property scrollbar-width does not inherit"
+css/css-scrollbars/inheritance.html	SUBTEST	FAIL	"Property scrollbar-width has initial value auto"

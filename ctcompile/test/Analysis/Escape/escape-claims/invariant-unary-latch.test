@@ -1,0 +1,118 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-unary-latch
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-unary-latch.claims
+
+// A unary latch uses the exact saved operand, including a primitive loaded
+// before its source changes. Recomputed and changing operands remain unproved.
+// IMPORT-LABEL: ctjs.func @savedPlus$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @savedNeg$
+// IMPORT: ctjs.unary neg
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @savedBitNot$
+// IMPORT: ctjs.unary bitnot
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @savedString$
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @changing$
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @repeated$
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @unknown$
+// IMPORT: ctjs.unary neg
+// IMPORT-LABEL: ctjs.func @zero$
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @noncanonical$
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @originalKey$
+// IMPORT: ctjs.unary plus
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function savedPlus() {
+    var child = {}, array = [child], saved = 0, step = 2 - 1;
+    for (var i = 0; i < array.length; i += +step) saved = array[i];
+    return 0;
+}
+function savedNeg() {
+    var child = {}, array = [child], saved = 0, step = 2 - 1;
+    for (var i = 0; i < array.length; i -= -step) saved = array[i];
+    return saved;
+}
+function savedBitNot() {
+    var child = {}, array = [child], saved = 0, step = 1 - 1;
+    for (var i = 0; i < array.length; i -= ~step) saved = array[i];
+    return 0;
+}
+function savedString() {
+    var child = {}, array = [child], inputs = ['1'], step = inputs[0], saved = 0;
+    inputs[0] = child;
+    for (var i = 0; i < array.length; i += +step) saved = array[i];
+    return 0;
+}
+function changing() {
+    var child = {}, array = [child], saved = 0, step = 1;
+    for (var i = 0; i < array.length; i += +step) {
+        saved = array[i];
+        step = step + 1;
+    }
+    return 0;
+}
+function repeated() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i += +(i + 1)) saved = array[i];
+    return 0;
+}
+function unknown(step) {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i -= -step) saved = array[i];
+    return 0;
+}
+function zero() {
+    var child = {}, array = [child], saved = 0, step = 1 - 1;
+    for (var i = 1; i < array.length; i += +step) saved = array[i];
+    return 0;
+}
+function noncanonical() {
+    var child = {}, array = [child], saved = 0, step = '01';
+    for (var i = 0; i < array.length; i += +step) saved = array[i];
+    return 0;
+}
+function originalKey() {
+    var child = {}, array = [child], saved = 0, step = true;
+    for (var i = 0; i < array.length; i += +step) saved = array[i];
+    return array[step];
+}
+savedPlus();
+var heldSavedNeg = savedNeg();
+savedBitNot();
+savedString();
+changing();
+repeated();
+unknown(1);
+zero();
+noncanonical();
+var heldOriginalKey = originalKey();

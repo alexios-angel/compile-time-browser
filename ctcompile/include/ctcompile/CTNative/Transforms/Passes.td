@@ -46,6 +46,8 @@ def CTNativeSpecializeClassInitialization : Pass<"ctnative-specialize-class-init
     closed static getters with scalars or fresh empty objects expand at their
     exact reads after a bounded dependency proof; unused getter definitions are
     removed only after complete closure and symbol-use checks.
+    Early fixed global callable holders with capture-free, receiver-blind helpers
+    become direct calls only after the same complete source-effect proof.
     Inheritance, field initializer closures, reflection and
     unknown source effects remain refused. This grants no native ownership or field
     admission; normal constructor lowering must prove those independently.

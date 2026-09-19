@@ -747,6 +747,20 @@ inline void require_dataset_element(ctbrowser::element_ref element) {
         throw std::invalid_argument("DOM dataset requires a contracted HTML or SVG element");
     }
 }
+// The source proof fixes /[A-Z]/g and the complete callback. ASCII matches
+// occupy one byte even in WTF-8; every unmatched byte is preserved unchanged.
+template <auto Replacement> std::string replace_uppercase(const std::string & text) {
+    std::string result;
+    for (char c : text) {
+        if (c >= 'A' && c <= 'Z') {
+            result += Replacement(std::string(1, c));
+        } else {
+            result += c;
+        }
+    }
+    return result;
+}
+
 template <auto Predicate>
 std::vector<std::string> filter_strings(const std::vector<std::string> & values) {
     std::vector<std::string> selected;
@@ -782,6 +796,10 @@ inline void set_attribute(ctbrowser::element_ref element, std::string_view name,
 }
 inline void set_attribute(ctbrowser::element_ref element, std::string_view name, bool value) {
     set_attribute(element, name, value ? std::string_view("true") : std::string_view("false"));
+}
+inline void set_optional_attribute(ctbrowser::element_ref element, std::string_view name,
+                                   const std::optional<std::string> & value) {
+    set_attribute(element, name, value ? std::string_view(*value) : std::string_view("null"));
 }
 inline double dom_number(const std::optional<std::string> & text) {
     return text ? ctbrowser::string_to_number(*text) : 0.0;

@@ -1,0 +1,74 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name visited-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-visited-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function belowStart() {
+    var child = {}, a = [1, child];
+    for (var i = 1; i < a.length; i += a[0]) a[i] = 0;
+    return a;
+}
+function skippedSlot() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i += a[1]) a[i] = 0;
+    return a;
+}
+function relativeStart() {
+    var child = {}, a = [2, child, 2, child];
+    for (var i = 1; i < a.length; i += a[2]) a[i] = 0;
+    return a;
+}
+function nested() {
+    var child = {}, a = [1, child], box = [a];
+    for (var i = 1; i < a.length; i += box[0][0]) a[i] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [1, child];
+    for (var i = 2; i < a.length; i += a[0]) a[i] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i += a[2]) a[i] = 3;
+    return a;
+}
+function fixedOverlap() {
+    var child = {}, a = [1, child, child];
+    for (var i = 1; i < a.length; i += a[0]) {
+        a[i] = 0;
+        a[0] = 2;
+    }
+    return a;
+}
+function saved() {
+    var child = {}, a = [1, child], saved = a[1];
+    for (var i = 1; i < a.length; i += a[0]) a[i] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, 2, child, child];
+    for (var i = 0; i < a.length; i += a[1]) a[i] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [1, child];
+    for (var i = 1; i < a.length; i += a[0]) {
+        a[i] = a;
+        a[i] = 0;
+    }
+    return a;
+}
+belowStart(); skippedSlot(); relativeStart(); nested(); zeroTrip();
+laterOverlap(); fixedOverlap(); saved(); remaining(); cycle();

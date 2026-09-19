@@ -1,0 +1,268 @@
+css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index() for --list"
+css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index() for --number"
+css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index() for --percentage"
+css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index() for --resolution"
+css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index() for --time"
+css/css-values/tree-counting/sibling-index-keyframe-rotate-dynamic.html	FAIL
+css/css-values/tree-counting/sibling-index-keyframe-rotate-dynamic.html	SUBTEST	FAIL	"Initially, the sibling-index() is 3 for #target"
+css/css-values/tree-counting/sibling-index-keyframe-rotate-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index()"
+css/css-values/tree-counting/sibling-index-keyframe-scale-dynamic.html	FAIL
+css/css-values/tree-counting/sibling-index-keyframe-scale-dynamic.html	SUBTEST	FAIL	"Initially, the sibling-index() is 3 for #target"
+css/css-values/tree-counting/sibling-index-keyframe-scale-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index()"
+css/css-values/tree-counting/sibling-index-keyframe-transform-dynamic.html	FAIL
+css/css-values/tree-counting/sibling-index-keyframe-transform-dynamic.html	SUBTEST	FAIL	"Initially, the sibling-index() is 3 for #target"
+css/css-values/tree-counting/sibling-index-keyframe-transform-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index()"
+css/css-values/tree-counting/sibling-index-keyframe-value-dynamic.html	FAIL
+css/css-values/tree-counting/sibling-index-keyframe-value-dynamic.html	SUBTEST	FAIL	"Initially, the sibling-index() is 3 for #target"
+css/css-values/tree-counting/sibling-index-keyframe-value-dynamic.html	SUBTEST	FAIL	"Removing a preceding sibling of #target reduces the sibling-index()"
+css/css-values/tree-counting/sibling-index-linear-gradient-gcs.html	FAIL
+css/css-values/tree-counting/sibling-index-linear-gradient-gcs.html	SUBTEST	FAIL	"Check that sibling-index() is resolved in serialization of computed value of linear-gradient() inside cross-fade()"
+css/css-values/tree-counting/sibling-index-linear-gradient-gcs.html	SUBTEST	FAIL	"Check that sibling-index() is resolved in serialization of computed value of linear-gradient() inside image-set()"
+css/css-values/tree-counting/sibling-index-linear-gradient-gcs.html	SUBTEST	FAIL	"Check that sibling-index() is resolved in serialization of computed value of linear-gradient()"
+css/css-values/tree-counting/tree-scoped-sibling-function.html	FAIL
+css/css-values/tree-counting/tree-scoped-sibling-function.html	SUBTEST	FAIL	"sibling-index() and sibling-count() evaluate as normal from inner tree"
+css/css-values/tree-counting/tree-scoped-sibling-function.html	SUBTEST	FAIL	"sibling-index() and sibling-count() evaluates to 1 from outer tree with ::part"
+css/css-values/tree-counting/trig-functions-in-gradient-position.html	FAIL
+css/css-values/tree-counting/trig-functions-in-gradient-position.html	SUBTEST	FAIL	"cos() with a runtime-dependent angle argument resolves in a gradient position"
+css/css-values/typed-arithmetic-different-categories-crash.html	SKIP	not a testharness test
+css/css-values/typed-arithmetic-inside-calc-crash.html	SKIP	not a testharness test
+css/css-values/typed-arithmetic-mixed-units-crash.html	SKIP	not a testharness test
+css/css-values/typed_arithmetic.html	FAIL
+css/css-values/typed_arithmetic.html	SUBTEST	FAIL	"calc(1px * pow(50% / 1px, 1)) should be used-value-equivalent to 50px"
+css/css-values/typed_arithmetic.html	SUBTEST	FAIL	"calc(20cqw / 1rem) should be used-value-equivalent to 2"
+css/css-values/typed_arithmetic.html	SUBTEST	FAIL	"e.style['width'] = \"calc((1% * 1% * 1%) / 1px)\" should not set the property value"
+css/css-values/typed_arithmetic.html	SUBTEST	FAIL	"max(1em + 2%, 110px / 10px * 1px) should be used-value-equivalent to 12px"
+css/css-values/urls/cross-origin/url-image-cross-origin-anonymous-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-image-cross-origin-anonymous.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-image-cross-origin-use-credentials-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-image-cross-origin-use-credentials.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-image-set-cross-origin-anonymous-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-image-set-cross-origin-anonymous.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-import-cross-origin-anonymous-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-import-cross-origin-anonymous.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-import-cross-origin-use-credentials-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-import-cross-origin-use-credentials.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-svg-filter-cross-origin-anonymous-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-svg-filter-cross-origin-anonymous.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-svg-filter-cross-origin-use-credentials-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/cross-origin/url-svg-filter-cross-origin-use-credentials.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/empty.html	FAIL
+css/css-values/urls/empty.html	SUBTEST	FAIL	"empty URL: external-unquoted"
+css/css-values/urls/empty.html	SUBTEST	FAIL	"empty URL: inline-unquoted"
+css/css-values/urls/fragment-only.html	FAIL
+css/css-values/urls/fragment-only.html	SUBTEST	FAIL	"empty URL: external-unquoted"
+css/css-values/urls/fragment-only.html	SUBTEST	FAIL	"empty URL: inline-unquoted"
+css/css-values/urls/integrity/url-image-integrity-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/integrity/url-image-integrity.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/integrity/url-import-integrity-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/integrity/url-import-integrity.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/integrity/url-svg-filter-integrity-negative.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/integrity/url-svg-filter-integrity.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/no-referrer-when-downgrade/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/no-referrer-when-downgrade/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/no-referrer/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/no-referrer/url-image-referrer-policy-external-stylesheet.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/no-referrer/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/no-referrer/url-image-set-referrer-policy.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/no-referrer/url-svg-filter-referrer-policy.sub.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/origin-when-cross-origin/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/origin-when-cross-origin/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/origin/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/origin/url-image-referrer-policy-external-stylesheet.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/origin/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/same-origin/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/same-origin/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/strict-origin-when-cross-origin/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/strict-origin-when-cross-origin/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/strict-origin/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/strict-origin/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/unsafe-url/url-image-referrer-policy-cross-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/unsafe-url/url-image-referrer-policy-external-stylesheet.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/referrer-policy/unsafe-url/url-image-referrer-policy-same-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/urls/resolve-relative-to-base.sub.html	FAIL
+css/css-values/urls/resolve-relative-to-base.sub.html	SUBTEST	FAIL	"base-relative URL: relative-image-url"
+css/css-values/urls/resolve-relative-to-base.sub.html	SUBTEST	FAIL	"base-relative URL: relative-image-variable-url"
+css/css-values/urls/resolve-relative-to-stylesheet.html	FAIL
+css/css-values/urls/resolve-relative-to-stylesheet.html	SUBTEST	FAIL	"stylesheet-relative URL: stylesheet-relative-document-variable-image"
+css/css-values/urls/resolve-relative-to-stylesheet.html	SUBTEST	FAIL	"stylesheet-relative URL: stylesheet-relative-image"
+css/css-values/urls/resolve-relative-to-stylesheet.html	SUBTEST	FAIL	"stylesheet-relative URL: stylesheet-relative-variable-image"
+css/css-values/urls/url-request-modifiers-import-parsing.sub.html	FAIL
+css/css-values/urls/url-request-modifiers-import-parsing.sub.html	SUBTEST	FAIL	"cross-origin(anonymous) serialized in @import cssText"
+css/css-values/urls/url-request-modifiers-import-parsing.sub.html	SUBTEST	FAIL	"duplicate cross-origin in @import between referrer-policy"
+css/css-values/urls/url-request-modifiers-import-parsing.sub.html	SUBTEST	FAIL	"duplicate cross-origin in @import"
+css/css-values/urls/url-request-modifiers-import-parsing.sub.html	SUBTEST	FAIL	"multiple modifiers serialized in canonical order in @import cssText"
+css/css-values/urls/url-request-modifiers-import-parsing.sub.html	SUBTEST	FAIL	"unquoted url() with cross-origin in @import"
+css/css-values/urls/url-request-modifiers-invalid.sub.html	FAIL
+css/css-values/urls/url-request-modifiers-invalid.sub.html	SUBTEST	FAIL	"e.style['background-image'] = \"\\\"http://{{hosts[][]}}:{{ports[http][0]}}/css/support/1x1-green.png\\\" cross-origin(anonymous)\" should not set the property value"
+css/css-values/urls/url-request-modifiers-invalid.sub.html	SUBTEST	FAIL	"e.style['background-image'] = \"\\\"http://{{hosts[][]}}:{{ports[http][0]}}/css/support/1x1-green.png\\\" integrity(\\\"sha384-foobar\\\")\" should not set the property value"
+css/css-values/urls/url-request-modifiers-invalid.sub.html	SUBTEST	FAIL	"e.style['background-image'] = \"\\\"http://{{hosts[][]}}:{{ports[http][0]}}/css/support/1x1-green.png\\\" referrer-policy(no-referrer)\" should not set the property value"
+css/css-values/using-font-relative-units-in-font-properties.html	FAIL
+css/css-values/using-font-relative-units-in-font-properties.html	SUBTEST	FAIL	"Property font-variant-alternates value 'stylistic(ident(\"test-\" calc(1em / 1px)))'"
+css/css-values/vh-calc-support-pct.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-calc-support.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-em-inherit.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-inherit.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-interpolate-pct.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-interpolate-px.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-interpolate-vh.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-support-margin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-support-transform-origin.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-support-transform-translate.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-support.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-update-and-transition-in-subframe-iframe.html	SKIP	not a testharness test
+css/css-values/vh-update-and-transition-in-subframe.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/vh-zero-support.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-page-print.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-unit-011.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-001-print.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-after-font-load.html	FAIL
+css/css-values/viewport-units-after-font-load.html	SUBTEST	FAIL	"Viewport units are correctly updated after resize even if a font load has happened before"
+css/css-values/viewport-units-compute.html	FAIL
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100dvb computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100dvh computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100dvi computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100dvmax computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100dvmin computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100dvw computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100lvb computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100lvh computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100lvi computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100lvmax computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100lvmin computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100lvw computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100svb computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100svh computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100svi computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100svmax computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100svmin computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100svw computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100vb computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100vh computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100vi computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100vmax computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100vmin computes to 100px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"100vw computes to 200px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"10dvh computes to 10px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"10dvw computes to 20px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"1dvh computes to 1px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"1dvw computes to 2px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"calc(1dvw + 10%) computes to 12px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"calc(1dvw + 100px) computes to 102px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"calc(1dvw + 1dvh) computes to 3px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"calc(1dvw + 1dvw) computes to 4px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"max(1svw, 1svh) computes to 2px"
+css/css-values/viewport-units-compute.html	SUBTEST	FAIL	"min(1lvw, 1lvh) computes to 1px"
+css/css-values/viewport-units-extreme-scale.html	FAIL
+css/css-values/viewport-units-extreme-scale.html	SUBTEST	FAIL	"100vh computes to 480px"
+css/css-values/viewport-units-extreme-scale.html	SUBTEST	FAIL	"100vw computes to 640px"
+css/css-values/viewport-units-extreme-scale.html	SUBTEST	FAIL	"calc((100vh - 479px) * 60000) computes to 60000px"
+css/css-values/viewport-units-extreme-scale.html	SUBTEST	FAIL	"calc((1vw - 6.3999px) * 10000000) computes to 1000px"
+css/css-values/viewport-units-gutter-003.html	FAIL
+css/css-values/viewport-units-gutter-003.html	SUBTEST	FAIL	"#test-div 1"
+css/css-values/viewport-units-gutter-004.html	FAIL
+css/css-values/viewport-units-gutter-004.html	SUBTEST	FAIL	"#test-div 1"
+css/css-values/viewport-units-keyframes.html	FAIL
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100dvb is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100dvh is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100dvi is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100dvmax is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100dvmin is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100dvw is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100lvb is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100lvh is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100lvi is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100lvmax is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100lvmin is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100lvw is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100svb is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100svh is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100svi is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100svmax is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100svmin is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100svw is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100vb is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100vh is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100vi is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100vmax is 100px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100vmin is 50px at 50%"
+css/css-values/viewport-units-keyframes.html	SUBTEST	FAIL	"Interpolation from 0px to 100vw is 100px at 50%"
+css/css-values/viewport-units-media-queries.html	FAIL
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100dvb) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100dvh) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100dvmin) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100lvb) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100lvh) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100lvmin) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100svb) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100svh) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100svmin) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100vb) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100vh) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:100vmin) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(height:90vh) does not apply"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100dvi) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100dvmax) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100dvw) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100lvi) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100lvmax) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100lvw) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100svi) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100svmax) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100svw) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100vi) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100vmax) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:100vw) applies"
+css/css-values/viewport-units-media-queries.html	SUBTEST	FAIL	"@media(width:90vw) does not apply"
+css/css-values/viewport-units-scrollbars-auto-vhw-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-scrollbars-compute.html	FAIL
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100dvb computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100dvh computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100dvi computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100dvmax computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100dvmin computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100dvw computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100lvb computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100lvh computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100lvi computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100lvmax computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100lvmin computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100lvw computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100svb computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100svh computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100svi computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100svmax computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100svmin computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100svw computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100vb computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100vh computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100vi computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100vmax computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100vmin computes to 85px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"100vw computes to 185px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"10dvh computes to 8.5px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"10dvw computes to 18.5px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"1dvh computes to 0.84375px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"1dvw computes to 1.84375px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"calc(1dvw + 10%) computes to 10.3438px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"calc(1dvw + 100px) computes to 101.844px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"calc(1dvw + 1dvh) computes to 2.6875px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"calc(1dvw + 1dvw) computes to 3.6875px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"max(1svw, 1svh) computes to 1.84375px"
+css/css-values/viewport-units-scrollbars-compute.html	SUBTEST	FAIL	"min(1lvw, 1lvh) computes to 0.84375px"
+css/css-values/viewport-units-scrollbars-crash.html	SKIP	not a testharness test
+css/css-values/viewport-units-scrollbars-custom-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-scrollbars-dynamic-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-scrollbars-scroll-vhw-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-scrollbars-scroll-vw-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-scrollbars-scroll-vw-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-scrollbars-scroll-vw-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-writing-mode-font-size.html	SKIP	reftest: needs a reference render, not a harness result
+css/css-values/viewport-units-writing-mode.html	FAIL
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100dvb computes to 200px with vertical writing-mode"
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100dvi computes to 100px with vertical writing-mode"
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100lvb computes to 200px with vertical writing-mode"
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100lvi computes to 100px with vertical writing-mode"
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100svb computes to 200px with vertical writing-mode"
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100svi computes to 100px with vertical writing-mode"
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100vb computes to 200px with vertical writing-mode"
+css/css-values/viewport-units-writing-mode.html	SUBTEST	FAIL	"100vi computes to 100px with vertical writing-mode"

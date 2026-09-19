@@ -3,7 +3,7 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-product
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-product.claims
 
-// Products retain exact signed Number snapshots, never coercible String facts.
+// Products retain signed Number snapshots and exact canonical String conversions.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.set_property
@@ -44,10 +44,23 @@
 // CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr confined
+
+// IMPORT-LABEL: ctjs.func @stringSnapshotReturned$
+// IMPORT: ctjs.get_property
+// IMPORT: ctjs.set_property
+// IMPORT: ctjs.binary mul
+// IMPORT-LABEL: ctjs.func @noncanonicalFactor$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary mul
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
 
 //--- source.js
 function snapshotReleased() {
@@ -118,6 +131,24 @@ function coercibleLeft() {
     }
     return 0;
 }
+function stringSnapshotReturned() {
+    var child = {}, array = [child, child, child], source = ["2"], saved = 0;
+    var factor = source[0];
+    source[0] = 0;
+    var step = factor * "1";
+    for (var i = 0; i < array.length; i += step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function noncanonicalFactor() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var negative = 1 - 3, step = negative * "01";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
 snapshotReleased();
 var snapshotRetained = snapshotReturned();
 positiveReleased();
@@ -126,3 +157,5 @@ zeroReleased();
 var zeroRetained = zeroReturned();
 coercibleRight();
 coercibleLeft();
+var stringRetained = stringSnapshotReturned();
+noncanonicalFactor();

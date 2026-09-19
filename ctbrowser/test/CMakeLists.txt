@@ -2,70 +2,31 @@
 #
 # What lives here rather than in unittests/: the lint (a sweep over the tree,
 # not a behaviour test), the corpus ratchets (somebody else's bundle, measured),
-# and the directories that are pure data - golden/, baseline/, package/ and
-# support/. `ctbrowser_test()` and the probes behind it
+# and the directories that are pure data - golden/ and baseline/. The standalone package/ consumer and shared
+# support/ headers have their own CMake entry points. `ctbrowser_test()` and the probes behind it
 # come from cmake/modules/CTTest.cmake.
 
-# The API-surface lint. Not a behaviour test - it sweeps include/, lib/
-# and the application sources and fails on an engine include or an SDL symbol
-# that is not on its allow-list.
-ctbrowser_test(lint/api_surface)
+# Keep the established build/test executable paths as ownership moves below.
+if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+add_subdirectory(support)
+add_subdirectory(lint)
+add_subdirectory(corpus)
 
 # The comparison/provenance tools must fail promptly and label measured artifacts.
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME cmake_hygiene
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${CTBROWSER_MONOREPO_ROOT}/tools/check/check-cmake-hygiene.py")
+  set_tests_properties(cmake_hygiene PROPERTIES TIMEOUT 30)
   foreach(check review_tools baseline)
     add_test(NAME tool_${check}
-             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/../tools/check/test_${check}.py")
+             COMMAND "${Python3_EXECUTABLE}" "${CTBROWSER_MONOREPO_ROOT}/tools/check/test_${check}.py")
     set_tests_properties(tool_${check} PROPERTIES TIMEOUT 30)
   endforeach()
 endif()
-
-# p5.js - how FAR the bundle gets, and how WIDE the surface is.
-ctbrowser_test(corpus/p5/p5_ratchet)
-# This ratchet calls ctjs's lexer and parser directly so it can report which
-# stage rejected the corpus; vparse.hpp itself has no ctc dependency.
-target_include_directories(ctbrowser-test-p5_ratchet PRIVATE
-  "${CTBROWSER_CTJS}/include")
-ctbrowser_test(corpus/p5/p5_api)
-
-# Phaser 4. invaders asks a third question: is the GAME playable?
-ctbrowser_test(corpus/phaser/phaser_ratchet)
-ctbrowser_test(corpus/phaser/phaser_api)
-ctbrowser_test(corpus/phaser/phaser_invaders)
-
-# Babylon.js, the only corpus that exercises WebGL 2 properly.
-ctbrowser_test(corpus/babylon/babylon_ratchet)
-ctbrowser_test(corpus/babylon/babylon_api)
-ctbrowser_test(corpus/babylon/babylon_lighting)
-ctbrowser_test(corpus/babylon/babylon_interaction)
-
-# WebGL 2 itself, measured through the bundles above.
-ctbrowser_test(corpus/webgl2/webgl2_ratchet)
-ctbrowser_test(corpus/webgl2/webgl2_api)
-
-# ES modules - the same ratchet shape over the engine's own corpus.
-ctbrowser_test(corpus/modules/module_ratchet)
-
-# THE CORPUS TESTS REACH THE DRIVER TOO, once ANGLE is on. gpu_basics and
-# navigation (bindings_basics until 2026-09-07) got the suppression file
-# because they were the only tests that touched Vulkan; a WebGL 2 or Babylon ratchet built with
-# -DCTBROWSER_WITH_ANGLE=ON now does as well, and reported races inside
-# SwiftShader's command buffers with no ctbrowser frame on the stack.
-#
-# ANGLE is on by default since 2026-08-09, so every TSan run gets these now;
-# before that it took a build configured by hand, which is why it went unseen.
-#
-# CTBROWSER_FONT_PATH is repeated here because ENVIRONMENT is ONE property:
-# ctbrowser_test() set it, and this call REPLACES rather than appends. Dropping
-# it would send these eight tests to the 8x8 bitmap font and move their goldens.
-foreach(angle-test webgl2_ratchet webgl2_api babylon_ratchet babylon_api
-                   babylon_lighting babylon_interaction p5_ratchet phaser_ratchet)
-  if(TEST ${angle-test})
-    set_tests_properties(${angle-test} PROPERTIES ENVIRONMENT
-      "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp")
-  endif()
-endforeach()
 
 # === test262 ===
 # The ECMAScript conformance suite. OPT-IN, and off by default for one reason:
@@ -107,7 +68,7 @@ if(CTBROWSER_TEST262)
     message(STATUS "ctbrowser: no test262 corpus at ${CTBROWSER_TEST262_DIR} - "
                    "run tools/fetch-test262.sh; the test262 tests are not registered")
   else()
-    set(CTBROWSER_TEST262_RUNNER "${PROJECT_SOURCE_DIR}/../tools/check/test262.py")
+    set(CTBROWSER_TEST262_RUNNER "${CTBROWSER_MONOREPO_ROOT}/tools/check/test262.py")
     foreach(mode selftest gate)
       if(mode STREQUAL selftest)
         set(flag --self-test)

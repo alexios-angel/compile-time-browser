@@ -1,0 +1,45 @@
+encoding/legacy-mb-korean/euc-kr/euckr-decode-cseuckr.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-csksc56011987.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	FAIL
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0xFE: B0 B0 FF"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"lead byte outside 0x81-0xFE: FF"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: B0 B0 B0"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: B0 B5 B0"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"lead not 0x00 and no more bytes: B0"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"pointer is null: 81 5B"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0x41-0xFE: B0 31"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html	SUBTEST	FAIL	"trail byte outside 0x41-0xFE: B0 FF"
+encoding/legacy-mb-korean/euc-kr/euckr-decode-iso-ir-149.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-korean.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-ks_c_5601-1987.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-ks_c_5601-1989.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-ksc5601.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-ksc_5601.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode-windows-949.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-decode.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-cseuckr.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-csksc56011987.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-iso-ir-149.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-korean.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ks_c_5601-1987.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ks_c_5601-1989.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ksc5601.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ksc_5601.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form-windows-949.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-form.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-href-errors-han.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-href-errors-misc.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr-encode-href.html	SKIP	variant: the driver opens a file and has no query string
+encoding/legacy-mb-korean/euc-kr/euckr_chars-cseuckr.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-csksc56011987.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-iso-ir-149.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-korean.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-ks_c_5601-1987.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-ks_c_5601-1989.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-ksc5601.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-ksc_5601.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars-windows-949.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_chars.html	SKIP	not a testharness test
+encoding/legacy-mb-korean/euc-kr/euckr_errors.html	SKIP	not a testharness test

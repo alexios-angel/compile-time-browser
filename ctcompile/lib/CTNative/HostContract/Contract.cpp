@@ -140,7 +140,15 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                         names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
                     return std::move(failure);
                 }
-                if (llvm::any_of(result.initialIntrinsics, [](const auto & name) {
+                // Class preparation consumes only its own identities. The DOM
+                // declarations survive for every method probe and final proof.
+                const bool hasClasses = llvm::is_contained(result.initialIntrinsics,
+                                                           host_detail::classDefinedIntrinsic);
+                if (llvm::any_of(result.initialIntrinsics, [&](const auto & name) {
+                        if (hasClasses &&
+                            (host_detail::classIntrinsicArity(name) || name == "Error")) {
+                            return false;
+                        }
                         return name != "Object" && name != "Number" &&
                                name != "decodeURIComponent" && name != "JSON" && name != "Array" &&
                                name != "String" && name != "RegExp" &&
@@ -168,7 +176,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         }
         for (const auto & name : result.initialIntrinsics) {
             if (name != "Map" && name != "Array" && name != "Error" &&
-                name != host_detail::classDefinedIntrinsic) {
+                !host_detail::classIntrinsicArity(name)) {
                 return error("unsupported initial intrinsic identity");
             }
             if (llvm::is_contained(result.absentBindings, name) ||
@@ -382,8 +390,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
         return "invalid initial realm globalThis declaration";
     }
     for (const auto & name : contract.initialIntrinsics) {
-        if ((name != "Map" && name != "Array" && name != "Error" &&
-             name != classDefinedIntrinsic) ||
+        if ((name != "Map" && name != "Array" && name != "Error" && !classIntrinsicArity(name)) ||
             llvm::is_contained(contract.absentBindings, name) ||
             llvm::is_contained(contract.undefinedBindings, name)) {
             return "invalid standard initial intrinsic declaration";
@@ -442,13 +449,14 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     llvm::isa<ctjs::StringAttr>(message.getValue())) {
                     continue;
                 }
-            } else if (load.getName() == classDefinedIntrinsic) {
+            } else if (const unsigned arity = classIntrinsicArity(load.getName())) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                 auto receiver = call ? call.getReceiver().getDefiningOp<ctjs::ConstantOp>()
                                      : ctjs::ConstantOp{};
-                if (call && use.getOperandNumber() == 0 && call.getArgs().size() == 1 && receiver &&
-                    llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
-                    call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>()) {
+                if (call && use.getOperandNumber() == 0 && call.getArgs().size() == arity &&
+                    receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
+                    (load.getName() != classDefinedIntrinsic ||
+                     call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>())) {
                     continue;
                 }
             } else if (load.getName() == "Array") {

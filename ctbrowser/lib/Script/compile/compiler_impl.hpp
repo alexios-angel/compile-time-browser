@@ -7,7 +7,7 @@
 // NAMED namespace, not anonymous: an anonymous namespace cannot be shared
 // through a header. `detail` rather than plain `script` because `frame`,
 // `local`, `interval` and `reference` are generic enough to collide with
-// anything - vm.hpp really has a call frame. They stay NESTED.
+// anything - vm.hpp really has a call frame. State types have nested aliases.
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/number_format.hpp>
@@ -32,6 +32,7 @@
 #include <ctjs/vparse.hpp>
 
 #include "child_slots.hpp"
+#include "compiler_impl/types.hpp"
 
 #include <ctbrowser/script/value.hpp>
 
@@ -52,89 +53,12 @@ namespace detail {
 
 class compiler_impl {
 public:
-    struct local {
-        std::string name;
-        std::uint16_t reg = 0;
-        bool boxed = false; // lives in a heap cell; see mark_captured
-        // WHERE A LEXICAL BINDING IS INITIALISED: the source offset past its
-        // declarator (or class), 0 for a `var`, a parameter, a function. A
-        // read of the same frame textually before it is in the temporal
-        // dead zone whenever it runs (the scope is entered once per run, the
-        // declaration always after such a read), so compile_ident throws
-        // there statically. A read from a nested function is not decided
-        // here - that needs a runtime check this engine does not make.
-        std::uint32_t initialized_at = 0;
-        // WHERE THIS LOCAL'S ENTRY IN `function_proto::locals` IS, or none when
-        // the debug tables are off. The compiler's `locals` is a STACK that
-        // shrinks at every scope exit, so by the time a function is finished
-        // the only names left are the ones still in scope - which for a body
-        // full of blocks is almost none of them. The debug table is written as
-        // each local is DECLARED and closed as its scope is popped, and this is
-        // the link between the two.
-        static constexpr std::uint32_t no_slot = 0xFFFFFFFFu;
-        std::uint32_t debug_slot = no_slot;
-    };
+    using local = compiler_types::local;
     // A HALF-OPEN RANGE OF EULER-TOUR TICKS. A function's descendants are
     // exactly the functions whose tick lies strictly inside its own range.
-    struct interval {
-        std::int32_t lo = 0;
-        std::int32_t hi = 0;
-        [[nodiscard]] bool empty() const noexcept { return lo >= hi; }
-    };
+    using interval = compiler_types::interval;
 
-    struct frame {
-        std::uint32_t proto = 0;
-        std::vector<local> locals;
-        // NAME -> THE POSITIONS IN `locals` THAT CARRY IT, innermost last. A
-        // backward scan of `locals` runs once per identifier MENTION, so a big
-        // function was quadratic in its own size (docs/performance.md).
-        //
-        // A vector per name rather than one index because names SHADOW: two
-        // `let x` in sibling scopes are two entries, and popping the inner one
-        // has to uncover the outer rather than erase the name. Entries are
-        // pushed in increasing order, so `pop_scope` unwinding from the top
-        // pops each name's stack from the top too.
-        string_flat_map<boost::container::small_vector<std::uint32_t, 2>> local_index;
-        // The same scan, on the upvalue list. This one only ever grows within a
-        // frame, so it is a plain name -> position.
-        string_flat_map<std::uint32_t> upvalue_index;
-        std::vector<std::string> declared; // pre-scanned; see collect_declared_names
-        // WHERE THIS FUNCTION SITS IN THE EULER TOUR, which is how
-        // is_captured() is answered. Empty (lo >= hi) means nothing is
-        // captured, which is what a field initialiser's frame gets - it never
-        // had a captured set either.
-        interval captures;
-        std::vector<std::string> upvalue_names; // parallel to proto().upvalues
-        std::vector<std::string> predeclared;   // hoisted at body entry; see predeclare_locals
-        // The block-level function DECLARATIONS that B.3.3 gave a var binding
-        // of this function (or, in a script, a global) too - as node indices,
-        // because the same name may be declared in two blocks and only one of
-        // them applicable: `{ function h() {} { function h() {} } }` gives the
-        // inner one nothing, and a list of names could not say so.
-        // See predeclare_locals and compile_function_decl.
-        std::vector<std::int32_t> annex_b_decls;
-        std::vector<std::size_t> scope_marks; // locals.size() at each scope entry
-        // WIDER THAN THE OPERAND THEY FEED, on purpose: counting in a wider
-        // type lets the compiler SAY how many registers were wanted instead
-        // of wrapping in silence.
-        std::uint32_t next_reg = 0;
-        std::uint32_t high_water = 0;
-        bool is_async = false;     // `return v` hands back a settled promise of v
-        bool is_generator = false; // `function*` - calling it does not run it
-        bool is_strict = false;    // see function_proto::is_strict
-        // THE CONSTRUCTOR OF A DERIVED CLASS: the hidden boxed local that says
-        // whether `super()` has run - `this` before it, a second `super()`,
-        // and a return without it are the ReferenceErrors of 10.2.1.3 /
-        // 13.3.7.1 / 9.2.1.2. Empty for every other function. An arrow inside
-        // the constructor asks its nearest non-arrow frame (derived_flag()).
-        std::string derived_flag;
-        // WHERE A NAME OR STRING ALREADY WENT. `function_proto::add_name` and
-        // `add_string` deduplicate by LINEAR SCAN, quadratic in the distinct
-        // names a function mentions. The index lives HERE rather than on the
-        // proto because it is wanted only while compiling.
-        flat_map<std::string, std::uint32_t> name_index;
-        flat_map<std::string, std::uint32_t> string_index;
-    };
+    using frame = compiler_types::frame;
 
     compiler_impl(const vp::ast & tree, program & out)
         : ast_(tree), current_ast_(&tree), out_(out) {}
@@ -173,16 +97,10 @@ public:
     // value, 14.15.3). Declarations and blocks are empty and leave it alone.
     int completion_reg_ = -1;
     int completion_suspended_ = 0; // > 0 inside a finally block
-    [[nodiscard]] bool tracking_completion() const {
-        return completion_reg_ >= 0 && frames_.size() == 1 && completion_suspended_ == 0;
-    }
+    [[nodiscard]] bool tracking_completion() const;
     // The statement about to be compiled starts a construct whose completion
     // is UpdateEmpty(_, undefined): clear the register.
-    void clear_completion() {
-        if (tracking_completion()) {
-            proto().emit(instruction{op::load_undef, static_cast<std::uint16_t>(completion_reg_)});
-        }
-    }
+    void clear_completion();
 
     // THE BYTES THE AST WAS PARSED FROM, which is NOT `out_.source`.
     //
@@ -391,55 +309,9 @@ public:
 
     [[nodiscard]] int add_upvalue(std::size_t level, std::string_view name, upvalue_desc desc);
 
-    // The `${...}` HOLES of a template literal, as raw text.
-    //
-    // A template is ONE node carrying its whole source, holes included - the
-    // parser does not break the substitutions out into child nodes. So every
-    // walk over the tree is blind to them, and the two walks that decide
-    // whether a local is BOXED and whether `arguments` is materialised must
-    // look inside. Nesting is counted so an object literal or a nested
-    // template inside a hole does not end it early.
-    template <typename Fn> static void for_each_template_hole(std::string_view raw, Fn && fn) {
-        for (std::size_t i = 0; i + 1 < raw.size(); ++i) {
-            if (raw[i] != '$' || raw[i + 1] != '{') { continue; }
-            if (i > 0 && raw[i - 1] == '\\') { continue; }
-            std::size_t depth = 1;
-            std::size_t at_char = i + 2;
-            const std::size_t start = at_char;
-            while (at_char < raw.size() && depth > 0) {
-                if (raw[at_char] == '{') { ++depth; }
-                if (raw[at_char] == '}') { --depth; }
-                if (depth > 0) { ++at_char; }
-            }
-            fn(raw.substr(start, at_char - start));
-            i = at_char;
-        }
-    }
+    template <typename Fn> static void for_each_template_hole(std::string_view raw, Fn && fn);
 
-    // Every identifier-shaped token in a hole.
-    //
-    // Lexical rather than parsed, and deliberately OVER-approximate: it counts
-    // property names and reserved words as well as variables. Naming something
-    // that is not really captured only boxes a local that did not need boxing,
-    // which is correct and slightly slower; MISSING one reads undefined at run
-    // time with nothing to say so.
-    template <typename Fn> static void each_name_in_template(std::string_view raw, Fn && add) {
-        for_each_template_hole(raw, [&](std::string_view hole) {
-            for (std::size_t i = 0; i < hole.size();) {
-                const auto begins = [](char c) {
-                    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$';
-                };
-                const auto continues = [&](char c) { return begins(c) || (c >= '0' && c <= '9'); };
-                if (!begins(hole[i])) {
-                    ++i;
-                    continue;
-                }
-                const std::size_t start = i;
-                while (i < hole.size() && continues(hole[i])) { ++i; }
-                add(hole.substr(start, i - start));
-            }
-        });
-    }
+    template <typename Fn> static void each_name_in_template(std::string_view raw, Fn && add);
 
     [[nodiscard]] static bool is_function_node(const vp::node & n);
 
@@ -521,106 +393,10 @@ public:
     // anything is compiled. Nested function declarations hoist too and are
     // compiled first, so the locals they capture have to exist by then.
     void predeclare_locals(std::int32_t body);
-    // `var` IS FUNCTION-SCOPED: `if (c) { var x = 1; }` declares `x` in the
-    // function, not the block, and webpack emits exactly that shape.
-    //
-    // Hoisting stops at a nested function, because that function's vars are
-    // ITS scope's, and does not descend into a declarator's initialiser, which
-    // is an expression and cannot contain a declaration statement.
-    template <typename Hoist> void hoist_nested_vars(std::int32_t index, const Hoist & hoist) {
-        if (index < 0) { return; }
-        const vp::node & n = at(index);
-        if (is_function_node(n)) { return; }
-        if (n.kind == vp::nk::var_decl && n.text == "var") {
-            for (const std::int32_t d : kids(n)) {
-                if (at(d).b >= 0) {
-                    std::vector<std::string> names;
-                    pattern_names(at(d).b, names);
-                    for (std::string & name : names) { hoist(std::move(name)); }
-                } else {
-                    hoist(std::string{at(d).text});
-                }
-            }
-            return;
-        }
-        for (const std::int32_t slot : child_slots(n)) { hoist_nested_vars(slot, hoist); }
-        for (const std::int32_t k : kids(n)) { hoist_nested_vars(k, hoist); }
-    }
-    // ANNEX B.3.3: in sloppy code a function declared in a nested block is
-    // ALSO a `var` of the enclosing function (or a global of the script),
-    // written when the declaration is evaluated. This walk names every
-    // function declaration below a body, at any block depth, stopping at
-    // function boundaries as hoist_nested_vars does; the caller decides
-    // which of them may take a var binding (none that a parameter or a
-    // lexical declaration already names).
-    // ...unless a binding of the same name is declared BETWEEN the body and
-    // the declaration (B.3.3.1 step ii, "would not produce any Early Errors":
-    // `{ let f; { function f() {} } }` gets no var binding), which is what
-    // `lexical` carries. Every construct that binds lexically counts, not
-    // only a block's `let`: the head of a `for`, a destructuring catch
-    // parameter (a SIMPLE one does not - B.3.5 lets a `var` shadow it), a
-    // `switch` body, and a block's own function declarations, which are
-    // lexical bindings of that block (14.2.1) and shadow anything nested
-    // deeper - `{ function f(){} { function f(){} } }` gives the inner one
-    // no var binding.
-    // `body_level` says this list is a function body's or a script's own top
-    // level rather than a Block: its function declarations are vars there,
-    // so they are neither reported nor shadowing.
+    template <typename Hoist> void hoist_nested_vars(std::int32_t index, const Hoist & hoist);
     template <typename Each>
     void each_block_function(std::int32_t index, const Each & each,
-                             std::vector<std::string> & lexical, bool body_level = false) {
-        if (index < 0) { return; }
-        const vp::node & n = at(index);
-        if (n.kind == vp::nk::func_decl) {
-            if (std::find(lexical.begin(), lexical.end(), n.text) == lexical.end()) {
-                each(std::string{n.text}, index);
-            }
-            return;
-        }
-        if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
-        const std::size_t mark = lexical.size();
-        if (n.kind == vp::nk::block || n.kind == vp::nk::program) {
-            each_block_function_scope(kids(n), each, lexical, body_level);
-            lexical.resize(mark);
-            return;
-        }
-        if (n.kind == vp::nk::switch_stmt) {
-            // THE WHOLE SWITCH BODY IS ONE SCOPE (14.12.4 - one declarative
-            // record for every CaseClause), so a `let` in one clause shadows
-            // a function declared in another.
-            std::vector<std::int32_t> stmts;
-            for (const std::int32_t clause : kids(n)) {
-                for (const std::int32_t s : kids(at(clause))) { stmts.push_back(s); }
-            }
-            each_block_function(n.a, each, lexical);
-            each_block_function_scope(stmts, each, lexical, false);
-            lexical.resize(mark);
-            return;
-        }
-        // A DESTRUCTURING catch parameter only: B.3.5 relaxes the early error
-        // for `catch (e) { var e; }`, so a simple name lets the extension
-        // through and a pattern does not.
-        if (n.kind == vp::nk::catch_clause && n.b >= 0) { pattern_names(n.b, lexical); }
-        // The head of a `for` binds for the body below it, lexically when it
-        // said `let`/`const`/`using`.
-        if (n.kind == vp::nk::for_stmt && n.a >= 0 && at(n.a).kind == vp::nk::var_decl &&
-            at(n.a).text != "var") {
-            collect_lexical_names(std::span<const std::int32_t>{&n.a, 1}, lexical);
-        }
-        // `for (let x of xs)`: d bit0 is `const`, bit1 "nothing to declare",
-        // bit3 `let`, bits 4 and 5 the `using` forms (see ctjs's for_stmt).
-        if (n.kind == vp::nk::forof_stmt && n.a >= 0 && (n.d & (1 | 8 | 16 | 32)) != 0) {
-            const vp::node & decl = at(n.a);
-            if (decl.b >= 0) {
-                pattern_names(decl.b, lexical);
-            } else if (!decl.text.empty()) {
-                lexical.emplace_back(decl.text);
-            }
-        }
-        for (const std::int32_t slot : child_slots(n)) { each_block_function(slot, each, lexical); }
-        for (const std::int32_t k : kids(n)) { each_block_function(k, each, lexical); }
-        lexical.resize(mark);
-    }
+                             std::vector<std::string> & lexical, bool body_level = false);
 
     // One statement list that is one scope - a Block, a program, or every
     // CaseClause of a `switch` together. Its own function declarations are
@@ -628,18 +404,7 @@ public:
     // what is nested below it and not itself.
     template <typename Each>
     void each_block_function_scope(std::span<const std::int32_t> stmts, const Each & each,
-                                   std::vector<std::string> & lexical, bool body_level) {
-        collect_lexical_names(stmts, lexical);
-        if (!body_level) {
-            for (const std::int32_t s : stmts) {
-                if (at(s).kind == vp::nk::func_decl) { each_block_function(s, each, lexical); }
-            }
-            collect_function_names(stmts, lexical);
-        }
-        for (const std::int32_t s : stmts) {
-            if (at(s).kind != vp::nk::func_decl) { each_block_function(s, each, lexical); }
-        }
-    }
+                                   std::vector<std::string> & lexical, bool body_level);
 
     [[nodiscard]] bool was_predeclared(std::string_view name) const;
 
@@ -769,23 +534,10 @@ public:
     // private key `@#x:N` of the innermost class declaring it (see
     // private_key_prefix and private_scopes_) - `@#x` alone when none does,
     // which is an early error the checker owns - anything else is itself.
-    [[nodiscard]] std::uint16_t member_operand(std::string_view text) {
-        return name_operand(member_key(text));
-    }
+    [[nodiscard]] std::uint16_t member_operand(std::string_view text);
     // The same resolution, as the KEY STRING - for a definition that goes
     // through a native rather than an operand.
-    [[nodiscard]] std::string member_key(std::string_view text) {
-        if (!text.starts_with('#')) { return std::string{text}; }
-        std::string key = std::string{private_key_prefix} + std::string{text};
-        for (std::size_t i = private_scopes_.size(); i-- > 0;) {
-            const private_scope & scope = private_scopes_[i];
-            if (std::find(scope.names.begin(), scope.names.end(), text) != scope.names.end()) {
-                key += ':' + std::to_string(scope.klass);
-                break;
-            }
-        }
-        return key;
-    }
+    [[nodiscard]] std::string member_key(std::string_view text);
 
     // Called where a frame's size is finally written, because that is the only
     // point at which high_water is the truth rather than a running total.
@@ -1001,26 +753,7 @@ public:
     // write would evaluate its side effects twice, so `a[i++] += 1` would
     // increment i twice and store into the wrong slot. This is the shape that
     // makes both of them correct, and it is why they share a code path.
-    struct reference {
-        enum class kind : std::uint8_t {
-            local,
-            boxed_local,
-            upvalue,
-            global,
-            member,
-            index
-        };
-        kind what = kind::local;
-        std::uint16_t reg = 0;  // local/boxed: its register. member/index: the object.
-        std::uint16_t key = 0;  // index: the key register
-        std::uint16_t name = 0; // global/member: the name index
-        // A NAME INSIDE A `with`: `with_reg` holds the object that bound it
-        // when the reference was prepared, or undefined, and the fields above
-        // are the fallback. See emit_with_object.
-        bool with = false;
-        std::uint16_t with_reg = 0;
-        std::uint16_t with_name = 0; // the name, as a property-name operand
-    };
+    using reference = compiler_types::reference;
 
     [[nodiscard]] reference prepare_reference(const vp::node & target);
 
@@ -1256,3 +989,5 @@ public:
 } // namespace detail
 
 } // namespace ctbrowser::script
+
+#include "compiler_impl/traversal.hpp"

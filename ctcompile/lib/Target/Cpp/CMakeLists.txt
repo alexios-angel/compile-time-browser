@@ -7,12 +7,6 @@
 # bump. `llvm_update_compile_flags` gives it the flags LLVM builds ITSELF with,
 # which is the set its authors actually test against.
 add_library(ctcompile-target-cpp
-  Callables/Body.cpp
-  Callables/Creation.cpp
-  Callables/References.cpp
-  Const/Bindings.cpp
-  Const/Types.cpp
-  Const/Uses.cpp
   ReadableFloat.cpp
   TranslateToCpp.cpp
   TranslateRegistration.cpp)
@@ -34,3 +28,12 @@ target_include_directories(ctcompile-target-cpp
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
 
 add_library(ctcompile::target-cpp ALIAS ctcompile-target-cpp)
+
+target_sources(ctcompile-target-cpp PRIVATE
+  ReadableFloat.h
+  UnusedParameters.h
+)
+
+add_subdirectory(Callables)
+add_subdirectory(Const)
+add_subdirectory(Exceptions)

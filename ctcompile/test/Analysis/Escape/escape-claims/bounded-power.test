@@ -3,7 +3,7 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name bounded-power
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-bounded-power.claims
 
-// Bounded zero/positive-one bases retain exact Number exponent snapshots.
+// Bounded zero/positive-one bases retain exact Number/canonical String exponent snapshots.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.binary pow
@@ -38,8 +38,8 @@
 // CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
 

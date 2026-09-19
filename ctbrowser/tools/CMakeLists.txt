@@ -9,12 +9,14 @@
 # ever, whatever CTBROWSER_WINDOWS_CONSOLE says: these are CLIs whose output is
 # the product - ctdrive prints the port it is listening on, which is the only
 # way its client ever learns it.
-foreach(tool ctbrowse ctdrive ctrun ct262)
-  add_executable(ctbrowser-tool-${tool} "${CMAKE_CURRENT_SOURCE_DIR}/${tool}/${tool}.cpp")
-  target_link_libraries(ctbrowser-tool-${tool} PRIVATE ctbrowser::ctbrowser)
-  ctbrowser_target(ctbrowser-tool-${tool})
-  set_target_properties(ctbrowser-tool-${tool} PROPERTIES OUTPUT_NAME ${tool})
-endforeach()
+if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+# Directory names must not collide with the executables kept in this directory.
+add_subdirectory(ctbrowse ctbrowse-build)
+add_subdirectory(ctdrive ctdrive-build)
+add_subdirectory(ctrun ctrun-build)
+add_subdirectory(ct262 ct262-build)
 
 # The Windows dist ships what a user runs, so not the conformance harness. A
 # GLOBAL property because examples/CMakeLists.txt, a sibling scope, assembles it.

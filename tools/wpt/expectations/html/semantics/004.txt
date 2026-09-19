@@ -1,0 +1,890 @@
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to time"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from radio to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to time"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from range to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to time"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from reset to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to time"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from search to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to time"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from submit to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to time"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from tel to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to time"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from text to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from time to url"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to button"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to checkbox"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to color"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to date"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to datetime-local"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to email"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to file"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to hidden"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to image"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to number"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to password"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to radio"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to range"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to reset"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to search"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to submit"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to tel"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to text"
+html/semantics/forms/the-input-element/type-change-state.html	SUBTEST	FAIL	"change state from url to time"
+html/semantics/forms/the-input-element/type-change-to-password-when-parent-has-spellcheck-attr-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-input-element/type-change-to-password.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-input-element/type-change-to-same-type.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-input-element/url.html	FAIL
+html/semantics/forms/the-input-element/url.html	SUBTEST	FAIL	"The value must not be set with \"LF\" (U+000A) or \"CR\" (U+000D)"
+html/semantics/forms/the-input-element/url.html	SUBTEST	FAIL	"The value sanitization algorithm is as follows: Strip leading and trailing whitespace from the value."
+html/semantics/forms/the-input-element/url.html	SUBTEST	FAIL	"The value sanitization algorithm is as follows: Strip line breaks from the value"
+html/semantics/forms/the-input-element/valueMode-weekmonth.html	FAIL
+html/semantics/forms/the-input-element/valueMode-weekmonth.html	SUBTEST	FAIL	"value IDL attribute of input type month with value attribute"
+html/semantics/forms/the-input-element/valueMode-weekmonth.html	SUBTEST	FAIL	"value IDL attribute of input type month without value attribute"
+html/semantics/forms/the-input-element/valueMode-weekmonth.html	SUBTEST	FAIL	"value IDL attribute of input type week with value attribute"
+html/semantics/forms/the-input-element/valueMode-weekmonth.html	SUBTEST	FAIL	"value IDL attribute of input type week without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	FAIL
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type color with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type color without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type date with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type date without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type datetime-local with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type datetime-local without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type email with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type email without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type file with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type file without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type number with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type number without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type password with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type password without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type range with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type range without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type search with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type search without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type tel with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type tel without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type text with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type text without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type time with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type time without value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type url with value attribute"
+html/semantics/forms/the-input-element/valueMode.html	SUBTEST	FAIL	"value IDL attribute of input type url without value attribute"
+html/semantics/forms/the-input-element/week.html	FAIL
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"2014 has 52 weeks: Value should be empty"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: incorrect with '-' at the end"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: no '-' (U+002D)"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: no week number"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: should be capital letter 'W'"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: value should be two parts"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: year only"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: yearless week and no '-' (U+002D)"
+html/semantics/forms/the-input-element/week.html	SUBTEST	FAIL	"Invalid value: yearless week"
+html/semantics/forms/the-label-element/clicking-interactive-content.html	TIMEOUT
+html/semantics/forms/the-label-element/clicking-noninteractive-unlabelable-content.html	FAIL
+html/semantics/forms/the-label-element/clicking-noninteractive-unlabelable-content.html	SUBTEST	FAIL	"noninteractive unlabelable content <input type=\"hidden\" tabindex=\"\"> as second child under <label>"
+html/semantics/forms/the-label-element/clicking-noninteractive-unlabelable-content.html	SUBTEST	FAIL	"noninteractive unlabelable content <input type=\"hidden\"> as second child under <label>"
+html/semantics/forms/the-label-element/control-active-with-multiple-clicks.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-label-element/forward-focus-to-associated-element.html	FAIL
+html/semantics/forms/the-label-element/forward-focus-to-associated-element.html	SUBTEST	FAIL	"focusing a hidden label with tabindex should forward focus to the labelable element"
+html/semantics/forms/the-label-element/forward-focus-to-associated-element.html	SUBTEST	FAIL	"focusing a label with empty tabindex should forward focus to the labelable element"
+html/semantics/forms/the-label-element/forward-focus-to-associated-element.html	SUBTEST	FAIL	"focusing a label with for attribute should forward focus to the associated element"
+html/semantics/forms/the-label-element/forward-focus-to-associated-element.html	SUBTEST	FAIL	"focusing a label without for attribute should fowrad focus to the first labelable child"
+html/semantics/forms/the-label-element/iframe-label-attributes.html	SKIP	not a testharness test
+html/semantics/forms/the-label-element/label-attributes.sub.html	FAIL
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A div element which contains labelable element is removed."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A form control has an implicit label."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A form control has multiple labels."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A form control has no label 1."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A form control has no label 2."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A label element not in a document can not label any element in the document."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A label element with a 'for' attribute should only be associated with a labelable element."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A label in a form without a control"
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A label outside a form with a control inside the form"
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A labelable element inside the shadow DOM."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A labelable element is moved to iframe."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A labelable element is moved to inside of nested associated labels."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A labelable element is moved to outside of nested associated labels."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A labelable element not in a document can label element in the same tree."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A labelable element which is a descendant of non-labelable element is moved to outside of associated label."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"A non-control follows by a control with same ID."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"The 'for' attribute is an empty string."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"The 'for' attribute points to an inexistent id."
+html/semantics/forms/the-label-element/label-attributes.sub.html	SUBTEST	FAIL	"The labeled control for a label element that has no 'for' attribute is the first labelable element which is a descendant of that label element."
+html/semantics/forms/the-label-element/label-forwarded-click-pointer-properties.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-label-element/labelable-elements.html	FAIL
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the button element can access 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the button element is a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the fieldset element is not a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the hidden input element has null 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the hidden input element is not a labelable element."
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the img element is not a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the input element in radio state can access 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the input element in radio state is a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the keygen element is not a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the label element is not a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the meter element can access 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the meter element is a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the object element is not a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the output element can access 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the output element is a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the progress element can access 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the progress element is a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the select element can access 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the select element is a labelable element"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the textarea element can access 'labels'"
+html/semantics/forms/the-label-element/labelable-elements.html	SUBTEST	FAIL	"Check if the textarea element is a labelable form-element"
+html/semantics/forms/the-label-element/move-form-associated-element-into-label-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-label-element/move-label-into-form-and-then-move-form-into-ancestor-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-label-element/proxy-modifier-click-to-associated-element.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-legend-element/HTMLLegendElement.html	FAIL
+html/semantics/forms/the-legend-element/HTMLLegendElement.html	SUBTEST	FAIL	"Interface HTMLLegendElement"
+html/semantics/forms/the-legend-element/HTMLLegendElement.html	SUBTEST	FAIL	"The legend.form must be same value as fieldset.form"
+html/semantics/forms/the-legend-element/HTMLLegendElement.html	SUBTEST	FAIL	"The legend.form return null when it has no fieldset parent"
+html/semantics/forms/the-legend-element/legend-form.html	FAIL
+html/semantics/forms/the-legend-element/legend-form.html	SUBTEST	FAIL	"Check if legend.form return null when legend has no fieldset element as its parent"
+html/semantics/forms/the-legend-element/legend-form.html	SUBTEST	FAIL	"Check if legend.form returns its parent when it's inside a fieldset"
+html/semantics/forms/the-meter-element/meter-appearance-none-even-less-good-value-rendering.html	SKIP	not a testharness test
+html/semantics/forms/the-meter-element/meter-appearance-none-optimum-value-rendering.html	SKIP	not a testharness test
+html/semantics/forms/the-meter-element/meter-appearance-none-rendering.html	SKIP	not a testharness test
+html/semantics/forms/the-meter-element/meter-appearance-none-suboptimum-value-rendering.html	SKIP	not a testharness test
+html/semantics/forms/the-meter-element/meter-leading-plus-sign.html	FAIL
+html/semantics/forms/the-meter-element/meter-leading-plus-sign.html	SUBTEST	FAIL	"'+-5' for max should use default value 1"
+html/semantics/forms/the-meter-element/meter-leading-plus-sign.html	SUBTEST	FAIL	"bare '+' for max should use default value 1"
+html/semantics/forms/the-meter-element/meter-leading-plus-sign.html	SUBTEST	FAIL	"bare '-' for max should use default value 1"
+html/semantics/forms/the-meter-element/meter-leading-plus-sign.html	SUBTEST	FAIL	"bare '.' for max should use default value 1"
+html/semantics/forms/the-meter-element/meter-min-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-meter-element/meter.html	FAIL
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"Default values"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a string is given to max and value is larger than the default value of min (i.e. 1.0), the actual value must be 1.0"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a string is given to min and value is smaller than the default value of min (i.e. 0), the actual value must be 0"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value larger than or equal to 0 is given to max and min is not specified, max must be the same value as the default value of min (i.e. 0)"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value larger than or equal to 0 is given to max and min is not specified, the actual value must be the same value as the default value of min (i.e. 0)"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value larger than or equal to 1.0 is given to min and max is not specified, max must be the same value as min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value larger than or equal to 1.0 is given to min and max is not specified, the actual value must be the same value as min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value smaller than 0 is given to max and min is not specified, max must be be the same value as the default value of min (i.e. 0)"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value smaller than 0 is given to max and min is not specified, the actual value must be be the same value as the default value of min (i.e. 0)"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value smaller than 1.0 is given to min and max is not specified, max must be the same value as its default value (i.e. 1.0)"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value smaller than 1.0 is given to min, max is not specified, and value is larger than the default value of max (i.e. 1.0), the actual value must be 1.0"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If a value smaller than low is given to high, it must be set to the same value as low"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If max is not specified and value is larger than the default value of max (i.e. 1.0), the actual value must be 1.0"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If max is not specified, high must not be larger than default value of max (i.e. 1.0)"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If min is not specified and value is smaller than the default value of min (i.e. 0), the actual value must be 0"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"If min is not specified, low must not be smaller than default value of min (i.e. 0)"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"default low and high values equal 0 and 1.0 respectively, if both low and high are not specified"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"default low and high values equal min and max, respectively"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"default optimum value is the midpoint between min and max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"default value of max is 1.0"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"giving a string to high must not affect the actual value"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"giving a string to low must not affect the actual value"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"high < low"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"high > max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"high must equal max when a string is given to high"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"high must not be larger than max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"high must not be smaller than min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"low < min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"low > max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"low must not be larger than max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"low must not be smaller than min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"max < min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"max must be 1.0 when a string is given"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"optimum (larger than max) must not affect max and the actual value"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"optimum (smaller than min) must not affect min and the actual value"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"optimum < min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"optimum > max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"optimum smaller than max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"optimum smaller than min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"value < min"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"value > max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"value must not be larger than max"
+html/semantics/forms/the-meter-element/meter.html	SUBTEST	FAIL	"value must not be smaller than min"
+html/semantics/forms/the-optgroup-element/optgroup-removal.window.js	FAIL
+html/semantics/forms/the-optgroup-element/optgroup-removal.window.js	SUBTEST	FAIL	"<select> needs to be updated when <optgroup> is removed"
+html/semantics/forms/the-option-element/dynamic-content-change-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-option-element/option-element-constructor.html	FAIL
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor creates HTMLOptionElement with specified text and value"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor does not set dirtiness (so, manipulating the selected content attribute still updates the selected IDL attribute)"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor handles selectedness correctly when specified with defaultSelected only"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor handles selectedness correctly, even when incongruous with defaultSelected"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor treats empty text and value correctly"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor treats falsy selected and defaultSelected correctly"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor treats truthy selected and defaultSelected correctly"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor treats undefined text and value correctly"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor with falsy arguments"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Option constructor with no arguments"
+html/semantics/forms/the-option-element/option-element-constructor.html	SUBTEST	FAIL	"Prototype of object created with named constructor"
+html/semantics/forms/the-option-element/option-form.html	FAIL
+html/semantics/forms/the-option-element/option-form.html	SUBTEST	FAIL	"form"
+html/semantics/forms/the-option-element/option-index.html	FAIL
+html/semantics/forms/the-option-element/option-index.html	SUBTEST	FAIL	"option index should always be 0 for options in datalists"
+html/semantics/forms/the-option-element/option-index.html	SUBTEST	FAIL	"option index should always be 0 for options not even in the document"
+html/semantics/forms/the-option-element/option-index.html	SUBTEST	FAIL	"option index should always be 0 for options with no container"
+html/semantics/forms/the-option-element/option-index.html	SUBTEST	FAIL	"option index should work inside the document"
+html/semantics/forms/the-option-element/option-label.html	FAIL
+html/semantics/forms/the-option-element/option-label.html	SUBTEST	FAIL	"No children, namespaced label"
+html/semantics/forms/the-option-element/option-label.html	SUBTEST	FAIL	"Single child, namespaced label"
+html/semantics/forms/the-option-element/option-label.html	SUBTEST	FAIL	"Two children, namespaced label"
+html/semantics/forms/the-option-element/option-selected.html	FAIL
+html/semantics/forms/the-option-element/option-selected.html	SUBTEST	FAIL	"not dirty"
+html/semantics/forms/the-option-element/option-text-backslash.html	FAIL
+html/semantics/forms/the-option-element/option-text-backslash.html	SUBTEST	FAIL	"Test for the backslash sign in option.text"
+html/semantics/forms/the-option-element/option-text-label.html	FAIL
+html/semantics/forms/the-option-element/option-text-label.html	SUBTEST	FAIL	"Option with empty label."
+html/semantics/forms/the-option-element/option-text-label.html	SUBTEST	FAIL	"Option with non-empty label."
+html/semantics/forms/the-option-element/option-text-recurse.html	FAIL
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should ignore PI children"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should ignore comment children"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should not recurse into HTML script elements"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should not recurse into SVG script elements"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should recurse into MathML script elements"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should recurse into null script elements"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should recurse"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should work if a child of the option ends with a script"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should work if the option is in a MathML script element"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should work if the option is in an HTML script element"
+html/semantics/forms/the-option-element/option-text-recurse.html	SUBTEST	FAIL	"option.text should work if the option is in an SVG script element"
+html/semantics/forms/the-option-element/option-text-setter.html	FAIL
+html/semantics/forms/the-option-element/option-text-setter.html	SUBTEST	FAIL	"Verify that using HTMLOptionElement.text setter does not update the existing text child node."
+html/semantics/forms/the-option-element/option-text-spaces.html	FAIL
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should leave a single internal NBSP alone."
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should leave leading NBSP alone."
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should leave trailing NBSP alone."
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should leave two internal NBSPs alone."
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\" \", \" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\" \", \"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\" \", \"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\" \", \"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\" \", \"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\f\", \" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\f\", \"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\f\", \"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\f\", \"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\f\", \"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\n\", \" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\n\", \"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\n\", \"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\n\", \"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\n\", \"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\r\", \" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\r\", \"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\r\", \"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\r\", \"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\r\", \"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\t\", \" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\t\", \"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\t\", \"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\t\", \"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace multiple internal space characters (\"\\t\", \"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace single internal space characters (\" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace single internal space characters (\"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace single internal space characters (\"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace single internal space characters (\"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should replace single internal space characters (\"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading and trailing space characters (\" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading and trailing space characters (\"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading and trailing space characters (\"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading and trailing space characters (\"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading and trailing space characters (\"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading space characters (\" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading space characters (\"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading space characters (\"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading space characters (\"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip leading space characters (\"\\t\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip trailing space characters (\" \")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip trailing space characters (\"\\f\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip trailing space characters (\"\\n\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip trailing space characters (\"\\r\")"
+html/semantics/forms/the-option-element/option-text-spaces.html	SUBTEST	FAIL	"option.text should strip trailing space characters (\"\\t\")"
+html/semantics/forms/the-option-element/option-value.html	FAIL
+html/semantics/forms/the-option-element/option-value.html	SUBTEST	FAIL	"No children, namespaced value"
+html/semantics/forms/the-option-element/option-value.html	SUBTEST	FAIL	"Single child, namespaced value"
+html/semantics/forms/the-option-element/option-value.html	SUBTEST	FAIL	"Two children, namespaced value"
+html/semantics/forms/the-output-element/mutations.window.js	FAIL
+html/semantics/forms/the-output-element/mutations.window.js	SUBTEST	FAIL	"Descendant mutations and output.value and .defaultValue"
+html/semantics/forms/the-output-element/mutations.window.js	SUBTEST	FAIL	"output and output.form.reset()"
+html/semantics/forms/the-output-element/output-setcustomvalidity.html	FAIL
+html/semantics/forms/the-output-element/output-setcustomvalidity.html	SUBTEST	FAIL	"output setCustomValidity is correct"
+html/semantics/forms/the-output-element/output-validity.html	FAIL
+html/semantics/forms/the-output-element/output-validity.html	SUBTEST	FAIL	":valid and :invalid pseudo-class on output element"
+html/semantics/forms/the-output-element/output.html	FAIL
+html/semantics/forms/the-output-element/output.html	SUBTEST	FAIL	"output value and defaultValue"
+html/semantics/forms/the-progress-element/progress-2.html	FAIL
+html/semantics/forms/the-progress-element/progress-2.html	SUBTEST	FAIL	"progress position equals -1"
+html/semantics/forms/the-progress-element/progress-2.html	SUBTEST	FAIL	"progress position equals 0"
+html/semantics/forms/the-progress-element/progress-2.html	SUBTEST	FAIL	"progress value equals .5"
+html/semantics/forms/the-progress-element/progress-2.html	SUBTEST	FAIL	"progress value equals 0"
+html/semantics/forms/the-progress-element/progress.html	FAIL
+html/semantics/forms/the-progress-element/progress.html	SUBTEST	FAIL	"Determinate progress bar should have fractional position"
+html/semantics/forms/the-progress-element/progress.html	SUBTEST	FAIL	"Indeterminate progress bar should have position -1"
+html/semantics/forms/the-progress-element/progress.html	SUBTEST	FAIL	"Indeterminate progress bar should have value 0"
+html/semantics/forms/the-progress-element/progress.html	SUBTEST	FAIL	"Revoming the value attribute makes an intermediate progress bar, which should have position -1"
+html/semantics/forms/the-progress-element/progress.html	SUBTEST	FAIL	"Value must be 0 if the parsed value is less than or equal to zero"
+html/semantics/forms/the-progress-element/progress.html	SUBTEST	FAIL	"Value must be 0 if value is invalid"
+html/semantics/forms/the-progress-element/progress.html	SUBTEST	FAIL	"Value must equal max if the parsed value is larger than max"
+html/semantics/forms/the-progress-element/progress.window.js	FAIL
+html/semantics/forms/the-progress-element/progress.window.js	SUBTEST	FAIL	"If value < max, then current value = value"
+html/semantics/forms/the-progress-element/progress.window.js	SUBTEST	FAIL	"If value > max, then current value = max"
+html/semantics/forms/the-select-element/combobox-selected-option-text-removal.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection-add.html	TIMEOUT
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection-namedItem.html	TIMEOUT
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	FAIL
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	SUBTEST	FAIL	"Changing the length adds new nodes; The new nodes will not copy select's prefix"
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	SUBTEST	FAIL	"Changing the length adds new nodes; The number of new nodes = new length minus old length"
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	SUBTEST	FAIL	"New nodes have no value"
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	SUBTEST	FAIL	"On getting, the length attribute must return the number of nodes represented by the collection."
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	SUBTEST	FAIL	"Setting a length equal to existing length changes nothing"
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	SUBTEST	FAIL	"Setting element by index should correctly append and replace elements"
+html/semantics/forms/the-select-element/common-HTMLOptionsCollection.html	SUBTEST	FAIL	"Setting element to null by index removed the element"
+html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-appearance-focused.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-appearance-grid.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-appearance.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-keyboard-behavior.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-mouse-behavior.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-listbox/customizable-select-listbox-sizing.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select-listbox/listbox-hr-appearance.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select-listbox/select-appearance-change.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select-listbox/select-listbox-home-end-pagedown-pageup.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-listbox/select-listbox-typeahead.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-listbox/selectedcontent-listbox.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-appearance.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-keyboard-behavior.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-popup-mouse-behavior.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-multiple-popup/select-multiple-validity-invalidation.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-multiple-popup/selectedcontent-multiple-restore.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select-multiple-popup/selectedcontent-multiple.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/all-revert-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/appearance-base-and-base-select.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/appearance-base-select-other-elements.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/base-appearance-inheritance.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/base-appearance-inheritance.html	SUBTEST	FAIL	"base appearance should not propagate to nested elements which support appearance."
+html/semantics/forms/the-select-element/customizable-select/border-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/button-in-popover.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/checkmark-animation-002.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/checkmark-animation.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/closed-listbox-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/focus-ring-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/nested-options.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/nested-select-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/option-disabled-invalid-nesting.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/option-disabled-invalid-nesting.html	SUBTEST	FAIL	"options should not inherit disabledness when nested in invalid elements."
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup-wrapper.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup-wrapper.html	SUBTEST	FAIL	":disabled matches option in wrapper inside disabled optgroup"
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup-wrapper.html	SUBTEST	FAIL	":disabled updates dynamically when optgroup disabled changes with wrapper"
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup-wrapper.html	SUBTEST	FAIL	"selectedness setting algorithm skips wrapped options in disabled optgroup"
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup.html	SUBTEST	FAIL	"disabled select"
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup.html	SUBTEST	FAIL	"nested options"
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup.html	SUBTEST	FAIL	"nesting options and optgroups in disabled select"
+html/semantics/forms/the-select-element/customizable-select/option-disabled-optgroup.html	SUBTEST	FAIL	"options should check ancestor optgroup for disabled state."
+html/semantics/forms/the-select-element/customizable-select/option-form-ancestor-select.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/option-form-ancestor-select.html	SUBTEST	FAIL	"option.form should be null when options are nested in invalid elements."
+html/semantics/forms/the-select-element/customizable-select/option-form-ancestor-select.html	SUBTEST	FAIL	"option.form should look up the ancestor chain for a select element to get its form from."
+html/semantics/forms/the-select-element/customizable-select/option-label-in-shadow-tree.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/option-list-wrapped-optgroup.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/option-list-wrapped-optgroup.html	SUBTEST	FAIL	"nested optgroups inside wrapper still excluded from option list"
+html/semantics/forms/the-select-element/customizable-select/option-list-wrapped-optgroup.html	SUBTEST	FAIL	"option inside optgroup inside wrapper div is in the option list"
+html/semantics/forms/the-select-element/customizable-select/option-list.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/option-list.html	SUBTEST	FAIL	"select's option list should not include descendants of options, hrs, or nested optgroups."
+html/semantics/forms/the-select-element/customizable-select/picker-and-slotted-invalidation.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/picker-and-slotted.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/picker-icon-and-slotted.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/picker-icon-animation-002.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/picker-icon-animation.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/picker-icon-animation.html	SUBTEST	FAIL	"::picker-icon pseudo-element animates"
+html/semantics/forms/the-select-element/customizable-select/select-accessibility-minimum-target-size.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-add-multiple-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/select-anchor-regression.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-appearance-active.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-base-display.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-base-toggle-invalidation.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-button-after-option.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-button-after-span.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-button-after-text.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-custom-button.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-dark-mode.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-default-button.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-disabled-option.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-disabled.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-bottom-left-scroller.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-bottom-left.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-bottom-right-scroller.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-bottom-right.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-top-left-scroller.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-top-left.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-top-right-scroller.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-fallback-top-right.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-font-inheriting.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-hover.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-mixing.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-optgroup-legend-and-label.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-optgroup-legend.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-optgroup-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-option-with-label.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-picker-select-border.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-sizing-in-flex.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-switching-invalidation.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-writing-mode-vertical-lr.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-writing-mode-vertical-rl.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-appearance-wrong-picker-argument.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance ::picker(select)"
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance <legend>."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance <optgroup>."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance <option> in <optgroup>."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance <option>."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance <select>."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance option::checkmark."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance select <button>."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-computed-style.html	SUBTEST	FAIL	"UA styles of base appearance select::picker-icon."
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-ordering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-base-appearance-writing-modes.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-base-overflow.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-button-behaviors.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-button-text-and-icon-clipping.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-click-drag-option.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-click-picker-light-dismiss.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-clipping.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-dialog-mode-focus.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-disabled.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-display-block.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-events-2.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-events.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-explicit-size.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-focus-visible-with-mouse.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-font-size.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-grid-before-after.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-highlight-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/select-home-end-pagedown-pageup-detailed.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-home-end-pagedown-pageup.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-icon-color.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-initial-focus-display-animation.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-input-parsing.tentative.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/select-input-parsing.tentative.html	SUBTEST	FAIL	"Input tags should close select when directly inside an <option>"
+html/semantics/forms/the-select-element/customizable-select/select-input-parsing.tentative.html	SUBTEST	FAIL	"Input tags should close select when placed after an <option>"
+html/semantics/forms/the-select-element/customizable-select/select-inside-top-layer.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-iterate-before-beginning.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-keyboard-behavior.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-keyboard-focus-change-for-hidden-options.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-listitems-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/select-listitems-hr-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/select-mouse-behavior.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-mousedown-slot-mutation.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-multiple-keydown-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/select-multiple-mousemove-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/select-multiple-removed.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-only-button-opt-in.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-only-picker-opt-in.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-open-invalidation.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-optgroup-arrow-keys.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-optgroup-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/select-optgroup-legend-label.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-option-arrow-scroll.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-option-hover-styles.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-option-images.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-options-id.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/select-options-id.html	SUBTEST	FAIL	"Option elements should work if they are a descendant of a selects wrapper div."
+html/semantics/forms/the-select-element/customizable-select/select-options-id.html	SUBTEST	FAIL	"Options in wrapper div in multiple should work after re-parsing and re-attaching."
+html/semantics/forms/the-select-element/customizable-select/select-options-id.html	SUBTEST	FAIL	"Options in wrapper div should still work when the multiple attribute is added."
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"</select> should close <button>"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"</select> should close <datalist>"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"<select> in <button> in <select> should remove inner <select>"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"<select> in <select><button><div> should remove inner <select>"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"Divs and imgs should be allowed as direct children of select and within options without a datalist"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"JS added nested <select> should be ignored"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"JS added nested <select>s should be ignored"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"JS added nested select should be ignored"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"JS added nested selects should be ignored"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"Nested selects should be retained 1"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"Nested selects should be retained 2"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"The last test should not leave any tags open after parsing"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"hr should generate implied end tags inside select"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"optgroup should generate implied end tags inside select"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"option inside optgroup should close previous option"
+html/semantics/forms/the-select-element/customizable-select/select-parsing.html	SUBTEST	FAIL	"textarea tags should parse inside select instead of closing the select"
+html/semantics/forms/the-select-element/customizable-select/select-picker-animations.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-picker-exit-animation.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-picker-hover-active-pseudo.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-picker-icon-content-none.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-icon-open-state.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-interactive-element-focus.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-picker-option-animation-reopens.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-picker-popover-open-invalid.tentative.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/select-picker-popover-open-invalid.tentative.html	SUBTEST	FAIL	"\"::picker(select):popover-open\" should be an invalid selector"
+html/semantics/forms/the-select-element/customizable-select/select-picker-popover-open-invalid.tentative.html	SUBTEST	FAIL	"\"select::picker(select):popover-open\" should be an invalid selector"
+html/semantics/forms/the-select-element/customizable-select/select-picker-pseudo-backdrop.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-pseudo-before-after.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-pseudo-first-letter-first-line.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-pseudo-highlight.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-pseudo-selection.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-pseudo-target-text.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-picker-starting-style.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-popover-exit-animation.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-pseudo-light-dismiss-invalidation.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-pseudo-open.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-pseudo-ordering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-second-child-button.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-single-base-appearance-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-size-change.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-size-multiple-new-content.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-synthetic-events.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-tabindex-order.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-text-only.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/select-type-to-search.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test that HTMLOption.selected updates select.value and select.selectedOptions"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test that HTMLOption.value updates select.value"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test that HTMLselect with no options has empty string for value and null for selectedOption"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test that option parts in a slotted-in listbox are reflected in the value property"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test that slotted-in selected-value part is updated to value of select"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test that value and selectedOption are correctly updated"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test that value and selectedOption are updated when options are removed"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test value and selectedOption when value is null"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test value and selectedOption when value is undefined"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test value and selectedOption with HTMLOptionElement element option parts"
+html/semantics/forms/the-select-element/customizable-select/select-value-selectedOption.html	SUBTEST	FAIL	"Test value with non-HTMLOptionElement elements labeled as parts"
+html/semantics/forms/the-select-element/customizable-select/select-vertical-writing-mode-navigation.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/selected-option-parser-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-color.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-in-option-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test1"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test2"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test3"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test4"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test5"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test6"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test7"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-mutations.html	SUBTEST	FAIL	"MutationObserver records during parsing of <select> with <selectedcontent>: test8"
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-nested.html	FAIL
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-nested.html	SUBTEST	FAIL	"Modification behavior when nesting selectedcontent elements."
+html/semantics/forms/the-select-element/customizable-select/selectedcontent-restore.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/selectedcontent.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/standalone-optgroup-no-shadow-tree-after-select.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/standalone-optgroup-no-shadow-tree.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/standalone-option-no-shadow-tree-after-select.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/standalone-option-no-shadow-tree.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/customizable-select/switch-picker-appearance.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/customizable-select/uses-label-dynamic.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/filterable-select/filterable-select-appearance.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/filterable-select/filterable-select-filtered-pseudo.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/filterable-select/filterable-select-keyboard-behavior.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/inserted-or-removed.html	FAIL
+html/semantics/forms/the-select-element/inserted-or-removed.html	SUBTEST	FAIL	"If an OPTION says it is selected, it should be selected after it is inserted."
+html/semantics/forms/the-select-element/inserted-or-removed.html	SUBTEST	FAIL	"The last selected OPTION should win; Inserted by DOM API"
+html/semantics/forms/the-select-element/inserted-or-removed.html	SUBTEST	FAIL	"The last selected OPTION should win; Inserted by innerHTML"
+html/semantics/forms/the-select-element/inserted-or-removed.html	SUBTEST	FAIL	"The last selected OPTION should win; Inserted by jQuery append()"
+html/semantics/forms/the-select-element/inserted-or-removed.html	SUBTEST	FAIL	"The last selected OPTION should win; Inserted by parser"
+html/semantics/forms/the-select-element/list-box-important-colors.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/multiple-pickers-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/option-selectedness-script-mutation.html	FAIL
+html/semantics/forms/the-select-element/option-selectedness-script-mutation.html	SUBTEST	FAIL	"multi-select keeps multiple selected options when selected attribute changes from script"
+html/semantics/forms/the-select-element/option-selectedness-script-mutation.html	SUBTEST	FAIL	"multi-select responds to option.selected without selected attribute reflection"
+html/semantics/forms/the-select-element/option-selectedness-script-mutation.html	SUBTEST	FAIL	"single-select responds to removing selected attribute from script"
+html/semantics/forms/the-select-element/option-selectedness-script-mutation.html	SUBTEST	FAIL	"single-select responds to setting option.selected from script"
+html/semantics/forms/the-select-element/option-selectedness-script-mutation.html	SUBTEST	FAIL	"single-select responds to setting selected attribute from script"
+html/semantics/forms/the-select-element/reset-algorithm-rendering.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-add-optgroup-before-argument-is-select-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-add-optgroup.html	FAIL
+html/semantics/forms/the-select-element/select-add-optgroup.html	SUBTEST	FAIL	"select.add() with an index should work when the target is inside an optgroup."
+html/semantics/forms/the-select-element/select-add-option-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-add.html	FAIL
+html/semantics/forms/the-select-element/select-add.html	SUBTEST	FAIL	"test that HTMLSelectElement.add method can add option element"
+html/semantics/forms/the-select-element/select-add.html	SUBTEST	FAIL	"test that HierarchyRequestError exception must be thrown when element is an ancestor of the element into which it is to be inserted"
+html/semantics/forms/the-select-element/select-ask-for-reset.html	FAIL
+html/semantics/forms/the-select-element/select-ask-for-reset.html	SUBTEST	FAIL	"ask for reset on node insert, non multiple."
+html/semantics/forms/the-select-element/select-ask-for-reset.html	SUBTEST	FAIL	"ask for reset on node remove, non multiple."
+html/semantics/forms/the-select-element/select-ask-for-reset.html	SUBTEST	FAIL	"change selectedness of option, non multiple."
+html/semantics/forms/the-select-element/select-attribute-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-dropdown-vs-listbox.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-hr-listbox-notref.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-hr-listbox.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-in-table-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-innerHTML-selected.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-listbox-selected-hscroll.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-listbox-touch.optional.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/select-many-options.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/select-marker-end-aligned-ref.tentative.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-marker-end-aligned.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-marker-visible-overflow-ref.tentative.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-marker-visible-overflow.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-multiple-resize-does-not-autoscroll.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/select-multiple-size-1.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-multiple-size-4.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-multiple.html	FAIL
+html/semantics/forms/the-select-element/select-multiple.html	SUBTEST	FAIL	"Removing multiple attribute reduces the number of selected OPTIONs to 1"
+html/semantics/forms/the-select-element/select-multiple.html	SUBTEST	FAIL	"multiple selected options exist, both set from markup"
+html/semantics/forms/the-select-element/select-multiple.html	SUBTEST	FAIL	"multiple selected options exist, one set from script"
+html/semantics/forms/the-select-element/select-named-getter.html	FAIL
+html/semantics/forms/the-select-element/select-named-getter.html	SUBTEST	FAIL	"Empty string name"
+html/semantics/forms/the-select-element/select-named-getter.html	SUBTEST	FAIL	"Option with id"
+html/semantics/forms/the-select-element/select-named-getter.html	SUBTEST	FAIL	"Option with name and id"
+html/semantics/forms/the-select-element/select-named-getter.html	SUBTEST	FAIL	"Option with name"
+html/semantics/forms/the-select-element/select-option-display-inherit.tentative.html	FAIL
+html/semantics/forms/the-select-element/select-option-display-inherit.tentative.html	SUBTEST	FAIL	"display:inherit on option in multiple select computes to contents"
+html/semantics/forms/the-select-element/select-option-display-inherit.tentative.html	SUBTEST	FAIL	"display:inherit on option in single select computes to contents"
+html/semantics/forms/the-select-element/select-option-focusable.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/select-overflow-x-ref.tentative.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-overflow-x.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-popover-position-with-zoom.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/select-remove.html	FAIL
+html/semantics/forms/the-select-element/select-remove.html	SUBTEST	FAIL	"select.options.remove(n) should work"
+html/semantics/forms/the-select-element/select-remove.html	SUBTEST	FAIL	"select.remove(n) should work"
+html/semantics/forms/the-select-element/select-required-attribute.tentative.html	FAIL
+html/semantics/forms/the-select-element/select-required-attribute.tentative.html	SUBTEST	FAIL	"Test required attribute"
+html/semantics/forms/the-select-element/select-restore-invalid-option.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/select-root-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	FAIL
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select> containing <hr><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select> containing <option><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select> containing <select><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><div><optgroup><div> containing <hr><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><div><optgroup><div> containing <optgroup><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><div><optgroup><div> containing <option><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><div><optgroup><div> containing <select><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><optgroup> containing <hr><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><optgroup> containing <optgroup><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><optgroup> containing <option><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions-nesting.window.js	SUBTEST	FAIL	"<select><optgroup> containing <select><option selected>"
+html/semantics/forms/the-select-element/select-selectedOptions.html	FAIL
+html/semantics/forms/the-select-element/select-selectedOptions.html	SUBTEST	FAIL	".selectedOptions should return `HTMLCollection` instance"
+html/semantics/forms/the-select-element/select-selectedOptions.html	SUBTEST	FAIL	".selectedOptions should return the same object after selection changes - [SameObject]"
+html/semantics/forms/the-select-element/select-selectedOptions.html	SUBTEST	FAIL	".selectedOptions using the 'multiple' attribute with no selected options"
+html/semantics/forms/the-select-element/select-selectedOptions.html	SUBTEST	FAIL	".selectedOptions using the 'multiple' attribute with two selected options"
+html/semantics/forms/the-select-element/select-selectedOptions.html	SUBTEST	FAIL	".selectedOptions with no selected option"
+html/semantics/forms/the-select-element/select-selectedOptions.html	SUBTEST	FAIL	".selectedOptions with one selected option"
+html/semantics/forms/the-select-element/select-selectedOptions.html	SUBTEST	FAIL	".selectedOptions without the 'multiple' attribute but more than one selected option should return the last one"
+html/semantics/forms/the-select-element/select-setcustomvalidity.html	FAIL
+html/semantics/forms/the-select-element/select-setcustomvalidity.html	SUBTEST	FAIL	"select setCustomValidity is correct"
+html/semantics/forms/the-select-element/select-tab-navigation.tentative.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/select-toggle-multiple.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-select-element/select-validity.html	FAIL
+html/semantics/forms/the-select-element/select-validity.html	SUBTEST	FAIL	"Placeholder label options within a select"
+html/semantics/forms/the-select-element/select-validity.html	SUBTEST	FAIL	"Placeholder label-like options within optgroup"
+html/semantics/forms/the-select-element/select-validity.html	SUBTEST	FAIL	"Remove and add back the placeholder label option"
+html/semantics/forms/the-select-element/select-validity.html	SUBTEST	FAIL	"Validation on selects with display size set as more than one"
+html/semantics/forms/the-select-element/select-validity.html	SUBTEST	FAIL	"Validation on selects with multiple set"
+html/semantics/forms/the-select-element/select-validity.html	SUBTEST	FAIL	"Validation on selects with non-empty disabled option"
+html/semantics/forms/the-select-element/select-validity.tentative.html	FAIL
+html/semantics/forms/the-select-element/select-validity.tentative.html	SUBTEST	FAIL	"Check form not submitted for invalid select"
+html/semantics/forms/the-select-element/select-validity.tentative.html	SUBTEST	FAIL	"Validation for placeholder option"
+html/semantics/forms/the-select-element/select-value.html	FAIL
+html/semantics/forms/the-select-element/select-value.html	SUBTEST	FAIL	"optgroups"
+html/semantics/forms/the-select-element/select-value.html	SUBTEST	FAIL	"option is child of div"
+html/semantics/forms/the-select-element/select-willvalidate-readonly-attribute.html	FAIL
+html/semantics/forms/the-select-element/select-willvalidate-readonly-attribute.html	SUBTEST	FAIL	"Select element with \"readonly\" attribute shouldn't be barred from constraint validation"
+html/semantics/forms/the-select-element/selected-index.html	FAIL
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"get default"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"get disabled"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"get display:none"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"get empty"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"get unselected"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"removing a non-selected option with nothing selected asks for a reset"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"reset to display:none"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"set (HTMLOptionsCollection)"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"set (HTMLSelectElement)"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"set and reset (HTMLOptionsCollection)"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"set and reset (HTMLSelectElement)"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"set empty (HTMLOptionsCollection)"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"set empty (HTMLSelectElement)"
+html/semantics/forms/the-select-element/selected-index.html	SUBTEST	FAIL	"set selectedIndex=-1"
+html/semantics/forms/the-select-element/show-picker-being-cv-hidden.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/show-picker-being-rendered.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/show-picker-disabled.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/show-picker-multiple.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/show-picker-size.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-select-element/show-picker-user-gesture.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-textarea-element/change-to-empty-value.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-textarea-element/cloning-steps.html	FAIL
+html/semantics/forms/the-textarea-element/cloning-steps.html	SUBTEST	FAIL	"textarea element's dirty value flag should be cloned, so setAttribute doesn't affect the cloned textarea's value"
+html/semantics/forms/the-textarea-element/cloning-steps.html	SUBTEST	FAIL	"textarea element's value should be cloned"
+html/semantics/forms/the-textarea-element/multiline-placeholder-cr.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-textarea-element/multiline-placeholder-crlf.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-textarea-element/multiline-placeholder.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-textarea-element/placeholder-white-space-notref.html	SKIP	not a testharness test
+html/semantics/forms/the-textarea-element/placeholder-white-space.tentative.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-textarea-element/selection-after-whitespace-change.html	SKIP	testdriver: needs WebDriver input injection
+html/semantics/forms/the-textarea-element/text-area-disconnected-firefox-bug-1933919-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-textarea-element/textarea-newline-bidi.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-textarea-element/textarea-placeholder-lineheight.html	FAIL
+html/semantics/forms/the-textarea-element/textarea-placeholder-lineheight.html	SUBTEST	FAIL	"Bounding rect height for textarea must be the same as line-height"
+html/semantics/forms/the-textarea-element/textarea-selection-range-intersects-character-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-textarea-element/textarea-setcustomvalidity.html	FAIL
+html/semantics/forms/the-textarea-element/textarea-setcustomvalidity.html	SUBTEST	FAIL	"textarea setCustomValidity is correct"
+html/semantics/forms/the-textarea-element/textarea-splittext-with-range-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-textarea-element/textarea-splittext-with-range-simple-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-textarea-element/textarea-textLength.html	FAIL
+html/semantics/forms/the-textarea-element/textarea-textLength.html	SUBTEST	FAIL	"Textarea's 'testLength' should work for utf-16."
+html/semantics/forms/the-textarea-element/textarea-type.html	FAIL
+html/semantics/forms/the-textarea-element/textarea-type.html	SUBTEST	FAIL	"Textarea's type attribute should return 'textarea'"
+html/semantics/forms/the-textarea-element/textarea-update-default-value-in-shadow-crash.html	SKIP	not a testharness test
+html/semantics/forms/the-textarea-element/textarea-validity-clone.html	FAIL
+html/semantics/forms/the-textarea-element/textarea-validity-clone.html	SUBTEST	FAIL	"<textarea> validity state should be preserved after a clone"
+html/semantics/forms/the-textarea-element/textarea-validity-valueMissing-inside-datalist.html	FAIL
+html/semantics/forms/the-textarea-element/textarea-validity-valueMissing-inside-datalist.html	SUBTEST	FAIL	"textarea element with \"required\" attribute and empty value is considered \"suffering from being missing\" even if inside datalist element"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent-xhtml.xhtml	FAIL
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent-xhtml.xhtml	SUBTEST	FAIL	"defaultValue and value include CDATASection Text nodes"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	FAIL
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"Setting defaultValue wipes out any children, including elements (just like setting textContent)"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value are affected by setting data on a child text node"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value are affected by setting nodeValue on a child text node"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value are affected by setting textContent"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value are affected by textContent in combination with appending a DocumentFragment"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value are affected by textContent in combination with appending a text node"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value are the empty string by default"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value reflect child text content, not textContent"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"defaultValue and value treat CRLF differently"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"tests for U+0000 NULL"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"tests for the value setter"
+html/semantics/forms/the-textarea-element/value-defaultValue-textContent.html	SUBTEST	FAIL	"value normalizes CRLF even spread over multiple text nodes"
+html/semantics/forms/the-textarea-element/wrap-enumerated-ascii-case-insensitive-child.html	SKIP	not a testharness test
+html/semantics/forms/the-textarea-element/wrap-enumerated-ascii-case-insensitive.html	FAIL
+html/semantics/forms/the-textarea-element/wrap-enumerated-ascii-case-insensitive.html	SUBTEST	FAIL	"keywords"
+html/semantics/forms/the-textarea-element/wrap-reflect-1a.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-textarea-element/wrap-reflect-1b.html	SKIP	reftest: needs a reference render, not a harness result
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	FAIL
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea hard-wrapping should honor the col count unconditionally,"
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea wrapping transformation: Newlines should be normalized to LF."
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea wrapping transformation: Wrapping happens with LF newlines."
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea wrapping transformation: wrapping round-trips: One\ntwo\nthree\nintermingled\n\nlines\nand so"
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea wrapping transformation: wrapping round-trips: Some text that is too long for the specified character width."
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea wrapping transformation: wrapping round-trips: Some text that is too long for the\n\n\nspecified character width."
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea wrapping transformation: wrapping round-trips: exact  len"
+html/semantics/forms/the-textarea-element/wrapping-transformation.window.js	SUBTEST	FAIL	"Textarea wrapping transformation: wrapping round-trips: exact  len\nand then\nsome"

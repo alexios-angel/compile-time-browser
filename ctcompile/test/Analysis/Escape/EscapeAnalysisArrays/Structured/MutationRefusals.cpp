@@ -1,0 +1,179 @@
+#include "Cases.hpp"
+
+namespace ctcompile::test::escape::arrays::structured_detail {
+
+void StructuredCases::mutationRefusals() {
+    reject("an opaque structured backedge cannot reuse a prior exact Number",
+           replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
+    reject("a structured array backedge must preserve its certified formal",
+           replace(original, "scf.yield %base, %step, %read", "scf.yield %a, %step, %read"));
+    reject("a reordered structured condition must still supply the induction formal",
+           replace(original, "scf.condition(%continue) %index, %saved, %array",
+                   "scf.condition(%continue) %saved, %index, %array"));
+    rows.push_back({.what = "structured current-element overwrites precede subsequent reads",
+                    .body = replace(original, "    %read =",
+                                    "    ctjs.set_property %base[%i], %zero\n    %read ="),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "zero -> {}"});
+    const std::string overwritten =
+        replace(original, "    %step =", "    ctjs.set_property %base[%i], %zero\n    %step =");
+    rows.push_back({.what = "structured overwrites retain the value saved before the store",
+                    .body = overwritten,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured overwrites release former children of returned arrays",
+                    .body = replace(overwritten, "ctjs.return %result", "ctjs.return %a"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "a -> {a}"});
+    const std::string fixedOverwrite =
+        replace(original, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
+    rows.push_back({.what = "structured invariant own-index overwrites precede later reads",
+                    .body = fixedOverwrite,
+                    .arrays = "a:[x,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "structured invariant overwrites retain other returned children",
+                    .body = replace(fixedOverwrite, "%base[%one], %zero", "%base[%zero], %zero"),
+                    .arrays = "a:[zero,y]",
+                    .reads = "a[0]=zero; a[1]=y",
+                    .exit = "y -> {y}"});
+    reject(
+        "structured invariant overwrite keys must name an existing own index",
+        replace(replace(fixedOverwrite, "  %a =", "  %fixed = ctjs.binary add %one, %one\n  %a ="),
+                "%base[%one], %zero", "%base[%fixed], %zero"));
+    reject("structured keys cannot reload overwritten guard elements",
+           replace(fixedOverwrite, "    ctjs.set_property %base[%one], %zero",
+                   "    %fixed = ctjs.get_property %base[%zero]\n"
+                   "    ctjs.set_property %base[%fixed], %zero"));
+    reject("structured element-dependent strides cannot survive overwrites",
+           replace(reloaded, "    %unit =", "    ctjs.set_property %base[%i], %zero\n    %unit ="));
+    reject("structured header stores can reach outside the guarded own elements",
+           replace(original,
+                   "    %less =", "    ctjs.set_property %array[%index], %zero\n    %less ="));
+    reject("structured next-index stores can extend the array",
+           replace(original, "    scf.yield %base, %step",
+                   "    ctjs.set_property %base[%step], %zero\n    scf.yield %base, %step"));
+    reject("structured loop allocation cannot collapse repeated instances",
+           replace(original, "    %read =", "    %fresh = ctjs.create_array []\n    %read ="));
+    reject("structured nested control needs a separate lifetime proof",
+           replace(original, "    %read =", "    scf.if %flag {\n    }\n    %read ="));
+    reject("a structured zero-trip body cannot conceal publication",
+           replace(replace(replace(original, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
+                   "    %read =", "    ctjs.store_global \"held\", %base\n    %read ="));
+    reject("a structured offset read must stay within the guard array on every iteration",
+           replace(original, "    %read = ctjs.get_property %base[%i]",
+                   "    %offset = ctjs.binary_static add %i, %one\n"
+                   "    %read = ctjs.get_property %base[%offset]"),
+           ArrayContentsFailure::MissingElement);
+    reject("effects after structured induction discard all earlier exact reads",
+           replace(original, "  ctjs.return %result",
+                   "  ctjs.store_global \"held\", %result\n  ctjs.return %result"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("opaque carried contents cannot borrow a prior structured scalar fact",
+           replace(replace(original, "%base[%i]", "%base[%last]"), "scf.yield %base, %step, %read",
+                   "scf.yield %base, %step, %p"),
+           ArrayContentsFailure::UnknownIndex);
+    const std::string directLoop =
+        "  %finalIndex, %result = scf.while (%index = %zero, %saved = %zero) : "
+        "(!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {\n"
+        "    %key = ctjs.constant #ctjs.string<\"length\">\n"
+        "    %length = ctjs.get_property %a[%key]\n"
+        "    %less = ctjs.compare lt %index, %length\n"
+        "    %continue = ctjs.truthy %less\n"
+        "    scf.condition(%continue) %index, %saved : !ctjs.value, !ctjs.value\n"
+        "  } do {\n  ^body(%i: !ctjs.value, %last: !ctjs.value):\n"
+        "    %read = ctjs.get_property %a[%i]\n"
+        "    %step = ctjs.binary_static add %i, %one\n"
+        "    scf.yield %step, %read : !ctjs.value, !ctjs.value\n  }\n";
+    const std::string direct = prefix + directLoop + "  ctjs.return %result\n";
+    rows.push_back({.what = "SCF may remove an invariant dominating array parameter",
+                    .body = direct,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back(
+        {.what = "direct structured arrays permit guarded current-element overwrites",
+         .body = replace(direct, "    %read =", "    ctjs.set_property %a[%i], %zero\n    %read ="),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "zero -> {}"});
+    rows.push_back(
+        {.what = "reversed strict guards also support direct structured array aliases",
+         .body = replace(direct, "compare lt %index, %length", "compare gt %length, %index"),
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
+    rows.push_back({.what = "direct-array structured induction preserves a nonzero start",
+                    .body = replace(direct, "%index = %zero", "%index = %one"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "computed zero also initializes an invariant direct-array loop",
+                    .body = prefix + "  %start = ctjs.unary plus %zero\n" +
+                            replace(directLoop, "%index = %zero", "%index = %start") +
+                            "  ctjs.return %result\n",
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "held unit steps also support invariant direct-array loops",
+                    .body = prefix + makeUnit +
+                            replace(directLoop, "add %i, %one", "add %i, %unit") +
+                            "  ctjs.return %result\n",
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "positive strides also support invariant direct-array loops",
+                    .body = prefix + makeStride +
+                            replace(directLoop, "add %i, %one", "add %i, %unit") +
+                            "  ctjs.return %result\n",
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "direct structured arrays retain preceding own overwrites",
+                    .body = prefix + "  ctjs.set_property %a[%one], %x\n" + directLoop +
+                            "  ctjs.return %result\n",
+                    .arrays = "a:[x,x]",
+                    .reads = "a[0]=x; a[1]=x",
+                    .exit = "x -> {x}"});
+    rows.push_back({.what = "a direct empty array proves zero trips",
+                    .body = replace(replace(direct, "[%x]", "[]"), "  ctjs.append %y to %a\n", ""),
+                    .arrays = "a:[]",
+                    .exit = "zero -> {}"});
+    rows.push_back({.what = "direct arrays retain their identity inside an enclosing branch",
+                    .body = prefix + "  %chosen = scf.if %flag -> (!ctjs.value) {\n" + directLoop +
+                            "    scf.yield %result : !ctjs.value\n"
+                            "  } else {\n    scf.yield %x : !ctjs.value\n  }\n"
+                            "  ctjs.return %chosen\n",
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}; x -> {x}"});
+    reject("an outer opaque parameter is not a dominating direct array",
+           replace(direct, "%length = ctjs.get_property %a", "%length = ctjs.get_property %p"));
+    reject("direct-array nonzero starts preserve own-bound checks on every read",
+           replace(replace(replace(direct, "%index = %zero", "%index = %one"),
+                           "  ctjs.append %y to %a\n",
+                           "  ctjs.append %y to %a\n"
+                           "  %b = ctjs.create_array [%x]\n"),
+                   "%read = ctjs.get_property %a", "%read = ctjs.get_property %b"),
+           ArrayContentsFailure::MissingElement);
+    rows.push_back(
+        {.what = "direct array induction permits invariant own-element writes",
+         .body = replace(direct, "    %read =", "    ctjs.set_property %a[%zero], %y\n    %read ="),
+         .arrays = "a:[y,y]",
+         .reads = "a[0]=y; a[1]=y",
+         .exit = "y -> {y}"});
+    reject("direct array length cannot certify another shorter array",
+           replace(replace(direct, "  %finalIndex,", "  %b = ctjs.create_array []\n  %finalIndex,"),
+                   "%read = ctjs.get_property %a", "%read = ctjs.get_property %b"),
+           ArrayContentsFailure::MissingElement);
+    reject("direct array offset reads retain own-bound checks",
+           replace(direct, "    %read = ctjs.get_property %a[%i]",
+                   "    %offset = ctjs.binary_static add %i, %one\n"
+                   "    %read = ctjs.get_property %a[%offset]"),
+           ArrayContentsFailure::MissingElement);
+}
+
+} // namespace ctcompile::test::escape::arrays::structured_detail

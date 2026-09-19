@@ -14,7 +14,7 @@ Five tables, all of them DATA published by Unicode:
   * Joining_Type, for the second: (L|D) T* ZWNJ T* (R|D).
   * Bidi_Class, for CheckBidi (RFC 5893): every class a valid label may carry.
 
-    python3 tools/gen/idna_table.py > ctbrowser/lib/Shell/net/idna_table.inc
+    python3 tools/gen/idna_table.py
 
 Hand-typing 8,000 ranges is how a wrong one gets in and stays in, so this
 fetches them. Everything comes from unicode.org except the two derived
@@ -23,7 +23,7 @@ version and the fetched files' may differ by a release, which moves a handful
 of recently assigned code points and nothing that WPT tests.
 """
 
-import sys
+from cpp_table import generate
 import unicodedata
 import urllib.request
 
@@ -205,4 +205,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(generate(main, "ctbrowser/lib/Shell/net/idna_table.inc"))

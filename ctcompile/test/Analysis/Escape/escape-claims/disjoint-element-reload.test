@@ -1,0 +1,86 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name disjoint-element-reload
+// RUN: FileCheck %s < %t/escape-claims-disjoint-element-reload.claims
+
+// Original allocation identities decide aliasing through saved and nested reads.
+// Every reload feeding the stride must survive writes; historical cycles remain.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function disjointReleased() {
+    var child = {}, array = [child, child], inputs = [1];
+    for (var i = 0; i < array.length; i += inputs[0]) array[i] = 0;
+    return array;
+}
+function disjointSaved() {
+    var child = {}, array = [child], inputs = [1], saved = array[0];
+    for (var i = 0; i < array.length; i += inputs[0]) array[i] = 0;
+    return saved;
+}
+function nestedReleased() {
+    var child = {}, array = [child, child], step = [1], inputs = [step, array];
+    for (var i = 0; i < array.length; i += inputs[0][0]) array[i] = 0;
+    return array;
+}
+function aliasedReload() {
+    var child = {}, array = [child, 1], inputs = array;
+    for (var i = 0; i < array.length; i += +inputs[1]) array[i] = 2;
+    return array;
+}
+function nestedGuardAlias() {
+    var child = {}, array = [child, 1], inputs = [array];
+    for (var i = 0; i < array.length; i += +inputs[0][1]) array[i] = 2;
+    return array;
+}
+function zeroTrip() {
+    var child = {}, array = [child], inputs = [1];
+    for (var i = array.length; i < array.length; i += inputs[0]) array[i] = 0;
+    return array;
+}
+function changingInput() {
+    var child = {}, array = [child, child], inputs = [1], other = [2];
+    for (var i = 0; i < array.length; i += inputs[0]) {
+        array[i] = 0;
+        inputs = other;
+    }
+    return array;
+}
+function transientCycle() {
+    var child = {}, array = [child], inputs = [1];
+    for (var i = 0; i < array.length; i += inputs[0]) {
+        array[i] = array;
+        array[i] = 0;
+    }
+    return array;
+}
+function alternativeAlias(flag) {
+    var child = {}, array = [child, 1], step = [1, 1], inputs;
+    if (flag) inputs = step;
+    else inputs = array;
+    for (var i = 0; i < array.length; i += +inputs[1]) array[i] = 2;
+    return array;
+}
+function nestedGuardLength() {
+    var child = {}, array = [child, 0], inputs = [array];
+    for (var i = 0; i < array.length; i += inputs[0].length) array[i] = 0;
+    return array;
+}
+function cyclicAlias() {
+    var child = {}, array = [child, 1], inputs = [0, array];
+    inputs[0] = inputs;
+    for (var i = 0; i < array.length; i += +inputs[0][1][1]) array[i] = 2;
+    return array;
+}
+disjointReleased(); disjointSaved(); nestedReleased(); aliasedReload(); nestedGuardAlias();
+zeroTrip(); changingInput(); transientCycle(); alternativeAlias(true); alternativeAlias(false);
+nestedGuardLength(); cyclicAlias();

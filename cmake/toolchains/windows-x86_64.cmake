@@ -20,9 +20,11 @@ set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
 # --- the std::embed mingw clang
+get_filename_component(_ctb_cmake_dir "${CMAKE_CURRENT_LIST_DIR}" DIRECTORY)
+get_filename_component(_ctb_repo_root "${_ctb_cmake_dir}" DIRECTORY)
 set(_ctb_mingw_roots "$ENV{LLVM_MINGW}"
     "$ENV{HOME}/projects/llvm-mingw/install/llvm-mingw-native"
-    "${CMAKE_CURRENT_LIST_DIR}/../tools/llvm-mingw")
+    "${_ctb_repo_root}/tools/llvm-mingw")
 foreach(_root IN LISTS _ctb_mingw_roots)
   if(_root AND EXISTS "${_root}/bin/x86_64-w64-mingw32-clang++")
     set(CMAKE_C_COMPILER "${_root}/bin/x86_64-w64-mingw32-clang")

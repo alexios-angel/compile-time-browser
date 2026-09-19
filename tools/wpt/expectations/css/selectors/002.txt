@@ -1,0 +1,626 @@
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #parent_previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #parent_previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/is-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:is(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #previous) : (removal) check matches (true)"
+css/selectors/invalidation/is-pseudo-containing-sibling-relationship-in-has.html	FAIL
+css/selectors/invalidation/is-pseudo-containing-sibling-relationship-in-has.html	SUBTEST	FAIL	"Initially red"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo-and-never-matching.html	FAIL
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo-and-never-matching.html	SUBTEST	FAIL	"subject1 color after focus is red"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo-and-never-matching.html	SUBTEST	FAIL	"subject2 color after focus is orangered"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo-and-never-matching.html	SUBTEST	FAIL	"subject3 color after focus is darkred"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo-and-never-matching.html	SUBTEST	FAIL	"subject4 color after focus is pink"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	FAIL
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject1 is orangered when .parent added to parent"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject2 is darkred when .other-match added"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject2 is pink when .parent removed from parent"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject3 is green when .other-match added"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject3 is lightgreen when .parent added to parent"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject3 is lightgreen when .parent removed from parent"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject4 is darkgreen when .other-match added"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject4 is yellowgreen when .parent added to parent"
+css/selectors/invalidation/is-where-pseudo-containing-hard-pseudo.html	SUBTEST	FAIL	"subject4 is yellowgreen when .parent removed from parent"
+css/selectors/invalidation/lang-pseudo-class-in-has-document-element.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/lang-pseudo-class-in-has-multiple-document-elements.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/lang-pseudo-class-in-has-xhtml.xhtml	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/lang-pseudo-class-in-has.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/link-pseudo-class-in-has.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/invalidation/location-pseudo-classes-in-has.html	FAIL
+css/selectors/invalidation/location-pseudo-classes-in-has.html	SUBTEST	FAIL	"CSS Selectors Invalidation: location pseudo classes in :has() argument"
+css/selectors/invalidation/media-pseudo-classes-in-has.html	HARNESS_ERROR
+css/selectors/invalidation/media-pseudo-classes-in-has.html	SUBTEST	NOTRUN	"Test :muted pseudo-class"
+css/selectors/invalidation/media-pseudo-classes-in-has.html	SUBTEST	NOTRUN	"Test :seeking pseudo-class"
+css/selectors/invalidation/modal-pseudo-class-in-has.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/invalidation/negated-always-matches-negated-first-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-always-matches-negated-last-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-first-of-type-in-nonsubject-position.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-has-in-nonsubject-position.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-is-always-matches-negated-first-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-is-always-matches-negated-last-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-is-never-matches-negated-first-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-is-never-matches-negated-last-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-last-of-type-invalidation.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-negated-first-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-negated-last-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-never-matches-negated-first-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-never-matches-negated-last-of-type-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-nth-child-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/negated-nth-last-child-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	FAIL
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #parent_previous.classList.add('c_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #parent_previous.classList.add('c_indirect_next') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #previous.classList.add('c_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] #previous.classList.add('c_indirect_next') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #parent_previous) : (insertion) check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #parent_previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #previous) : (insertion) check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .c_indirect_next before #previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #parent_previous) : (removal) check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #parent_previous) : (removal) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #previous) : (removal) check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkgreen:has(#descendant:not(.p + .c_indirect_next ~ .d .e)) ~ #indirect_next ] insert/remove .invalid before #previous) : (removal) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkred:has(#descendant:not(.a_indirect_next .b)) ~ #indirect_next ] #child.classList.remove('a_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkred:has(#descendant:not(.a_indirect_next .b)) ~ #indirect_next ] #has_scope.classList.add('darkred') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkred:has(#descendant:not(.a_indirect_next .b)) ~ #indirect_next ] #has_scope.classList.remove('a_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .darkred:has(#descendant:not(.a_indirect_next .b)) ~ #indirect_next ] #parent.classList.remove('a_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] #parent_previous.classList.add('c_has_scope') : check #has_scope color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] #parent_previous.classList.add('c_has_scope') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] #previous.classList.add('c_has_scope') : check #has_scope color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] #previous.classList.add('c_has_scope') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #parent_previous) : (insertion) check #has_scope color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #parent_previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #previous) : (insertion) check #has_scope color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .c_has_scope before #previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #parent_previous) : (removal) check #has_scope color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #parent_previous) : (removal) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #previous) : (removal) check #has_scope color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .green:has(#descendant:not(.p + .c_has_scope ~ .d .e)) ] insert/remove .invalid before #previous) : (removal) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .greenyellow:has(~ #indirect_next:not(.h_indirect_next .i)) ~ #indirect_next ] #has_scope.classList.add('greenyellow') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .greenyellow:has(~ #indirect_next:not(.h_indirect_next .i)) ~ #indirect_next ] #parent.classList.remove('h_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] #parent_previous.classList.add('c_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] #parent_previous.classList.add('c_descendant') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] #previous.classList.add('c_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] #previous.classList.add('c_descendant') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #parent_previous) : (insertion) check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #parent_previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #previous) : (insertion) check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .c_descendant before #previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #parent_previous) : (removal) check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #parent_previous) : (removal) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #previous) : (removal) check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .lightgreen:has(#descendant:not(.p + .c_descendant ~ .d .e)) #descendant ] insert/remove .invalid before #previous) : (removal) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orangered:has(#descendant:not(.a_descendant .b)) #descendant ] #child.classList.remove('a_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orangered:has(#descendant:not(.a_descendant .b)) #descendant ] #has_scope.classList.add('orangered') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orangered:has(#descendant:not(.a_descendant .b)) #descendant ] #has_scope.classList.remove('a_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orangered:has(#descendant:not(.a_descendant .b)) #descendant ] #parent.classList.remove('a_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orchid:has(~ #indirect_next:not(.p + .j_indirect_next ~ .k .l)) ~ #indirect_next ] #has_scope.classList.add('orchid') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orchid:has(~ #indirect_next:not(.p + .j_indirect_next ~ .k .l)) ~ #indirect_next ] #parent_previous.classList.remove('j_indirect_next') : check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orchid:has(~ #indirect_next:not(.p + .j_indirect_next ~ .k .l)) ~ #indirect_next ] insert/remove .invalid before #parent_previous) : (insertion) check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .orchid:has(~ #indirect_next:not(.p + .j_indirect_next ~ .k .l)) ~ #indirect_next ] insert/remove .j_indirect_next before #parent_previous) : (removal) check #indirect_next color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .plum:has(~ #indirect_next:not(.p + .j_indirect_next_child ~ .k .l)) ~ #indirect_next #indirect_next_child ] #has_scope.classList.add('plum') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .plum:has(~ #indirect_next:not(.p + .j_indirect_next_child ~ .k .l)) ~ #indirect_next #indirect_next_child ] #parent_previous.classList.remove('j_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .plum:has(~ #indirect_next:not(.p + .j_indirect_next_child ~ .k .l)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #parent_previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .plum:has(~ #indirect_next:not(.p + .j_indirect_next_child ~ .k .l)) ~ #indirect_next #indirect_next_child ] insert/remove .j_indirect_next_child before #parent_previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:not(.p + .f_descendant ~ .g)) #descendant ] #direct_next.classList.remove('f_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:not(.p + .f_descendant ~ .g)) #descendant ] #has_scope.classList.add('skyblue') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:not(.p + .f_descendant ~ .g)) #descendant ] #has_scope.classList.remove('f_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:not(.p + .f_descendant ~ .g)) #descendant ] #previous.classList.remove('f_descendant') : check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:not(.p + .f_descendant ~ .g)) #descendant ] insert/remove .f_descendant before #direct_next) : (removal) check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .skyblue:has(~ #indirect_next:not(.p + .f_descendant ~ .g)) #descendant ] insert/remove .f_descendant before #previous) : (removal) check #descendant color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #child_previous.classList.remove('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #has_scope.classList.add('yellowgreen') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #parent_previous.classList.add('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #parent_previous.classList.add('c_indirect_next_child') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #parent_previous.classList.remove('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #previous.classList.add('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #previous.classList.add('c_indirect_next_child') : check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] #previous.classList.remove('c_indirect_next_child') : check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #child_previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #parent_previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #parent_previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #parent_previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #previous) : (insertion) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .c_indirect_next_child before #previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #child_previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #parent_previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #parent_previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #parent_previous) : (removal) check matches (false)"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #previous) : (insertion) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #previous) : (removal) check #indirect_next_child color"
+css/selectors/invalidation/not-pseudo-containing-complex-in-has.html	SUBTEST	FAIL	"[ .yellowgreen:has(#descendant:not(.p + .c_indirect_next_child ~ .d .e)) ~ #indirect_next #indirect_next_child ] insert/remove .invalid before #previous) : (removal) check matches (false)"
+css/selectors/invalidation/nth-child-containing-ancestor.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-in-shadow-root.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-attr-largedom.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-attr.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-class-prefix.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-class.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-has.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-id-prefix.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-ids.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-in-ancestor.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-in-is.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-in-shadow-root.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-is.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-pseudo-class.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-of-sibling.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-when-sibling-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-child-whole-subtree.html	FAIL
+css/selectors/invalidation/nth-child-whole-subtree.html	SUBTEST	FAIL	"CSS Selectors Invalidation: :nth-child(... of :not()) combined with whole subtree invalidation"
+css/selectors/invalidation/nth-last-child-containing-ancestor.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-in-shadow-root.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-attr.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-class-prefix.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-class.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-has.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-id-prefix.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-ids.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-in-ancestor.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-in-is.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-in-shadow-root.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-is.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-pseudo-class.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-of-sibling.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-when-ancestor-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-last-child-when-sibling-changes.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/nth-of-namespace-class-invalidation-crash.html	SKIP	not a testharness test
+css/selectors/invalidation/open-pseudo-class-in-has.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/invalidation/option-disabled-when-ancestor-changes.html	FAIL
+css/selectors/invalidation/option-disabled-when-ancestor-changes.html	SUBTEST	FAIL	"optgroup :disabled and :has(optgroup:disabled) invalidate when ancestor fieldset disabled toggles"
+css/selectors/invalidation/option-disabled-when-ancestor-changes.html	SUBTEST	FAIL	"optgroup :disabled and :has(optgroup:disabled) invalidate when ancestor select disabled toggles"
+css/selectors/invalidation/option-disabled-when-ancestor-changes.html	SUBTEST	FAIL	"option :disabled and :has(option:disabled) invalidate when ancestor fieldset disabled toggles"
+css/selectors/invalidation/option-disabled-when-ancestor-changes.html	SUBTEST	FAIL	"option :disabled and :has(option:disabled) invalidate when ancestor select disabled toggles"
+css/selectors/invalidation/part-dir.html	HARNESS_ERROR
+css/selectors/invalidation/part-lang.html	HARNESS_ERROR
+css/selectors/invalidation/part-pseudo.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/placeholder-shown.html	FAIL
+css/selectors/invalidation/placeholder-shown.html	SUBTEST	FAIL	"Added placeholder text"
+css/selectors/invalidation/placeholder-shown.html	SUBTEST	FAIL	"Set placeholder text to empty string"
+css/selectors/invalidation/quirks-mode-stylesheet-dynamic-add-001.html	FAIL
+css/selectors/invalidation/quirks-mode-stylesheet-dynamic-add-001.html	SUBTEST	FAIL	"Style should've changed to a green background"
+css/selectors/invalidation/sheet-going-away-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/invalidation/state-in-has.html	FAIL
+css/selectors/invalidation/state-in-has.html	SUBTEST	FAIL	"Test :has() invalidation with :state() pseudo-classes"
+css/selectors/invalidation/subject-has-invalidation-with-display-none-anchor-element.html	FAIL
+css/selectors/invalidation/subject-has-invalidation-with-display-none-anchor-element.html	SUBTEST	FAIL	"CSS Selectors Invalidation: subject :has() invalidation with display: none anchor element"
+css/selectors/invalidation/user-action-pseudo-classes-in-has.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/invalidation/user-valid-user-invalid.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/is-default-ns-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/is-default-ns-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/is-default-ns-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/is-specificity-shadow.html	FAIL
+css/selectors/is-specificity-shadow.html	SUBTEST	FAIL	"Specificity of :host() inside :is()"
+css/selectors/is-where-basic.html	FAIL
+css/selectors/is-where-basic.html	SUBTEST	FAIL	":is() matches expected elements"
+css/selectors/is-where-error-crash.html	SKIP	not a testharness test
+css/selectors/is-where-error-recovery.html	FAIL
+css/selectors/is-where-error-recovery.html	SUBTEST	FAIL	"CSS Selectors: :is() and :where() error recovery"
+css/selectors/is-where-not.html	FAIL
+css/selectors/is-where-not.html	SUBTEST	FAIL	":not(:is(svg|div)) matches expected elements"
+css/selectors/is-where-pseudo-elements.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/is-where-shadow.html	FAIL
+css/selectors/is-where-shadow.html	SUBTEST	FAIL	":is() inside ::slotted()"
+css/selectors/is-where-shadow.html	SUBTEST	FAIL	":is() inside :host()"
+css/selectors/is-where-shadow.html	SUBTEST	FAIL	":is() inside :host-context()"
+css/selectors/is-where-visited.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/link-sharing-crash.html	SKIP	not a testharness test
+css/selectors/media/media-playback-state-timing.html	FAIL
+css/selectors/media/media-playback-state-timing.html	SUBTEST	FAIL	"Test :playing and :paused timing without media resource"
+css/selectors/media/media-playback-state.html	FAIL
+css/selectors/media/media-playback-state.html	SUBTEST	FAIL	"Test that non-media elements do not match :playing, :paused, or :seeking"
+css/selectors/media/media-playing-paused-style-invalidation.html	HARNESS_ERROR
+css/selectors/media/media-playing-paused-style-invalidation.html	SUBTEST	NOTRUN	"CSS invalidation fires for :paused when no :playing rule is present"
+css/selectors/media/media-playing-paused-style-invalidation.html	SUBTEST	NOTRUN	"CSS invalidation fires for both :playing and :paused rules"
+css/selectors/media/sound-state.html	FAIL
+css/selectors/media/sound-state.html	SUBTEST	FAIL	"Test :muted matches .muted for content attribute default"
+css/selectors/media/sound-state.html	SUBTEST	FAIL	"Test :muted matches .muted for content attribute set"
+css/selectors/media/sound-state.html	SUBTEST	FAIL	"Test :muted matches .muted for content attribute set, and overridden"
+css/selectors/missing-right-token.html	FAIL
+css/selectors/missing-right-token.html	SUBTEST	FAIL	"attribute selectors with missing right tokens succeed"
+css/selectors/modal-pseudo-class.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/not-default-ns-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/not-default-ns-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/not-default-ns-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/not-links.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-and-nth-last-child.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-large-anplusb-clamp.html	FAIL
+css/selectors/nth-child-large-anplusb-clamp.html	SUBTEST	FAIL	"a term (DimensionToken path) is clamped to INT_MAX"
+css/selectors/nth-child-large-anplusb-clamp.html	SUBTEST	FAIL	"b term (NumberToken path) is clamped to INT_MAX"
+css/selectors/nth-child-large-anplusb-clamp.html	SUBTEST	FAIL	"b term following an a coefficient is clamped to INT_MAX"
+css/selectors/nth-child-of-attribute.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-classname-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-classname.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-complex-selector-many-children-2.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-complex-selector-many-children.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-complex-selector.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-compound-selector.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-has.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-nesting.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-no-space-after-of.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-not.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-nth-child.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-pseudo.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-tagname.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-of-universal-selector.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-specificity-1.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-specificity-2.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-specificity-3.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-specificity-4.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-child-spurious-brace-crash.html	SKIP	not a testharness test
+css/selectors/nth-last-child-of-classname.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-of-complex-selector.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-of-compound-selector.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-of-nesting.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-of-no-space-after-of.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-of-style-sharing-1.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-of-style-sharing-2.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-of-tagname.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-specificity-1.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-specificity-2.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-specificity-3.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-last-child-specificity-4.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-of-invalid.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-of-selector-before.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/nth-of-type-namespace.html	FAIL
+css/selectors/nth-of-type-namespace.html	SUBTEST	FAIL	":nth-of-type selectors matching takes element namespace into account (http://dummy1/)"
+css/selectors/nth-of-type-namespace.html	SUBTEST	FAIL	":nth-of-type selectors matching takes element namespace into account (http://dummy2/)"
+css/selectors/of-type-selectors.xhtml	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/open-pseudo.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/parsing/parse-attribute.html	FAIL
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[*|att]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[att$=val]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[att*=val]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[att=val]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[att]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[att^=val]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[att|=val]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[att~=val]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"[|att]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"a[href$=\\\".html\\\"]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"a[hreflang=fr]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"a[hreflang|='en']\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"h1[title]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"object[type^=\\\"image/\\\"]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"p[title*=\\\"hello\\\"]\" should be a valid selector"
+css/selectors/parsing/parse-attribute.html	SUBTEST	FAIL	"\"span[class='example']\" should be a valid selector"
+css/selectors/parsing/parse-child.html	FAIL
+css/selectors/parsing/parse-child.html	SUBTEST	FAIL	"\"body > p\" should be a valid selector"
+css/selectors/parsing/parse-child.html	SUBTEST	FAIL	"\"div ol>li p\" should be a valid selector"
+css/selectors/parsing/parse-class.html	FAIL
+css/selectors/parsing/parse-class.html	SUBTEST	FAIL	"\"*.pastoral\" should be a valid selector"
+css/selectors/parsing/parse-class.html	SUBTEST	FAIL	"\".pastoral\" should be a valid selector"
+css/selectors/parsing/parse-class.html	SUBTEST	FAIL	"\"h1.pastoral\" should be a valid selector"
+css/selectors/parsing/parse-class.html	SUBTEST	FAIL	"\"p.pastoral.marine\" should be a valid selector"
+css/selectors/parsing/parse-descendant.html	FAIL
+css/selectors/parsing/parse-descendant.html	SUBTEST	FAIL	"\"div * p\" should be a valid selector"
+css/selectors/parsing/parse-descendant.html	SUBTEST	FAIL	"\"div p *[href]\" should be a valid selector"
+css/selectors/parsing/parse-descendant.html	SUBTEST	FAIL	"\"h1 em\" should be a valid selector"
+css/selectors/parsing/parse-focus-visible.html	FAIL
+css/selectors/parsing/parse-focus-visible.html	SUBTEST	FAIL	"\":focus-visible\" should be a valid selector"
+css/selectors/parsing/parse-focus-visible.html	SUBTEST	FAIL	"\":focus:not(:focus-visible)\" should be a valid selector"
+css/selectors/parsing/parse-focus-visible.html	SUBTEST	FAIL	"\"a:focus-visible\" should be a valid selector"
+css/selectors/parsing/parse-has-disallow-nesting-has-inside-has.html	FAIL
+css/selectors/parsing/parse-has-disallow-nesting-has-inside-has.html	SUBTEST	FAIL	"CSS Selectors: The relational pseudo-class (disallow nesting :has() inside :has())"
+css/selectors/parsing/parse-has-forgiving-selector.html	FAIL
+css/selectors/parsing/parse-has-forgiving-selector.html	SUBTEST	FAIL	"\":has(:is(.a, 123))\" should be a valid selector"
+css/selectors/parsing/parse-has-forgiving-selector.html	SUBTEST	FAIL	"\":has(:is(:has(*)))\" should be a valid selector"
+css/selectors/parsing/parse-has-forgiving-selector.html	SUBTEST	FAIL	"\":has(:where(:has(*)))\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	FAIL
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(#id)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(*)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(.class)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(:first-child)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(:hover)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(:not(:nth-last-of-type(2)):not([slot=\\\"foo\\\"]))\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(:not(foo))\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted([attr=\\\"foo\\\"])\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(bar)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(div + div)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(div:has(> span))\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(foo) + :has-slotted(bar)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(foo):dir(ltr)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(foo):first-child\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(foo):focus\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(foo):hover\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted(foo):lang(en)\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":has-slotted\" should be a valid selector"
+css/selectors/parsing/parse-has-slotted.tentative.html	SUBTEST	FAIL	"\":not(:has-slotted(foo))\" should be a valid selector"
+css/selectors/parsing/parse-has.html	FAIL
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\"*:has(.a)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\"*|*:has(*)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a .b:has(.c .d) .e\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a .b:has(.c .d)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a .b:has(.c)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(+ .b)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(.b) .c\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(.b):has(.c)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(.b)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(.b:is(.c .d))\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(:not(.b))\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(> .b)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:has(~ .b)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:is(.b:has(.c) .d)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\".a:not(:has(.b))\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has(#a)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has(*|*)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has(.a)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has(:hover)\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has([a=\\\"b\\\"])\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has([a])\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has([a|=\\\"b\\\"])\" should be a valid selector"
+css/selectors/parsing/parse-has.html	SUBTEST	FAIL	"\":has(a)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	FAIL
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading()\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(-1)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(-n+3)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(0)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(0, 1, 2)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(1.0)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(1.4)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2 of .foo)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2, 3n)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2n of .foo)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2n)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2n+1)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2n+2)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(2n, 3n)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(99999)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(calc(1))\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(even)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(max(1, 2))\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(min(1, 2)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(n)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(odd)\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading(var(--level))\" should be an invalid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\":heading\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\"h1:heading(1)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\"h1:heading(2)\" should be a valid selector"
+css/selectors/parsing/parse-heading.html	SUBTEST	FAIL	"\"h1:heading\" should be a valid selector"
+css/selectors/parsing/parse-id.html	FAIL
+css/selectors/parsing/parse-id.html	SUBTEST	FAIL	"\"#chapter1\" should be a valid selector"
+css/selectors/parsing/parse-id.html	SUBTEST	FAIL	"\"*#z98y\" should be a valid selector"
+css/selectors/parsing/parse-id.html	SUBTEST	FAIL	"\"h1#chapter1\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	FAIL
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\"::part(foo):is(:hover)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\"::part(foo):is([attr='value'])\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\"::part(foo):where(:hover)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\"::part(foo):where([attr='value'])\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":has(:is(:has(.a+.b)))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":has(:where(:has(.a+.b)))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:is(,,,))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:is(.a, .b+.c, .d))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:is(div ))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:is(div .foo))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:is(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:where(,,,))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:where(.a, .b+.c, .d))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:where(div ))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:where(div .foo))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":host(:where(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(,,,)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(::before)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(::before:HOVER  )\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(::before:HOVER, .a)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(:hover, :active)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(:is(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(:where(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(div )\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(div + bar, div ~ .baz)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(div) + bar\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(div)::before\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":is(div):hover\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":not(:is(div .foo))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":not(:is(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":not(:where(div .foo))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":not(:where(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(,,,)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(::before)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(::before:HOVER  )\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(::before:HOVER, .a)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(:hover, :active)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(:is(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(:where(div))\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(div )\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(div + bar, div ~ .baz)\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(div) + bar\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(div)::before\" should be a valid selector"
+css/selectors/parsing/parse-is-where.html	SUBTEST	FAIL	"\":where(div):hover\" should be a valid selector"
+css/selectors/parsing/parse-is.html	FAIL
+css/selectors/parsing/parse-is.html	SUBTEST	FAIL	"\".a.b ~ .c.d:is(span.e + .f, .g.h > .i.j .k)\" should be a valid selector"
+css/selectors/parsing/parse-is.html	SUBTEST	FAIL	"\".a.b ~ :is(.c.d ~ .e.f)\" should be a valid selector"
+css/selectors/parsing/parse-is.html	SUBTEST	FAIL	"\":is(#a)\" should be a valid selector"
+css/selectors/parsing/parse-is.html	SUBTEST	FAIL	"\":is(:hover,:focus)\" should be a valid selector"
+css/selectors/parsing/parse-is.html	SUBTEST	FAIL	"\":is(ul,ol,.list) > [hidden]\" should be a valid selector"
+css/selectors/parsing/parse-is.html	SUBTEST	FAIL	"\"a:is(:not(:hover))\" should be a valid selector"
+css/selectors/parsing/parse-not.html	FAIL
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\"*:not(foo)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\"*|*:not(*)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":host(:not(.a .b))\" should be an invalid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":host(:not(.a))\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(*|*)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(.a + .b)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(.a .b ~ c)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(.a .b ~ c, .d .e)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(.a .b)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(::before)\" should be an invalid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(:host(.a))\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(:host(:not(.a)))\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(:host)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(:hover)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(:link):not(:visited)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(:not(foo))\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not([disabled],[selected])\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not([disabled][selected])\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\":not(span.a, div.b)\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\"button:not([disabled])\" should be a valid selector"
+css/selectors/parsing/parse-not.html	SUBTEST	FAIL	"\"foo:not(bar)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	FAIL
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(--)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(--0)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(--foo)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(-foo bar)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(bar)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo bar)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo) + ::part(bar)\" should be an invalid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo)::after\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo)::before\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo)::file-selector-button\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo)::first-letter\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo)::first-line\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo)::placeholder\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):checked\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):dir(ltr)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):disabled\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):focus-within\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):focus\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):has(li)\" should be an invalid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):hover\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):is(:focus)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):is(nav ul)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):is(ul)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):lang(en)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):where(nav ul)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\"::part(foo):where(ul)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\":dir(ltr)::part(foo)\" should be a valid selector"
+css/selectors/parsing/parse-part.html	SUBTEST	FAIL	"\":lang(en)::part(foo)\" should be a valid selector"
+css/selectors/parsing/parse-sibling.html	FAIL
+css/selectors/parsing/parse-sibling.html	SUBTEST	FAIL	"\"h1 ~ pre\" should be a valid selector"
+css/selectors/parsing/parse-sibling.html	SUBTEST	FAIL	"\"h1.opener + h2\" should be a valid selector"
+css/selectors/parsing/parse-sibling.html	SUBTEST	FAIL	"\"math + p\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	FAIL
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted()\" should be an invalid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(*)\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(.class)\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(0)\" should be an invalid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(:first-child)\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(:has(:first-child:last-child))\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(:hover)\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(:not(:nth-last-of-type(2)):not([slot=\\\"foo\\\"]))\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(:not(foo))\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted([attr=\\\"foo\\\"])\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(bar)\" should be a valid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(foo) + ::slotted(bar)\" should be an invalid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(foo):dir(ltr)\" should be an invalid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(foo):first-child\" should be an invalid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(foo):focus\" should be an invalid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(foo):hover\" should be an invalid selector"
+css/selectors/parsing/parse-slotted.html	SUBTEST	FAIL	"\"::slotted(foo):lang(en)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	FAIL
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"::part(inner):state(bar)::after:state(foo)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"::part(inner):state(bar)::after\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"::part(inner):state(bar)::before:state(foo)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"::part(inner):state(bar)::before\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"::slotted(foo):state(foo)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":host(:state(--foo))\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state()\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(--)\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(--0)\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(--foo)\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(0)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(0rem)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(:host)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(bar)\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(foo(1))\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\":state(url())\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"my-input::after:state(foo)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"my-input::first-letter:state(foo)\" should be an invalid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"my-input[type=\\\"foo\\\"]:state(--0)::before\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"my-input[type=\\\"foo\\\"]:state(--0)::part(inner):state(bar)\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"my-input[type=\\\"foo\\\"]:state(--0)::part(inner)\" should be a valid selector"
+css/selectors/parsing/parse-state.html	SUBTEST	FAIL	"\"my-input[type=\\\"foo\\\"]:state(checked)\" should be a valid selector"
+css/selectors/parsing/parse-universal.html	FAIL
+css/selectors/parsing/parse-universal.html	SUBTEST	FAIL	"\"*\" should be a valid selector"
+css/selectors/parsing/parse-universal.html	SUBTEST	FAIL	"\"div *:first-child\" should be a valid selector"
+css/selectors/parsing/parse-universal.html	SUBTEST	FAIL	"\"div :first-child\" should be a valid selector"
+css/selectors/parsing/parse-where.html	FAIL
+css/selectors/parsing/parse-where.html	SUBTEST	FAIL	"\".a.b ~ .c.d:where(span.e + .f, .g.h > .i.j .k)\" should be a valid selector"
+css/selectors/parsing/parse-where.html	SUBTEST	FAIL	"\".a.b ~ :where(.c.d ~ .e.f)\" should be a valid selector"
+css/selectors/parsing/parse-where.html	SUBTEST	FAIL	"\":where(#a)\" should be a valid selector"
+css/selectors/parsing/parse-where.html	SUBTEST	FAIL	"\":where(:hover,:focus)\" should be a valid selector"
+css/selectors/parsing/parse-where.html	SUBTEST	FAIL	"\":where(ul,ol,.list) > [hidden]\" should be a valid selector"
+css/selectors/parsing/parse-where.html	SUBTEST	FAIL	"\"a:where(:not(:hover))\" should be a valid selector"
+css/selectors/placeholder-shown.html	FAIL
+css/selectors/placeholder-shown.html	SUBTEST	FAIL	"CSS Selectors Test: :placeholder-shown matching 1"
+css/selectors/placeholder-shown.html	SUBTEST	FAIL	"CSS Selectors Test: :placeholder-shown matching 2"
+css/selectors/placeholder-shown.html	SUBTEST	FAIL	"CSS Selectors Test: :placeholder-shown matching 3"
+css/selectors/placeholder-shown.html	SUBTEST	FAIL	"CSS Selectors Test: :placeholder-shown matching 4"
+css/selectors/placeholder-shown.html	SUBTEST	FAIL	"CSS Selectors Test: :placeholder-shown matching 5"
+css/selectors/placeholder-shown.html	SUBTEST	FAIL	"CSS Selectors Test: :placeholder-shown matching 6"
+css/selectors/placeholder-shown.html	SUBTEST	FAIL	"CSS Selectors Test: :placeholder-shown matching"
+css/selectors/popover-open-with-has-sibling-selector.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/pseudo-where-crash.html	SKIP	not a testharness test
+css/selectors/quirks-mode-import.html	FAIL
+css/selectors/quirks-mode-import.html	SUBTEST	FAIL	"Importing quirks mode element into standards mode document"
+css/selectors/remove-hovered-element.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/root-siblings.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/scope-without-scoping.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selection-image-001-no-selection-noref.html	SKIP	not a testharness test
+css/selectors/selection-image-001-noref.html	SKIP	not a testharness test
+css/selectors/selection-image-001.html	SKIP	not a testharness test
+css/selectors/selection-image-002.html	SKIP	not a testharness test
+css/selectors/selector-placeholder-shown-type-change-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-placeholder-shown-type-change-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-placeholder-shown-type-change-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-read-write-type-change-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-read-write-type-change-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-required-type-change-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-required-type-change-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-required.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selector-structural-pseudo-root.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/details-open-pseudo-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/details-open-pseudo-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/details-open-pseudo-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-000.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-002.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-003.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-004.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-005.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-006.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-007.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-008.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-009.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-010.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-011.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-012.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-013.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-014.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-015.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-016.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-017.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-018.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-019.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-020.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-021.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-022.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-023.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-024.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-025.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-4/lang-singleton-subtag-matching.html	FAIL
+css/selectors/selectors-4/lang-singleton-subtag-matching.html	SUBTEST	FAIL	":lang(fr) does not match lang=\"fr-ninechars\" (subtag exceeds 8-char limit)"
+css/selectors/selectors-attr-many.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/selectors-attr-white-space-001.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/sharing-in-svg-use.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/spurious-brace-crash.html	SKIP	not a testharness test
+css/selectors/text-emphasis-visited-inheritance.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/text-fill-color-visited-inheritance.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/text-stroke-color-visited-inheritance.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/toplayer-transition-001.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/user-action-pseudo-top-layer.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/user-invalid-form-submission-invalidation.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/user-invalid.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/user-valid-user-invalid-multifield-inputs.tentative.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/user-valid.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/valid-invalid-form-fieldset.html	SKIP	testdriver: needs WebDriver input injection
+css/selectors/visited-in-visited-compound.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/visited-inheritance.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/visited-nested.html	SKIP	reftest: needs a reference render, not a harness result
+css/selectors/visited-part-crash.html	SKIP	not a testharness test
+css/selectors/webkit-pseudo-element.html	FAIL
+css/selectors/webkit-pseudo-element.html	SUBTEST	FAIL	"Nested pseudos are invalid"
+css/selectors/webkit-pseudo-element.html	SUBTEST	FAIL	"rules include webkit-prefixed pseudo-element should be cascaded"
+css/selectors/x-pseudo-element.html	FAIL
+css/selectors/x-pseudo-element.html	SUBTEST	FAIL	"x-prefixed pseudo-elements should make the whole rule invalid"

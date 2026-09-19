@@ -88,26 +88,17 @@ struct browser_options {
     double caret_blink_ms = 500;
 };
 
+// Detailed contracts: docs/reference/header-contracts/shell-browser-*.md
 class browser {
 public:
-    explicit browser(browser_options options = {})
-        : options_(options), recorder_(atoms_),
-          renderer_(options.width, options.height, ctbrowser::raster::default_tile_extent) {
-        reset_document();
-    }
+    explicit browser(browser_options options = {});
 
-    // Neither copyable nor movable. run_scripts() hands dom_bindings two
-    // `this`-capturing callbacks and record() installs a third on the recorder,
-    // so a moved-from browser leaves three lambdas pointing at the old address.
-    // The implicit move was available and would have done exactly that.
     browser(const browser &) = delete;
     browser & operator=(const browser &) = delete;
     browser(browser &&) = delete;
     browser & operator=(browser &&) = delete;
 
-    [[nodiscard]] const ctbrowser::raster::software_backend & rendering_with() const noexcept {
-        return renderer_;
-    }
+    [[nodiscard]] const ctbrowser::raster::software_backend & rendering_with() const noexcept;
 
     // --- content ---------------------------------------------------------
 
@@ -115,11 +106,6 @@ public:
     // one case where that is the honest answer.
     void load_html(std::string_view html);
 
-    // WHICH FRONT END PARSES THE SOURCE, and it is the CALLER's to decide -
-    // never sniffed. `<?xml ...?>` is optional in XML 1.0 and turns up in
-    // plenty of documents served as text/html, so guessing from the bytes gets
-    // both directions wrong. A file gets it from its extension
-    // (`is_xml_extension`) and a fetch from its content type.
     enum class source_kind : std::uint8_t {
         html,
         xml
@@ -129,23 +115,10 @@ public:
     // `load_document(s, source_kind::html)`.
     void load_document(std::string_view source, source_kind kind);
 
-    // Why the last XML parse failed, empty when it did not or when the last
-    // document was HTML. XML is draconian - there is no recovery - so this is
-    // the difference between a document and an error page.
-    [[nodiscard]] const std::string & xml_error() const noexcept { return xml_error_; }
+    [[nodiscard]] const std::string & xml_error() const noexcept;
 
     // --- script ----------------------------------------------------------
 
-    // PAGE-LEVEL TEXT SELECTION.
-    //
-    // A position is (node, code point WITHIN THAT NODE'S TEXT) rather than a
-    // fragment pointer: a node's text is broken across as many fragments as it
-    // has visual lines, and a relayout rebuilds all of them - a selection has
-    // to survive a window resize, and pointers do not.
-    //
-    // The GLYPH GEOMETRY is not stored on the fragment. It is derived on demand
-    // from the same measure layout used, which costs a few measurements per
-    // click and keeps the fragment tree exactly the shape it was.
     struct text_position {
         node_id node;
         std::size_t code_point = 0;
@@ -157,193 +130,76 @@ public:
     // What is selected, in document order, as text.
     [[nodiscard]] std::string selected_text();
 
-    // THE CLIPBOARD, as two hooks. The engine is SDL-free, so it cannot own a
-    // system clipboard - the app layer installs these, and without them copy
-    // and paste still work WITHIN the page, which is what makes the whole thing
-    // testable headlessly.
     void set_clipboard_hooks(std::function<void(const std::string &)> write,
-                             std::function<std::string()> read) {
-        clipboard_write_ = std::move(write);
-        clipboard_read_ = std::move(read);
-    }
+                             std::function<std::string()> read);
 
-    // Natives the EMBEDDER supplies - `playSound` from the SDL layer is the
-    // reason this exists. Re-installed on every navigation, because each page
-    // gets a fresh script context and a hook registered once would silently
-    // stop existing after the first `location.reload()`.
     void define_native(std::string name, script::native_fn fn);
 
-    // HAND THE PAGE ITS SCRIPTS ALREADY COMPILED.
-    //
-    // Parsing and compiling JavaScript is about forty percent of a page load
-    // and running it is 1.4% (docs/performance.md), so this is the largest
-    // saving available to a packaged application: measured on the devbox,
-    // loading babylon from an image is 77 ms against 300 ms to compile it.
-    //
-    // ONE IMAGE PER <script>, NOT ONE PER PAGE: each script is its own program
-    // keyed on its own bytes, so editing a two-line sketch beside a 4.5 MB
-    // library does not invalidate the library.
-    //
-    // AN IMAGE IS USED ONLY IF IT MATCHES, and this is where a mistake becomes
-    // wrong code rather than a slow page: an image whose source hash is not
-    // this script's, or which was compiled as a module, is refused rather than
-    // run. `add_script_image` refuses at the door too - bytes that are not an
-    // image this build would load return false immediately, so a packager hears
-    // about it when it hands them over rather than as a cache that never hits.
-    //
-    // A refusal at USE is silent by design and countable by
-    // scripts_compiled_from_source(): the page still works, it just paid for
-    // the compile. That counter is how a test proves the fast path was taken
-    // rather than assuming it.
     bool add_script_image(std::vector<std::byte> image);
 
-    // How many classic scripts this browser compiled rather than loaded from an
-    // image. Zero after a load whose every script was cached; without this a
-    // cache that silently misses looks exactly like one that works.
-    [[nodiscard]] std::size_t scripts_compiled_from_source() const noexcept {
-        return scripts_compiled_from_source_;
-    }
+    [[nodiscard]] std::size_t scripts_compiled_from_source() const noexcept;
 
-    // How many module programs this browser is holding alive. One per
-    // <script type="module"> on the CURRENT page and none from any earlier one
-    // - a module's functions close over its top-level frame, so its program has
-    // to outlive the load. A count is the only way to see a leak from outside.
-    [[nodiscard]] std::size_t module_programs_held() const noexcept {
-        return module_programs_.size();
-    }
+    [[nodiscard]] std::size_t module_programs_held() const noexcept;
 
-    // THE TEXT THE LAST LOAD COMPILED, one entry per classic <script> on the
-    // page in document order: the resolved `src` bytes followed by a newline
-    // when the element has one, then the element's own text, then a newline.
-    // Exactly what run_scripts assembles, because it IS what run_scripts
-    // assembled.
-    //
-    // This is what a packaging tool needs and the reason it is public. An image
-    // is accepted only when its source hash matches one of these strings, so
-    // anything BUILDING an image has to know precisely what the browser will
-    // hash - and a second implementation of that rule, in the packager, would
-    // be a copy free to drift from the one that matters. Load the page once,
-    // take these, compile and write one image each; the next load matches by
-    // construction.
-    [[nodiscard]] const std::vector<std::string> & script_sources() const noexcept {
-        return script_sources_;
-    }
+    [[nodiscard]] const std::vector<std::string> & script_sources() const noexcept;
 
-    // AND THE MODULE SCRIPTS, WHICH CANNOT BE PACKAGED YET: `load_module`
-    // compiles from source every time and there is no image path into it.
-    // Published so the packager and the launcher can refuse rather than ship
-    // an application that parses all of its JavaScript at every start.
-    [[nodiscard]] const std::vector<std::string> & module_sources() const noexcept {
-        return module_sources_;
-    }
+    [[nodiscard]] const std::vector<std::string> & module_sources() const noexcept;
 
-    // How many classic scripts the last load ran as their own programs. One per
-    // non-empty <script> on the page, and the denominator that makes
-    // scripts_compiled_from_source() a ratio rather than a number.
-    [[nodiscard]] std::size_t classic_programs_held() const noexcept {
-        return classic_programs_.size();
-    }
+    [[nodiscard]] std::size_t classic_programs_held() const noexcept;
 
     // Where the vendored faces are looked for when `use_real_fonts` is given no
     // directory: $CTBROWSER_FONT_PATH, or `fonts` beside the executable. Public
     // because a packager needs the same answer - see browser.cpp.
     [[nodiscard]] static std::string default_font_directory();
 
-    // Turn on real fonts. Loads the vendored OFL faces through the asset
-    // registry - so an application that baked them in never touches the disk -
-    // and leaves font8x8 in place if SDL3_ttf is absent or none of them load.
-    //
-    // OPT-IN rather than automatic: the goldens are font8x8's pixels, and a
-    // page that silently changed how it renders because a font file happened to
-    // be next to the binary would be a worse default than one that looks the
-    // same everywhere.
-    //
-    // DEFAULTED TO NOTHING, which means "wherever this build keeps them":
-    // $CTBROWSER_FONT_PATH if it is set, and `fonts` beside the executable
-    // otherwise. Those are two different places on purpose - a shipped
-    // application carries `fonts/` next to its binary, while in the source tree
-    // the faces are `ctbrowser/resources/fonts/` and the build sets the
-    // variable for anything it runs. Passing a directory explicitly overrides
-    // both and is what a caller with its own faces wants.
     bool use_real_fonts(std::string_view directory = {});
-    [[nodiscard]] bool has_real_fonts() const noexcept { return fonts_ != nullptr; }
-    // The metrics layout measured with, so a caller can ask where a run's
-    // baseline is. The same object the rasterizer draws with.
-    [[nodiscard]] ctbrowser::layout::measure_text_fn metrics() const { return measure(); }
 
-    // Where the page's resources come from. An application seeds this from
-    // app_options::assets; `ctbrowse` points its base path at the page's
-    // directory so `<img src="cat.bmp">` resolves next to the html.
-    [[nodiscard]] asset_registry & assets() noexcept { return assets_; }
-    [[nodiscard]] image_store & images() noexcept { return images_; }
+    [[nodiscard]] bool has_real_fonts() const noexcept;
+
+    [[nodiscard]] ctbrowser::layout::measure_text_fn metrics() const;
+
+    [[nodiscard]] asset_registry & assets() noexcept;
+
+    [[nodiscard]] image_store & images() noexcept;
     // Whether fetch() may open a socket when the registry misses.
     void allow_network(bool allowed);
 
-    [[nodiscard]] canvas_store & canvases() noexcept { return canvases_; }
-    [[nodiscard]] form_store & forms() noexcept { return forms_; }
-    [[nodiscard]] node_id focused() const noexcept { return focused_; }
+    [[nodiscard]] canvas_store & canvases() noexcept;
+
+    [[nodiscard]] form_store & forms() noexcept;
+
+    [[nodiscard]] node_id focused() const noexcept;
 
     // Typed text, from the platform's text-input event rather than from key
     // codes - that is the only way to get IME, dead keys and non-Latin layouts
     // right, and it is what SDL_EVENT_TEXT_INPUT delivers.
     bool text_input(std::string_view text);
-    // THE BINDINGS DO NOT EXIST UNTIL A PAGE IS LOADED - they are made in
-    // run_scripts - so this dereferences null before then. Worth knowing rather
-    // than discovering: the symptom is a segfault inside what looks like a
-    // getter.
-    [[nodiscard]] dom_bindings & bindings() noexcept { return *bindings_; }
 
-    [[nodiscard]] const std::string & script_error() const noexcept { return script_error_; }
+    [[nodiscard]] dom_bindings & bindings() noexcept;
 
-    // A <link rel=stylesheet> that did not resolve. Separate from
-    // script_error() because it is a different failure with a different cause,
-    // and NOT silent the way a real browser's is: a fixture whose href has a
-    // typo lays out as if the stylesheet were empty, which reads as thousands
-    // of engine differences rather than as one broken path. The parity harness
-    // asks this first and reports a rig failure instead of a diff.
-    [[nodiscard]] const std::string & style_error() const noexcept { return style_error_; }
+    [[nodiscard]] const std::string & script_error() const noexcept;
+
+    [[nodiscard]] const std::string & style_error() const noexcept;
 
     // Run a snippet in the page's own script context - the same globals, the
     // same document. This is what a devtools console types into, and what a
     // test uses to ask a page a question. Returns whether it ran.
     bool run_script(std::string_view source);
 
-    // How many times layout has run. Observable because the whole dirty-level
-    // design exists to keep this number down: a caret blink or a scroll must
-    // not increment it.
-    [[nodiscard]] std::size_t layout_count() const noexcept { return layouts_; }
+    [[nodiscard]] std::size_t layout_count() const noexcept;
 
-    // Collect the script heap now, and how many objects it has. Exposed
-    // because "does a collection free what the page is still using" is only
-    // answerable from outside.
-    std::size_t collect_garbage() { return script_ ? script_->collect() : 0; }
+    std::size_t collect_garbage();
     [[nodiscard]] std::size_t live_script_objects() const;
 
-    // A control's live state - value, caret, selection, checked. Read-only and
-    // null for anything that is not a control: this is what a test asks where
-    // the caret ended up, and what an embedder asks to read a form without
-    // submitting it.
     [[nodiscard]] const control_state * control_state_of(node_id id);
 
-    // Whether anything has changed that a frame would show. An event loop asks
-    // this rather than assuming: a caret blink and a scrollbar that appears
-    // after a relayout both change what should be on screen without any event
-    // having arrived, and a loop that only redraws when IT did something shows
-    // neither until the user happens to move the mouse.
-    [[nodiscard]] bool needs_frame() const noexcept { return dirty_ != dirty::nothing; }
+    [[nodiscard]] bool needs_frame() const noexcept;
 
-    // Milliseconds until this page next has something to do on its own - a
-    // timer, an animation frame, or the caret's next blink. Infinity when it
-    // has nothing, which is what lets an idle application BLOCK instead of
-    // waking up sixty times a second to discover there was nothing to do.
     [[nodiscard]] double next_wakeup_ms();
 
-    // THE CARET BLINKS, in Chrome's 500 ms halves. The phase is measured from
-    // the last caret ACTIVITY rather than from page load: a caret that blinks
-    // out from under the character you just typed looks broken, so typing,
-    // moving and clicking all restart it solid.
     [[nodiscard]] bool caret_visible() const noexcept;
-    void restart_caret_blink() noexcept { caret_base_ms_ = caret_clock_ms_; }
+
+    void restart_caret_blink() noexcept;
 
     // Advance the page clock and run whatever became due - timers, then
     // animation frames. An event loop calls this once per tick; the return is
@@ -354,116 +210,63 @@ public:
     // where you already are, which is the only navigation the engine has.
     void reload();
 
-    // The system dialog `alert()` raises. The engine is SDL-free and has no
-    // window to put a dialog in, so this is a hook like the clipboard's; without
-    // one the messages are still recorded and readable, which is what makes
-    // alert testable headlessly.
     void set_alert_hook(std::function<void(const std::string &)> hook);
-    // Kept HERE rather than on the bindings, because a reload replaces the
-    // bindings - and the alert that caused the reload is exactly the one you
-    // want to still be able to read afterwards.
-    [[nodiscard]] const std::vector<std::string> & alerts() const noexcept { return alerts_; }
 
-    // WHAT A PAGE EXPORTED, and the one behaviour this engine invents rather than
-    // copies. A browser shows a save dialog for an `<a download>`; there is
-    // nobody here to show one to, so the bytes are written out. See
-    // browser::save_download for why the alternative was not "do nothing".
+    [[nodiscard]] const std::vector<std::string> & alerts() const noexcept;
+
     struct download_record {
         std::string name;  // what the page asked it be called, sanitised
         std::string path;  // where it actually went
         std::size_t bytes; // how big it was; 0 means the href resolved to nothing
         bool written;      // whether the write itself succeeded
     };
-    // Where exports land. Empty means the process's working directory, which is
-    // where a command-line tool writes. A test points this at its build dir.
-    void set_download_directory(std::filesystem::path where) {
-        download_directory_ = std::move(where);
-    }
-    [[nodiscard]] const std::vector<download_record> & downloads() const noexcept {
-        return downloads_;
-    }
 
-    // REAL TIME, if the embedder wants it. Without one, `Date.now()` is a fixed
-    // base plus the page's own elapsed time - deterministic, which is what makes
-    // a golden possible, and the same reason Math.random is seeded here. An
-    // interactive application installs the wall clock instead, because showing
-    // the wrong date is a bug no golden cares about; `run_app` does exactly that.
-    void set_clock(std::function<double()> clock) { clock_ = std::move(clock); }
+    void set_download_directory(std::filesystem::path where);
 
-    // Where a link that leaves this page goes. the engine does not navigate, so the
-    // embedder decides - `ctbrowse` opens a local .html, the SDL app hands an
-    // http(s) URL to the system browser, and a program with no hook does
-    // nothing rather than pretending it followed the link.
+    [[nodiscard]] const std::vector<download_record> & downloads() const noexcept;
+
+    void set_clock(std::function<double()> clock);
+
     void set_navigate_hook(std::function<void(const std::string &)> hook);
 
-    // EVERY CLASSIC SCRIPT'S PROGRAM, ONCE, BEFORE IT RUNS - which is where a
-    // packaged application stamps its compiled bodies on.
-    //
-    // The runtime enters native code only when `function_proto::aot_entry` is
-    // set, and a page's programs are built inside `run_scripts` and never leave
-    // it: `classic_programs_` is private and only its size is published. So a
-    // compiler that generates perfect bodies had nowhere to install them, which
-    // made every generated APPLICATION interpret its own JavaScript while every
-    // count on the way in read a truthful zero.
-    //
-    // ENGINE TYPES ONLY, deliberately. The dependency runs one way - ctcompile
-    // depends on ctbrowser and never the reverse - so this hands over a
-    // `script::program` and the text it was compiled from and knows nothing
-    // about entry tables. `ctcompile::aot::install` is the caller.
-    //
-    // The TEXT and not the hash, because an installer has to know WHICH script
-    // this is, and `script_sources()` is the list it was given. It is the same
-    // string this browser hashed to look for an image.
-    //
-    // AFTER the image lookup, so the hook sees the program that will actually
-    // run whether it came from an image or from a compile - a hook that only
-    // fired on one of those paths would work until the page was packaged.
-    void set_script_prepared_hook(std::function<void(script::program &, std::string_view)> hook) {
-        script_prepared_hook_ = std::move(hook);
-    }
-    // THE DOCUMENT'S ADDRESS, set BEFORE load_html. The engine is handed bytes,
-    // not a URL, so without this a page has none: `document.URL` is empty and
-    // every URL-reflecting attribute (`a.href`, `img.src`, ...) hands back its
-    // raw text instead of resolving against the document (HTML "reflecting
-    // content attributes in IDL attributes", the USVString URL case). An
-    // embedder that opened a file gives its `file://` URL; a fragment lands in
-    // location_hash().
+    void set_script_prepared_hook(std::function<void(script::program &, std::string_view)> hook);
     void set_location(std::string href);
-    // What the last activated link recorded. A fragment lands in the hash,
-    // because scrolling to an anchor IS navigation within a document.
-    [[nodiscard]] const std::string & location_href() const noexcept { return location_href_; }
-    [[nodiscard]] const std::string & location_hash() const noexcept { return location_hash_; }
 
-    [[nodiscard]] std::string_view title() const noexcept { return title_; }
-    [[nodiscard]] const document & doc() const noexcept { return *doc_; }
-    [[nodiscard]] atom_table & atoms() noexcept { return atoms_; }
+    [[nodiscard]] const std::string & location_href() const noexcept;
+
+    [[nodiscard]] const std::string & location_hash() const noexcept;
+
+    [[nodiscard]] std::string_view title() const noexcept;
+
+    [[nodiscard]] const document & doc() const noexcept;
+
+    [[nodiscard]] atom_table & atoms() noexcept;
 
     // --- viewport --------------------------------------------------------
 
     void resize(int width, int height);
-    [[nodiscard]] int width() const noexcept { return options_.width; }
-    [[nodiscard]] int height() const noexcept { return options_.height; }
 
-    // --- scrolling -------------------------------------------------------
-    //
-    // The payoff of the whole architecture: this touches no stage but the
-    // compositor.
-    void scroll_by(float dy) { scroll_to(scroll_y_ + dy); }
-    void scroll_to(float y) { scroll_to(scroll_x_, y); }
+    [[nodiscard]] int width() const noexcept;
+
+    [[nodiscard]] int height() const noexcept;
+
+    void scroll_by(float dy);
+
+    void scroll_to(float y);
     // Both axes. The wheel and the keys move y alone; `window.scrollTo` and
     // the CSSOM View setters (through the bindings' viewport scroll hooks)
     // move either. Clamped to the viewport's scrolling area.
     void scroll_to(float x, float y);
-    [[nodiscard]] float scroll_y() const noexcept { return scroll_y_; }
-    [[nodiscard]] float scroll_x() const noexcept { return scroll_x_; }
-    [[nodiscard]] point scroll_position() const noexcept { return point{scroll_x_, scroll_y_}; }
-    [[nodiscard]] float content_height() const noexcept { return content_height_; }
-    [[nodiscard]] float content_width() const noexcept { return content_width_; }
-    // What the pointer should look like at a viewport point: the CSS `cursor`
-    // of the element under it, with the UA's defaults - a link is a pointer, an
-    // editable is a text beam. A name rather than a handle, so the engine needs
-    // no cursor vocabulary and the app layer maps it to whatever the platform
-    // has.
+
+    [[nodiscard]] float scroll_y() const noexcept;
+
+    [[nodiscard]] float scroll_x() const noexcept;
+
+    [[nodiscard]] point scroll_position() const noexcept;
+
+    [[nodiscard]] float content_height() const noexcept;
+
+    [[nodiscard]] float content_width() const noexcept;
     [[nodiscard]] std::string_view cursor_at(float x, float y);
 
     // Whether a viewport x lands on the scrollbar. Public because the app layer
@@ -471,11 +274,8 @@ public:
     [[nodiscard]] bool on_scrollbar(float x) const noexcept;
     [[nodiscard]] float max_scroll() const noexcept;
     [[nodiscard]] float max_scroll_x() const noexcept;
-    // Whether the page shows its scrollbar: it overflows, the chrome has one,
-    // and the viewport's overflow is not hidden (run_layout decides that).
-    [[nodiscard]] bool has_scrollbar() const noexcept {
-        return scrollbar_shown_ && max_scroll() > 0 && options_.scrollbar_width > 0;
-    }
+
+    [[nodiscard]] bool has_scrollbar() const noexcept;
 
     // --- input -----------------------------------------------------------
 
@@ -496,14 +296,14 @@ public:
     void frame(scheduler * pool = nullptr);
 
     [[nodiscard]] rect viewport() const noexcept;
-    [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
-    [[nodiscard]] const fragment & fragments() const noexcept { return fragments_; }
-    [[nodiscard]] const layer_tree & layers() const noexcept { return layers_; }
 
-    // The composited image, for goldens and for headless runs.
-    [[nodiscard]] const ctbrowser::raster::surface & read_pixels() const noexcept {
-        return renderer_.target();
-    }
+    [[nodiscard]] std::uint64_t frames() const noexcept;
+
+    [[nodiscard]] const fragment & fragments() const noexcept;
+
+    [[nodiscard]] const layer_tree & layers() const noexcept;
+
+    [[nodiscard]] const ctbrowser::raster::surface & read_pixels() const noexcept;
 
 private:
     // The same bits ctcss compiles :hover/:active/:focus into, named here so
@@ -512,19 +312,8 @@ private:
     static constexpr std::uint32_t state_active = ctbrowser::style::engine::state_active;
     static constexpr std::uint32_t state_focus = ctbrowser::style::engine::state_focus;
 
-    // Tiles are discarded in frame(), not here: every level at or above
-    // `raster` invalidates them, and doing it in one place is what stops a new
-    // dirty level from silently forgetting to.
-    void mark(dirty d) { dirty_ = worse(dirty_, d); }
+    void mark(dirty d);
 
-    // The author's sheets: <style> elements AND <link rel=stylesheet>, in
-    // DOCUMENT ORDER, because the cascade's last tie-break is source order and
-    // a <style> after a <link> has to be able to override it.
-    //
-    // <link> resolves through the same asset_registry as <script src> and
-    // <img src> - registry, then data:, then the filesystem - so there is still
-    // no socket here. That is enough for a page that ships its own stylesheet
-    // beside it, which is what every fixture and every real local page is.
     void load_author_styles();
     // The `<style>` and `<link>` text of the document as it is NOW, concatenated
     // in document order. One sheet rather than one per element, for the source-
@@ -537,11 +326,6 @@ private:
     // ...and rebuild the author origin from it if it has changed. See the
     // definition for why it does not go through the CSSOM.
     void refresh_author_styles();
-    // A `<link rel=stylesheet>`, `<style>` or `<script>` this browser has
-    // applied, or failed to find the bytes of: its `load`/`error` event is owed.
-    // Recorded once per element - the styles walk repeats on every restyle -
-    // and handed to the bindings by announce_resource_loads, because at page
-    // load the walk runs BEFORE run_scripts has built them.
     void note_resource_load(node_id id, bool ok);
     void announce_resource_loads();
 
@@ -557,10 +341,6 @@ private:
     // The body of one load. load_html wraps it so that a navigation asked for
     // by a script is queued rather than performed under that script's feet.
     void load_one_page(std::string_view html, source_kind kind);
-    // Run every <script> in the document, in order. Errors are recorded rather
-    // than thrown: a page whose script fails still has to render, which is what
-    // every browser does and what makes a broken script a broken feature rather
-    // than a blank window.
     void run_scripts();
 
     // The measure layout uses, and the fonts the rasterizer draws with, are the
@@ -593,13 +373,6 @@ private:
 
     void run_layout();
 
-    // --- NESTED BROWSING CONTEXTS (browser/nested.cpp) ----------------------
-    //
-    // A frame's document run through the same stages as the page - the cascade
-    // with its own sheets, the box tree, layout - at the size its <iframe> box
-    // got, so `frame.contentWindow.getComputedStyle(el).height` and `100vw`
-    // inside the frame answer about the frame. Nothing is PAINTED: a frame is
-    // still an empty box on screen, and this is the half the DOM reads.
     struct frame_layout {
         node_id element;         // the <iframe>, in its owner's document
         dom_bindings * bindings; // over the frame's document
@@ -625,21 +398,8 @@ private:
 
     void record();
 
-    // The scrollbar, as its OWN non-scrolling layer.
-    //
-    // A layer rather than a paint into the page: it must not move when the page
-    // does, and the compositor already knows how to hold a layer still. That is
-    // also why it survives a scroll without re-recording anything - a scroll
-    // moves the page layer and leaves this one where it is.
-    // Rebuilt on every frame whose scroll moved, NOT only when the page
-    // re-records: a scroll deliberately skips recording. Cheap enough to do
-    // unconditionally: it is two rectangles.
     void refresh_chrome();
 
-    // Everything the BROWSER draws rather than the page: the scrollbar, and an
-    // open <select>'s option list. Each is its own non-scrolling layer for the
-    // same reason - chrome does not move when the page does, and the compositor
-    // already knows how to hold a layer still.
     void record_chrome();
 
     // The context menu. Its entries are the clipboard verbs, because those are
@@ -676,40 +436,12 @@ private:
     // visible, with a floor so a very long page still has something to grab.
     [[nodiscard]] rect scrollbar_thumb() const;
 
-    // A vector graphic, rasterised for THIS box rather than scaled into it.
-    //
-    // The rect handed to draw_image is the SNAPPED size, not `box`. That is the
-    // point of the whole size-aware path: draw_image scales nearest-neighbour,
-    // so passing the unsnapped box would have it resample a bitmap that is
-    // already the right size to within a fraction of a pixel - reintroducing
-    // exactly the stair-stepping this exists to remove. Snapped, it is a 1:1
-    // blit.
     bool paint_svg(node_id id, const rect & box, ctbrowser::paint::display_list & into);
 
-    // What a <canvas> or a form control draws. Everything here is chrome the
-    // UA supplies rather than anything the document asked for, which is why the
-    // palette comes from :ua and not from the cascade.
-    //
-    // `box` is the BORDER box and `content` the content box - the recorder
-    // resolved the padding and the border to draw them, so it hands over where
-    // they left off rather than the shell keeping a constant of its own that a
-    // sheet could not change.
     void paint_replaced(node_id id, const rect & box, const rect & content,
                         const ctbrowser::style::computed_style_ptr & style,
                         ctbrowser::paint::display_list & into);
 
-    // THE TICK IN A CHECKED CHECKBOX.
-    //
-    // Drawn as a staircase of 1px rows, the same way the select's drop-down
-    // triangle is: `paint_op` has fill_rect, fill_ellipse, text_run, image and
-    // the two clips, and nothing else - no line, no path, no transform - so a
-    // stroke at 45 degrees is not expressible and a stack of short rows is what
-    // a diagonal IS here. A glyph is not an option either: the goldens render
-    // with font8x8, which has no U+2713.
-    //
-    // Two rows per step so the stroke reads as a stroke at 13px rather than as
-    // a dotted line, and the short arm rises half as far as the long one, which
-    // is what makes it a tick rather than a V.
     void check_mark(const rect & box, ctbrowser::paint::display_list & into, node_id id);
 
     // A button's label is CENTRED, horizontally and on the box's middle. Left
@@ -724,10 +456,6 @@ private:
     // than its text (every one with a border and padding) still centres it.
     [[nodiscard]] static float baseline_inset(const rect & box, float size);
 
-    // A control's text geometry, in ONE place. The painter draws from it and a
-    // click is mapped through it, so a caret cannot land where the text is not:
-    // two copies of "where does line 2 start" is how a click ends up putting
-    // the caret somewhere the glyphs never were.
     struct field_layout {
         rect inner;
         float size = 16;
@@ -735,37 +463,14 @@ private:
         ctbrowser::layout::text_face metrics_face;
         std::vector<std::pair<std::size_t, std::size_t>> lines; // [begin, end) in the VALUE
         bool masked = false;
-        // How many lines fit in the box. A textarea is a replaced box sized by
-        // its `rows`, so wrapping can produce more lines than it can show and
-        // the rest are scrolled to rather than grown into. At least one, or a
-        // box too short for a single line could never show the caret.
         std::size_t visible_lines = 1;
-        // THE EFFECTIVE VIEW ORIGIN - control_state's, clamped to what the
-        // value and the box currently are. Everything that draws or hit-tests
-        // reads these rather than the stored ones, so a scroll left stale by a
-        // shrinking value, a scripted `el.value =`, or a resize that rewraps to
-        // fewer lines can never be OBSERVED: it is corrected here, once, where
-        // the geometry is derived. The stored value is only ever a request.
         std::size_t scroll_line = 0;
         float scroll_x = 0;
         // The widest line, which is how far right there is to scroll.
         float content_width = 0;
     };
 
-    // THE CONTENT BOX OF A CONTROL, in ONE place.
-    //
-    // The caret, the hit test, the selection and the painter all have to agree
-    // about where a field's text starts: they all ask this, and it asks the
-    // cascade.
-    [[nodiscard]] rect content_box_of(node_id id, const rect & box) const {
-        const layout::box_node * found = find_box(boxes_, id);
-        if (found == nullptr) { return box; }
-        const layout::resolved_edges e = layout::resolve_edges(
-            *found, layout::constraints{box.width, box.height, found->font_size});
-        return rect{box.x + e.content_left(), box.y + e.content_top(),
-                    std::max(0.0f, box.width - e.horizontal_inner()),
-                    std::max(0.0f, box.height - e.vertical_inner())};
-    }
+    [[nodiscard]] rect content_box_of(node_id id, const rect & box) const;
 
     [[nodiscard]] field_layout layout_of_field(const rect & border_box, node_id id,
                                                const control_state & control, control_kind kind);
@@ -775,10 +480,6 @@ private:
     [[nodiscard]] bool is_disabled(node_id id);
 
     [[nodiscard]] bool is_password(node_id id);
-    // `<input type=password>` shows BULLETS. Masked per CODE POINT rather than
-    // per byte, so a value with anything non-ASCII in it does not come out with
-    // three bullets for one character - and the caret, which counts the same
-    // way, still lands between them.
     [[nodiscard]] static std::string masked_text(std::string_view text);
     // What the user SEES for a stretch of the value.
     [[nodiscard]] static std::string shown(std::string_view text, bool masked);
@@ -795,30 +496,6 @@ private:
     bool move_caret_by_line(node_id id, control_state & control, control_kind kind, int direction,
                             bool extend);
 
-    // THREE THINGS MOVE A FIELD'S VIEW, and they must never run on the same
-    // event or they fight each other. Every bug in this area is a violation of
-    // this split, so it is written here once:
-    //
-    //   1. The CARET moves and the view follows - typing, editing keys, paste,
-    //      cut, select-all, `el.value =`. That is reveal_caret, below. The
-    //      caret drives.
-    //   2. The USER moves the view directly - the wheel. The scroll moves and
-    //      the caret does NOT; it is left off screen if that is where it was,
-    //      which is what every browser does. Nothing re-reveals here: calling
-    //      reveal_caret on a wheel would snap the view straight back and make
-    //      the wheel useless. The next keystroke brings it back, by rule 1.
-    //   3. AUTO-SCROLL during a drag - the scroll steps and the caret is then
-    //      re-derived from where the pointer is. The view drives.
-
-    // Scroll a field the MINIMUM needed to bring the caret back into view, in
-    // BOTH axes. Called after anything that moves the caret or changes the
-    // value - typing off the edge of a box that cannot grow is otherwise typing
-    // into somewhere you cannot see.
-    //
-    // Both axes for both kinds. The vertical half is a natural no-op for a
-    // single-line field, which has exactly one line; the horizontal half is NOT
-    // a no-op for a textarea, because an unbreakable word longer than the line
-    // overflows sideways there too.
     void reveal_caret(node_id id, control_state & control, control_kind kind);
 
     // Home and End are per LINE in a textarea, as they are in every editor.
@@ -829,77 +506,30 @@ private:
                           control_kind kind, const ctbrowser::style::computed_style_ptr & style,
                           bool focused, ctbrowser::paint::display_list & into);
 
-    // A value's VISUAL lines as [begin, end) offsets: split on newlines, then
-    // soft-wrapped within each of those to `wrap_width`. Always at least one,
-    // so an empty value still has a line for the caret to be on.
-    //
-    // THE TWO BREAKS DIFFER, and everything downstream depends on how. A hard
-    // '\n' is CONSUMED, so the next line begins at end + 1. A soft break
-    // consumes nothing, so the next line begins exactly AT end - which is how a
-    // consumer tells them apart without a flag, and why caret_line() below has
-    // to exist. Trailing spaces stay on the earlier line, inside [begin, end):
-    // browsers hang them the same way, and it is what keeps end == begin true.
-    //
-    // A zero or negative width means no wrapping - a degenerate box must not
-    // turn into an infinite loop of empty lines.
     [[nodiscard]] static std::vector<std::pair<std::size_t, std::size_t>> value_lines(
         const std::string & value, float wrap_width, float size,
         const ctbrowser::layout::text_face & face,
         const ctbrowser::layout::measure_text_fn & measure);
 
-    // The line a caret is ON, as an index into `lines`. FIRST match wins: a
-    // soft break makes end == begin, so a caret sitting on a wrap boundary
-    // matches BOTH lines, and the painter would draw two carets.
-    [[nodiscard]] static std::size_t caret_line(const field_layout & geometry, std::size_t caret) {
-        for (std::size_t index = 0; index < geometry.lines.size(); ++index) {
-            const auto [begin, end] = geometry.lines[index];
-            if (caret >= begin && caret <= end) { return index; }
-        }
-        return geometry.lines.empty() ? 0 : geometry.lines.size() - 1;
-    }
+    [[nodiscard]] static std::size_t caret_line(const field_layout & geometry, std::size_t caret);
 
     [[nodiscard]] std::string button_label(const read_txn & txn, node_id id,
                                            const control_state & control,
                                            std::string_view type) const;
 
-    // The colour a control's own text is drawn in. A DISABLED control ignores
-    // the cascade here: `color` on a disabled button is not what a user needs
-    // to see, and greyed-out is the only signal the control is dead.
     [[nodiscard]] color control_text_colour(node_id id,
-                                            const ctbrowser::style::computed_style_ptr & style) {
-        return is_disabled(id) ? color{ctbrowser::style::ua_widget_disabled_text}
-                               : text_colour(style);
-    }
+                                            const ctbrowser::style::computed_style_ptr & style);
 
     [[nodiscard]] color text_colour(const ctbrowser::style::computed_style_ptr & style);
 
-    // The face a control's text is drawn in - the same one layout measured it
-    // with. Measuring a caret position with a different font from the one that
-    // drew the text is how the caret ends up a character or two past the end of
-    // what you typed.
-    // Every control's text MUST draw with it too: drawing a control's text
-    // with the default face while measuring the caret with the element's own
-    // is a caret that drifts further right with every character typed. A
-    // textarea is monospace by UA rule and was drawn in the default serif.
     [[nodiscard]] ctbrowser::layout::text_face face_of(node_id id) const;
 
     [[nodiscard]] float font_size_of(node_id id) const;
-    [[nodiscard]] static const layout::box_node * find_box(const layout::box_node & at,
-                                                           node_id id) {
-        if (at.source == id) { return &at; }
-        for (const layout::box_node & child : at.children) {
-            if (const layout::box_node * hit = find_box(child, id)) { return hit; }
-        }
-        return nullptr;
-    }
+
+    [[nodiscard]] static const layout::box_node * find_box(const layout::box_node & at, node_id id);
 
     static void outline(const rect & box, color c, ctbrowser::paint::display_list & into,
-                        node_id id) {
-        into.fill(rect{box.x, box.y, box.width, 1}, c, id);
-        into.fill(rect{box.x, box.bottom() - 1, box.width, 1}, c, id);
-        into.fill(rect{box.x, box.y, 1, box.height}, c, id);
-        into.fill(rect{box.right() - 1, box.y, 1, box.height}, c, id);
-    }
+                        node_id id);
 
     bool set_hover(node_id at);
 
@@ -908,12 +538,6 @@ private:
     // link with any markup inside it.
     bool set_state(node_id at, std::uint32_t bit, bool on);
 
-    // The LABEL a <select> shows: the text of the option whose value is the
-    // control's. Label and value are different things - `<option value=g>green
-    // </option>` is worth "g" to a form and shows "green" to a reader - so the
-    // control stores the value and this maps it back for display. Reads the
-    // DOM directly rather than caching, because a script may have just changed
-    // the option list.
     [[nodiscard]] std::string selected_option(const read_txn & txn, node_id id);
 
     // A press while a <select> is open. Returns whether the popup consumed it -
@@ -934,10 +558,6 @@ private:
     // Every text run in DOCUMENT ORDER, which is the order a selection spans.
     [[nodiscard]] std::vector<text_run> text_runs() const;
 
-    // Where in the node's text a point falls: the nearest character boundary on
-    // the nearest line. Above the first line is its start and below the last is
-    // its end, so dragging past the edge takes whole lines - which is what a
-    // drag off the top of a paragraph has to do.
     [[nodiscard]] text_position position_at(float x, float y);
 
     // The character boundary nearest an x, by MEASURING prefixes with the same
@@ -951,10 +571,6 @@ private:
     // The highlighted part of one text fragment, in the fragment's own space.
     [[nodiscard]] rect highlight_for(const ctbrowser::layout::fragment & f);
 
-    // Copy / Cut / Paste / Select All, from the context menu or from Ctrl+key.
-    // The page gets a CANCELABLE event first for the three that correspond to
-    // one, which is how an editor takes them over. The wrapper reveals the
-    // caret afterwards whatever the verb did; `clipboard_verb` is the verb.
     void run_clipboard_verb(std::string_view verb);
     void clipboard_verb(std::string_view verb);
 
@@ -984,75 +600,23 @@ private:
 
     [[nodiscard]] control_kind kind_of(const read_txn & txn, node_id id);
 
-    // The control a <label> labels, per HTML: its `for` attribute resolved by
-    // id, or failing that the FIRST labelable element inside it.
-    //
-    // `from` is where the click landed, which for label text is the TEXT NODE -
-    // hit testing returns the deepest fragment's source, never the <label>
-    // itself - so this walks up to the enclosing label first.
-    //
-    // LABELABLE is exactly "is a control": control_kind_of already maps
-    // `input type=hidden` to none, so HTML's notion falls out of what is here
-    // rather than needing a second list to keep in step.
     [[nodiscard]] node_id labelled_control(const read_txn & txn, node_id from);
 
-    // The control a click landed in. A click on the text inside a <button> has
-    // to focus the button, not the text node - and a click on a <label>'s text
-    // has to reach the control that label names, which is a SIBLING of the text
-    // rather than an ancestor of it, so the upward walk alone cannot find it.
     [[nodiscard]] node_id control_ancestor(node_id from);
 
-    // Whether `from` reaches its control only THROUGH a label. A label click
-    // focuses and activates, but must not place a caret or begin a selection:
-    // the pointer is over the label's text, nowhere near the field's glyphs,
-    // so mapping the click through offset_at_point would put the caret at
-    // whichever end of the value the label happened to sit on.
     [[nodiscard]] bool via_label(node_id from);
 
     bool focus(node_id id);
     [[nodiscard]] bool focus_was_moved() const;
 
-    // Every control the user can Tab to, in DOCUMENT ORDER.
-    //
-    // Document order IS the tab order here, because there is no `tabindex` -
-    // which is also what a document without one gets in a real browser. Two
-    // deliberate gaps, so nobody has to rediscover them: a positive `tabindex`
-    // does not reorder anything, and each radio button is its own stop rather
-    // than a group being one.
     [[nodiscard]] std::vector<node_id> focusable_controls();
 
-    // A control takes focus if it IS one, is not disabled (by its own attribute
-    // or an enclosing <fieldset>'s), and is actually RENDERED. `display: none`
-    // leaves no fragment, and tabbing into something nobody can see is how
-    // focus appears to vanish. Note a control scrolled off-screen still HAS a
-    // fragment and so stays tabbable, which is correct - it is reachable, just
-    // not visible yet.
     [[nodiscard]] bool is_focusable(const read_txn & txn, node_id id);
 
     // Sequential focus navigation. Wraps at both ends, so Tab off the last
     // control returns to the first rather than dropping focus into nothing.
     bool focus_next(bool backwards);
 
-    // AUTO-SCROLL WHILE DRAG-SELECTING - rule 3 of the three at reveal_caret.
-    //
-    // Holding the pointer outside a field you are selecting in has to keep
-    // scrolling it, with no further mouse events: offset_at_point clamps to
-    // what the value has, so a stationary pointer one pixel below the box picks
-    // the same offset forever and the selection freezes one line short.
-    //
-    // Built on the caret blink's shape - the one clock tick() already advances,
-    // a due time, and a next_wakeup_ms contribution - because that is how this
-    // engine does "happens on a timer" and an idle loop must still block.
-    //
-    // THE VIEW DRIVES HERE, the caret follows. reveal_caret is the other way
-    // round, so the drag path must never call it: one moves the scroll to
-    // follow the caret and the other moves the caret to follow the scroll, and
-    // together they oscillate.
-
-    // How far outside its field the pointer is, on each axis. Zero when inside.
-    // A step is due only when this is non-zero AND the scroll can still move
-    // that way - otherwise the wakeup is never scheduled and an idle loop with
-    // a pointer parked below a fully-scrolled field does not spin.
     struct autoscroll_state {
         node_id field;
         float below = 0;  // >0 down, <0 up
@@ -1065,12 +629,6 @@ private:
     // pointer actually is.
     void autoscroll_step(const autoscroll_state & state);
 
-    // A wheel notch aimed at a scrollable field. True when the field took it.
-    //
-    // Rule 2 of the three at reveal_caret: this moves the VIEW and leaves the
-    // caret alone, off screen if that is where it was. Revealing the caret here
-    // would snap the view straight back and make the wheel useless; the next
-    // keystroke brings it back instead, which is what browsers do.
     [[nodiscard]] bool scroll_field_under(const input_event & event);
 
     bool edit_key(control_state & control, const input_event & event);
@@ -1081,10 +639,6 @@ private:
     // What clicking a control does once no listener has cancelled it.
     void activate(node_id target);
 
-    // Clicking a <summary> opens or closes its <details>. The state is the
-    // `open` ATTRIBUTE, as the spec says, so a script that reads or sets it
-    // agrees with what the user did - and layout, which builds a closed
-    // details' children away, picks it up from the same place.
     bool toggle_details(node_id target);
 
     // <a href> - the one navigation-shaped thing a document does on its own.
@@ -1112,13 +666,8 @@ private:
     void reset(node_id form);
 
 public:
-    // What the last submission would have sent. There is no network, so
-    // producing the data and stopping is the honest half of submitting - and it
-    // is what a test can check.
     [[nodiscard]] const std::vector<std::pair<std::string, std::string>> & last_submission()
-        const noexcept {
-        return last_submission_;
-    }
+        const noexcept;
 
 private:
     std::vector<std::pair<std::string, std::string>> last_submission_;
@@ -1197,16 +746,7 @@ private:
     node_id focused_;
     std::uint64_t canvas_revision_ = 0;
 
-    // ONE PROGRAM PER CLASSIC <script>, kept alive for the page's lifetime, for
-    // the same reason the modules below are: a function declared at a script's
-    // top level holds a `const function_proto *` into its program, and a timer
-    // or an event listener dereferences it long after run_scripts returned.
     std::vector<std::unique_ptr<script::program>> classic_programs_;
-    // PRECOMPILED IMAGES, KEYED BY WHAT THEY WERE BUILT FROM. See
-    // add_script_image. A vector rather than a map on purpose: a page has a
-    // handful of scripts and a packager hands over a few dozen images, so a
-    // linear scan over 64-bit keys is nothing next to a hash - and the public
-    // header gains no include for a container it does not need.
     struct held_image {
         std::uint64_t source_hash = 0;
         script::script_kind kind = script::script_kind::classic;
@@ -1216,44 +756,18 @@ private:
     std::vector<held_image> script_images_;
     std::vector<std::string> script_sources_;
     std::vector<std::string> module_sources_;
-    // A LOAD IS IN FLIGHT, AND A SCRIPT ASKED FOR ANOTHER ONE. See load_html:
-    // a navigation from inside a script is queued and performed after the
-    // scripts stop, because doing it where it was asked for destroys the
-    // context the asking script is running on.
     bool loading_ = false;
     std::optional<std::string> pending_load_;
     source_kind pending_kind_ = source_kind::html;
-    // THE DOCUMENT FINISHED LOADING AND NOBODY HAS BEEN TOLD YET. Set when a
-    // page's scripts have run, cleared by the first tick that fires
-    // `DOMContentLoaded` and `load` at the window.
-    //
-    // Fired from tick() rather than from load_one_page() for the same reason a
-    // navigation is queued there: a listener runs script, and running script
-    // inside the load is what the whole `loading_` dance exists to prevent.
-    //
-    // testharness.js listens for `load` unconditionally and `Tests.all_done()`
-    // waits for it: without the event every web-platform-test times out.
     bool load_event_pending_ = false;
     std::size_t scripts_compiled_from_source_ = 0;
-    // ONE PROGRAM PER MODULE, kept alive for the page's lifetime. A module's
-    // top-level declarations live in its own frame and its functions close over
-    // them, so the program cannot be a temporary the way a classic script's
-    // could be. See docs/plans/modules.md.
     std::vector<std::unique_ptr<script::program>> module_programs_;
-    // Load a module and everything it imports, depth-first, evaluating each
-    // once. See the definition for why post-order is the only order that works.
-    // TWO PASSES over the graph, because a cycle cannot be done in one - see
-    // the definitions. load_module runs both.
     void load_module(const std::string & source, const std::string & specifier);
     void instantiate_module(const std::string & source, const std::string & specifier);
     void evaluate_module(const std::string & specifier);
     // `export ... from` and `export *`: aliases wired once the dependencies are
     // instantiated and before anything evaluates. See the definition.
     void wire_reexports(const std::string & specifier);
-    // Every program run by run_script AFTER the page's own. They accumulate for
-    // the life of the page because a closure from any of them may still be
-    // reachable - a listener, a timer, a rAF callback - and a program that
-    // outlives nothing is a use-after-free waiting for the first callback.
     std::vector<std::unique_ptr<script::program>> extra_programs_;
     std::unique_ptr<script::context> script_;
     std::unique_ptr<dom_bindings> bindings_;
@@ -1278,14 +792,8 @@ private:
     // page overflows. `clientWidth` and getComputedStyle percentages are relative
     // to this and not to options_.width.
     float layout_width_ = 0;
-    // The layout viewport as an integer, falling back to the window before the
-    // first layout has run. Both callers of observe_viewport go through this:
-    // bindings are installed LAZILY, the first time a page runs script, which is
-    // after run_layout - so a setup path that reported options_.width silently
-    // clobbered the narrower number layout had already used.
-    [[nodiscard]] int layout_viewport_width() const noexcept {
-        return layout_width_ > 0 ? static_cast<int>(layout_width_) : options_.width;
-    }
+
+    [[nodiscard]] int layout_viewport_width() const noexcept;
     node_id hovered_;
     node_id pressed_;
     dirty dirty_ = dirty::everything;
@@ -1297,3 +805,6 @@ private:
 };
 
 } // namespace ctbrowser::shell
+
+#include "browser/access_inline.hpp"
+#include "browser/geometry_inline.hpp"

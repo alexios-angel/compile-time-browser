@@ -1,6 +1,10 @@
 // ClosureLifting/Constructors.cpp - native lowering implementation.
 #include "ClosureLifter.h"
 
+#include <ctbrowser/core/number_format.hpp>
+
+#include <cmath>
+
 namespace ctcompile::ctnative::lowering_detail {
 
 // --- the constructor lift -----------------------------------------------
@@ -163,12 +167,41 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
             if (!methodClosures.contains(method)) {
                 return "its prototype method is not an immutable direct-call binding";
             }
-            // ponytail: conservatively check this key across the module. A
-            // callable identity read cannot survive erasing its runtime field.
-            bool calledOnly = true;
+            // Closed instance uses cannot store, return or merge the receiver;
+            // only method/borrowed parameters can alias it. ponytail: a complete
+            // per-receiver proof could narrow this further; keep all formals
+            // conservative. Prototype observations retain the whole-module
+            // census, including aliases derived from those observations.
+            bool prototypeObserved = false;
             module.walk([&](ctjs::GetPropertyOp read) {
                 const auto key = ctjs::constantKey(read.getKey());
-                if (!key.empty() && key != ctjs::constantKey(field.getKey())) { return; }
+                prototypeObserved |=
+                    key == "__proto__" || key == "constructor" || key == "prototype";
+            });
+            bool calledOnly = true;
+            module.walk([&](ctjs::GetPropertyOp read) {
+                const auto object = read.getObject();
+                if (!prototypeObserved && !llvm::isa<mlir::BlockArgument>(object) &&
+                    object != prototype->attachment.getValue() &&
+                    llvm::none_of(
+                        constructsOfTarget.lookup(targetOf(c)),
+                        [&](ctjs::ConstructOp made) { return made.getResult() == object; })) {
+                    return;
+                }
+                const auto key = ctjs::constantKey(field.getKey());
+                if (auto constant = read.getKey().getDefiningOp<ctjs::ConstantOp>()) {
+                    if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+                        text && text.getValue() != key) {
+                        return;
+                    }
+                    // ponytail: keep large/nonfinite keys conservative until
+                    // the shared formatter guards its int64 fast-path cast.
+                    if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+                        number && std::fabs(number.getDouble()) < 1e15 &&
+                        ctbrowser::number_to_string(number.getDouble()) != key) {
+                        return;
+                    }
+                }
                 auto call = read.getResult().hasOneUse()
                                 ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
                                 : ctjs::CallOp{};

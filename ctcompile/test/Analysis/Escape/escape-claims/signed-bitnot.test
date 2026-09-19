@@ -3,7 +3,7 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-bitnot
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-bitnot.claims
 
-// BitNot preserves signed Number snapshots with ToInt32 wrap, not coercion facts.
+// BitNot preserves signed Number snapshots and bounded canonical original Strings.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.unary bitnot
 // IMPORT: ctjs.set_property
@@ -40,10 +40,19 @@
 // CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+
+// IMPORT-LABEL: ctjs.func @stringReturned$
+// IMPORT: ctjs.unary bitnot
+// IMPORT-LABEL: ctjs.func @noncanonicalInput$
+// IMPORT: ctjs.unary bitnot
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
 
 //--- source.js
 function snapshotReleased() {
@@ -112,6 +121,22 @@ function unboundedInput() {
     }
     return 0;
 }
+function stringReturned() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var step = ~"2";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return saved;
+}
+function noncanonicalInput() {
+    var child = {}, array = [child, child, child], saved = 0;
+    var step = ~"02";
+    for (var i = 0; i < array.length; i -= step) {
+        saved = array[i];
+    }
+    return 0;
+}
 snapshotReleased();
 var snapshotRetained = snapshotReturned();
 positiveReleased();
@@ -120,3 +145,5 @@ zeroReleased();
 var zeroRetained = zeroReturned();
 coercibleInput();
 unboundedInput();
+var stringRetained = stringReturned();
+noncanonicalInput();

@@ -37,3 +37,22 @@ set(LLVM_TARGET_DEFINITIONS CTJSInterfaces.td)
 mlir_tablegen(CTJSOpInterfaces.h.inc -gen-op-interface-decls)
 mlir_tablegen(CTJSOpInterfaces.cpp.inc -gen-op-interface-defs)
 add_public_tablegen_target(CTJSInterfacesIncGen)
+
+target_sources(CTJSDialect PRIVATE
+  CTJSAttrs.h
+  CTJSAttrs.td
+  CTJSBase.td
+  CTJSDialect.h
+  CTJSEnums.h
+  CTJSEnums.td
+  CTJSEscapeEffects.h
+  CTJSInterfaces.h
+  CTJSInterfaces.td
+  CTJSOps.h
+  CTJSOps.td
+  CTJSTraits.h
+  CTJSTypes.h
+  CTJSTypes.td
+)
+
+add_subdirectory(Ops)

@@ -1,5 +1,7 @@
 #include "../Lowering/Exceptions/Recovery.h"
 #include "Analysis.h"
+#include "ClassInitialization/Proof.hpp"
+#include "Preparation.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -15,730 +17,10 @@
 #include "llvm/Support/MemoryBuffer.h"
 
 namespace ctcompile::ctnative {
+using class_detail::classInitialization;
 #define GEN_PASS_DEF_CTNATIVESPECIALIZECLASSINITIALIZATION
 #include "ctcompile/CTNative/Transforms/Passes.h.inc"
 namespace {
-
-struct classInitialization {
-    mlir::ModuleOp module;
-    unsigned remaining;
-    std::string reason;
-    llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
-    llvm::StringMap<ctjs::StoreGlobalOp> globals;
-    llvm::StringMap<bool> closedGlobals;
-    llvm::SmallVector<ctjs::CallOp> calls;
-    llvm::DenseSet<mlir::Operation *> setup;
-    llvm::DenseSet<mlir::Operation *> retainedSetup;
-    llvm::DenseSet<mlir::Operation *> constructors;
-    llvm::DenseSet<mlir::Operation *> methods;
-    llvm::DenseSet<mlir::Operation *> methodCalls;
-    llvm::DenseSet<mlir::Operation *> helpers;
-    llvm::DenseSet<mlir::Operation *> helperCalls;
-    llvm::DenseSet<mlir::Operation *> getters;
-    llvm::DenseSet<mlir::Operation *> throwingGetters;
-    llvm::DenseSet<mlir::Operation *> errorOperations;
-    llvm::SmallVector<ctjs::GetPropertyOp> constructorReads;
-    llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
-    llvm::SmallVector<ctjs::FuncOp> getterOrder;
-    llvm::SmallVector<ctjs::CreateClosureOp> getterClosures;
-    llvm::SetVector<mlir::Operation *> dispatchMethods;
-    llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
-
-    classInitialization(mlir::ModuleOp module, unsigned steps) : module(module), remaining(steps) {}
-
-    bool step() {
-        if (!remaining) { return refuse("class initialization work budget exhausted"); }
-        --remaining;
-        return true;
-    }
-    bool refuse(llvm::StringRef message) {
-        if (reason.empty()) { reason = message.str(); }
-        return false;
-    }
-    static bool undefined(mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-    }
-    ctjs::FuncOp target(ctjs::CreateClosureOp closure) {
-        if (!closure || closure.getFunction() < 0) { return {}; }
-        // Numeric function indices belong to the enclosing source program.
-        auto scope = closure->getParentOfType<ctjs::FuncOp>();
-        if (!scope || scope.getBody().empty() || scope.getBody().front().getNumArguments() < 3 ||
-            closure.getEnclosingClosure() !=
-                scope.getBody().front().getArgument(ctjs::arg_callee)) {
-            return {};
-        }
-        return functions.lookup(static_cast<unsigned>(closure.getFunction()));
-    }
-    ctjs::CreateClosureOp sourceClosure(mlir::Value value) {
-        if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
-        auto load = value.getDefiningOp<ctjs::LoadGlobalOp>();
-        auto store = load ? globals.lookup(load.getName()) : ctjs::StoreGlobalOp{};
-        if (!store) { return {}; }
-        auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-        if (store->getBlock() == load->getBlock() && store->isBeforeInBlock(load)) {
-            return closure;
-        }
-        auto fn = target(closure);
-        if (!fn) { return {}; }
-        auto [cached, fresh] = closedGlobals.try_emplace(load.getName(), false);
-        if (fresh) {
-            // Charge the existing declaration proof's operation/use scans once
-            // per binding. Its hoisting and closed-callee rules also cover reads
-            // in other functions without trusting resolver annotations.
-            auto walked = module.walk([&](mlir::Operation * op) {
-                const uint64_t cost = uint64_t(2) + op->getNumOperands();
-                if (cost > remaining) {
-                    refuse("class initialization work budget exhausted");
-                    return mlir::WalkResult::interrupt();
-                }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
-            });
-            cached->second = !walked.wasInterrupted() && closedDeclaration(store, fn, module);
-        }
-        return cached->second ? closure : ctjs::CreateClosureOp{};
-    }
-    bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
-                    llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
-                    bool methodsAvailable = false) {
-        for (mlir::OpOperand & use : object.getUses()) {
-            if (!step()) { return false; }
-            auto * op = use.getOwner();
-            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-                read && use.getOperandNumber() == 0 &&
-                ctjs::constantKey(read.getKey()) == "constructor") {
-                // The exact fresh prototype owns this backedge. Its identity
-                // may only select a proved local getter; no write or escape.
-                for (mlir::OpOperand & selected : read.getResult().getUses()) {
-                    if (!step()) { return false; }
-                    if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
-                    auto getter = llvm::dyn_cast<ctjs::GetPropertyOp>(selected.getOwner());
-                    if (!getter || selected.getOperandNumber() != 0 ||
-                        !ctjs::ordinaryKey(getter.getKey())) {
-                        return refuse("class constructor identity escapes its local getter read");
-                    }
-                    staticReads.push_back(getter);
-                }
-                constructorReads.push_back(read);
-                continue;
-            }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && methodsAvailable) {
-                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (use.getOperandNumber() == 1 && read && read.getObject() == object &&
-                    read.getResult().hasOneUse() &&
-                    methodKeys.contains(ctjs::constantKey(read.getKey()))) {
-                    methodCalls.insert(call);
-                    continue;
-                }
-            }
-            mlir::Value key;
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
-            if (use.getOperandNumber() != 0 || !key || !ctjs::ordinaryKey(key)) {
-                return refuse("class receiver escapes or observes a prototype/descriptor");
-            }
-            if (methodKeys.contains(ctjs::constantKey(key))) {
-                auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-                auto call = read && read.getResult().hasOneUse()
-                                ? llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin())
-                                : ctjs::CallOp{};
-                if (!methodsAvailable || !call || call.getCallee() != read.getResult() ||
-                    call.getReceiver() != object) {
-                    return refuse("class method is observed or shadowed");
-                }
-            }
-        }
-        return true;
-    }
-
-    bool staticGetters(const llvm::StringMap<ctjs::DefineAccessorOp> & definitions,
-                       llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper) {
-        llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> dependencies;
-        const auto firstRead = getterReads.size();
-        const auto resolve = [&](ctjs::GetPropertyOp read) -> ctjs::FuncOp {
-            auto definition = definitions.lookup(ctjs::constantKey(read.getKey()));
-            if (!ctjs::ordinaryKey(read.getKey()) || !definition) { return {}; }
-            return target(definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>());
-        };
-        for (const auto & item : definitions) {
-            // Closure metadata and the compiler's home field precede accessors
-            // in the interpreter. Keep their source reads until that boundary
-            // has one semantics across the interpreter and native output.
-            const auto key = item.first();
-            if (key == "name" || key == "length" || key == "__home" || key == "caller" ||
-                key == "arguments") {
-                return refuse("static getter shadows closure metadata");
-            }
-            auto definition = item.second;
-            auto closure = definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
-            auto fn = target(closure);
-            if (!step() || !fn || !ctjs::ordinaryKey(item.first()) ||
-                !undefined(definition.getSetter()) || closure->getBlock() != helper->getBlock() ||
-                !closure->isBeforeInBlock(definition) || !undefined(closure.getEnclosingThis()) ||
-                !closure.getUpvalues().empty()) {
-                return refuse(
-                    "static getter needs a unique local capture-free getter without a setter");
-            }
-            ctjs::SetPropertyOp getterHome;
-            for (mlir::OpOperand & use : closure.getResult().getUses()) {
-                if (!step()) { return false; }
-                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                if (use.getOwner() == definition && use.getOperandNumber() == 1) { continue; }
-                auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
-                if (getterHome || !write || use.getOperandNumber() != 0 ||
-                    ctjs::constantKey(write.getKey()) != "__home" ||
-                    write.getValue() != helper.getArgs().front() ||
-                    write->getBlock() != helper->getBlock() || !closure->isBeforeInBlock(write) ||
-                    !write->isBeforeInBlock(helper)) {
-                    return refuse("static getter callable identity escapes its definition");
-                }
-                getterHome = write;
-            }
-            // The body census below forbids observing this metadata. Keep the
-            // exact source assignment in the setup proof before erasing it.
-            if (getterHome) { setup.insert(getterHome); }
-            auto & entry = fn.getBody().front();
-            if (!llvm::hasSingleElement(fn.getBody()) || entry.getNumArguments() != 3 ||
-                !entry.getArgument(ctjs::arg_callee).use_empty() ||
-                !entry.getArgument(ctjs::arg_new_target).use_empty()) {
-                return refuse("static getter observes its callable identity or parameters");
-            }
-            auto & required = dependencies[fn];
-            if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(entry.getTerminator())) {
-                if (!thrown.getValue().getDefiningOp<ctjs::ConstantOp>() &&
-                    !errorOperations.contains(thrown.getOperation())) {
-                    return refuse("static getter throw needs a literal or declared Error payload");
-                }
-                throwingGetters.insert(fn);
-            }
-            for (mlir::Operation & op : entry) {
-                if (!step()) { return false; }
-                if (errorOperations.contains(&op) ||
-                    (llvm::isa<ctjs::ThrowOp>(op) && throwingGetters.contains(fn))) {
-                    continue;
-                }
-                if (!llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp, ctjs::BinaryOp,
-                               ctjs::UnaryOp, ctjs::CompareOp, ctjs::TruthyOp, ctjs::FromBoolOp,
-                               ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
-                    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-                    if (!read || read.getObject() != entry.getArgument(ctjs::arg_receiver)) {
-                        return refuse("static getter body is not a closed expression");
-                    }
-                }
-            }
-            for (mlir::OpOperand & use : entry.getArgument(ctjs::arg_receiver).getUses()) {
-                if (!step()) { return false; }
-                auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
-                auto callee = read ? resolve(read) : ctjs::FuncOp{};
-                if (use.getOperandNumber() != 0 || !callee) {
-                    return refuse("static getter receiver lacks an exact local getter dependency");
-                }
-                required.push_back(callee);
-                getterReads.emplace_back(read, callee);
-            }
-            getters.insert(fn);
-            getterClosures.push_back(closure);
-            setup.insert(definition);
-        }
-        // ponytail: bounded fixpoint over local getters; inherited/dynamic
-        // receivers need a separate provenance proof before widening.
-        llvm::DenseSet<mlir::Operation *> completed;
-        llvm::DenseMap<mlir::Operation *, unsigned> expansion;
-        while (completed.size() != dependencies.size()) {
-            const auto before = completed.size();
-            for (const auto & [fn, required] : dependencies) {
-                if (!step()) { return false; }
-                if (completed.contains(fn)) { continue; }
-                bool ready = true;
-                for (mlir::Operation * callee : required) {
-                    if (!step()) { return false; }
-                    ready &= completed.contains(callee);
-                }
-                if (!ready) { continue; }
-                // A dependency call uses this function's closure argument.
-                // Keep its callers too, so no such argument is copied into a
-                // different function when expanding a getter chain.
-                if (llvm::any_of(required, [&](mlir::Operation * callee) {
-                        return throwingGetters.contains(callee);
-                    })) {
-                    throwingGetters.insert(fn);
-                }
-                unsigned cost = 0;
-                for (mlir::Operation & op : llvm::cast<ctjs::FuncOp>(fn).getBody().front()) {
-                    if (!step()) { return false; }
-                    if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
-                        continue;
-                    }
-                    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-                    const unsigned added = read ? expansion.lookup(resolve(read)) : 1;
-                    if (cost > remaining || added > remaining - cost) {
-                        return refuse("class initialization work budget exhausted");
-                    }
-                    cost += added;
-                }
-                if (throwingGetters.contains(fn)) {
-                    cost = 3; // Undefined, a fresh capture-free closure, and its direct call.
-                    if (cost > remaining) {
-                        return refuse("class initialization work budget exhausted");
-                    }
-                }
-                expansion[fn] = cost;
-                completed.insert(fn);
-                getterOrder.push_back(llvm::cast<ctjs::FuncOp>(fn));
-            }
-            if (completed.size() == before) { return refuse("static getter dependency cycle"); }
-        }
-        for (ctjs::GetPropertyOp read : reads) {
-            if (!step()) { return false; }
-            auto callee = resolve(read);
-            if (!callee) { return refuse("constructor read lacks an exact local static getter"); }
-            getterReads.emplace_back(read, callee);
-        }
-        // Charge every clone before any mutation, including repeated reads and
-        // the transitive expansion copied from already-expanded getter bodies.
-        for (const auto & item : llvm::drop_begin(getterReads, firstRead)) {
-            const unsigned cost = expansion.lookup(item.second);
-            if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
-            remaining -= cost;
-        }
-        return true;
-    }
-
-    // ponytail: immutable local base methods/getters; inheritance needs a complete
-    // receiver/home proof before widening.
-    bool examine(ctjs::CallOp call) {
-        if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
-            !call.getResult().use_empty()) {
-            return refuse("class helper needs one local constructor and an unused result");
-        }
-        auto closure = call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
-        auto function = target(closure);
-        if (!function || !undefined(closure.getEnclosingThis()) || !closure.getUpvalues().empty() ||
-            closure->getBlock() != call->getBlock() || !closure->isBeforeInBlock(call)) {
-            return refuse("class constructor lacks a local ordinary closure identity");
-        }
-        ctjs::SetPropertyOp attachment, home, backedge;
-        llvm::SmallVector<ctjs::ConstructOp> instances;
-        llvm::StringMap<ctjs::DefineAccessorOp> staticDefinitions;
-        llvm::SmallVector<ctjs::GetPropertyOp> staticReads;
-        llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
-        for (mlir::OpOperand & use : closure.getResult().getUses()) {
-            if (!step()) { return false; }
-            auto * op = use.getOwner();
-            if (op == call && use.getOperandNumber() == 2) { continue; }
-            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-            if (auto definition = llvm::dyn_cast<ctjs::DefineAccessorOp>(op)) {
-                if (use.getOperandNumber() != 0 || definition->getBlock() != call->getBlock() ||
-                    !definition->isBeforeInBlock(call) ||
-                    !staticDefinitions.try_emplace(definition.getName(), definition).second) {
-                    return refuse("static accessor setup is repeated or outside initialization");
-                }
-                continue;
-            }
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-                if (use.getOperandNumber() != 0 || read->getBlock() != call->getBlock() ||
-                    !call->isBeforeInBlock(read)) {
-                    return refuse("static getter read lacks completed local initialization");
-                }
-                staticReads.push_back(read);
-                continue;
-            }
-            if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-                if (use.getOperandNumber() >= 2 || made.getCallee() != closure.getResult() ||
-                    made.getNewTarget() != closure.getResult() ||
-                    made->getBlock() != call->getBlock() || !call->isBeforeInBlock(made)) {
-                    return refuse("class construction escapes or lacks exact local new.target");
-                }
-                if (use.getOperandNumber() == 0) { instances.push_back(made); }
-                continue;
-            }
-            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
-            if (!write || write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
-                return refuse("class constructor has an observable use outside its setup");
-            }
-            const auto key = ctjs::constantKey(write.getKey());
-            if (use.getOperandNumber() == 0 && key == "prototype" && !attachment) {
-                attachment = write;
-            } else if (use.getOperandNumber() == 0 && key == "__home" && !home) {
-                home = write;
-            } else if (use.getOperandNumber() == 2 && key == "constructor" && !backedge) {
-                backedge = write;
-            } else if (use.getOperandNumber() == 2 && key == "__home") {
-                getterHomes.push_back(write); // Rechecked against exact getters below.
-            } else {
-                return refuse("class methods, static fields or repeated setup remain unsupported");
-            }
-        }
-        auto prototype = attachment ? attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>()
-                                    : ctjs::CreateObjectOp{};
-        if (!prototype || !home || !backedge || instances.empty() ||
-            prototype->getBlock() != call->getBlock() || home.getValue() != prototype.getResult() ||
-            backedge.getObject() != prototype.getResult()) {
-            return refuse("class setup needs its exact fresh prototype, constructor and home");
-        }
-        const auto firstConstructorRead = constructorReads.size();
-        llvm::StringSet<> methodKeys;
-        llvm::SmallVector<ctjs::SetPropertyOp> definitions;
-        for (mlir::OpOperand & use : prototype.getResult().getUses()) {
-            if (!step()) { return false; }
-            auto * op = use.getOwner();
-            if ((op == attachment || op == home) && use.getOperandNumber() == 2) { continue; }
-            if (op == backedge && use.getOperandNumber() == 0) { continue; }
-            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
-            if (!write || write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
-                return refuse("class prototype is observed or mutated outside initialization");
-            }
-            if (use.getOperandNumber() == 2 && ctjs::constantKey(write.getKey()) == "__home") {
-                continue; // Rechecked against the exact method closure below.
-            }
-            if (use.getOperandNumber() != 0 || !ctjs::ordinaryKey(write.getKey()) ||
-                !methodKeys.insert(ctjs::constantKey(write.getKey())).second) {
-                return refuse("class prototype needs unique ordinary method definitions");
-            }
-            definitions.push_back(write);
-        }
-        llvm::DenseSet<mlir::Operation *> methodHomes;
-        for (ctjs::SetPropertyOp definition : definitions) {
-            auto method = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-            auto fn = target(method);
-            if (!step() || !fn || method->getBlock() != call->getBlock() ||
-                !method->isBeforeInBlock(definition) || !undefined(method.getEnclosingThis()) ||
-                !method.getUpvalues().empty()) {
-                return refuse("class method needs a local ordinary capture-free closure");
-            }
-            ctjs::SetPropertyOp methodHome;
-            for (mlir::OpOperand & use : method.getResult().getUses()) {
-                if (!step()) { return false; }
-                auto * op = use.getOwner();
-                if (op == definition && use.getOperandNumber() == 2) { continue; }
-                if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-                auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
-                if (methodHome || !write || use.getOperandNumber() != 0 ||
-                    ctjs::constantKey(write.getKey()) != "__home" ||
-                    write.getValue() != prototype.getResult() ||
-                    write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
-                    return refuse("class method identity or lexical home escapes initialization");
-                }
-                methodHome = write;
-            }
-            auto & block = fn.getBody().front();
-            if (!methodHome || !block.getArgument(ctjs::arg_callee).use_empty() ||
-                !block.getArgument(ctjs::arg_new_target).use_empty() ||
-                !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
-                return refuse("class method observes its identity, home or an unproved receiver");
-            }
-            methods.insert(fn);
-            methodHomes.insert(methodHome);
-            setup.insert(methodHome);
-        }
-        for (mlir::OpOperand & use : prototype.getResult().getUses()) {
-            if (!step()) { return false; }
-            if (use.getOperandNumber() == 2 && use.getOwner() != attachment &&
-                use.getOwner() != home && !methodHomes.contains(use.getOwner())) {
-                return refuse("class prototype reaches an unrelated lexical home");
-            }
-        }
-        for (ctjs::ConstructOp made : instances) {
-            if (!fieldsOnly(made.getResult(), methodKeys, staticReads, true)) { return false; }
-        }
-        if (!definitions.empty() || constructorReads.size() != firstConstructorRead) {
-            for (ctjs::ReturnOp returned : function.getBody().front().getOps<ctjs::ReturnOp>()) {
-                if (!step() || !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
-                    return refuse(
-                        "class receiver getter or method needs a primitive constructor return");
-                }
-            }
-        }
-        auto & entry = function.getBody().front();
-        if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
-            !entry.getArgument(ctjs::arg_callee).use_empty() ||
-            !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
-            return refuse(
-                "class constructor observes new.target, lexical home or receiver identity");
-        }
-        if (!staticGetters(staticDefinitions, staticReads, call)) { return false; }
-        for (ctjs::SetPropertyOp write : getterHomes) {
-            if (!step()) { return false; }
-            if (!setup.contains(write)) {
-                return refuse("class constructor reaches an unrelated getter home");
-            }
-        }
-        constructors.insert(function);
-        // Keep method definitions on the prototype until constructor lowering.
-        // They must already be available when the constructor body runs.
-        if (definitions.empty()) {
-            setup.insert(attachment);
-        } else {
-            retainedSetup.insert(attachment);
-        }
-        setup.insert(home);
-        setup.insert(backedge);
-        return true;
-    }
-
-    bool prove(const HostContract & contract) {
-        auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
-        if (!entry || functionIndex(entry) != 0) {
-            return refuse("class initialization requires the closed script entry");
-        }
-        for (mlir::Operation & op : module.getBody()->getOperations()) {
-            if (!step()) { return false; }
-            auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
-            auto index = fn ? functionIndex(fn) : std::nullopt;
-            if (!fn || !index || fn.getBody().empty() || fn.getUpvalueCount() != 0 ||
-                fn.getBody().front().getNumArguments() < 3 ||
-                !functions.try_emplace(*index, fn).second) {
-                return refuse(
-                    "class initialization requires complete capture-free source functions");
-            }
-        }
-        llvm::DenseSet<int64_t> createdFunctions;
-        auto walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (op->hasAttr("ctjs.skipped")) {
-                refuse("class initialization cannot omit source functions");
-                return mlir::WalkResult::interrupt();
-            }
-            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
-                closure && !createdFunctions.insert(closure.getFunction()).second) {
-                refuse("class initialization requires unique source closure creation sites");
-                return mlir::WalkResult::interrupt();
-            }
-            if (op->getNumRegions() && op != module.getOperation() &&
-                !(llvm::isa<ctjs::FuncOp>(op) && op->getParentOp() == module.getOperation()) &&
-                !llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                           mlir::scf::IndexSwitchOp>(op)) {
-                refuse("class initialization contains an unchecked source region");
-                return mlir::WalkResult::interrupt();
-            }
-            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
-                auto [at, fresh] = globals.try_emplace(store.getName(), store);
-                if (!fresh) { at->second = {}; }
-            }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-                auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                if (load && load.getName() == host_detail::classDefinedIntrinsic) {
-                    calls.push_back(call);
-                }
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (walked.wasInterrupted()) { return false; }
-        if (calls.empty()) { return refuse("source has no class initialization calls"); }
-        if (llvm::is_contained(contract.initialIntrinsics, "Error")) {
-            walked = module.walk([&](ctjs::ConstructOp made) -> mlir::WalkResult {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                if (!load || load.getName() != "Error" || made.getNewTarget() != load.getResult() ||
-                    made.getArgs().size() != 1) {
-                    return mlir::WalkResult::advance();
-                }
-                auto message = made.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
-                if (!message || !llvm::isa<ctjs::StringAttr>(message.getValue())) {
-                    return mlir::WalkResult::advance();
-                }
-                for (mlir::OpOperand & use : made.getResult().getUses()) {
-                    if (!step()) { return mlir::WalkResult::interrupt(); }
-                    if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                    auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(use.getOwner());
-                    if (!thrown) {
-                        refuse("declared Error payload escapes its throw");
-                        return mlir::WalkResult::interrupt();
-                    }
-                    errorOperations.insert(thrown);
-                }
-                errorOperations.insert(load);
-                errorOperations.insert(made);
-                return mlir::WalkResult::advance();
-            });
-            if (walked.wasInterrupted()) { return false; }
-        }
-        for (ctjs::CallOp call : calls) {
-            if (!examine(call)) { return false; }
-        }
-        walked = module.walk([&](ctjs::CallDirectOp call) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            auto closure = sourceClosure(call.getCalleeValue());
-            auto fn = target(closure);
-            if (!fn || call.getTarget() != fn || constructors.contains(fn) ||
-                methods.contains(fn) || getters.contains(fn) || !undefined(call.getReceiver()) ||
-                !undefined(call.getNewTarget())) {
-                return mlir::WalkResult::advance();
-            }
-            auto & block = fn.getBody().front();
-            if (!block.getArgument(ctjs::arg_receiver).use_empty() ||
-                !block.getArgument(ctjs::arg_new_target).use_empty()) {
-                return mlir::WalkResult::advance();
-            }
-            helpers.insert(fn);
-            helperCalls.insert(call);
-            return mlir::WalkResult::advance();
-        });
-        if (walked.wasInterrupted() || !reason.empty()) { return false; }
-        // No ambient object, unknown callee, accessor, dynamic key or reflective
-        // instruction can replace the fixed helper between entry and any call.
-        // Reject the whole module, including suffixes and uncalled bodies.
-        walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
-                llvm::is_contained(calls, op) || llvm::is_contained(constructorReads, op)) {
-                return mlir::WalkResult::advance();
-            }
-            if (errorOperations.contains(op) &&
-                throwingGetters.contains(op->getParentOfType<ctjs::FuncOp>())) {
-                return mlir::WalkResult::advance();
-            }
-            bool accepted =
-                llvm::isa<mlir::ModuleOp, ctjs::ConstantOp, ctjs::CreateObjectOp,
-                          ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp,
-                          ctjs::StoreGlobalOp, ctjs::BinaryOp, ctjs::UnaryOp, ctjs::CompareOp,
-                          ctjs::TruthyOp, ctjs::FromBoolOp>(op);
-            // Proved ordinary methods and exact local helpers may contain control flow.
-            // The recursive census still checks every arm/body, including ones
-            // never called. Setup, constructors and getter cloning stay linear.
-            // The lift represents break/continue/return edges with integer
-            // flags and switches. These exact transport ops cannot reenter or
-            // change the class helper; switch arms still get the full census.
-            // Static ++/-- conversions also cannot reenter; native admission
-            // separately requires numeric operands before emitting arithmetic.
-            if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                          mlir::scf::IndexSwitchOp, mlir::scf::YieldOp, mlir::scf::ConditionOp,
-                          mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp,
-                          mlir::arith::TruncIOp, mlir::ub::PoisonOp, ctjs::BinaryStaticOp,
-                          mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(op)) {
-                auto fn = op->getParentOfType<ctjs::FuncOp>();
-                accepted = methods.contains(fn) || helpers.contains(fn);
-                if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
-                    dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());
-                }
-            }
-            if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(op)) {
-                // An uncaught object throw can reenter through formatting.
-                // Preserve literal primitive throws; downstream lowering still
-                // has to prove their completion and payload representation.
-                accepted = (methods.contains(op->getParentOfType<ctjs::FuncOp>()) ||
-                            throwingGetters.contains(op->getParentOfType<ctjs::FuncOp>())) &&
-                           thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
-            }
-            if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
-                auto & block = fn.getBody().front();
-                bool unusedReceiver = true;
-                for (mlir::OpOperand & use : block.getArgument(ctjs::arg_receiver).getUses()) {
-                    if (!step()) { return mlir::WalkResult::interrupt(); }
-                    auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-                    // An arrow may save this without ever observing it. Its
-                    // exact helper body was checked before accepting the call.
-                    unusedReceiver &=
-                        closure && use.getOperandNumber() == 1 && helpers.contains(target(closure));
-                }
-                accepted = methods.contains(fn) || helpers.contains(fn) ||
-                           (llvm::hasSingleElement(fn.getBody()) &&
-                            (constructors.contains(fn) || getters.contains(fn) ||
-                             (block.getNumArguments() == 3 && unusedReceiver &&
-                              block.getArgument(ctjs::arg_new_target).use_empty())));
-            }
-            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
-                auto fn = target(closure);
-                accepted = fn && fn != entry && closure.getUpvalues().empty() &&
-                           (undefined(closure.getEnclosingThis()) || helpers.contains(fn));
-            }
-            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-                accepted = load.getName() == host_detail::classDefinedIntrinsic ||
-                           static_cast<bool>(sourceClosure(load.getResult()));
-            }
-            if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-                accepted = helperCalls.contains(call);
-            }
-            if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-                accepted = constructors.contains(
-                    target(made.getCallee().getDefiningOp<ctjs::CreateClosureOp>()));
-            }
-            mlir::Value key;
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
-            if (key) {
-                auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-                // Literal Number keys cannot name a prototype hook or invoke
-                // user coercion. Native field/index representation is separate.
-                accepted = ctjs::ordinaryKey(key) ||
-                           (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
-                            llvm::isa<ctjs::NumberAttr>(constant.getValue()));
-            }
-            if (accepted) { return mlir::WalkResult::advance(); }
-            auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-            refuse("class initialization source contains an unknown call, binding or reflective "
-                   "effect" +
-                   (load ? " (global \"" + load.getName().str() + "\")" : std::string{}));
-            return mlir::WalkResult::interrupt();
-        });
-        if (walked.wasInterrupted()) { return false; }
-        // Closure references and calls are covered above. Symbol attributes
-        // must not retain a getter definition after all its reads are expanded.
-        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-            if (!uses) { return refuse("static getter symbol uses could not be enumerated"); }
-            for (const auto & use : *uses) {
-                if (!step()) { return false; }
-                auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef());
-                if (!target) {
-                    return refuse("class initialization has an unresolved symbol reference");
-                }
-                if (getters.contains(target)) {
-                    return refuse("static getter has a remaining symbol reference");
-                }
-            }
-        }
-        return true;
-    }
-
-    bool normalizeMethods() {
-        for (mlir::Operation * operation : dispatchMethods) {
-            auto function = llvm::cast<ctjs::FuncOp>(operation);
-            // Charge the private copy before allocating it. All source effect
-            // and receiver checks have finished; only structural transport is
-            // normalized, with the existing bounded exception machinery.
-            auto walked = function.walk([&](mlir::Operation * op) {
-                const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-                if (cost > remaining) {
-                    refuse("class initialization work budget exhausted");
-                    return mlir::WalkResult::interrupt();
-                }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
-            });
-            if (walked.wasInterrupted()) { return false; }
-            mlir::IRMapping mapping;
-            mlir::OwningOpRef<ctjs::FuncOp> copy(
-                llvm::cast<ctjs::FuncOp>(function->clone(mapping)));
-            if (auto failed = lowering_detail::normalizeStructuredExits(*copy, remaining)) {
-                auto message = llvm::toString(std::move(failed));
-                return refuse(message == "native exception recovery work budget exhausted"
-                                  ? "class initialization work budget exhausted"
-                                  : message);
-            }
-            // Exit normalization moves branch bodies without replacing their
-            // property reads. Expansion must follow the private copy too.
-            for (auto & [read, target] : getterReads) {
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-                }
-            }
-            for (ctjs::GetPropertyOp & read : constructorReads) {
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-                }
-            }
-            normalizedMethods.emplace_back(function, std::move(copy));
-        }
-        return true;
-    }
-};
 
 struct CTNativeSpecializeClassInitializationPass
     : impl::CTNativeSpecializeClassInitializationBase<CTNativeSpecializeClassInitializationPass> {
@@ -764,15 +46,28 @@ struct CTNativeSpecializeClassInitializationPass
             !llvm::is_contained(contract->initialIntrinsics, host_detail::classDefinedIntrinsic) ||
             llvm::any_of(contract->initialIntrinsics,
                          [](const auto & name) {
-                             return name != host_detail::classDefinedIntrinsic && name != "Error";
+                             return !host_detail::classIntrinsicArity(name) && name != "Error";
                          }) ||
             contract->realmGlobalThis || contract->classicScriptRealm ||
             !contract->absentBindings.empty() || !contract->undefinedBindings.empty()) {
-            module.emitError("class initialization requires the standard class helper and optional "
-                             "Error identity");
+            module.emitError("class initialization requires standard class helper identities and "
+                             "optional Error identity");
             return signalPassFailure();
         }
-        classInitialization proof{module, maxSteps};
+        // Super normalization is speculative; refusal publishes no partial body.
+        unsigned remaining = maxSteps;
+        const auto counted = module.walk([&](mlir::Operation * op) {
+            const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
+            if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+            remaining -= static_cast<unsigned>(cost);
+            return mlir::WalkResult::advance();
+        });
+        if (counted.wasInterrupted()) {
+            module.emitError("class initialization work budget exhausted");
+            return signalPassFailure();
+        }
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(module.clone());
+        classInitialization proof{*candidate, remaining};
         if (!proof.prove(*contract)) {
             module.emitError() << proof.reason;
             return signalPassFailure();
@@ -786,87 +81,51 @@ struct CTNativeSpecializeClassInitializationPass
             module.emitError() << proof.reason;
             return signalPassFailure();
         }
-        // All current-IR checks precede the first mutation. Nothing inferred
-        // from report attributes authorizes removal, even on a repeated run.
-        module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-        for (auto & [function, copy] : proof.normalizedMethods) {
-            (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-            function.getBody().takeBody(copy->getBody());
-        }
-        llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
-        for (auto [read, target] : proof.getterReads) { reads[target].push_back(read); }
-        for (ctjs::FuncOp target : proof.getterOrder) {
-            for (ctjs::GetPropertyOp read : reads[target]) {
-                mlir::OpBuilder at(read);
-                if (proof.throwingGetters.contains(target)) {
-                    // Keep the throw in its original function. A direct call
-                    // preserves abrupt completion without cloning a terminator
-                    // into the middle of the reader's block. Native completion
-                    // and Error representation remain separate admission proofs.
-                    auto undefined = ctjs::ConstantOp::create(
-                        at, read.getLoc(), read.getType(), ctjs::UndefinedAttr::get(&getContext()));
-                    auto scope = read->getParentOfType<ctjs::FuncOp>();
-                    auto closure = ctjs::CreateClosureOp::create(
-                        at, read.getLoc(), read.getType(),
-                        scope.getBody().front().getArgument(ctjs::arg_callee), undefined,
-                        at.getI32IntegerAttr(static_cast<int32_t>(*functionIndex(target))),
-                        mlir::ValueRange{}, mlir::DenseI32ArrayAttr{});
-                    auto call = ctjs::CallDirectOp::create(
-                        at, read.getLoc(), read.getType(),
-                        mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), undefined, undefined,
-                        closure, mlir::ValueRange{}, nullptr, nullptr);
-                    read.getResult().replaceAllUsesWith(call.getResult());
-                    read.erase();
-                    continue;
-                }
-                mlir::IRMapping mapping;
-                // Dependencies have already been expanded. This closed body
-                // has no remaining implicit-argument or external-value uses.
-                // Clone at each original read, preserving evaluation order and
-                // fresh object identity, including through getter dependencies.
-                for (mlir::Operation & op : target.getBody().front()) {
-                    if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp>(op)) { continue; }
-                    if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
-                        read.getResult().replaceAllUsesWith(mapping.lookup(returned.getValue()));
-                    } else {
-                        at.clone(op, mapping);
-                    }
-                }
-                read.erase();
-            }
-        }
-        for (ctjs::GetPropertyOp read : proof.constructorReads) {
-            for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
-                root->erase(); // Only inert roots remain after getter expansion.
-            }
-            read.erase();
-        }
-        for (ctjs::CallOp call : proof.calls) { call.erase(); }
-        for (mlir::Operation * op : proof.setup) { op->erase(); }
-        for (ctjs::CreateClosureOp closure : proof.getterClosures) {
-            for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
-                root->erase(); // Only inert roots remain after descriptor removal.
-            }
-            closure.erase();
-        }
-        // Original getter closures are gone; every new numeric closure has a
-        // matching direct symbol call. Remove callers before their dependencies
-        // so unused throwing chains disappear in one pass.
-        // ponytail: one symbol scan per getter; index uses if large classes need it.
-        for (ctjs::FuncOp getter : llvm::reverse(proof.getterOrder)) {
-            if (!proof.throwingGetters.contains(getter) ||
-                mlir::SymbolTable::symbolKnownUseEmpty(getter, &module.getBodyRegion())) {
-                getter.erase();
-            }
-        }
-        module.walk([&](ctjs::LoadGlobalOp load) {
-            if (load.getName() == host_detail::classDefinedIntrinsic &&
-                load.getResult().use_empty()) {
-                load.erase();
-            }
-        });
+        proof.rewrite();
+        module->setAttrs((*candidate)->getAttrs());
+        module.getBodyRegion().takeBody(candidate->getBodyRegion());
     }
 };
 
 } // namespace
+
+llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps) {
+    const auto refuse = [](const llvm::Twine & reason) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+    };
+    if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
+         contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
+        llvm::count(contract.initialIntrinsics, host_detail::classDefinedIntrinsic) != 1 ||
+        llvm::count(contract.initialIntrinsics, "Error") > 1 || contract.realmGlobalThis ||
+        contract.classicScriptRealm || !contract.absentBindings.empty() ||
+        !contract.undefinedBindings.empty() || !contract.realmOwnDataProperties.empty()) {
+        return refuse("DOM class initialization requires the standard class helper and optional "
+                      "Error identity");
+    }
+    classInitialization proof{module, maxSteps};
+    if (!proof.prove(contract, true)) { return refuse(proof.reason); }
+    // Reuse the binding proof before consuming its declaration. This projected
+    // contract proves helper and optional Error identity; DOM declarations and
+    // parameters are proved later. Referenced throwing getters retain their
+    // original bodies and must pass the final typed DOM proof after rewriting.
+    HostContract binding = contract;
+    binding.provider = HostContract::Provider::closedSource;
+    binding.elementParameters.clear();
+    llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
+        return !host_detail::classIntrinsicArity(name) && name != "Error";
+    });
+    if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+        return refuse(problem);
+    }
+    if (!proof.normalizeMethods()) { return refuse(proof.reason); }
+    proof.rewrite();
+    llvm::erase_if(contract.initialIntrinsics, [](const auto & name) {
+        // Heritage and super helpers remain declared until their operations
+        // have a semantic normalization; binding identity alone consumes none.
+        return name == host_detail::classDefinedIntrinsic || name == "Error";
+    });
+    if (!proof.proveDOMMethods(contract)) { return refuse(proof.reason); }
+    return llvm::Error::success();
+}
+
 } // namespace ctcompile::ctnative

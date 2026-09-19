@@ -4,7 +4,8 @@
 # still provides run_app() over the headless backend, which is what makes "SDL3
 # is optional" true of the BUILD and not just of the engine.
 add_library(ctbrowser-app)
-ctbrowser_subsystem_sources(ctbrowser-app app)
+target_sources(ctbrowser-app PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
+add_subdirectory(app)
 target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-app)
 target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster

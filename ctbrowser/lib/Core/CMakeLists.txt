@@ -1,7 +1,18 @@
 # ctbrowser.core - the foundation: slab allocation, generation-tagged handles,
 # atoms, the thread pool, geometry. Knows nothing about browsers.
 add_library(ctbrowser-core)
-ctbrowser_subsystem_sources(ctbrowser-core core)
+target_sources(ctbrowser-core PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
+target_sources(ctbrowser-core PRIVATE
+  algorithms.cpp
+  allocator.cpp
+  atom.cpp
+  json.cpp
+  number_format.cpp
+  scheduler.cpp
+  unicode_lowercase.cpp
+  unicode_lowercase.inc
+  uri.cpp
+)
 target_compile_features(ctbrowser-core PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-core)
 target_link_libraries(ctbrowser-core PUBLIC Boost::headers)

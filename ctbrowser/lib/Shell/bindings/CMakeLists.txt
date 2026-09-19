@@ -1,0 +1,32 @@
+target_sources(ctbrowser-shell PRIVATE
+  abort.cpp
+  animation_effects.cpp
+  animations.cpp
+  canvas.cpp
+  css.cpp
+  custom_element_reactions.cpp
+  custom_elements.cpp
+  domparsing.cpp
+  element_internals.cpp
+  exceptions.cpp
+  frames.cpp
+  image_data.hpp
+  media_queries.cpp
+  mutation.cpp
+  names.hpp
+  performance.cpp
+  promise_rejections.cpp
+  resources.cpp
+  selection.cpp
+  shadow_dom.cpp
+  xhr.cpp
+)
+
+add_subdirectory(animations)
+add_subdirectory(computed_style)
+add_subdirectory(document)
+add_subdirectory(element)
+add_subdirectory(events)
+add_subdirectory(stylesheets)
+add_subdirectory(webgl)
+add_subdirectory(window)
