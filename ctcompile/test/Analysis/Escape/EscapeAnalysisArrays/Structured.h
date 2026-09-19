@@ -465,6 +465,33 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(lengthReload, "    %unit = ctjs.binary sub %size, %one",
                    "    %max = ctjs.constant #ctjs.number<4751297606873776128>\n"
                    "    %unit = ctjs.binary add %size, %max"));
+    const auto stringLength =
+        replace(replace(original, "    %step =",
+                        "    %text = ctjs.constant #ctjs.string<\"a\">\n"
+                        "    %name = ctjs.constant #ctjs.string<\"length\">\n"
+                        "    %unit = ctjs.get_property %text[%name]\n    %step ="),
+                "add %i, %one", "add %i, %unit");
+    rows.push_back({.what = "original ASCII String length is an invariant Number stride",
+                    .body = stringLength,
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "an ASCII length stride preserves discarded child confinement",
+                    .body = replace(stringLength, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "zero -> {}"});
+    for (const std::string & text : {std::string{}, std::string{"é"}, std::string(257, 'a')}) {
+        reject("String length refuses zero strides, Unicode and its scan ceiling",
+               replace(stringLength, "#ctjs.string<\"a\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    reject("String length requires its original exact key",
+           replace(stringLength, "%text[%name]", "%text[%zero]"));
+    reject("computed Strings cannot borrow literal length provenance",
+           replace(stringLength, "ctjs.constant #ctjs.string<\"a\">", "ctjs.unary typeof %one"));
+    reject("String length cannot bypass loop writes",
+           replace(stringLength,
+                   "    %unit =", "    ctjs.set_property %base[%zero], %one\n    %unit ="));
     reject("structured induction refuses a computed negative start",
            replace(computedStart, "unary plus %zero", "unary neg %one"));
     reject("structured induction cannot convert a String start into a Number proof",

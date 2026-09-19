@@ -895,6 +895,24 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
+std::optional<std::size_t> boundedStringLength(const ContentsValue & base,
+                                               const ContentsValue & key) {
+    if (!base.string() || !base.origin() || !key.origin()) { return std::nullopt; }
+    const auto name = ownObjectKey(key.origin());
+    if (!name || name.getValue() != "length") { return std::nullopt; }
+    auto literal = base.origin().getDefiningOp<ctjs::ConstantOp>();
+    auto string =
+        literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+    if (!string) { return std::nullopt; }
+    const auto text = string.getValue();
+    // ponytail: bound the scan to 256 original ASCII bytes. Wider/computed Strings
+    // need charged provenance; Unicode needs agreement with Script's byte length.
+    if (text.size() > 256 || !llvm::all_of(text, [](unsigned char c) { return c < 128; })) {
+        return std::nullopt;
+    }
+    return text.size();
+}
+
 // One signed magnitude of an exact primitive Number conversion. Facts attach
 // only to the operation result; primitive origins keep their property keys.
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input,
@@ -1313,6 +1331,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const auto base = self(self, load.getObject(), depth + 1);
                 const auto key = self(self, load->getOperand(1), depth + 1);
                 if (!base || !key || !base->origin() || !key->origin()) { return std::nullopt; }
+                if (const auto length = boundedStringLength(*base, *key)) {
+                    result.integerNumber = length;
+                    return result;
+                }
                 const auto array = state.arrays.find(base->origin().getDefiningOp());
                 if (array == state.arrays.end()) { return std::nullopt; }
                 // The complete loop census below rejects mutations and effects.
@@ -2127,6 +2149,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 continue;
             }
             if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
+                if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(&op)) {
+                    if (const auto length =
+                            boundedStringLength(held(load.getObject()), held(op.getOperand(1)))) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        state.values[load.getResult()] = {load.getResult(), ContentsKind::NonBigInt,
+                                                          length};
+                        continue;
+                    }
+                }
                 const mlir::Value base = origin(op.getOperand(0));
                 mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
                 auto object = state.objects.find(container);
