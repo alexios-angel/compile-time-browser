@@ -1,5 +1,6 @@
 # Test registration by subsystem. Includes share this directory scope so
-# source paths, generated outputs and helper functions keep their meaning.
+# generated outputs, test commands and helper functions keep their meaning.
+# Handwritten sources are registered by the directories that own them below.
 
 # ONE check(), ONE COUNTER: ctbrowser/test/support/check.hpp - check(),
 # CHECK, CHECK_EQ, REPORT and the terminate/signal trace - for every test
@@ -26,3 +27,12 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/PartialEvaluation.cmake")
 # Last: lit.site.cfg.py carries CTCOMPILE_BOOTSTRAP_NODE (BootstrapData.cmake)
 # and the reference executable (Native.cmake), so they must exist first.
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/Lit.cmake")
+
+# Local source ownership; target options and generated fixtures are configured above.
+add_subdirectory(Analysis)
+add_subdirectory(CTJS)
+add_subdirectory(CTNative)
+add_subdirectory(Comparison)
+add_subdirectory(Core)
+add_subdirectory(Packaging)
+add_subdirectory(Runtime)

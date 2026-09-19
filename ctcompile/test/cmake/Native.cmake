@@ -12,7 +12,7 @@
 # file, built wherever the type oracle is: the answer side of the gate should
 # not depend on the compiler side existing, and a lowering author wants it on a
 # box with no LLVM too.
-add_executable(ctcompile-test-native-reference Runtime/Reference/Interpreter.cpp)
+add_executable(ctcompile-test-native-reference)
 target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-native-reference)
 
@@ -21,7 +21,7 @@ ctcompile_target(ctcompile-test-native-reference)
 # compiles it under -Werror - a header only generated programs compile is the
 # string literal it replaced. Needs no MLIR, like the reference above; needs
 # ctbrowser for its DOM section.
-add_executable(ctcompile-test-native-runtime Runtime/NativeRuntime.cpp)
+add_executable(ctcompile-test-native-runtime)
 target_link_libraries(ctcompile-test-native-runtime PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-native-runtime)
 add_test(NAME ctcompile_native_runtime COMMAND ctcompile-test-native-runtime)
@@ -51,7 +51,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
     DEPENDS "${_native_module}" ctjs-translate
     COMMENT "Emitting native-fixture.emitc.mlir to C++ for the VM-linked control"
     VERBATIM)
-  add_executable(ctcompile-test-native-vm-linked Runtime/Reference/VmLinked.cpp "${_native_cpp}")
+  add_executable(ctcompile-test-native-vm-linked "${_native_cpp}")
   target_link_libraries(ctcompile-test-native-vm-linked PRIVATE ctbrowser::ctbrowser)
   target_compile_features(ctcompile-test-native-vm-linked PRIVATE cxx_std_23)
   # THE GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under
