@@ -120,6 +120,15 @@ OBSERVATIONS = {
     "field-initializer": (7, 7),
     "inherited": (7, 7),
     "inherited-explicit": (7, 7),
+    "inherited-order": (312, 312),
+    "inherited-chain": (13, 13),
+    "inherited-base-instance": (27, 27),
+    "inherited-new-target": (8, 8),
+    "inherited-replacement": (9, 9),
+    "inherited-number-return": (7, 7),
+    "inherited-fields": (9, 9),
+    "inherited-missing-super": (None, None),
+    "inherited-double-super": (None, None),
     "inherited-dispatch": (118, 118),
     "bootstrap-base": (7, 7),
     "static-getter": (1, 1),
@@ -182,6 +191,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-base-instance",
+    "inherited-explicit",
+    "inherited-order",
+    "inherited-chain",
     "local-holder-method",
     "local-holder-arrow",
     "local-holder-branches",
@@ -362,6 +375,68 @@ def check_ancestry_inputs(args, source, manifest):
         diagnostic="class heritage needs its declared direct helper",
     )
     return len(cases) + 1
+
+
+def check_super_inputs(args, source, manifest):
+    text = source.read_text()
+    guard = re.search(r'(%\w+) = "ctjs.create_cell"\((%\w+)\)', text)
+    write = re.search(
+        r'^.*"ctjs.cell_set"\(' + re.escape(guard[1]) + r", (%\w+)\)[^\n]+\n", text, re.M
+    )
+    passing = re.search(r'^.*"ctjs.pass_new_target"[^\n]+\n', text, re.M)
+    if not write or not passing:
+        raise RuntimeError("explicit super control lost its original guard or new.target")
+    cases = {
+        "true-guard": text.replace("#ctjs.boolean<false>", "#ctjs.boolean<true>", 1),
+        "false-write": text.replace(write[0], write[0].replace(write[1], guard[2])),
+        "missing-new-target": text.replace(passing[0], ""),
+        "escaped-guard": text.replace(
+            write[0],
+            write[0]
+            + '    "ctjs.store_global"('
+            + guard[1]
+            + ') <{name = "leaked_guard"}> : (!ctjs.value) -> ()\n',
+        ),
+        "unknown-effect": text.replace(
+            passing[0],
+            '    %ambient = "ctjs.load_global"() <{name = "unproved", typeof_lookup = false}> : () -> !ctjs.value\n'
+            + passing[0],
+        ),
+    }
+    for label, changed in cases.items():
+        path = args.work / f"super-{label}.mlir"
+        path.write_text(changed)
+        prepare(
+            args,
+            f"super-{label}",
+            path,
+            dict(manifest, module_sha256=host.fingerprint(args.opt, path)),
+            success=False,
+        )
+    for name in ("__ctbrowser_bind_this", "__ctbrowser_init_fields"):
+        prepare(
+            args,
+            f"super-undeclared-{name}",
+            source,
+            dict(
+                manifest,
+                initial_intrinsics=[
+                    item for item in manifest["initial_intrinsics"] if item != name
+                ],
+            ),
+            success=False,
+            diagnostic="super initialization requires declared helper identities",
+        )
+    prepare(
+        args,
+        "super-budget",
+        source,
+        manifest,
+        success=False,
+        options="max-steps=0",
+        diagnostic="work budget exhausted",
+    )
+    return len(cases) + 3
 
 
 def check_proof_inputs(args, source, manifest, prepared, name):
@@ -851,7 +926,7 @@ def main():
                 # Generic assembly preserves every operation and operand.
                 *(
                     ["--mlir-print-op-generic"]
-                    if name in ("inherited-explicit", "inherited-dispatch", "bootstrap-base")
+                    if name.startswith("inherited-") or name == "bootstrap-base"
                     else []
                 ),
                 "-o",
@@ -937,6 +1012,7 @@ def main():
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
         if name == "inherited-explicit":
             preparation_refusals += check_ancestry_inputs(args, structured, manifest)
+            preparation_refusals += check_super_inputs(args, structured, manifest)
         if name == "bootstrap-r":
             key_checked, key_refused = check_prototype_keys(args, prepared)
         if name == "global-holder-chain":

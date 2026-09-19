@@ -774,9 +774,321 @@ struct classInitialization {
                sourceValue(use.get()) == constructor;
     }
 
-    // ponytail: ordered local ancestry; super construction and inherited dispatch
-    // still require receiver/home normalization before semantic admission.
-    bool examine(ctjs::CallOp call, bool domEntry) {
+    // ponytail: explicit super statements over field-only local bases. Inherited
+    // methods, fields, replacement returns and default rest/apply need their own proof.
+    bool normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base, const HostContract & contract) {
+        auto & original = function.getBody().front();
+        if (!llvm::hasSingleElement(base.getBody()) ||
+            !original.getArgument(ctjs::arg_new_target).use_empty() ||
+            !original.getArgument(ctjs::arg_callee).use_empty()) {
+            return refuse("derived class requires receiver-preserving super normalization");
+        }
+        auto returned = llvm::dyn_cast<ctjs::ReturnOp>(base.getBody().front().getTerminator());
+        if (!returned || !undefined(returned.getValue())) {
+            return refuse("super base requires an undefined constructor return");
+        }
+        for (llvm::StringRef name : {"__ctbrowser_bind_this", "__ctbrowser_init_fields"}) {
+            if (!llvm::is_contained(contract.initialIntrinsics, name)) {
+                return refuse("super initialization requires declared helper identities");
+            }
+        }
+        // Other class/helper/global records borrow original operations. Keep
+        // this first constructor slice free of declarations/publications instead
+        // of invalidating those records while replacing its private body.
+        for (auto fn : {function, base}) {
+            const auto census = fn.walk([&](mlir::Operation * op) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp>(op)) {
+                    refuse("super constructor declarations and global writes remain unsupported");
+                    return mlir::WalkResult::interrupt();
+                }
+                return mlir::WalkResult::advance();
+            });
+            if (census.wasInterrupted()) { return false; }
+        }
+        ctjs::CreateCellOp guard;
+        for (auto cell : original.getOps<ctjs::CreateCellOp>()) {
+            if (!step() || guard) { return refuse("super requires one private Boolean guard"); }
+            auto value = cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
+            auto bit =
+                value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue()) : ctjs::BooleanAttr{};
+            if (!bit || bit.getValue()) { return refuse("super guard must begin false"); }
+            guard = cell;
+        }
+        if (!guard) {
+            return refuse("derived class requires receiver-preserving super normalization");
+        }
+        for (auto & use : guard.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (use.getOperandNumber() != 0 ||
+                !llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp, ctjs::RootOp>(use.getOwner())) {
+                return refuse("super guard escapes its private reads and write");
+            }
+        }
+        auto counted = function.walk([&](mlir::Operation * op) {
+            const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
+            if (cost > remaining) {
+                refuse("class initialization work budget exhausted");
+                return mlir::WalkResult::interrupt();
+            }
+            remaining -= static_cast<unsigned>(cost);
+            return mlir::WalkResult::advance();
+        });
+        if (counted.wasInterrupted()) { return false; }
+        mlir::OwningOpRef<ctjs::FuncOp> copy(
+            llvm::cast<ctjs::FuncOp>(function->cloneWithoutRegions()));
+        auto * output = new mlir::Block;
+        copy->getBody().push_back(output);
+        mlir::IRMapping mapping;
+        for (auto argument : original.getArguments()) {
+            mapping.map(argument, output->addArgument(argument.getType(), argument.getLoc()));
+        }
+        mlir::OpBuilder at(function.getContext());
+        at.setInsertionPointToEnd(output);
+        auto absent = ctjs::ConstantOp::create(at, function.getLoc(),
+                                               ctjs::UndefinedAttr::get(module.getContext()));
+        const auto receiver = original.getArgument(ctjs::arg_receiver);
+        const auto integer = [&](mlir::Value value) -> std::optional<int64_t> {
+            auto constant = mapping.lookupOrDefault(value).getDefiningOp<mlir::arith::ConstantOp>();
+            auto number = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
+                                   : mlir::IntegerAttr{};
+            return number ? std::optional<int64_t>(number.getInt()) : std::nullopt;
+        };
+        unsigned phase = 0; // base call, guard write, bind-this, fields, completion.
+        bool initialized = false, finished = false;
+        ctjs::CallOp baseCall;
+        llvm::DenseSet<mlir::Block *> visited;
+        const auto visit = [&](auto && self, mlir::Block & block,
+                               llvm::SmallVectorImpl<mlir::Value> & yielded,
+                               unsigned depth) -> bool {
+            if (!step() || depth == 64 || !visited.insert(&block).second) {
+                return refuse("super initialization has cyclic control flow");
+            }
+            for (mlir::Operation & op : block) {
+                if (!step()) { return false; }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
+                    const auto bit = integer(branch.getCondition());
+                    if (!bit) { return refuse("super initialization has an unproved branch"); }
+                    auto & region = *bit ? branch.getThenRegion() : branch.getElseRegion();
+                    if (!region.hasOneBlock()) { return refuse("super branch is not linear"); }
+                    llvm::SmallVector<mlir::Value> values;
+                    if (!self(self, region.front(), values, depth + 1) ||
+                        values.size() != branch.getNumResults()) {
+                        return false;
+                    }
+                    mapping.map(branch.getResults(), values);
+                    continue;
+                }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(op)) {
+                    const auto key = integer(branch.getArg());
+                    if (!key) { return refuse("super completion has an unproved switch"); }
+                    auto * region = &branch.getDefaultRegion();
+                    for (auto [i, value] : llvm::enumerate(branch.getCases())) {
+                        if (!step()) { return false; }
+                        if (value == *key) { region = &branch.getCaseRegions()[i]; }
+                    }
+                    if (!region->hasOneBlock()) { return refuse("super completion is not linear"); }
+                    llvm::SmallVector<mlir::Value> values;
+                    if (!self(self, region->front(), values, depth + 1) ||
+                        values.size() != branch.getNumResults()) {
+                        return false;
+                    }
+                    mapping.map(branch.getResults(), values);
+                    continue;
+                }
+                if (auto branch = llvm::dyn_cast<mlir::cf::SwitchOp>(op)) {
+                    const auto key = integer(branch.getFlag());
+                    if (!key) { return refuse("super exit has an unproved switch"); }
+                    auto * destination = branch.getDefaultDestination();
+                    mlir::ValueRange operands = branch.getDefaultOperands();
+                    if (auto cases = branch.getCaseValues()) {
+                        for (auto [i, value] : llvm::enumerate(cases->getValues<llvm::APInt>())) {
+                            if (!step()) { return false; }
+                            if (value.getSExtValue() == *key) {
+                                destination = branch.getCaseDestinations()[i];
+                                operands = branch.getCaseOperands(static_cast<unsigned>(i));
+                            }
+                        }
+                    }
+                    for (auto [argument, value] :
+                         llvm::zip(destination->getArguments(), operands)) {
+                        mapping.map(argument, mapping.lookupOrDefault(value));
+                    }
+                    return self(self, *destination, yielded, depth + 1);
+                }
+                if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
+                    for (auto value : yield.getOperands()) {
+                        yielded.push_back(mapping.lookupOrDefault(value));
+                    }
+                    return true;
+                }
+                if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
+                    if (phase != 4 ||
+                        mapping.lookupOrDefault(returned.getValue()) != mapping.lookup(receiver)) {
+                        return refuse("derived completion requires its initialized receiver");
+                    }
+                    ctjs::ReturnOp::create(at, returned.getLoc(), absent);
+                    finished = true;
+                    return true;
+                }
+                if (&op == guard) { continue; }
+                if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
+                    if (read.getCell() != guard.getResult()) {
+                        return refuse("super reads an unrelated cell");
+                    }
+                    mapping.map(read.getResult(),
+                                ctjs::ConstantOp::create(
+                                    at, read.getLoc(),
+                                    ctjs::BooleanAttr::get(module.getContext(), initialized))
+                                    .getResult());
+                    continue;
+                }
+                if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
+                    auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
+                    auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
+                                     : ctjs::BooleanAttr{};
+                    if (phase != 1 || write.getCell() != guard.getResult() || !bit ||
+                        !bit.getValue()) {
+                        return refuse("super guard requires one true write after the base call");
+                    }
+                    initialized = true;
+                    phase = 2;
+                    continue;
+                }
+                if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
+                    auto value =
+                        mapping.lookupOrDefault(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
+                    auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
+                                     : ctjs::BooleanAttr{};
+                    if (!bit) { return refuse("super condition is not a proved Boolean"); }
+                    mapping.map(truth.getResult(), mlir::arith::ConstantIntOp::create(
+                                                       at, truth.getLoc(), bit.getValue(), 1)
+                                                       .getResult());
+                    continue;
+                }
+                if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(op)) {
+                    const auto value = integer(cast.getIn());
+                    if (!value || *value < 0) {
+                        return refuse("super completion index is not proved");
+                    }
+                    mapping.map(cast.getResult(),
+                                mlir::arith::ConstantIndexOp::create(at, cast.getLoc(), *value)
+                                    .getResult());
+                    continue;
+                }
+                if (auto pass = llvm::dyn_cast<ctjs::PassNewTargetOp>(op)) {
+                    if (phase != 0 || !llvm::isa_and_nonnull<ctjs::CallOp>(pass->getNextNode())) {
+                        return refuse("super new.target must immediately precede its base call");
+                    }
+                    continue;
+                }
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    auto proto = read ? read.getObject().getDefiningOp<ctjs::GetProtoOp>()
+                                      : ctjs::GetProtoOp{};
+                    if (proto && proto->getOperand(0).getDefiningOp<ctjs::LoadHomeOp>() &&
+                        ctjs::constantKey(read.getKey()) == "constructor") {
+                        if (phase != 0 || call.getReceiver() != receiver ||
+                            !llvm::isa_and_nonnull<ctjs::PassNewTargetOp>(call->getPrevNode()) ||
+                            call.getArgs().size() + ctjs::implicit_arguments >
+                                base.getBody().front().getNumArguments()) {
+                            return refuse("super requires one exact ordered base call");
+                        }
+                        for (auto & use : call.getResult().getUses()) {
+                            if (!step()) { return false; }
+                            auto bind = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                            auto load = bind ? bind.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()
+                                             : ctjs::LoadGlobalOp{};
+                            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                                (!load || load.getName() != "__ctbrowser_bind_this" ||
+                                 use.getOperandNumber() != 2)) {
+                                return refuse("super result escapes its receiver binding");
+                            }
+                        }
+                        mlir::IRMapping arguments;
+                        auto & body = base.getBody().front();
+                        arguments.map(body.getArgument(ctjs::arg_receiver),
+                                      mapping.lookup(receiver));
+                        arguments.map(body.getArgument(ctjs::arg_new_target),
+                                      mapping.lookup(original.getArgument(ctjs::arg_new_target)));
+                        arguments.map(body.getArgument(ctjs::arg_callee), absent);
+                        for (auto [i, formal] : llvm::enumerate(
+                                 body.getArguments().drop_front(ctjs::implicit_arguments))) {
+                            if (!step()) { return false; }
+                            arguments.map(formal, i < call.getArgs().size()
+                                                      ? mapping.lookupOrDefault(call.getArgs()[i])
+                                                      : absent.getResult());
+                        }
+                        for (mlir::Operation & operation : body) {
+                            if (!step()) { return false; }
+                            if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(
+                                    operation)) {
+                                at.clone(operation, arguments);
+                            }
+                        }
+                        mapping.map(call.getResult(), absent);
+                        baseCall = call;
+                        phase = 1;
+                        continue;
+                    }
+                    auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                    if (load && undefined(call.getReceiver()) && call.getResult().use_empty()) {
+                        if (load.getName() == "__ctbrowser_bind_this" && phase == 2 &&
+                            call.getArgs().size() == 1 &&
+                            call.getArgs()[0] == baseCall.getResult()) {
+                            phase = 3;
+                            continue;
+                        }
+                        if (load.getName() == "__ctbrowser_init_fields" && phase == 3 &&
+                            call.getArgs().size() == 2 && call.getArgs()[0] == receiver &&
+                            call.getArgs()[1].getDefiningOp<ctjs::LoadHomeOp>()) {
+                            phase = 4;
+                            continue;
+                        }
+                    }
+                    return refuse("super initialization contains an unproved call");
+                }
+                if (llvm::isa<ctjs::RootOp>(op) && op.getOperand(0) == guard.getResult()) {
+                    continue;
+                }
+                if (phase != 4 && llvm::is_contained(op.getOperands(), receiver)) {
+                    return refuse("derived receiver is used before super initialization");
+                }
+                if (op.getNumRegions() || op.hasTrait<mlir::OpTrait::IsTerminator>()) {
+                    return refuse("super initialization contains unsupported control flow");
+                }
+                at.clone(op, mapping);
+            }
+            return false;
+        };
+        llvm::SmallVector<mlir::Value> unused;
+        if (!visit(visit, original, unused, 0) || !finished) {
+            return refuse("derived class requires receiver-preserving super normalization");
+        }
+        // Only unobserved super metadata and pure transport can disappear. Any
+        // unexpected use keeps the operation for the complete class census.
+        for (mlir::Operation & op : llvm::make_early_inc_range(llvm::reverse(*output))) {
+            if (!step()) { return false; }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+            const auto proto = read ? read.getObject().getDefiningOp<ctjs::GetProtoOp>()
+                                    : llvm::dyn_cast<ctjs::GetProtoOp>(op);
+            auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+            const bool metadata =
+                (proto && proto->getOperand(0).getDefiningOp<ctjs::LoadHomeOp>() &&
+                 (!read || ctjs::constantKey(read.getKey()) == "constructor")) ||
+                (load && (load.getName() == "__ctbrowser_bind_this" ||
+                          load.getName() == "__ctbrowser_init_fields"));
+            if (op.use_empty() &&
+                (metadata || llvm::isa<ctjs::LoadHomeOp, ctjs::ConstantOp, mlir::arith::ConstantOp,
+                                       mlir::ub::PoisonOp>(op))) {
+                op.erase();
+            }
+        }
+        function.getBody().takeBody(copy->getBody());
+        return true;
+    }
+
+    bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry) {
         if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
             !call.getResult().use_empty()) {
             return refuse("class helper needs one local constructor and an unused result");
@@ -952,12 +1264,19 @@ struct classInitialization {
                 }
             }
         }
-        auto & entry = function.getBody().front();
-        if (heritage.count(closure.getResult())) {
-            // An ancestry proof does not establish super completion, receiver
-            // rebinding or constructor effects. Preserve the original body.
-            return refuse("derived class requires receiver-preserving super normalization");
+        if (auto inherited = heritage.lookup(closure.getResult())) {
+            if (!methodKeys.empty() || !staticDefinitions.empty() || !staticReads.empty()) {
+                return refuse("derived class requires receiver-preserving super normalization");
+            }
+            auto base =
+                target(sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>());
+            if (!constructors.contains(base) || !normalizeSuper(function, base, contract)) {
+                return false;
+            }
+            setup.insert(inherited);
+            retainedSetup.insert(inherited.getCallee().getDefiningOp());
         }
+        auto & entry = function.getBody().front();
         if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
             !entry.getArgument(ctjs::arg_callee).use_empty() ||
             !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
@@ -1098,8 +1417,20 @@ struct classInitialization {
             if (!proveCells(call->getParentOfType<ctjs::FuncOp>())) { return false; }
         }
         if (!proveHeritage(contract)) { return false; }
+        if (!heritage.empty()) {
+            HostContract binding = contract;
+            binding.provider = HostContract::Provider::closedSource;
+            binding.elementParameters.clear();
+            llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
+                return !host_detail::classIntrinsicArity(name) && name != "Error";
+            });
+            if (auto problem = host_detail::initialBindingProblem(module, binding);
+                !problem.empty()) {
+                return refuse(problem);
+            }
+        }
         for (ctjs::CallOp call : calls) {
-            if (!examine(call, domEntry)) { return false; }
+            if (!examine(call, contract, domEntry)) { return false; }
         }
         const auto recordHelper = [&](mlir::Operation * op) {
             auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
@@ -1700,8 +2031,8 @@ struct classInitialization {
     }
 
     void rewrite() {
-        // All current-IR checks precede the first mutation. Nothing inferred
-        // from report attributes authorizes removal, even on a repeated run.
+        // Complete current-IR checks precede setup erasure. Normalized super
+        // bodies exist only on the private candidate; reports grant no authority.
         module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
         for (auto & [function, copy] : normalizedMethods) {
             (*copy).walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
@@ -1869,8 +2200,24 @@ struct classInitialization {
                 getter.erase();
             }
         }
+        // An unconstructed base now exists only in the proved derived bodies.
+        // Its complete original body passed the census before this dead-identity
+        // check; a direct construction or symbol reference keeps it alive.
+        for (auto value : baseClasses) {
+            auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
+            auto function = target(closure);
+            if (!llvm::all_of(closure->getUsers(),
+                              [](mlir::Operation * use) { return llvm::isa<ctjs::RootOp>(use); }) ||
+                !mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) ||
+                !mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
+                continue;
+            }
+            eraseRooted(closure);
+            function.erase();
+        }
         module.walk([&](ctjs::LoadGlobalOp load) {
-            if (load.getName() == host_detail::classDefinedIntrinsic &&
+            if ((load.getName() == host_detail::classDefinedIntrinsic ||
+                 load.getName() == "__ctbrowser_class_heritage") &&
                 load.getResult().use_empty()) {
                 load.erase();
             }
@@ -1910,7 +2257,20 @@ struct CTNativeSpecializeClassInitializationPass
                              "optional Error identity");
             return signalPassFailure();
         }
-        classInitialization proof{module, maxSteps};
+        // Super normalization is speculative; refusal publishes no partial body.
+        unsigned remaining = maxSteps;
+        const auto counted = module.walk([&](mlir::Operation * op) {
+            const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
+            if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+            remaining -= static_cast<unsigned>(cost);
+            return mlir::WalkResult::advance();
+        });
+        if (counted.wasInterrupted()) {
+            module.emitError("class initialization work budget exhausted");
+            return signalPassFailure();
+        }
+        mlir::OwningOpRef<mlir::ModuleOp> candidate(module.clone());
+        classInitialization proof{*candidate, remaining};
         if (!proof.prove(*contract)) {
             module.emitError() << proof.reason;
             return signalPassFailure();
@@ -1925,6 +2285,8 @@ struct CTNativeSpecializeClassInitializationPass
             return signalPassFailure();
         }
         proof.rewrite();
+        module->setAttrs((*candidate)->getAttrs());
+        module.getBodyRegion().takeBody(candidate->getBodyRegion());
     }
 };
 

@@ -125,6 +125,87 @@ function inherited_explicit() {
 }
 var a = inherited_explicit();
 
+// Base effects run on the final receiver before the original derived suffix.
+//--- inherited-order.js
+function inherited_order() {
+    class Base { constructor(n) { this.n = n; } }
+    class Derived extends Base {
+        constructor(n) { var x = n * 10; super(x + 1); this.n = this.n * 10 + 2; }
+    }
+    return new Derived(3).n;
+}
+var a = inherited_order();
+
+// Each completed base body composes onto the same final receiver.
+//--- inherited-chain.js
+function inherited_chain() {
+    class Base { constructor(n) { this.n = n; } }
+    class Middle extends Base { constructor(n) { super(n + 1); this.n += 2; } }
+    class Derived extends Middle { constructor(n) { super(n * 2); this.n += 4; } }
+    return new Derived(3).n;
+}
+var a = inherited_chain();
+
+// A separately constructed base must retain its original callable body.
+//--- inherited-base-instance.js
+function inherited_base_instance() {
+    class Base { constructor(n) { this.n = n; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    var first = new Base(2), second = new Derived(7);
+    return first.n * 10 + second.n;
+}
+var a = inherited_base_instance();
+
+// Observing new.target is outside the current receiver-only normalization.
+//--- inherited-new-target.js
+function inherited_new_target() {
+    class Base { constructor(n) { this.n = new.target === Base ? n : n + 1; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).n;
+}
+var a = inherited_new_target();
+
+// Replacement objects, explicit primitive base returns and fields stay refused.
+//--- inherited-replacement.js
+function inherited_replacement() {
+    class Base { constructor(n) { this.n = n; return {n: 9}; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).n;
+}
+var a = inherited_replacement();
+
+//--- inherited-number-return.js
+function inherited_number_return() {
+    class Base { constructor(n) { this.n = n; return 3; } }
+    class Derived extends Base { constructor(n) { super(n); } }
+    return new Derived(7).n;
+}
+var a = inherited_number_return();
+
+//--- inherited-fields.js
+function inherited_fields() {
+    class Base { constructor(n) { this.n = n; } }
+    class Derived extends Base { n = 9; constructor(n) { super(n); } }
+    return new Derived(7).n;
+}
+var a = inherited_fields();
+
+//--- inherited-missing-super.js
+function inherited_missing_super() {
+    class Base { constructor(n) { this.n = n; } }
+    class Derived extends Base { constructor(n) { this.n = n; } }
+    return new Derived(7).n;
+}
+var a = inherited_missing_super();
+
+//--- inherited-double-super.js
+function inherited_double_super() {
+    class Base { constructor(n) { this.n = n; } }
+    class Derived extends Base { constructor(n) { super(n); super(n + 1); } }
+    return new Derived(7).n;
+}
+var a = inherited_double_super();
+
 // B's constructor dispatches through the leaf receiver, while super dispatches
 // through the declaring method's lexical home. Keep the shadowed W method too.
 //--- inherited-dispatch.js
