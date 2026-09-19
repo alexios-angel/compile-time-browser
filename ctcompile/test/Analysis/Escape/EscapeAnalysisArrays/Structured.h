@@ -583,6 +583,41 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(divisionProduct, "mul %d, %one", "div %d, %two"));
     reject("structured zero remainders cannot certify termination",
            replace(divisionProduct, "mul %d, %one", "mod %d, %one"));
+    const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
+    for (const auto & source :
+         {invariantPower, replace(invariantPower, "pow %d, %one", "pow %one, %d"),
+          replace(invariantPower, "pow %d, %one", "pow %unit, %d"),
+          replace(
+              replace(invariantPower, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n"),
+              "binary add %i, %product", "binary sub %i, %product")}) {
+        rows.push_back({.what = "power latches preserve reordered structured operand transport",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "invariant powers discharge only unreturned structured children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+    }
+    reject("a structured power operand retains its original backedge identity",
+           replace(invariantPower, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    for (const std::string operands :
+         {"%i, %one", "%one, %i", "%p, %one", "%one, %p", "%zero, %one"}) {
+        reject("structured powers need unchanged exact operands and a positive stride",
+               replace(invariantPower, "pow %d, %one", "pow " + operands));
+    }
+    reject("a nested structured power exponent needs its own invariant proof",
+           replace(invariantPower, "    %product = ctjs.binary pow %d, %one",
+                   "    %nested = ctjs.binary pow %d, %one\n"
+                   "    %product = ctjs.binary pow %one, %nested"));
+    reject("a structured power cannot borrow noncanonical primitive conversion",
+           replace(invariantPower, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"));
+    reject("an invariant structured power still bounds the final index update",
+           replace(replace(invariantPower, makeUnit,
+                           "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
+                   "%index = %zero", "%index = %one"));
     for (const std::string unary : {"plus", "neg", "bitnot"}) {
         const auto source =
             replace(carriedUnit, "    %step = ctjs.binary_static add %i, %d",
@@ -1343,15 +1378,11 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
              .exit = "zero -> {}"});
         const auto repeated =
             replace(replace(source, makeResult, ""), "    %step =", makeResult + "    %step =");
-        if (operation == "pow") {
-            reject("repeated structured power still needs independent invariance", repeated);
-        } else {
-            rows.push_back({.what = "repeated structured division proves invariant operands",
-                            .body = repeated,
-                            .arrays = "a:[x,y]; seed:[]",
-                            .reads = "a[0]=x; a[1]=y",
-                            .exit = "y -> {y}"});
-        }
+        rows.push_back({.what = "repeated structured division and power prove invariant operands",
+                        .body = repeated,
+                        .arrays = "a:[x,y]; seed:[]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
     }
     for (const std::string operation : {"div", "mod", "pow"}) {
         const std::string literal = "  %text = ctjs.constant #ctjs.string<\"" +
@@ -1467,11 +1498,16 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
         reject("primitive powers cannot borrow another predecessor's exact operand",
                replace(source, "scf.yield %one :", "scf.yield %p :"),
                ArrayContentsFailure::UnsupportedOperation);
-        reject("repeated structured primitive powers need independent invariance",
-               replace(replace(source, "    %step =",
-                               replace(primitivePower, "%unit =", "%repeated =") + "    %step ="),
-                       primitiveBase ? "binary add %i, %d" : "binary sub %i, %d",
-                       primitiveBase ? "binary add %i, %repeated" : "binary sub %i, %repeated"));
+        rows.push_back(
+            {.what = "repeated structured primitive powers prove each invariant operand snapshot",
+             .body =
+                 replace(replace(source, "    %step =",
+                                 replace(primitivePower, "%unit =", "%repeated =") + "    %step ="),
+                         primitiveBase ? "binary add %i, %d" : "binary sub %i, %d",
+                         primitiveBase ? "binary add %i, %repeated" : "binary sub %i, %repeated"),
+             .arrays = "a:[x,y] | a:[x,y]",
+             .reads = "a[0]=x; a[1]=y; a[0]=x; a[1]=y",
+             .exit = "y -> {y}; y -> {y}"});
         auto zero =
             replace(replace(source, "#ctjs.boolean<true>", "#ctjs.boolean<false>"),
                     "scf.yield %one :", "%nil = ctjs.constant #ctjs.null\n    scf.yield %nil :");

@@ -985,6 +985,33 @@ void boundedNumberDivision(const ContentsValue & left, const ContentsValue & rig
     }
 }
 
+void boundedNumberPower(const ContentsValue & left, const ContentsValue & right,
+                        ContentsValue & result) {
+    const auto exponent = boundedConvertedNumber(right);
+    const auto positive = boundedConvertedNumber(left);
+    const auto negative = boundedConvertedNumber(left, true);
+    const auto negativeExponent = boundedConvertedNumber(right, true);
+    // ponytail: only exact zero/unit identities; general powers need Number's
+    // implementation-approximated result proof. Boolean/null and canonical
+    // Strings share unary's exact conversion; keep the original signed zero.
+    if (exponent && *exponent <= 1 && (positive || negative)) {
+        result.integerNumber = *exponent == 0 ? std::optional<std::size_t>{1} : positive;
+        if (*exponent == 1 && !positive) { result.negativeIntegerNumber = negative; }
+    } else if ((positive == 0 && exponent) || (positive == 1 && (exponent || negativeExponent))) {
+        // Zero needs a positive exponent; exponent zero was handled above.
+        // One still requires a finite Number.
+        result.integerNumber = positive;
+    } else if (negative == 1 && (exponent || negativeExponent)) {
+        // The sign of an integer exponent does not change parity.
+        const auto magnitude = exponent ? *exponent : *negativeExponent;
+        if (magnitude % 2 == 0) {
+            result.integerNumber = 1;
+        } else {
+            result.negativeIntegerNumber = 1;
+        }
+    }
+}
+
 void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result) {
     // Add selects concatenation before Number conversion; even canonical
@@ -1260,12 +1287,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
         }
         if (!stride) {
-            // ponytail: one Mul/Div/Mod of saved primitives; deeper repeated
+            // ponytail: one Mul/Div/Mod/Pow of saved primitives; deeper repeated
             // expressions need their own charged invariance proof.
             auto binary = increment.getDefiningOp<ctjs::BinaryOp>();
             if (binary && (binary.getKind() == ctjs::BinaryKind::Mul ||
                            binary.getKind() == ctjs::BinaryKind::Div ||
-                           binary.getKind() == ctjs::BinaryKind::Mod)) {
+                           binary.getKind() == ctjs::BinaryKind::Mod ||
+                           binary.getKind() == ctjs::BinaryKind::Pow)) {
                 if (!spend(2)) { return ArrayContentsFailure::WorkLimit; }
                 const auto left = invariant(binary.getLhs());
                 const auto right = invariant(binary.getRhs());
@@ -1273,6 +1301,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsValue result;
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
                     boundedNumberProduct(*left, *right, result);
+                } else if (binary.getKind() == ctjs::BinaryKind::Pow) {
+                    boundedNumberPower(*left, *right, result);
                 } else {
                     boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
                                           result);
@@ -1883,36 +1913,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Pow) {
-                    const auto exponent = boundedConvertedNumber(right);
-                    const auto positive = boundedConvertedNumber(left);
-                    const auto negative = boundedConvertedNumber(left, true);
-                    const auto negativeExponent = boundedConvertedNumber(right, true);
-                    // ponytail: only exact zero/unit identities; general powers
-                    // need Number's implementation-approximated result proof.
-                    // Boolean/null and canonical Strings share unary's exact
-                    // conversion. Keep the result identity and signed zero parity.
-                    if (exponent && *exponent <= 1 && (positive || negative)) {
+                    boundedNumberPower(left, right, result);
+                    if (result.integerNumber || result.negativeIntegerNumber) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber =
-                            *exponent == 0 ? std::optional<std::size_t>{1} : positive;
-                        if (*exponent == 1 && !positive) {
-                            result.negativeIntegerNumber = negative;
-                        }
-                    } else if ((positive == 0 && exponent) ||
-                               (positive == 1 && (exponent || negativeExponent))) {
-                        // Zero needs a positive exponent; exponent zero was
-                        // handled above. One still requires a finite Number.
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = positive;
-                    } else if (negative == 1 && (exponent || negativeExponent)) {
-                        // The sign of an integer exponent does not change parity.
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        const auto magnitude = exponent ? *exponent : *negativeExponent;
-                        if (magnitude % 2 == 0) {
-                            result.integerNumber = 1;
-                        } else {
-                            result.negativeIntegerNumber = 1;
-                        }
                     }
                 }
                 state.values[binary.getResult()] = result;

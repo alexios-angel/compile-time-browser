@@ -637,6 +637,43 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(replace(invariantProduct, "mul %d, %one", "div %d, %one"), makeUnit,
                            "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
+    for (const auto & source :
+         {invariantPower, replace(invariantPower, "pow %d, %one", "pow %one, %d"),
+          replace(invariantPower, "pow %d, %one", "pow %d, %delta"),
+          replace(replace(invariantPower, "  %product = ctjs.binary pow %d, %one\n", ""),
+                  "  %key =", "  %product = ctjs.binary pow %delta, %one\n  %key ="),
+          replace(
+              replace(invariantPower, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n"),
+              "binary add %i, %product", "binary sub %i, %product")}) {
+        run({.what = "one power latch preserves original invariant CFG operands",
+             .body = source,
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
+    }
+    reject("a power operand cannot change even to the same Number value",
+           replace(invariantPower, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    for (const std::string operands :
+         {"%i, %one", "%one, %i", "%p, %one", "%one, %p", "%two, %two", "%zero, %one"}) {
+        reject("power latches require invariant exact operands and a positive stride",
+               replace(invariantPower, "pow %d, %one", "pow " + operands));
+    }
+    reject("a nested power cannot borrow a previous iteration's scalar result",
+           replace(invariantPower, "  %product = ctjs.binary pow %d, %one",
+                   "  %nested = ctjs.binary pow %d, %one\n"
+                   "  %product = ctjs.binary pow %nested, %one"));
+    for (const std::string literal :
+         {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">", "#ctjs.undefined",
+          "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>"}) {
+        reject("power latches cannot borrow unsupported primitive conversions",
+               replace(invariantPower, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+    }
+    reject("an invariant power still bounds the final index update",
+           replace(replace(invariantPower, makeUnit,
+                           "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
+                   "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     for (const std::string unary : {"plus", "neg", "bitnot"}) {
         const auto source =
             replace(carriedUnit, "  %step = ctjs.binary_static add %i, %d",
@@ -2245,8 +2282,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            ArrayContentsFailure::UnsupportedOperation);
     reject("negative powers cannot supply an own array index",
            replace(powerChild, "%base[%i]", "%base[%power]"), ArrayContentsFailure::UnknownIndex);
-    reject("a power snapshot cannot change on the CFG backedge",
-           replace(replace(powerChild, power, ""), "  %step =", power + "  %step ="));
+    run({.what = "a repeated power retains its original invariant Number operands",
+         .body = replace(replace(powerChild, power, ""), "  %step =", power + "  %step ="),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     const auto unitPower = replace(replace(powerChild, "pow %minus, %one", "pow %one, %minus"),
                                    "binary sub %i, %power", "binary_static add %i, %power");
     for (const std::string literal :
@@ -2279,8 +2319,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             reject("power conversion cannot turn its original primitive into an own key",
                    replace(source, "%base[%i]", "%base[%primitive]"),
                    ArrayContentsFailure::UnknownIndex);
-            reject("repeated primitive powers need independent invariance",
-                   replace(replace(source, makePower, ""), "  %step =", makePower + "  %step ="));
+            run({.what = "repeated primitive powers preserve invariant operand snapshots",
+                 .body =
+                     replace(replace(source, makePower, ""), "  %step =", makePower + "  %step ="),
+                 .arrays = "a:[one,x]; seed:[]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
             reject("primitive power identities still require both original operands",
                    replace(source, "ctjs.constant " + literal, "ctjs.unary plus %p"),
                    ArrayContentsFailure::UnsupportedOperation);
@@ -2320,8 +2364,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
              .reads = "a[0]=one; a[1]=x",
              .exit = "zero -> {}"},
             "x");
-        reject("a String power producer cannot borrow its previous iteration's result",
-               replace(replace(source, makePower, ""), "  %step =", makePower + "  %step ="));
+        run({.what = "a repeated String power proves its original invariant operands",
+             .body = replace(replace(source, makePower, ""), "  %step =", makePower + "  %step ="),
+             .arrays = "a:[one,x]; seed:[]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
         for (const std::string invalid :
              {"01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
             const auto body =
@@ -2395,9 +2442,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("zero to a negative exponent cannot certify a bounded start",
            replace(replace(unitPower, "pow %one, %minus", "pow %zero, %minus"),
                    "^header(%a, %zero, %zero", "^header(%a, %power, %zero"));
-    reject("a newly admitted power cannot be recomputed on the CFG backedge",
-           replace(replace(unitPower, "  %power = ctjs.binary pow %one, %minus\n", ""),
-                   "  %step =", "  %power = ctjs.binary pow %one, %minus\n  %step ="));
+    run({.what = "a repeated unit power proves its saved signed exponent",
+         .body = replace(replace(unitPower, "  %power = ctjs.binary pow %one, %minus\n", ""),
+                         "  %step =", "  %power = ctjs.binary pow %one, %minus\n  %step ="),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     const std::string factor = "  %factor = ctjs.unary plus %one\n";
     const std::string product = "  %product = ctjs.binary mul %minus, %factor "
                                 "{storage_test_id = \"product\"}\n";
