@@ -1,5 +1,38 @@
 # What native Bootstrap needs next
 
+## Unused conditional and early-return bodies, 2026-09-19 UTC
+
+**104ab81c** proves every original arm of unused total conditional helpers;
+**16dc5860** reuses the existing completion normalizer for their early returns.
+Neither change supplies parameter facts. Source bodies, effect refusals, work
+budgets and Script exclusions remain intact. This resumes **a76e1a53** and the
+10:18 unused-H thread explicitly abandoned at 10:19:04.
+
+Final focused transaction **1/1 (4.55s total)**, host **1/1 (0.48s total)** and
+class DOM **1/1 (278.83s; 608 observations, eight native executions, 4,742 refusals)**.
+Both code commits passed the focused selection; no build/test failed. All three
+hashes matched the devbox at each commit. All 408 earlier driver bodies and 18
+raw C++ JS bodies are preserved; 17 driver bodies and 17 transaction controls per
+provider were added. Formatting retains 26 baseline diagnostics in nine unchanged
+files; changed checks pass. Commands/evidence: repository HANDOFF and
+`/tmp/ctcompile-h-1021/`. Full suites and broad matrices were skipped.
+
+**Next:** unchanged `class_filter_full_h` now refuses at `native DOM class:
+DOM class method body: native DOM source: unused DOM helper body contains an
+unproved operation: fn$7 / ctjs.create_cell`. This is original
+`H.getDataAttributes`' parameter cell; its local state, fresh result, iterator and
+callback body still need complete independent proof. Do not merely whitelist
+cells or allocate guessed parameter values. Its unknown `t` has no DOM authority;
+uncalled setters likewise lack proved DOM receivers and String keys. Dynamic F
+is already implemented for proved Strings. Do not insert calls, remove unproved
+siblings or keep adding unrelated inert operators as a substitute for that proof.
+Part 25 ordinary-object reloads still require actual literal own-data definition
+semantics/provenance, preserving assignment setters. The parallel escape review
+reconfirmed that prerequisite; no escape code or measurement changed.
+W, nested iterators, complex completion, broader ownership and the application
+driver remain. No whole-Bootstrap admission gain or new compliance count is claimed.
+
+
 ## Dynamic Bootstrap F inputs, 2026-09-19 UTC
 
 **84b3357a** finishes the dynamic String F continuation from the abandoned 09:33

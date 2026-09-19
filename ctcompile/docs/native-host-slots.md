@@ -160,23 +160,30 @@ normal closure lowering.
 For typed DOM preparation, each direct sibling's complete String-argument
 census runs before expansion reaches their shared callees. This admits original
 H/M/F with all four H slots invoked from the entry, including distinct literal
-keys. Unknown or matching F inputs still poison its complete no-match proof;
+keys. Dynamic F inputs require proved Strings and the original exact callback;
 unused slots still need independent body proof. Complete H also works inside
 instance methods when every slot has actual calls. Closure lifting separately
 excludes writes whose receiver is a direct fresh allocation distinct from the
 prototype or constructed instance; unknown aliases and formals still count.
 Constructor-stored DOM fields and fixed fresh-result aliases retain their original
-receiver proofs. Uncalled, uncaptured straight-line leaves now prove independently:
-literals, identity returns, typeof/Not/Void and strict equality need no parameter
-facts. The original frame and implicit-argument checks still apply. A slot retired
-by class lifting additionally requires no remaining numeric closure or symbol use.
-Calls, coercions, properties and captures remain outside this proof.
+receiver proofs. Uncalled, uncaptured conditional leaves prove independently:
+literals, identity returns, typeof/Not/Void, strict equality and truth tests need
+no parameter facts. Every arm is checked, including discarded values and
+constant-dead arms. The existing completion normalizer proves every original early-return path
+before this census; inactive poison is never treated as a value. Original
+dominance, completion, frame, depth and implicit argument checks still apply. A slot retired by class lifting additionally requires
+no remaining numeric closure or symbol use. Calls, coercions, properties, captures
+and loops remain outside this proof; refusals name the function and operation.
 
-The unchanged `class_filter_full_h` still refuses. Its unused setters call F with
-unknown keys; those inputs correctly prevent the shared no-match replacement
-proof. General matching replacement and independent parameterized H-body proof
-remain prerequisites. No alias, parameter type or slot-stability premise is
-supplied by String argument normalization.
+The unchanged `class_filter_full_h` now first refuses at `fn$7 /
+ctjs.create_cell`, the parameter cell in original `H.getDataAttributes`. Local
+state and the complete iterator/callback body still need independent proof. Its
+unused setters have no actual calls establishing DOM receivers and String keys. Recognizing a method
+name cannot supply that authority: an unknown object could expose arbitrary
+JavaScript at that property. Dynamic F replacement is already implemented for
+proved Strings. The remaining prerequisite is a complete independent parameterized
+body proof with justified operand authority; additional inert-leaf operators alone
+cannot discharge it. Do not insert calls or erase unproved sibling bodies.
 
 Global callable holders additionally require a unique publication from the closed
 script entry, after every fixed callable slot is initialized. Before publication,

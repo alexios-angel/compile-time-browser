@@ -15,6 +15,75 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Unused conditional and early-return bodies, 2026-09-19 UTC
+
+Resumed clean **a76e1a53** and the original unused-H thread claimed at
+**10:18:04**, explicitly abandoned at **10:19:04** in AGENT-SYNC. Both agents'
+histories and unmerged branches were reviewed; September 7 WIP is not pending.
+Three agents supplied native/fixture/escape findings before service limits;
+root completed implementation and validation.
+
+**104ab81c** independently proves uncaptured conditional leaves using total
+operations on arbitrary values. Every arm is checked, including discarded values
+and constant-dead effects; diagnostics now identify the function and operation.
+**16dc5860** reuses the existing complete-source completion normalizer before
+that proof, admitting safe early returns without observing inactive poison.
+Original dominance, frames, implicit arguments, reference census and work limits
+remain. Calls, coercions, properties, captures and loops still refuse.
+
+Final focused passes: transaction **1/1 (4.54s; total 4.55s)**; host contract
+**1/1 (0.47s; total 0.48s)**; class DOM **1/1 (278.83s)** with **608 Node/interpreter
+observations, eight GCC/Clang native executions and 4,742 refusals**. The first
+commit separately passed the same selection: transaction **4.55s total**, host
+**0.48s**, class **265.28s / 596 observations / eight executions / 4,596 refusals**.
+No focused build or test failed. All three tested source/test hashes matched the
+devbox at each commit; emitted C++ and Script/dispatch/link exclusions pass.
+All **408 original driver bodies** and **18 raw C++ JavaScript bodies** are
+preserved; 17 driver bodies and 17 transaction controls per provider were added.
+Existing pinned VM UTF-16 differences remain. Required formatting retains
+**26 baseline diagnostics in nine unchanged files**; changed formatting, added
+JS syntax and whitespace checks pass.
+
+**Next:** unchanged `class_filter_full_h` now refuses at `native DOM class:
+DOM class method body: native DOM source: unused DOM helper body contains an
+unproved operation: fn$7 / ctjs.create_cell`. This is original
+`H.getDataAttributes`' parameter cell; its local state, fresh result, iterator and
+callback body still need complete independent proof. Do not merely whitelist
+cells or allocate guessed parameter values. Its unknown `t` has no DOM authority;
+uncalled setters likewise lack proved DOM receivers and String keys. Dynamic F
+is already implemented for proved Strings. Do not insert calls, remove unproved
+siblings or keep adding unrelated inert operators as a substitute for that proof.
+Part 25 ordinary-object reloads still require actual literal own-data definition
+semantics/provenance, preserving assignment setters. The parallel escape review
+reconfirmed that prerequisite; no escape code or measurement changed.
+W, nested iterators, complex completion, broader ownership and the application
+driver remain. No whole-Bootstrap admission gain or new compliance count is claimed.
+
+Exact validation, with every devbox command under
+`/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference
+  ctcompile-test-exception-recovery ctcompile-test-host-contract`, once per code
+  change; then the same focused selection for that changed implementation.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_exception_recovery$'` and the separate exact
+  selection `-R '^ctcompile_host_contract$'`.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$'`.
+- `tools/format.sh --check` reported the baseline above; pinned clang-format
+  checked the two changed C++ files, `black --check` checked `class_dom.py`,
+  Node syntax-checked the new source bodies, and `git diff --check` passed.
+  Temporary gate scripts passed `bash -n`; docs require no build or CTest.
+
+Skipped: full CTest/compiler lit, escape tests, standalone RegExp and broader
+DOM/String suites, separate lifetime matrices, broad corpus/native matrices,
+WPT/test262 and whole Bootstrap. These are focused results. No browser or Script
+semantics changed. Evidence: `/tmp/ctcompile-h-1021/`, including both gate logs,
+source preservation, hashes, emitted C++ and exact full-H diagnostics. Normal
+SSH authentication failed before the build; temporary session access restored it.
+The session authorized key and local keypair were removed after validation.
+
+
 ## Dynamic Bootstrap F and saved digit keys, 2026-09-19 UTC
 
 Resumed **1b93d242** and three dirty escape files from the **09:33 session**,
