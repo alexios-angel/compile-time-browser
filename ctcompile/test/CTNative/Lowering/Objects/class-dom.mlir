@@ -52,7 +52,7 @@
 // Constructor-only classes compose with a local H slot's original for-of loop,
 // dynamic dataset reads and fresh-result writes, including prefix-stripped keys.
 // Stale/changed/transformed keys, coercion hooks, repeated writers and unused
-// effects refuse. Class-method aliases, repeated iterators and original H's
+// effects refuse. Class-method aliases, nested iterators and original H's
 // Unicode normalization remain separate proof boundaries.
 // charAt(0) and slice(1) preserve UTF-16 code units through public Core converters,
 // including empty/NUL strings, BMP text, pairs and lone surrogates. String results
@@ -70,8 +70,11 @@
 // retain the conservative census. Original called methods share their complete
 // DOM proof without synthetic duplicate iterators. Captured H, stored receivers,
 // aliases, parameters and loop branches preserve dynamic dataset reads; changing
-// cells, callback identity/this, detached methods and repeated iterators refuse.
+// cells, callback identity/this, detached methods and nested iterators refuse.
 // Direct entry helpers prove original callback enclosures before unused receiver
 // checks, matching captured helpers. Argument writes and saved String results
 // retain their order; observed this/callee/new.target, escapes, invalid arguments,
-// replacement, unused helpers, early-return loops and repeated iterators refuse.
+// replacement, unused helpers and early-return loops refuse.
+// Sequential top-level iterators reprove each original snapshot prefix, keeping
+// prior loops, saved results and intervening writes. Nested/early-return loops,
+// stale snapshots, unknown effects and invalid later calls remain refused.

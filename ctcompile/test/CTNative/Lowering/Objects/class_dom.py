@@ -1261,6 +1261,67 @@ DYNAMIC_REFUSALS.update(
         ),
     }
 )
+# Each sequential iterator reuses the complete proof of its original prefix.
+for name in (
+    "class_dynamic_repeated",
+    "class_dynamic_method_repeated",
+    "class_dynamic_helper_repeated",
+):
+    DYNAMIC_CASES[name] = (DYNAMIC_REFUSALS.pop(name), "1000")
+DYNAMIC_CASES.update(
+    {
+        "class_dynamic_three": (
+            DYNAMIC_HELPER.replace(
+                "return readDataset(element)",
+                "readDataset(element); readDataset(element); return readDataset(element)",
+            ),
+            "1000",
+        ),
+        "class_dynamic_sequential_saved": (
+            DYNAMIC_HELPER.replace(
+                "return readDataset(element) === 'value|'",
+                "const saved = readDataset(element); "
+                "const next = readDataset(element); return saved + next === 'value|value|'",
+            ),
+            "1000",
+        ),
+        "class_dynamic_sequential_write": (
+            DYNAMIC_HELPER.replace(
+                "return readDataset(element) === 'value|'",
+                "const saved = readDataset(element); element.setAttribute('marker', 'between'); "
+                "const next = readDataset(element); return saved + next === 'value|value|' "
+                "&& element.getAttribute('marker') === 'between'",
+            ),
+            "1000",
+        ),
+    }
+)
+DYNAMIC_REFUSALS.update(
+    {
+        "class_dynamic_sequential_invalid": DYNAMIC_HELPER.replace(
+            "return readDataset(element)", "readDataset(element); return readDataset({})"
+        ),
+        "class_dynamic_sequential_effect": DYNAMIC_HELPER.replace(
+            "return readDataset(element)",
+            "readDataset(element); element.unknown(); return readDataset(element)",
+        ),
+        "class_dynamic_sequential_callback": DYNAMIC_HELPER.replace(
+            "return readDataset(element)",
+            "readDataset(element); Object.keys(element.dataset).filter(t => unknown(t)); "
+            "return readDataset(element)",
+        ),
+        "class_dynamic_nested": DYNAMIC_HELPER.replace(
+            "joined = joined + t.dataset[n] + '|';",
+            "for (const other of keys) { joined = joined + t.dataset[other] + '|'; }",
+        ),
+        "class_dynamic_sequential_stale": DYNAMIC_HELPER.replace(
+            "return joined;",
+            "t.setAttribute('data-bs-new', 'later'); "
+            "for (const other of keys) { joined = joined + t.dataset[other] + '|'; } "
+            "return joined;",
+        ),
+    }
+)
 FILTER_CASES.update(DYNAMIC_CASES)
 FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
 # Retain the entire original method as the next boundary, including M, for-of

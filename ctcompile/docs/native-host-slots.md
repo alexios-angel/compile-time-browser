@@ -238,14 +238,16 @@ Dynamic property operations in DOM entries, methods and retained local helpers
 stay intact for the shared typed DOM proof. Dataset reads require a live member
 key from the same element; fresh-result writes retain their existing key and
 mutation-order proof. Class and holder identity uses remain separately checked.
-A constructor-only class or a class method composes with one original for-of
-loop in a local H slot, including captured holders and stored DOM receivers.
+A constructor-only class or a class method composes with sequential original
+for-of loops in local H slots, including captured holders and stored DOM receivers.
+Each iterator reuses the complete snapshot-prefix proof in source order, retaining
+all prior loops, saved results and intervening effects.
 Constructor method-value checks distinguish unrelated SSA values from the closed
 instance; parameter aliases and prototype observations remain conservative.
 Original reached methods share a complete proof of their actual calls; only
 uncalled zero-argument methods receive synthetic proof invocations. Source loops
 use the existing exact completion proof even without a completion switch.
-Repeated iterators, loops behind early returns, original H's Unicode normalization
+Nested iterators, loops behind early returns, original H's Unicode normalization
 and unused slots remain separate boundaries; slots cannot borrow authority from
 another invocation. Prefix-stripped output keys retain their existing proof.
 

@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 149; ++control) {
+        for (unsigned control = 0; control < 151; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -831,8 +831,15 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                     const shape = new Shape();
                     return typeof H.read(element) === 'object' && element.hasAttribute(shape.key);
                 })js";
-                if (control == 141) {
+                if (control == 141 || control >= 149) {
                     source.insert(source.find("return typeof"), "H.read(element); ");
+                }
+                if (control == 149) {
+                    source.insert(source.find("return typeof"), "element.unknown(); ");
+                }
+                if (control == 150) {
+                    source.replace(source.find("return typeof H.read(element)"), 29,
+                                   "return typeof H.read({})");
                 }
                 if (control == 142) {
                     source.insert(source.find("for (const"),
@@ -928,7 +935,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
                 control != 100 && control != 104 && control != 105 && control != 116 &&
                 control != 117 && control != 128 && control != 129 && control != 130 &&
-                control != 140) {
+                control != 140 && control != 141) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
