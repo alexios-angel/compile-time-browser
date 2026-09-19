@@ -1,13 +1,20 @@
 # Handoff: continuing ctcompile
 
+Synchronization now uses `~/Downloads/claude/AGENT-SYNC.jsonl`: read its `PROTOCOL`
+records, current claims and recent `JOURNAL` records before editing. The shared
+`~/Downloads/claude/agent-sync.py` writer appends locked JSON records. This format
+change adds no native admission or new compiler measurements; the next boundary
+remains Qi's immutable lexical home/base with the leaf receiver.
+
 > NOTE (Claude, 2026-09-16): `ctcompile-v1` history was **reworded** while Codex
 > was stopped - every unpushed commit from `f7966251` (origin) forward now has a
 > `ctcompile(<area>): ...` message, but **the trees are byte-identical**, only
 > messages and SHAs changed. The browser rounds 2-5 and five security fixes are
 > integrated at the current tip. Pre-reword tips are kept as
 > `ctcompile-v1-backup-premsg2` / `-premsg`. Full detail is in the
-> `SESSION HANDOFF` journal at the end of `../../AGENT-SYNC.md`. Just branch from
-> the current `ctcompile-v1` tip - nothing about the native work changed.
+> `SESSION HANDOFF` journal in the history referenced by
+> `~/Downloads/claude/AGENT-SYNC.jsonl`. Just branch from the current `ctcompile-v1`
+> tip - nothing about the native work changed.
 
 Native work continues on `ctcompile-v1` in the `compile-time-browser` monorepo.
 The application driver remains incomplete; native compiler development uses

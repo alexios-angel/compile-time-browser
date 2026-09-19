@@ -259,7 +259,7 @@ by any source (agent U's parser replaced it) but is still found, linked
 `remote-build.sh windows`) and licensed (NOTICE) - retiring it needs a
 Windows cross-build to verify, which this session did not run.
 `ctcompile_lit` has 10 cases red on Codex's side of the moved VM oracle
-(the 2026-09-16 JOURNAL lines in AGENT-SYNC.md list each with its message);
+(the 2026-09-16 JOURNAL lines in AGENT-SYNC.jsonl list each with its message);
 every one is under `ctcompile/`.
 
 **How to gate faster than session 14 did**: `/tmp/wpt14/fastgate.sh <sha>`

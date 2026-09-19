@@ -425,7 +425,7 @@ is unchanged at 776.
 whose initialiser contains a function or class now emits `load_undef;
 new_cell; init -> tmp; cell_set` where it was `init; new_cell`; other
 declarations are unchanged. And an `await` no longer shrinks `registers_`
-below the caller's `frame_size + 8`. AGENT-SYNC.md carries the full JOURNAL
+below the caller's `frame_size + 8`. AGENT-SYNC.jsonl carries the full JOURNAL
 line; ctjs gitlink unchanged at `3cb2ef9`.
 
 **Still the biggest holes** (`docs/plans/wpt-next.md` has the briefs):
@@ -463,7 +463,7 @@ binding is not created" cluster that was the single largest in the corpus.
 
 **BYTECODE SHAPE** (recorded for the native backend, which pins it): `5dddb500`
 - a script's block-level function declaration now binds a local first, so the
-sequence for `{ function f(){} }` at script top level changed. AGENT-SYNC.md
+sequence for `{ function f(){} }` at script top level changed. AGENT-SYNC.jsonl
 carries the full JOURNAL line; ctjs gitlink unchanged at `3cb2ef9`.
 
 **Still the biggest holes:** `Temporal` 4,603; `RegExp` ~924; `language`
