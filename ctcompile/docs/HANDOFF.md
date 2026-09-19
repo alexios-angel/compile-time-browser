@@ -15,6 +15,102 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nearest method overrides and exact quotient overwrites, 2026-09-19 UTC
+
+Resumed clean **171eee2a** and the nearest-override thread claimed by the
+session explicitly abandoned at 14:54:19 in AGENT-SYNC. Both agents' histories,
+unmerged branches, standing protocol and handoffs were reviewed. September 7 WIP
+is already an ancestor; no recovery merge was needed. Three agents supplied
+native dispatch review, the authentic Bootstrap continuation and an independent
+quotient-index escape draft. Initial service limits interrupted their first
+turns; all resumed tasks completed. Root reviewed, gated and committed each area
+separately. Independent final native review found no blocker.
+
+**0414e5fb** selects the nearest ordinary method on a proved local inheritance
+chain. Every ancestor body, including shadowed definitions, still passes the
+complete receiver and source census. Unused base/method identities disappear only
+after checking callable and symbol uses. Four new positive sources plus the
+preserved `inherited-method-override` (21) add **40 native executions**. Distinct
+leaf targets in a shared method still refuse. Nine new sources were added; all
+185 previous split-file sections remain unchanged.
+
+**5019e45f** proves bounded `i / divisor` overwrites for exact positive Number
+divisors with divisible starts and strides. Each write range keeps its actual
+quotient stride; recursive guard reloads must miss every write. Saved children,
+remaining aliases, historical cycles and work limits remain. Added CFG/SCF controls
+and 17 source functions.
+
+Focused host **1/1 (0.48s; 0.49s total)**; class initialization/DOM lit **2/2
+(313.53s)**: **187 source observations / 492 main native executions**, with
+374 unprepared and 221 preparation refusals. DOM remains **632 observations /
+eight executions / 4,910 refusals**. Arrays **1/1 (1.28s; 1.29s total)** and
+quotient/offset/visited escape lit **3/3 (0.11s)** pass. New oracle: **51 sites /
+six sound / 6 of 9 confined precision**, zero violations, partial, pending or
+unclaimed sites. Seven tested hashes match; changed formatting passes. Required
+formatter retains 26 baseline diagnostics in nine unchanged files.
+
+**Next:** preserve B's ordinary `this._getConfig(t)` call after its own `super()`
+initialization. The original 118-result `inherited-dispatch` now stops there with
+`super initialization contains an unproved call`, before reaching Qi's method.
+Then normalize Qi's `LoadHome -> GetProto -> GetProperty -> Call` using its immutable
+method home and immediate base, while retaining Qi as receiver. Complete authentic
+W/B/Qi still needs captured constructor helpers, ordinary static methods,
+receiver-selected getters, complete H/r/s bodies, configuration, selectors,
+events and Popper. Own-data provenance, broader escape control flow/ownership and
+the application driver remain. Full suites/broad matrices/whole Bootstrap were
+skipped; no browser/Script changes or new compliance measurements. Exact commands,
+initial failures and resume provenance: HANDOFF and `/tmp/ctcompile-overrides-1456/`.
+
+Focused devbox commands, all under `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+  ctcompile-test-native-reference`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_host_contract$'`.
+- `~/.lit-venv/bin/lit -sva -j2 projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-(initialization|dom)[.]mlir$'`.
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`.
+- The same CTest command with `-R '^ctcompile_escape_analysis_arrays$'`.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(quotient-index-overwrite|offset-index-overwrite|visited-index-overwrite)[.]test$'`.
+
+The corrected narrow native probe measured **32 observations / 112 executions /
+64 unprepared and 30 preparation refusals**, plus 24 existing executions/24
+refusals and two prepared refusals. The final initialization case additionally
+measured 28 executions/30 refusals and 13 prepared refusals. Existing escape
+oracles retain **48 sites / seven sound / 7 of 13 precision** and **31 / six /
+6 of 7**, all with zero violations, partial, pending and unclaimed sites.
+
+Initial native probes exposed the new fixtures missing the existing generic-IR
+printing workaround for `cf.switch`, then unobserved shadowed closures blocking
+admission. The first cleanup draft invalidated the module walk; the final code
+collects candidates without mutation, erases all closures, then module-level
+bodies. The final narrow probe and focused class/DOM gate passed afterwards.
+Escape build/tests passed on the first run. Generated middle-override C++ was
+inspected: stack object, borrowed receiver and direct selected-method calls;
+no Script/VM or prototype storage. Evidence includes all failed/passing logs,
+commands, hashes and `override-middle.cpp` in `/tmp/ctcompile-overrides-1456/`.
+
+Required `tools/format.sh --check` stops in the C++ phase with the baseline
+26 diagnostics in nine HEAD-identical files. Changed C++/Python formatting,
+Python syntax, temporary shell-script syntax, source JavaScript checks and
+`git diff --check` pass. Full CTest/compiler lit, standalone transaction/lifetime,
+broad native/corpus matrices, WPT/test262 and whole Bootstrap were skipped.
+Focused passes are not full-suite results. No browser/runtime edits or push.
+Removed only this session's temporary SSH authorized entry and local keypair;
+other keys were preserved.
+
+For the next constructor slice, retain only proved same-receiver ordinary calls
+after initialization phase 4, preserving argument/effect order. Let the subsequent
+`fieldsOnly` proof record the cloned calls; recording original operations before
+`takeBody` creates stale pointers. Keep pre-super/foreign/dynamic calls, method
+replacement, new.target, declarations/global effects and budget failures refused.
+The original source chain is B constructor -> Qi override -> lexical B method ->
+ordinary W merge -> Qi constructor.Default. Standalone super-property reads use
+`__ctbrowser_super_get`; the called-method IR above is a different shape.
+
+
 ## Inherited method targets and bounded offset overwrites, 2026-09-19 UTC
 
 Resumed seven dirty ctcompile paths left by the session explicitly abandoned

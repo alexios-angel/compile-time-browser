@@ -1,5 +1,43 @@
 # What native Bootstrap needs next
 
+## Nearest method overrides and exact quotient overwrites, 2026-09-19 UTC
+
+**0414e5fb** selects the nearest ordinary method on a proved local inheritance
+chain. Every ancestor body, including shadowed definitions, still passes the
+complete receiver and source census. Unused base/method identities disappear only
+after checking callable and symbol uses. Four new positive sources plus the
+preserved `inherited-method-override` (21) add **40 native executions**. Distinct
+leaf targets in a shared method still refuse. Nine new sources were added; all
+185 previous split-file sections remain unchanged.
+
+**5019e45f** proves bounded `i / divisor` overwrites for exact positive Number
+divisors with divisible starts and strides. Each write range keeps its actual
+quotient stride; recursive guard reloads must miss every write. Saved children,
+remaining aliases, historical cycles and work limits remain. Added CFG/SCF controls
+and 17 source functions.
+
+Focused host **1/1 (0.48s; 0.49s total)**; class initialization/DOM lit **2/2
+(313.53s)**: **187 source observations / 492 main native executions**, with
+374 unprepared and 221 preparation refusals. DOM remains **632 observations /
+eight executions / 4,910 refusals**. Arrays **1/1 (1.28s; 1.29s total)** and
+quotient/offset/visited escape lit **3/3 (0.11s)** pass. New oracle: **51 sites /
+six sound / 6 of 9 confined precision**, zero violations, partial, pending or
+unclaimed sites. Seven tested hashes match; changed formatting passes. Required
+formatter retains 26 baseline diagnostics in nine unchanged files.
+
+**Next:** preserve B's ordinary `this._getConfig(t)` call after its own `super()`
+initialization. The original 118-result `inherited-dispatch` now stops there with
+`super initialization contains an unproved call`, before reaching Qi's method.
+Then normalize Qi's `LoadHome -> GetProto -> GetProperty -> Call` using its immutable
+method home and immediate base, while retaining Qi as receiver. Complete authentic
+W/B/Qi still needs captured constructor helpers, ordinary static methods,
+receiver-selected getters, complete H/r/s bodies, configuration, selectors,
+events and Popper. Own-data provenance, broader escape control flow/ownership and
+the application driver remain. Full suites/broad matrices/whole Bootstrap were
+skipped; no browser/Script changes or new compliance measurements. Exact commands,
+initial failures and resume provenance: HANDOFF and `/tmp/ctcompile-overrides-1456/`.
+
+
 ## Inherited method targets and bounded offset overwrites, 2026-09-19 UTC
 
 **fb7d6a3d** admits inherited ordinary methods on local explicit-super chains,

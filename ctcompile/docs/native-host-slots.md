@@ -97,9 +97,10 @@ The declarations also accept `__ctbrowser_class_heritage` (three arguments),
 `__ctbrowser_super_get` (three). Their identities may only reach direct calls
 with an undefined receiver and that exact arity. Source replacement, reflection,
 and passing the helper itself still refuse. Argument values, heritage, receiver
-rebinding, fields and super lookup need separate semantic proofs. These calls
-are preserved and remain unsupported by native class preparation; declaring
-their identities does not authorize executing or deleting them.
+rebinding, fields and super lookup need separate semantic proofs. Class preparation
+can consume ordered local heritage and its proved explicit-super initialization;
+other helper uses remain unsupported. Declaring an identity alone authorizes
+neither execution nor deletion.
 
 `initial_intrinsics` also accepts `Error` for construction with one literal string and the exact
 same constructor/new-target identity. This declares no general exception or
@@ -134,6 +135,13 @@ passing or returning the receiver and observing a method identity still refuse.
 Every instance method read must feed its own receiver call. Constructors may call
 those immutable methods on the same receiver and must return a primitive constant
 when methods exist. Method writes and replacement return objects remain excluded.
+Explicit-super chains select the nearest ordinary method definition for each
+constructed leaf. Every ancestor body, including shadowed methods, retains the
+complete receiver and effect census. Only afterwards may an unused base or
+shadowed callable disappear, with both callable and symbol uses checked first.
+Separate receiver origins must still agree on each method-call target; differing
+leaf overrides can therefore remain a native refusal. Calls after a derived
+constructor's own `super()` and lexical-super method selection need further proof.
 Methods may contain structured `if`, `for` and `while` regions, including lifted
 break/continue/return dispatch and static numeric increment/decrement counters.
 Native admission independently requires Number counter operands. Ordinary methods
