@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 181; ++control) {
+        for (unsigned control = 0; control < 189; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -938,7 +938,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                                                 : "t";
                 source.replace(source.find("return t;"), 9, "return " + expression + ";");
             }
-            if (control >= 172) {
+            if (control >= 172 && control < 181) {
                 const std::string expression = control == 173   ? "t ? (e ? typeof t : !e) : void t"
                                                : control == 174 ? "typeof t === 'string' ? t : e"
                                                : control == 175 ? "t ? (e(), t) : e"
@@ -948,6 +948,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                                : control == 179 ? "false ? (e(), t) : t"
                                                                 : "t ? e : t";
                 source.replace(source.find("return t;"), 9, "return " + expression + ";");
+            }
+            if (control >= 181) {
+                const std::string body =
+                    control == 182 ? "if (t) { if (e) return typeof t; return !e; } return void t;"
+                    : control == 183 ? "if (t === e) return true; return false;"
+                    : control == 184 ? "if (t) { e(); return t; } return e;"
+                    : control == 185 ? "if (t) return e; e(); return t;"
+                    : control == 186 ? "if (t) return e.value; return t;"
+                    : control == 187 ? "if (false) { e(); return t; } return e;"
+                                     : "if (t) return e; return t;";
+                source.replace(source.find("return t;"), 9, body);
             }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
@@ -1015,7 +1026,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
                         control == 91 || control == 103 || control == 115 || control == 125 ||
                         control == 139 || control == 147 || control == 153 || control == 164 ||
-                        control == 171 || control == 180
+                        control == 171 || control == 180 || control == 188
                     ? 0
                 : control == 4 || control == 17 ? 1000
                 : control >= 47                 ? 1000000
@@ -1030,7 +1041,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 128 && control != 129 && control != 130 && control != 140 &&
                 control != 141 && control != 148 && control != 151 && control != 157 &&
                 control != 158 && control != 165 && control != 166 && control != 167 &&
-                control != 172 && control != 173 && control != 174) {
+                control != 172 && control != 173 && control != 174 && control != 181 &&
+                control != 182 && control != 183) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }

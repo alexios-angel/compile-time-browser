@@ -1416,7 +1416,10 @@ struct DOMSource {
     }
 
     bool proveUnusedBody(ctjs::FuncOp function) {
-        if (function.getUpvalueCount() != 0 || !checkBody(function, false)) { return false; }
+        if (function.getUpvalueCount() != 0 || !normalizeCompletion(function) ||
+            !checkBody(function, false)) {
+            return false;
+        }
         // No invocation supplies parameter facts. These operations are inert for
         // every value, including Objects and Symbols; conversions and calls are
         // deliberately excluded. Check the original body before retiring it.

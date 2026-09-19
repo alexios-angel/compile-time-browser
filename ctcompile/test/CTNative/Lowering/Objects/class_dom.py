@@ -1791,6 +1791,25 @@ for name, expression in {
     FULL_H_REFUSALS["class_h_unused_" + name] = FULL_H_CALLS.replace(
         "const H = {", "const H = { unused(t, e) { return " + expression + "; },"
     )
+for name, body in {
+    "early": "if (t) return e; return t;",
+    "nested_early": "if (t) { if (e) return typeof t; return !e; } return void t;",
+    "strict_early": "if (t === e) return true; return false;",
+}.items():
+    FULL_H_CASES["class_h_unused_" + name] = (
+        FULL_H_CALLS.replace("const H = {", "const H = { unused(t, e) { " + body + " },"),
+        "1000",
+    )
+for name, body in {
+    "early_then_effect": "if (t) { e(); return t; } return e;",
+    "early_else_effect": "if (t) return e; e(); return t;",
+    "early_property": "if (t) return e.value; return t;",
+    "early_dead_effect": "if (false) { e(); return t; } return e;",
+    "early_loop": "while (t) { if (e) return t; t = !t; } return e;",
+}.items():
+    FULL_H_REFUSALS["class_h_unused_" + name] = FULL_H_CALLS.replace(
+        "const H = {", "const H = { unused(t, e) { " + body + " },"
+    )
 FULL_H_CASES["class_h_full_unused_slot"] = (FULL_H_REFUSALS.pop("class_h_full_unused_slot"), "1000")
 FULL_H_CASES["class_h_full_later_key"] = (FULL_H_REFUSALS.pop("class_h_full_later_key"), "0000")
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC_CASES):
