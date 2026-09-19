@@ -12,7 +12,7 @@
  *
  *   name     the row, as the self-test and this file's readers refer to it
  *   where    the site, cited BY NAME first and by file:line second. The line
- *            is checked by test/Core/source-citations.cmake (inside the file, no
+ *            is checked by test/Core/def-citations.test (inside the file, no
  *            more than that) and is the one at the commit that wrote the row;
  *            the name is what to search for when it has moved.
  *   hooked   1 if the oracle's hook runs there, 0 if the records of a frame
@@ -32,21 +32,21 @@
 
 CT_FRAME_END(
     /* name */ ret,
-    /* where */ "run_loop.cpp VM_CASE(ret)/VM_CASE(ret_undef): VM_POP_FRAME (run_loop.cpp:774)",
+    /* where */ "run_loop.cpp VM_CASE(ret)/VM_CASE(ret_undef): VM_POP_FRAME",
     /* hooked */ 1,
     /* note */
     "after frames_.pop_back(), before the result lands in the caller's register; "
     "the return value is rooted by the hook through temporaries_ while it walks")
 CT_FRAME_END(
     /* name */ unwind,
-    /* where */ "vm.hpp context::unwind_to_handler: frames_.resize(h.frame + 1) (vm.hpp:1519)",
+    /* where */ "vm/frames_inline.hpp context::unwind_to_handler: frames_.resize(h.frame + 1)",
     /* hooked */ 1,
     /* note */
     "before the resize, so the ending frames are inspectable; thrown_ is still set "
     "and is cleared only after the landing write, so it is a root here; "
     "compiled allocations are folded as UNCHECKED")
 CT_FRAME_END(/* name */ await,
-             /* where */ "run_loop.cpp VM_CASE(await_value): suspend_frame() (call/coroutines.cpp), frames_.pop_back()",
+             /* where */ "run_loop/await.cpp context::execute_await: suspend_frame() (call/coroutines.cpp), frames_.pop_back()",
              /* hooked */ 0,
              /* note */
              "the frame's window is copied into a coroutine_object first and is traced from "
