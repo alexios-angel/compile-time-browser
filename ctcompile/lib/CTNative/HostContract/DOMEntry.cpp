@@ -159,6 +159,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         replacePrefix,
         charAt,
         slice,
+        lowercaseUnit,
         regexpFactory,
         prefixRegExp,
         toggle,
@@ -255,6 +256,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         // implication proves filtered-key uniqueness after removing that prefix.
         llvm::DenseSet<mlir::Value> prefixRequired, prefixSnapshots;
         llvm::DenseMap<mlir::Value, ctjs::GetPropertyOp> strippedAssignmentKeys;
+        llvm::DenseMap<mlir::Value, mlir::Value> firstUnits, stringTails, loweredFirstUnits;
         struct Predicate {
             mlir::Value optional;
             bool stringOnTrue;
@@ -717,11 +719,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         return false;
                     }
                     if (!name || name.getValue() == "__proto__") {
-                        // A direct snapshot member is visited at most once. This
-                        // permits one inherited __proto__ setter invocation,
-                        // whose prototype is unobservable under the final owning
-                        // data contract. Repeated/transformed keys need a separate
-                        // proof; ordinary assignment must never silently skip them.
+                        // The proved transforms have only one __proto__ preimage.
+                        // This permits one inherited setter invocation, whose
+                        // prototype is unobservable under the final owning data
+                        // contract. Ordinary collisions retain ordered overwrites.
                         auto key = write.getKey().getDefiningOp<ctjs::GetPropertyOp>();
                         if (!key) {
                             if (!spend()) { return false; }
@@ -957,6 +958,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                                              : HostDOMMethod::stringSlice);
                         continue;
                     }
+                    if (suppliedString && hasKind(read.getObject(), Kind::string) &&
+                        key == "toLowerCase" && firstUnits.contains(read.getObject())) {
+                        values[read.getResult()] = Kind::lowercaseUnit;
+                        provedMethods.emplace_back(read, HostDOMMethod::stringLowercaseUnit);
+                        continue;
+                    }
                     if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
                         llvm::is_contained(provedDatasetElements, read.getObject())) {
                         values[read.getResult()] = Kind::dataset;
@@ -1139,6 +1146,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             {invoke,
                              first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
                              invoke.getReceiver()});
+                        values[invoke.getResult()] = Kind::string;
+                        if (!spend()) { return false; }
+                        (first ? firstUnits : stringTails)[invoke.getResult()] =
+                            invoke.getReceiver();
+                        continue;
+                    }
+                    if (hasKind(invoke.getCallee(), Kind::lowercaseUnit) && arguments.empty()) {
+                        if (!spend()) { return false; }
+                        provedCalls.push_back(
+                            {invoke, HostDOMMethod::stringLowercaseUnit, invoke.getReceiver()});
+                        loweredFirstUnits[invoke.getResult()] =
+                            firstUnits.lookup(invoke.getReceiver());
                         values[invoke.getResult()] = Kind::string;
                         continue;
                     }
@@ -1328,6 +1347,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     hasKind(binary.getLhs(), Kind::string) &&
                     hasKind(binary.getRhs(), Kind::string)) {
                     values[binary.getResult()] = Kind::string;
+                    if (!spend() || !spend()) { return false; }
+                    const auto original = loweredFirstUnits.lookup(binary.getLhs());
+                    if (original && stringTails.lookup(binary.getRhs()) == original) {
+                        if (!spend()) { return false; }
+                        if (auto key = strippedAssignmentKeys.lookup(original)) {
+                            // Full lowercase may expand or collide, but only '_'
+                            // lowers to '_'. With the unchanged tail, __proto__
+                            // still has exactly one original bs__proto__ preimage.
+                            // This never grants membership in the source dataset.
+                            strippedAssignmentKeys[binary.getResult()] = key;
+                        }
+                    }
                     continue;
                 }
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);

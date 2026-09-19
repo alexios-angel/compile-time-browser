@@ -407,6 +407,33 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         swap(value.getResult(0));
         return true;
     }
+    if (edge.kind == HostDOMMethod::stringLowercaseUnit) {
+        const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
+        auto units = callWithConstValueOperands(at, where, mlir::TypeRange{unitsType},
+                                                at.getStringAttr("ctbrowser::wtf8_to_utf16"),
+                                                mlir::ValueRange{call.getReceiver()});
+        auto empty = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{at.getI1Type()}, units.getResult(0),
+            at.getStringAttr("empty"), mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
+        auto branch = mlir::scf::IfOp::create(at, where, mlir::TypeRange{unitsType},
+                                              empty.getResult(0), true);
+        mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&branch.getThenRegion().front());
+        mlir::scf::YieldOp::create(inside, where, units.getResults());
+        inside.setInsertionPointToStart(&branch.getElseRegion().front());
+        auto first = ec::MemberCallOpaqueOp::create(
+            inside, where, mlir::TypeRange{ec::OpaqueType::get(context, "char16_t")},
+            units.getResult(0), inside.getStringAttr("front"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        auto lowered = callWithConstValueOperands(
+            inside, where, mlir::TypeRange{unitsType},
+            inside.getStringAttr("ctbrowser::unicode_lowercase_unit"), first.getResults());
+        mlir::scf::YieldOp::create(inside, where, lowered.getResults());
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            at.getStringAttr("ctbrowser::utf16_to_wtf8"), branch.getResults());
+        swap(value.getResult(0));
+        return true;
+    }
     if (edge.kind == HostDOMMethod::stringCharAt || edge.kind == HostDOMMethod::stringSlice) {
         const auto unitsType = ec::OpaqueType::get(context, "std::u16string");
         auto units = callWithConstValueOperands(at, where, mlir::TypeRange{unitsType},
@@ -471,6 +498,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::removeStringPrefix:
     case HostDOMMethod::stringCharAt:
     case HostDOMMethod::stringSlice:
+    case HostDOMMethod::stringLowercaseUnit:
     case HostDOMMethod::startsWith: llvm_unreachable("String filter handled above");
     case HostDOMMethod::decodeURIComponent:
     case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");

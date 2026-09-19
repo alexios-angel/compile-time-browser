@@ -1453,8 +1453,8 @@ DYNAMIC_REFUSALS.update(
 )
 FILTER_CASES.update(DYNAMIC_CASES)
 FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
-# Retain the entire original method as the next boundary, including M, for-of
-# and Unicode key normalization; no unused sibling slot can mask that refusal.
+# Preserve the entire original method, including M, for-of and Unicode key
+# normalization; unused sibling slots retain their separate refusal.
 ORIGINAL_ATTRIBUTES = (
     BOOTSTRAP_M
     + "const H = {\n"
@@ -1467,8 +1467,8 @@ ORIGINAL_ATTRIBUTES = (
     "const shape = new Shape();\n"
     "return typeof H.getDataAttributes(element) === 'object' && element.getAttribute(shape.key) === null;\n"
 )
-for refusals in (FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS):
-    refusals["class_dynamic_original"] = ORIGINAL_ATTRIBUTES
+for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, DYNAMIC_CASES):
+    cases["class_dynamic_original"] = (ORIGINAL_ATTRIBUTES, "1000")
 # The VM still indexes bytes. Pin its known divergence separately from the
 # Node/native UTF-16 contract; all pre-existing differential expectations remain.
 UTF16_CASES, UTF16_VM_BITS = {}, {}
@@ -1540,6 +1540,7 @@ UTF16_REFUSALS = {
         ("effect", "charAt(0)", "charAt(unknown())"),
     )
 }
+UTF16_CASES["class_utf16_lowercase"] = (UTF16_REFUSALS.pop("class_utf16_lowercase"), "1111")
 CLASS_CASES.update(UTF16_CASES)
 CLASS_REFUSALS.update(UTF16_REFUSALS)
 # The arrow saves lexical this, but its original Bootstrap predicate never reads it.

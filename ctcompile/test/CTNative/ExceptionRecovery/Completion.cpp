@@ -1071,6 +1071,66 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 }
             }
         }
+        for (unsigned control = 0; control < 7; ++control) {
+            std::string source = R"js(function guarded(element) {
+                const H = { read(t) {
+                    const result = {};
+                    const keys = Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"));
+                    for (const n of keys) {
+                        let i = n.replace(/^bs/, "");
+                        i = i.charAt(0).toLowerCase() + i.slice(1);
+                        result[i] = t.dataset[n];
+                    }
+                    return result;
+                } };
+                class Shape { constructor() { this.key = 'x'; } }
+                const shape = new Shape();
+                return typeof H.read(element) === 'object' && element.hasAttribute(shape.key);
+            })js";
+            if (control == 1) { source.replace(source.find("i.slice(1)"), 10, "n.slice(1)"); }
+            if (control == 2) { source.replace(source.find("t.dataset[n]"), 12, "t.dataset[i]"); }
+            if (control == 3) {
+                source.insert(source.find("return result;"), "result.other = 'second writer'; ");
+            }
+            if (control == 4) {
+                source.replace(source.find("i.charAt(0).toLowerCase()"), 25, "i.toLowerCase()");
+            }
+            auto candidate = import(context, source, true);
+            if (!candidate) { continue; }
+            const auto original = printed(*candidate);
+            ctnative::HostContract request;
+            request.provider = provider;
+            request.entry = guarded(*candidate).getSymName().str();
+            request.elementParameters = request.datasetParameters = {0};
+            request.initialIntrinsics = {"__ctbrowser_class_defined",
+                                         "Object",
+                                         "Array",
+                                         "RegExp",
+                                         "__ctbrowser_regexp",
+                                         "__ctbrowser_for_of_open",
+                                         "__ctbrowser_iter_next",
+                                         "__ctbrowser_iter_close"};
+            if (control != 5) { request.initialIntrinsics.push_back("String"); }
+            request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
+            const auto before = request;
+            auto error = ctnative::prepareDOMEntry(*candidate, request, control == 6 ? 0 : 1000000);
+            if (control) {
+                check(static_cast<bool>(error), "unproved normalized output keys refuse");
+                llvm::consumeError(std::move(error));
+                check(printed(*candidate) == original &&
+                          request.moduleSha256 == before.moduleSha256 &&
+                          request.initialIntrinsics == before.initialIntrinsics &&
+                          request.elementParameters == before.elementParameters &&
+                          request.datasetParameters == before.datasetParameters &&
+                          request.provider == before.provider && request.entry == before.entry,
+                      "normalized-key refusal preserves original class source and contract");
+            } else {
+                if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+                const ctnative::DOMEntryAnalysis proof(*candidate, request);
+                check(proof.proved() && mlir::succeeded(mlir::verify(*candidate)),
+                      "normalized-key preparation publishes a complete fresh DOM proof");
+            }
+        }
     }
     using ctnative::lowering_detail::inspectSingleInvocationRegion;
     using ctnative::lowering_detail::normalizeDOMURI;

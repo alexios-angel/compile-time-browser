@@ -41,6 +41,9 @@ BODIES = {
     "loop_dynamic_all": "const e = {}; "
     "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); } return e;",
     # Preserve the interrupted prefix_result probe's original body.
+    "normalized_result": "const result = {}; "
+    f"for (const n of {BOOTSTRAP_FILTER}) {{ let i = n.replace(/^bs/, ''); "
+    "i = i.charAt(0).toLowerCase() + i.slice(1); result[i] = M(t.dataset[n]); } return result;",
     "prefix_result": "const result = {}; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ result[n.replace(/^bs/, '')] = M(t.dataset[n]); }} return result;",
 }
@@ -162,6 +165,41 @@ FIXTURES["prefix_result"].append(
     + [("data-bsbs__proto__", "42"), ("data-__proto__", "null")]
 )
 
+
+# Colliding output names overwrite in source order; dataset reads keep n.
+FIXTURES["normalized_result"] = [
+    [],
+    [("data-bs", "42"), ("data-bs-foo", "1"), ("data-bsfoo", "2")],
+    [("data-bsfoo", "2"), ("data-bs-foo", "1")],
+    [("data-bsÉx", "1"), ("data-bséx", "2")],
+    [("data-bséx", "2"), ("data-bsÉx", "1")],
+    [("data-bsİx", "1"), ("data-bsi\u0307x", "2")],
+    [("data-bsi\u0307x", "2"), ("data-bsİx", "1")],
+    [("data-bs𐐀x", "42"), ("data-bsΣ", "true"), ("data-bsK", "false")],
+] + [
+    attrs
+    for value in ("null", '{"collision":7,"__proto__":{"safe":true}}', "[true]")
+    for attrs in (
+        [
+            ("data-bs__proto__", value),
+            ("data-bs-foo", "1"),
+            ("data-bs-foo2", "2"),
+            ("data-bsfoo", "3"),
+            ("data-bsbs__proto__", "4"),
+        ],
+        [("data-bsfoo", "3"), ("data-bs-foo", "1"), ("data-bs__proto__", value)],
+    )
+]
+# Script retains byte-indexed charAt/slice and ASCII casing. Pin its existing
+# divergent results; Node's unmodified source supplies native expectations.
+VM_EXPECTATIONS = {
+    ("normalized_result", 3): 'object:{"Éx":1,"éx":2}',
+    ("normalized_result", 4): 'object:{"éx":2,"Éx":1}',
+    ("normalized_result", 5): 'object:{"İx":1,"i\u0307x":2}',
+    ("normalized_result", 6): 'object:{"i\u0307x":2,"İx":1}',
+    ("normalized_result", 7): 'object:{"𐐀x":42,"Σ":true,"K":false}',
+}
+
 REFUSALS = {
     "dynamic_key": f"const e = {{}}; e[t.getAttribute('key')] = {GET}; return e;",
     "prototype_key": f"const e = {{}}; e['__proto__'] = {GET}; return e;",
@@ -243,6 +281,19 @@ REFUSALS = {
 }
 
 
+for name, old, new in (
+    ("normalized_dataset", "t.dataset[n]", "t.dataset[i]"),
+    ("normalized_tail", "i.slice(1)", "n.slice(1)"),
+    ("normalized_first", "i.charAt(0)", "n.charAt(0)"),
+    ("normalized_whole", "i.charAt(0).toLowerCase()", "i.toLowerCase()"),
+    ("normalized_arguments", ".toLowerCase()", ".toLowerCase(1)"),
+    ("normalized_unfiltered", BOOTSTRAP_FILTER, "Object.keys(t.dataset)"),
+    ("normalized_second_writer", "return result;", "result.other = 1; return result;"),
+    ("normalized_effect", "let i =", "t.setAttribute('data-bs-new', '1'); let i ="),
+):
+    REFUSALS[name] = BODIES["normalized_result"].replace(old, new)
+
+
 def oracle_source(accessors):
     source = "".join(SOURCES.values()) + values.OBSERVE
     labels = []
@@ -253,7 +304,13 @@ def oracle_source(accessors):
         for attrs in fixtures:
             label = f"assignmentObservation{len(labels):03}"
             labels.append(label)
-            if name in ("assign_loop", "loop_dynamic_key", "loop_dynamic_all", "prefix_result"):
+            if name in (
+                "assign_loop",
+                "loop_dynamic_key",
+                "loop_dynamic_all",
+                "prefix_result",
+                "normalized_result",
+            ):
                 keys = [
                     re.sub(r"-([a-z])", lambda m: m[1].upper(), attr[5:])
                     for attr, _ in attrs
@@ -328,7 +385,13 @@ def oracles(args):
     vm = args.work / "assignment-vm.js"
     vm.write_text(source)
     actual = run([args.reference, vm]).stdout
-    wanted = "".join(f'{label}="{values.quote(value)}"\n' for label, value in zip(labels, expected))
+    fixture_keys = [
+        (name, index) for name, fixtures in FIXTURES.items() for index in range(len(fixtures))
+    ]
+    vm_expected = [VM_EXPECTATIONS.get(key, value) for key, value in zip(fixture_keys, expected)]
+    wanted = "".join(
+        f'{label}="{values.quote(value)}"\n' for label, value in zip(labels, vm_expected)
+    )
     assert actual == wanted, (actual, wanted)
     return expected
 
@@ -456,7 +519,10 @@ def main():
                 module = layouts[layout]
                 entries = dom.NATIVE.findall(module.read_text())
                 assert len(entries) == (
-                    2 if name in ("assign_loop", "loop_dynamic_key", "prefix_result") else 1
+                    2
+                    if name
+                    in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result")
+                    else 1
                 ) and not dom.FUNCTION.search(module.read_text()), module.read_text()
                 symbol = next(
                     entry for entry in entries if re.fullmatch(re.escape(name) + r"_\d+", entry)
@@ -471,7 +537,12 @@ def main():
                     assert (
                         "ctbrowser::parse_json" in cpp and "ctbrowser::decode_uri_component" in cpp
                     ), cpp
-                if name in ("loop_dynamic_key", "loop_dynamic_all", "prefix_result"):
+                if name in (
+                    "loop_dynamic_key",
+                    "loop_dynamic_all",
+                    "prefix_result",
+                    "normalized_result",
+                ):
                     assert "ctnative::dataset_value(" in cpp, cpp
                     assert "ctnative::assign_json_snapshot_property(" in cpp, cpp
                     assert "__proto__" not in cpp, cpp
@@ -547,7 +618,7 @@ def main():
                     success=False,
                 )
                 refusals += 1
-    for name in ("assign_loop", "loop_dynamic_key", "prefix_result"):
+    for name in ("assign_loop", "loop_dynamic_key", "prefix_result", "normalized_result"):
         _, ir, contract = next(row for row in prepared if row[0] == name)
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):

@@ -52,13 +52,15 @@
 // Constructor-only classes compose with a local H slot's original for-of loop,
 // dynamic dataset reads and fresh-result writes, including prefix-stripped keys.
 // Stale/changed/transformed keys, coercion hooks, repeated writers and unused
-// effects refuse. Class-method aliases, nested iterators and original H's
-// Unicode normalization remain separate proof boundaries.
+// effects refuse. Nested iterators and unused H slots remain separate boundaries.
 // charAt(0) and slice(1) preserve UTF-16 code units through public Core converters,
 // including empty/NUL strings, BMP text, pairs and lone surrogates. String results
 // survive DOM writes, and concatenation rejoins surrogate halves. Node/native
 // expectations retain the VM's separately pinned byte-indexing divergence.
-// Other indices/coercions, detached methods, replacement and lowercase still refuse.
+// A proved charAt(0) may lowercase through public Core Unicode 17 mappings.
+// Original H keeps dataset keys separate from normalized output keys; collisions
+// overwrite in order and __proto__ has one source preimage. Whole-string casing,
+// other indices/coercions, detached methods and replacement still refuse.
 // Direct class methods retain the original filter predicate and its lexical-this
 // enclosure when that callback never reads this. Constructor fields, actual
 // parameters, early-return branches and repeated calls retain their source order.
