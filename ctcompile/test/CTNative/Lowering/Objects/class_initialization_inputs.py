@@ -16,6 +16,14 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-post-super-method": (7, 7),
+    "inherited-post-super-override": (10, 10),
+    "inherited-post-super-order": (11212, 11212),
+    "inherited-post-super-chain": (24, 24),
+    "inherited-post-super-foreign": (9, 9),
+    "inherited-post-super-before": (None, None),
+    "inherited-post-super-dynamic": (7, 7),
+    "inherited-post-super-replaced": (9, 9),
     "override-constructor": (15, 15),
     "override-middle": (21, 21),
     "override-leaf": (28, 28),
@@ -212,6 +220,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-post-super-method",
+    "inherited-post-super-override",
+    "inherited-post-super-order",
+    "inherited-post-super-chain",
     "override-constructor",
     "override-middle",
     "override-leaf",

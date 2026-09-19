@@ -60,7 +60,8 @@ bool classInitialization::heritageUse(mlir::OpOperand & use, mlir::Value constru
 }
 
 bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base,
-                                         const HostContract & contract) {
+                                         const HostContract & contract,
+                                         const llvm::StringSet<> & methodKeys) {
     auto & original = function.getBody().front();
     if (!llvm::hasSingleElement(base.getBody()) ||
         !original.getArgument(ctjs::arg_new_target).use_empty() ||
@@ -320,6 +321,16 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
                         continue;
                     }
                 }
+                if (phase == 4 && read && read.getResult().hasOneUse() &&
+                    mapping.lookupOrDefault(read.getObject()) == mapping.lookup(receiver) &&
+                    mapping.lookupOrDefault(call.getReceiver()) == mapping.lookup(receiver) &&
+                    methodKeys.contains(ctjs::constantKey(read.getKey()))) {
+                    // Preserve evaluation order and leaf receiver dispatch. The
+                    // complete fieldsOnly census records the cloned call after
+                    // takeBody; original operations would become stale there.
+                    at.clone(op, mapping);
+                    continue;
+                }
                 return refuse("super initialization contains an unproved call");
             }
             if (llvm::isa<ctjs::RootOp>(op) && op.getOperand(0) == guard.getResult()) { continue; }
@@ -557,7 +568,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         auto base =
             target(sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>());
-        if (!constructors.contains(base) || !normalizeSuper(function, base, contract)) {
+        if (!constructors.contains(base) || !normalizeSuper(function, base, contract, methodKeys)) {
             return false;
         }
         setup.insert(inherited);

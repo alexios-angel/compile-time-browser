@@ -155,7 +155,7 @@ def main():
         diagnostic = {
             "inherited": "derived class requires receiver-preserving super normalization",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
-            "inherited-dispatch": "super initialization contains an unproved call",
+            "inherited-dispatch": "class receiver escapes or observes a prototype/descriptor",
             "override-ambient": "unknown call, binding or reflective effect",
             "override-shadowed-receiver": "class method is observed or shadowed",
             "override-hidden-ancestor": "class method is observed or shadowed",
