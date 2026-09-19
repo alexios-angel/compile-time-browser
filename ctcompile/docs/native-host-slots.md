@@ -115,9 +115,17 @@ instance methods when every slot has actual calls. Closure lifting separately
 excludes writes whose receiver is a direct fresh allocation distinct from the
 prototype or constructed instance; unknown aliases and formals still count.
 Constructor-stored DOM fields and fixed fresh-result aliases retain their original
-receiver proofs. The unchanged `class_filter_full_h` still has uncalled original
-slots and refuses their unproved closure/capture. No alias or slot-stability
-premise is supplied by String argument normalization.
+receiver proofs. Uncalled, uncaptured straight-line leaves now prove independently:
+literals, identity returns, typeof/Not/Void and strict equality need no parameter
+facts. The original frame and implicit-argument checks still apply. A slot retired
+by class lifting additionally requires no remaining numeric closure or symbol use.
+Calls, coercions, properties and captures remain outside this proof.
+
+The unchanged `class_filter_full_h` still refuses. Its unused setters call F with
+unknown keys; those inputs correctly prevent the shared no-match replacement
+proof. General matching replacement and independent parameterized H-body proof
+remain prerequisites. No alias, parameter type or slot-stability premise is
+supplied by String argument normalization.
 
 Global callable holders additionally require a unique publication from the closed
 script entry, after every fixed callable slot is initialized. Before publication,
@@ -208,8 +216,8 @@ Capture metadata is cleared before holder closures are erased, and the holder
 object remains until its proved capture and cell transport has been removed.
 The holder then becomes direct calls before ordinary closure lifting, but
 **every slot function stays** for complete invocation and typed DOM
-proof. Even a pure uncalled slot refuses; missing arguments are budgeted and
-surplus arguments refuse. Other object captures, unordered uses, replacement and
+proof. Uncalled inert leaves may use the independent proof above; other uncalled
+bodies still refuse. Missing arguments are budgeted and surplus arguments refuse. Other object captures, unordered uses, replacement and
 identity escape remain outside this rule. One slot may combine fixed sibling
 captures and confined callback creation: every original callee use independently
 passes its capture or callback proof. No other use is skipped. Global holders

@@ -15,6 +15,88 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inert unused bodies and ASCII String lengths, 2026-09-19 UTC
+
+Resumed **01c63ec8**, the dirty `EscapeAnalysis.cpp` draft from the **08:05
+session**, and the unused-H thread abandoned at **08:06:01** in AGENT-SYNC.
+September 7 WIP is already an ancestor; both agents' recent histories were
+reviewed. Three agents investigated escape, fixtures and native proof, then hit
+service limits. Root completed the code, review and focused gates.
+
+**6fdac943** proves bounded original ASCII String-length snapshots and invariant
+reloads. Original base/key identities, read-only loop census, work/64-layer
+budgets and index bounds remain. Seventeen CFG/SCF rows and nine source functions
+cover retained/discarded children, saved lengths, dense String reloads, growth,
+Unicode, computed Strings and mutation. The scan ceiling is 256 ASCII bytes;
+Script's byte length still prevents extending this proof to general Unicode.
+
+**3c16788b** independently proves uncaptured, straight-line unused leaves with
+literals, identity returns, typeof/Not/Void and strict equality. No parameter
+facts or synthetic calls are supplied. Original frame/implicit-argument checks
+remain; slots already retired by class lifting also require absent numeric
+closures and symbol references. Calls, coercions, properties and captures refuse.
+All **373 prior driver source bodies** and **16 raw C++ JavaScript bodies** are
+preserved. Fifteen driver bodies and seven transaction controls per provider
+were added. Three original literal-slot refusals and the original orphan-body
+unit specimen now admit without source edits; effect/reference controls remain.
+
+Measured focused passes: arrays **1/1 (2.10s; total 2.11s)**, transaction
+**1/1 (4.48s; total 4.49s)**, host contract **1/1 (0.48s)**, class DOM
+**1/1 (246.04s)**: **532 observations, eight GCC/Clang native executions,
+4,116 refusals**. Existing pinned VM UTF-16 differences remain. The prior
+length oracle is **38 sites / 16 sound / 16 of 27 confined precision**; the new
+String oracle is **28 / 10 / 10 of 18**, with zero violations, partial, pending
+or unclaimed sites. All ten tested hashes match the devbox. Inspected emitted
+C++ uses ordinary owners and public Core/DOM helpers; Script/dispatch exclusions
+pass. Required formatting retains **26 baseline diagnostics in nine unchanged
+files**; changed formatting, added JS syntax and `git diff --check` pass.
+
+**Next:** original `class_filter_full_h` still has uncalled parameterized H
+slots. Their internal `F(e)` calls leave `e` unknown and correctly poison F's
+complete no-match replacement proof. General matching replacement and independent
+parameterized H-body proof remain before publication; never insert calls or
+erase unproved siblings to admit it. Part 25 object reloads still need real
+literal own-data definition provenance, preserving assignment setters. W's
+operations, nested iterators, complex entry completion, broader ownership work
+and the application driver remain. No whole-Bootstrap admission gain is claimed.
+No browser/Script behavior or historical compliance measurements changed.
+
+Exact validation (every devbox command held `/tmp/ctbrowser-devbox-build.lock`):
+
+- Built with `tools/remote-build.sh ctjs-opt ctjs-translate
+  ctcompile-test-escape-analysis-arrays ctcompile-test-escape-claims
+  ctcompile-test-type-oracle ctcompile-test-native-reference
+  ctcompile-test-exception-recovery ctcompile-test-host-contract`; later builds
+  selected only the affected native targets. Final host fixture retry rebuilt
+  only the host-contract object and executable.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`, then separate exact
+  selections `'^ctcompile_exception_recovery$'` and `'^ctcompile_host_contract$'`.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(invariant-string-length|invariant-length-reload)[.]test$'`:
+  prior length passed; new String case initially failed an expectation. Retried
+  only `invariant-string-length[.]test`, **1/1 (0.10s)**. Its fixed-literal latch
+  source remains a positive; an added growing String supplies the real refusal.
+- Same lit command selecting only
+  `'^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$'`: **1/1** above.
+- Initial build failed two test range-loop-copy warnings; corrected to references.
+  First transaction run failed six assertions on orphan unused leaves, exposing
+  the class-retired path fixed in production. Host checks first caught the old
+  orphan-literal refusal; a subsequent new symbol-reference control needed its
+  attribute placed inside the module's symbol scope. Sources were preserved.
+  No additional production correction followed the orphan-body fix.
+- A later diagnostic-only full-H probe could not connect over SSH (timeout).
+  Its refusal is still measured by the class DOM case; the F prerequisite is
+  a source-audit finding. This did not invalidate the completed focused gates.
+- `tools/format.sh --check` reports the baseline above. Changed C++ uses pinned
+  clang-format 23.0.0git; Python uses `black --check`; new JS bodies pass Node's
+  syntax check. Documentation needs no build or CTest.
+
+Skipped: full CTest/compiler lit, complete DOM/String/assignment suites, separate
+lifetime matrices, broad corpus/native matrices, WPT/test262 and whole Bootstrap.
+These are focused results. Exact scripts, logs, source hashes and inspected C++
+are in `/tmp/ctcompile-h-0823/`. No push. Native Bootstrap and the plan remain open.
+
 ## Full H instance methods and object-reload prerequisite, 2026-09-19 UTC
 
 **6bca7b94** finishes the interrupted receiver-proof thread at **61f627fb**:

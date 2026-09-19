@@ -1,5 +1,29 @@
 # What native Bootstrap needs next
 
+## Inert unused bodies and the remaining H boundary, 2026-09-19 UTC
+
+**3c16788b** proves unused uncaptured straight-line leaves independently of
+calls: literals, identity, typeof/Not/Void and strict equality. Retired slots
+must have no numeric closure or symbol uses. Unknown calls, conversions,
+properties and captures still refuse. All 373 previous source bodies stay
+intact; 15 bodies and seven transaction controls per provider were added.
+
+Focused transaction **1/1 (4.49s total)**, host contract **1/1 (0.48s)**,
+class DOM **1/1 (246.04s; 532 observations, eight native executions, 4,116
+refusals)**. Ten tested native/escape hashes match. Script/dispatch exclusions
+pass; formatting retains 26 baseline diagnostics in nine unchanged files.
+Parallel **6fdac943** finishes the interrupted ASCII String-length escape draft.
+Exact commands, failures and source-oracle measurements are in HANDOFF and
+`/tmp/ctcompile-h-0823/`. Full suites and broad matrices were skipped.
+
+**Next:** original `class_filter_full_h` still refuses. Uncalled H setters
+pass unknown keys into F, blocking its complete no-match replacement proof.
+Implement general matching replacement and independent parameterized H-body
+proof before publication; do not add calls or drop siblings from the specimen.
+Object reloads still require real own-data literal definitions. W operations,
+nested iterators, complex completion and the application driver remain.
+No browser/Script semantics changed; no whole-Bootstrap gain is claimed.
+
 ## Full H instance methods and object-reload prerequisite, 2026-09-19 UTC
 
 **6bca7b94** finishes the interrupted receiver-proof thread at **61f627fb**:
