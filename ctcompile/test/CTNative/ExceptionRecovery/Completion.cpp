@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 151; ++control) {
+        for (unsigned control = 0; control < 157; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -831,7 +831,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                     const shape = new Shape();
                     return typeof H.read(element) === 'object' && element.hasAttribute(shape.key);
                 })js";
-                if (control == 141 || control >= 149) {
+                if (control == 141 || control == 149 || control == 150) {
                     source.insert(source.find("return typeof"), "H.read(element); ");
                 }
                 if (control == 149) {
@@ -858,6 +858,33 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                    constructor + " read(t) { return H.read(t); }");
                     source.replace(source.find("typeof H.read(element)"), 22,
                                    "typeof shape.read(element)");
+                }
+            }
+            if (control >= 151) {
+                source = R"js(function guarded(element) {
+                    const H = { read(t) {
+                        if (t.getAttribute('x') !== null) return '';
+                        const keys = Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"));
+                        let joined = '';
+                        for (const n of keys) joined = joined + t.dataset[n] + '|';
+                        return joined;
+                    } };
+                    class Shape { constructor() { this.key = 'x'; } }
+                    const shape = new Shape();
+                    return H.read(element) === 'value|' && element.hasAttribute(shape.key);
+                })js";
+                if (control == 152) {
+                    const std::string early = "return '';";
+                    source.replace(source.find(early), early.size(), "{ unknown(); return ''; }");
+                }
+                if (control == 155) {
+                    source.insert(
+                        source.find("let joined"),
+                        "if (t.hasAttribute('later')) t.setAttribute('data-bs-new', 'x'); ");
+                }
+                if (control == 156) {
+                    source.insert(source.find("for (const"),
+                                  "if (t.hasAttribute('later')) joined = 0; ");
                 }
             }
             auto candidate = import(context, source, true);
@@ -917,6 +944,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                              "__ctbrowser_iter_next",
                                              "__ctbrowser_iter_close"};
                 if (control == 146) { request.datasetParameters.clear(); }
+                if (control == 154) { request.initialIntrinsics.pop_back(); }
             }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
@@ -924,7 +952,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 *candidate, request,
                 control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
                         control == 91 || control == 103 || control == 115 || control == 125 ||
-                        control == 139 || control == 147
+                        control == 139 || control == 147 || control == 153
                     ? 0
                 : control == 4 || control == 17 ? 1000
                 : control >= 47                 ? 1000000
@@ -935,7 +963,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
                 control != 100 && control != 104 && control != 105 && control != 116 &&
                 control != 117 && control != 128 && control != 129 && control != 130 &&
-                control != 140 && control != 141) {
+                control != 140 && control != 141 && control != 151) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }

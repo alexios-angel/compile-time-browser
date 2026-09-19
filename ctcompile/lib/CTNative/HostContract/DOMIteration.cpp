@@ -154,12 +154,21 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
     };
     auto entry = candidate.lookupSymbol<ctjs::FuncOp>(contract.entry);
-    // ponytail: only sequential top-level snapshot iterators. Nested iterators
-    // need a proof of their conditional prefix and scalar state.
-    if (!entry || !hasLoop || llvm::any_of(opens, [&](ctjs::CallOp open) {
-            return open->getBlock() != &entry.getBody().front();
-        })) {
-        return error("DOM iteration requires top-level source iterators");
+    // ponytail: conditional and sequential snapshots only. Loop-nested opens
+    // need a proof of their changing prefix and scalar state.
+    if (!entry || !hasLoop || !entry.getBody().hasOneBlock()) {
+        return error("DOM iteration requires a structured source entry");
+    }
+    for (ctjs::CallOp open : opens) {
+        auto * block = open->getBlock();
+        while (block != &entry.getBody().front()) {
+            if (!spend()) { return error("DOM iteration work budget exhausted"); }
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(block->getParentOp());
+            if (!branch || !block->getParent()->hasOneBlock() || block->getNumArguments()) {
+                return error("DOM iteration requires sequential or conditional source iterators");
+            }
+            block = branch->getBlock();
+        }
     }
     const auto normalize = [&](ctjs::CallOp open) -> llvm::Error {
         if (!undefined(open.getReceiver()) || open.getArgs().size() != 1) {
@@ -182,23 +191,37 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         auto snapshot = copiedOpen.getArgs().front();
         auto snapshotCall = snapshot.getDefiningOp<ctjs::CallOp>();
         if (!snapshotCall) { return error("DOM iterator input is not a proved owning snapshot"); }
-        auto & body = *copiedOpen->getBlock();
-        ctjs::FrameEnterOp frame;
-        for (mlir::Operation & operation : body) {
+        auto * body = copiedOpen->getBlock();
+        while (&body->back() != copiedOpen) {
             if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            if (&operation == copiedOpen) { break; }
+            body->back().erase();
+        }
+        copiedOpen.erase();
+        // The prefix witnesses just the path reaching this open. Keep each
+        // condition producer and dominating operation, but discard its suffix
+        // and other arm only in this private proof. The final entry proof still
+        // checks both original arms, including effects and joined scalar state.
+        while (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(body->getParentOp())) {
+            auto * parent = branch->getBlock();
+            while (&parent->back() != branch) {
+                if (!spend()) { return error("DOM iteration work budget exhausted"); }
+                parent->back().erase();
+            }
+            if (!spend()) { return error("DOM iteration work budget exhausted"); }
+            parent->getOperations().splice(branch->getIterator(), body->getOperations());
+            branch.erase();
+            body = parent;
+        }
+        ctjs::FrameEnterOp frame;
+        for (mlir::Operation & operation : *body) {
+            if (!spend()) { return error("DOM iteration work budget exhausted"); }
             if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) { frame = entered; }
             if (llvm::isa<ctjs::FrameExitOp>(operation)) { frame = {}; }
         }
-        while (&body.back() != copiedOpen) {
-            if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            body.back().erase();
-        }
-        copiedOpen.erase();
         auto copiedLoad =
             llvm::cast<ctjs::LoadGlobalOp>(mapping.lookup(open.getCallee().getDefiningOp()));
         if (copiedLoad.getResult().use_empty()) { copiedLoad.erase(); }
-        mlir::OpBuilder at(&body, body.end());
+        mlir::OpBuilder at(body, body->end());
         if (frame) { ctjs::FrameExitOp::create(at, open.getLoc(), frame.getContext()); }
         ctjs::ReturnOp::create(at, open.getLoc(), snapshot);
         HostContract prefixContract = contract;
@@ -222,6 +245,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             return error("DOM iterator input is not a proved owning String snapshot");
         }
         const mlir::Value originalSnapshot = open.getArgs().front();
+        auto * iterationBody = open->getBlock();
         at.setInsertionPoint(open);
         for (mlir::OpOperand & use : open.getResult().getUses()) {
             (void)use;
@@ -239,11 +263,12 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         while (changed) {
             changed = false;
             llvm::SmallVector<mlir::Operation *> operations;
-            const auto scan = entry.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-                operations.push_back(op);
-                return mlir::WalkResult::advance();
-            });
+            const auto scan =
+                iterationBody->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    operations.push_back(op);
+                    return mlir::WalkResult::advance();
+                });
             if (scan.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
             // Restart after each mutation so no saved pointer can name an erased arm.
             for (mlir::Operation * operation : operations) {
@@ -348,8 +373,20 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
     };
     // Source order matters: each prefix includes every earlier normalized loop,
     // so the same complete proof checks effects and snapshot state between opens.
-    for (ctjs::CallOp open : opens) {
-        if (auto failure = normalize(open)) { return failure; }
+    while (!opens.empty()) {
+        if (auto failure = normalize(opens.front())) { return failure; }
+        // Constant branch folding can erase another open in an unreachable arm.
+        // Recollect live operations instead of retaining pointers into that arm.
+        opens.clear();
+        const auto scan = entry.walk([&](mlir::Operation * operation) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+            auto load =
+                call ? call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+            if (load && load.getName() == "__ctbrowser_for_of_open") { opens.push_back(call); }
+            return mlir::WalkResult::advance();
+        });
+        if (scan.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
     }
     return llvm::Error::success();
 }

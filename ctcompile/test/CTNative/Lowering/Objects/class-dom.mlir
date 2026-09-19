@@ -74,7 +74,8 @@
 // Direct entry helpers prove original callback enclosures before unused receiver
 // checks, matching captured helpers. Argument writes and saved String results
 // retain their order; observed this/callee/new.target, escapes, invalid arguments,
-// replacement, unused helpers and early-return loops refuse.
-// Sequential top-level iterators reprove each original snapshot prefix, keeping
-// prior loops, saved results and intervening writes. Nested/early-return loops,
-// stale snapshots, unknown effects and invalid later calls remain refused.
+// replacement and unused helpers refuse.
+// Sequential and conditional iterators reprove each original snapshot prefix,
+// retaining condition producers, prior loops, saved results and intervening writes.
+// The final entry proof checks both arms and joined scalar state. Loop-nested
+// iterators, stale snapshots, unknown effects and invalid later calls still refuse.

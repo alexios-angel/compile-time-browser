@@ -1320,8 +1320,59 @@ DYNAMIC_REFUSALS.update(
             "for (const other of keys) { joined = joined + t.dataset[other] + '|'; } "
             "return joined;",
         ),
+        "class_dynamic_holder_early": DYNAMIC_HOLDER.replace(
+            "const keys =", "if (t.getAttribute('x') !== null) return ''; const keys ="
+        ),
+        "class_dynamic_helper_early_inverse": DYNAMIC_HELPER.replace(
+            "const keys =", "if (t.getAttribute('x') === null) return ''; const keys ="
+        ).replace(
+            "element.getAttribute(shape.read()) === null",
+            "element.getAttribute(shape.read()) !== null",
+        ),
+        "class_dynamic_conditional_sequential": DYNAMIC_HELPER.replace(
+            "return readDataset(element) === 'value|'",
+            "const saved = readDataset(element); "
+            "if (element.getAttribute('x') !== null) return false; "
+            "return saved + readDataset(element) === 'value|value|'",
+        ),
+        "class_dynamic_conditional_nested_if": DYNAMIC_HELPER.replace(
+            DYNAMIC_BODY,
+            "if (t.getAttribute('x') === null) { if (!t.hasAttribute('skip')) { "
+            + DYNAMIC_BODY
+            + "} } return '';",
+        ),
+        "class_dynamic_conditional_untaken_effect": DYNAMIC_HELPER.replace(
+            "const keys =",
+            "if (t.getAttribute('x') !== null) { unknown(); return ''; } const keys =",
+        ),
+        "class_dynamic_conditional_changed_keys": DYNAMIC_HELPER.replace(
+            "let joined = '';",
+            "if (t.hasAttribute('x')) keys[0] = 'absent'; let joined = '';",
+        ).replace("const keys =", "if (t.hasAttribute('skip')) return ''; const keys ="),
+        "class_dynamic_conditional_stale": DYNAMIC_HELPER.replace(
+            "let joined = '';",
+            "if (t.hasAttribute('x')) t.setAttribute('data-bs-later', 'later'); let joined = '';",
+        ).replace("const keys =", "if (t.hasAttribute('skip')) return ''; const keys ="),
+        "class_dynamic_conditional_nested_loop": DYNAMIC_HELPER.replace(
+            "joined = joined + t.dataset[n] + '|';",
+            "for (const other of keys) { joined = joined + t.dataset[other] + '|'; }",
+        ).replace("const keys =", "if (t.getAttribute('x') !== null) return ''; const keys ="),
+        "class_dynamic_conditional_scalar": DYNAMIC_HELPER.replace(
+            "let joined = '';",
+            "let joined = ''; if (t.getAttribute('x') === null) joined = 0;",
+        ).replace("const keys =", "if (t.hasAttribute('skip')) return ''; const keys ="),
     }
 )
+# Conditional prefixes retain their original guards; the complete entry still
+# proves both arms and their joined state before publishing native code.
+for name, bits in (
+    ("class_dynamic_parameter_early", "1000"),
+    ("class_dynamic_helper_early", "1000"),
+    ("class_dynamic_holder_early", "1000"),
+    ("class_dynamic_helper_early_inverse", "0111"),
+    ("class_dynamic_conditional_nested_if", "1000"),
+):
+    DYNAMIC_CASES[name] = (DYNAMIC_REFUSALS.pop(name), bits)
 FILTER_CASES.update(DYNAMIC_CASES)
 FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
 # Retain the entire original method as the next boundary, including M, for-of
