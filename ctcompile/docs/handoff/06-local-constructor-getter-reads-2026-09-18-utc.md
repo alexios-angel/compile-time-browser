@@ -49,14 +49,14 @@ iterator, RegExp/type checking and throw exits, plus throwing `NAME`, need their
 own proof. Inherited receivers and DOM/default composition follow. Full H Unicode
 key normalization, retained callbacks and the application driver remain open.
 The disjoint **`codex-unicode-core` / `ecca5b66`** extraction is being integrated
-by its own session; consult AGENT-SYNC for its status. It does not yet prove
+by its own session; consult AGENT-SYNC.jsonl for its status. It does not yet prove
 Unicode casing or normalized dataset keys. Bootstrap **19/574 / 0 of 47 globals**,
 Button **4/86 / 22 observations** and Data **7/7** remain historical measurements.
 
 ## Recovered method counters and signed subtraction, 2026-09-18 UTC
 
 Resumed the seven dirty ctcompile paths at `6d6dcfbf` from the
-**01:35:20 / 01:38:50 AGENT-SYNC drafts**, abandoned at **01:38:57**. Finished
+**01:35:20 / 01:38:50 AGENT-SYNC.jsonl drafts**, abandoned at **01:38:57**. Finished
 both before new implementation. September 7 WIP is already an ancestor.
 
 **`55e13932`** admits static numeric counters in proved ordinary class methods.
@@ -99,7 +99,7 @@ application driver. Bootstrap **19/574 / 0 of 47 globals**, Button **4/86 /
 ## Recovered method dispatch continuation, 2026-09-18 UTC
 
 Resumed `2167f4d2`, the sole dirty `class_initialization.py`, and the
-**01:19:28 / 01:22:57 AGENT-SYNC checkpoint and interruption**. September 7 WIP
+**01:19:28 / 01:22:57 AGENT-SYNC.jsonl checkpoint and interruption**. September 7 WIP
 is already an ancestor. The interrupted thread had landed **`ab646056`** (exact
 negative Number sums), **`63a021c1`** (integer/index poison and carried while
 backedges), and **`2167f4d2`** (proved local method exit dispatch).
@@ -145,7 +145,7 @@ remain historical measurements.
 
 ## Structured class methods and signed division, 2026-09-18 UTC
 
-Continued clean `b965aa43` and the **23:35:19 AGENT-SYNC completion handoff**.
+Continued clean `b965aa43` and the **23:35:19 AGENT-SYNC.jsonl completion handoff**.
 The previous interrupted threads were landed; `codex-wip-20260907` exists but is
 already an ancestor of `ctcompile-v1`. This session resumed the recorded Config
 method boundary. Agents split escape work, fixtures and proof review; after service
@@ -211,7 +211,7 @@ failure, final gate logs, both source manifests and original full-Config probe.
 
 ## Fresh Config defaults and signed Number products, 2026-09-17 UTC
 
-Continued `1af71cf8` and the **17:03:14 AGENT-SYNC handoff**. The earlier
+Continued `1af71cf8` and the **17:03:14 AGENT-SYNC.jsonl handoff**. The earlier
 prefix-assignment recovery was complete; the frozen signed-product draft in the
 **17:10:37 journal** was reviewed, corrected and committed before the next native
 change. Independent agents handled escape proofs, Config fixtures and deletion
@@ -286,7 +286,7 @@ C++, array log, failure evidence and the complete Config probe).
 
 ## Filtered prefix assignments and Number cancellation, 2026-09-17 UTC
 
-Resumed unmerged **`codex-dynamic-20260917`** from the **16:17:07 AGENT-SYNC
+Resumed unmerged **`codex-dynamic-20260917`** from the **16:17:07 AGENT-SYNC.jsonl
 handoff** at `1d363a7b`; shared main started clean at `d2cc2b8c`. September 7 WIP
 was absent. Locked merge **`08a812a6`** lands `73ae525d` (direct unique snapshot
 assignments), `88e9f626` (callback census after frontend cell ordering), and
@@ -365,7 +365,7 @@ Full H still needs the browser-owned public UTF-16 indexing/slicing and Unicode
 case seam for `charAt(0).toLowerCase() + slice(1)`. No suffix ASCII premise follows
 from the filter. Lowercasing can collide ordinary result keys; the existing ordered
 helper handles collisions, but any admission must preserve the source proof for
-the sole possible prototype-key write. Coordinate through AGENT-SYNC while Claude
+the sole possible prototype-key write. Coordinate through AGENT-SYNC.jsonl while Claude
 owns ctbrowser. Do not replace Unicode with the runtime's current byte/ASCII String
 operations. Config/inheritance/defaults, retained callbacks and the application
 driver remain open; signed multiplication snapshots are an independent future
@@ -374,7 +374,7 @@ escape step. Evidence: `/tmp/ctcompile-native-recovery/` and
 
 ## Ordered native result assignments and negative Sub snapshots, 2026-09-17 UTC
 
-Continued clean **`1bbaff44`** and the **12:40:58 AGENT-SYNC handoff** after
+Continued clean **`1bbaff44`** and the **12:40:58 AGENT-SYNC.jsonl handoff** after
 checking both commit histories and unmerged branches. The interrupted guard/helper
 thread was complete; this session resumed its documented fresh-result assignment
 boundary. Three agents split source preparation, execution tests and escape review;
@@ -453,7 +453,7 @@ Older sections below are historical checkpoints.
 ## Validated element guards and nested helper calls, 2026-09-17 UTC
 
 Resumed seven dirty ctcompile files on **`d9f89a05`**, identified in the
-**10:52:21 recovery / 10:55:26 abandoned-loop AGENT-SYNC journal**. Both histories
+**10:52:21 recovery / 10:55:26 abandoned-loop AGENT-SYNC.jsonl journal**. Both histories
 and unmerged branches were checked; September 7 WIP was already integrated. Two
 editing agents hit service limits after reviewing the drafts; root recovered them.
 A third agent completed independent proof and corrected-order reviews.
@@ -528,7 +528,7 @@ frozen tree and require fresh differential validation when integrated. Evidence:
 ## Present dataset values and signed unary snapshots, 2026-09-17 UTC
 
 Resumed **12 dirty ctcompile files on `6e8fb994`**, identified in the **02:27:52
-recovery / 02:29:20 abandoned-loop AGENT-SYNC journal**. The integrated-runtime
+recovery / 02:29:20 abandoned-loop AGENT-SYNC.jsonl journal**. The integrated-runtime
 recovery was already committed; September 7 WIP is already an ancestor. Three agents
 split dataset tests, escape recovery and independent review. Root recovered the two
 editing agents after service limits, reviewed their drafts and completed the gates.
@@ -607,7 +607,7 @@ are historical checkpoints.
 ## Integrated-runtime recovery complete, 2026-09-17 UTC
 
 Resumed clean `228d80d1` from this handoff and the interrupted **2026-09-16
-22:29 AGENT-SYNC** gate. The native source had already landed: `c8b9856d`
+22:29 AGENT-SYNC.jsonl** gate. The native source had already landed: `c8b9856d`
 (original anchored prefix), `bf872db3` (branch-local confined filter scheduling),
 and `c7d1b1a2` (held bounded Neg stride). Claude reworded their old SHAs without
 changing the trees. September 7 WIP is already an ancestor; no branch was replayed.
@@ -658,7 +658,7 @@ remain open. Older sections below are historical checkpoints.
 
 ## Original snapshot iteration and scalar loop completion, 2026-09-16 UTC
 
-Resumed clean **9b02a344**, its HANDOFF and the **19:22:54 AGENT-SYNC** journal:
+Resumed clean **9b02a344**, its HANDOFF and the **19:22:54 AGENT-SYNC.jsonl** journal:
 the unfinished thread was the original filtered `for...of`, with source regressions
 preserved at `/tmp/ctcompile-dom-iterator-tests/native_dom_dataset.loop-draft.py`.
 Both histories and unmerged branches were checked; September 7 WIP was already landed

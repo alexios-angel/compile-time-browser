@@ -172,7 +172,7 @@ are in `/tmp/ctcompile-h-0823/`. No push. Native Bootstrap and the plan remain o
 
 **6bca7b94** finishes the interrupted receiver-proof thread at **61f627fb**:
 three dirty files from the **07:05 session**, explicitly abandoned by the
-**07:07:11 AGENT-SYNC exit**. Complete original H/M/F now runs inside instance
+**07:07:11 AGENT-SYNC.jsonl exit**. Complete original H/M/F now runs inside instance
 methods when every H slot has actual calls, including constructor-stored DOM
 receivers and fixed fresh-result aliases. Method stability ignores only a direct
 fresh allocation distinct from the prototype/instance; all unknown aliases,
@@ -256,7 +256,7 @@ Native Bootstrap and the overall plan remain unfinished.
 ## Full H entry calls and invariant array lengths, 2026-09-19 UTC
 
 Resumed **59d28a62** and five dirty ctcompile paths from the **06:19 H-slot /
-own-length threads**, explicitly abandoned by the **06:21:33 AGENT-SYNC loop
+own-length threads**, explicitly abandoned by the **06:21:33 AGENT-SYNC.jsonl loop
 exit**. Both-agent histories and unmerged branches were reviewed; September 7
 WIP is already an ancestor. The native draft was diagnostic instrumentation;
 the four-file escape draft was complete but ungated. Three agents reviewed
@@ -334,7 +334,7 @@ was removed at closure, preserving other keys. No push.
 ## Original H key normalization and invariant array reloads, 2026-09-19 UTC
 
 Resumed clean **dadadb5c**, its HANDOFF promise to handle original H casing, and
-the **05:48 AGENT-SYNC closure**. Both-agent histories and unmerged branches were
+the **05:48 AGENT-SYNC.jsonl closure**. Both-agent histories and unmerged branches were
 reviewed; September 7 WIP is already an ancestor. No predecessor edits remained.
 Three agents worked on Core casing, dense reloads and H proof review. Two reached
 service limits; root completed the escape draft, native proof and focused gates.
@@ -427,7 +427,7 @@ No push.
 ## Repeated helpers across entry exits and budgeted invariant depth, 2026-09-19 UTC
 
 Resumed **41527341** and the two dirty class fixture files from the **05:21/05:25
-conditional-callee threads**, explicitly abandoned in AGENT-SYNC at **05:26:57**.
+conditional-callee threads**, explicitly abandoned in AGENT-SYNC.jsonl at **05:26:57**.
 September 7 WIP exists and is already an ancestor. Three agents started fixture,
 escape and proof-review work; all hit service limits. Root preserved the fixture
 draft and completed implementation, review and focused gates.
@@ -507,7 +507,7 @@ Exact validation and limits:
 ## Conditional dataset iterators and invariant bitwise latches, 2026-09-19 UTC
 
 Resumed **ce49f0dd** and the six dirty ctcompile paths left by the **04:59
-conditional/bitwise threads**, explicitly abandoned at the **05:01:02 AGENT-SYNC
+conditional/bitwise threads**, explicitly abandoned at the **05:01:02 AGENT-SYNC.jsonl
 loop exit**. Both-agent history and unmerged branches were reviewed; September 7
 WIP is already an ancestor. Three parallel agents supplied escape completion,
 conditional-proof review and the next-H analysis. Two hit service limits after
@@ -583,7 +583,7 @@ Exact validation and limits:
 
 ## Sequential dataset iterators and invariant Add/Sub, 2026-09-19 UTC
 
-Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC closure** and its
+Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC.jsonl closure** and its
 recorded repeated-iterator boundary. Both-agent logs and unmerged branches were
 reviewed; September 7 WIP is already an ancestor. No predecessor edits were
 pending. Three agents worked in parallel: the escape agent completed its draft
@@ -668,7 +668,7 @@ Exact validation and limits:
 
 ## Direct dataset helpers and nested invariant latches, 2026-09-19 UTC
 
-Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC closure** and the
+Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC.jsonl closure** and the
 original `class_dynamic_helper` refusal in HANDOFF. Both-agent logs and unmerged
 branches were reviewed; September 7 WIP is already an ancestor. There were no
 uncommitted predecessor edits. Three agents supplied the escape implementation
@@ -751,7 +751,7 @@ Exact validation and limits:
 
 ## Class dataset loops and invariant powers, 2026-09-19 UTC
 
-Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC closure**. The latest
+Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC.jsonl closure**. The latest
 work was committed; September 7 WIP is already an ancestor. Three parallel agents
 supplied the escape implementation and class/casing findings before service
 limits; root completed diagnosis, integration and focused validation.

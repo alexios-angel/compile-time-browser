@@ -201,7 +201,7 @@ complete class remains an explicit refusal. Object.entries/destructuring,
 RegExp/type checking, throwing NAME and exception exits need proof; inherited
 receivers and DOM/default composition remain. Full H Unicode keys, callbacks and
 the application driver remain open. The disjoint public UTF-16 extraction
-`codex-unicode-core` / `ecca5b66` is tracked in AGENT-SYNC; Unicode casing and
+`codex-unicode-core` / `ecca5b66` is tracked in AGENT-SYNC.jsonl; Unicode casing and
 normalized-key proof are still separate. Whole-Bootstrap counts remain historical.
 Evidence: `/tmp/ctcompile-receiver-defaults/`.
 

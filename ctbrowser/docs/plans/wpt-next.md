@@ -41,7 +41,7 @@ Evidence: `/tmp/ctbrowser21/` holds final `browser21-corrected-css.json`,
 The first replay's seven losses remain in `browser21-final-css.json` and
 `css-comparison.json`; do not use that intermediate result as the baseline.
 The columns child worktree, branch and devbox copy were removed. Integration
-status is recorded in the latest AGENT-SYNC journal. The `d2664e9` ctjs
+status is recorded in the latest AGENT-SYNC.jsonl journal. The `d2664e9` ctjs
 commit remains local; do not assume its object is published.
 
 Session 19's eight-directory wide baseline is in `/tmp/w-b722aa41/` against

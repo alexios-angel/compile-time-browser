@@ -377,7 +377,7 @@ No browser/Script semantics changed; no whole-Bootstrap gain is claimed.
 
 **6bca7b94** finishes the interrupted receiver-proof thread at **61f627fb**:
 three dirty files from the **07:05 session**, explicitly abandoned by the
-**07:07:11 AGENT-SYNC exit**. Complete original H/M/F now runs inside instance
+**07:07:11 AGENT-SYNC.jsonl exit**. Complete original H/M/F now runs inside instance
 methods when every H slot has actual calls, including constructor-stored DOM
 receivers and fixed fresh-result aliases. Method stability ignores only a direct
 fresh allocation distinct from the prototype/instance; all unknown aliases,
@@ -446,7 +446,7 @@ whole-bundle gain is claimed. Browser/Script semantics are unchanged.
 ## Original H key normalization and invariant array reloads, 2026-09-19 UTC
 
 Resumed clean **dadadb5c** and its recorded original-H boundary in HANDOFF and
-AGENT-SYNC's **05:48 closure**. September 7 WIP is already an ancestor; no dirty
+AGENT-SYNC.jsonl's **05:48 closure**. September 7 WIP is already an ancestor; no dirty
 predecessor work remained. Three agents worked on Core casing, escape reloads
 and H proof review. Two reached service limits; root completed their work.
 
@@ -485,7 +485,7 @@ Script/binding semantics are unchanged. Native Bootstrap and the plan remain unf
 ## Repeated helpers across entry exits and budgeted invariant depth, 2026-09-19 UTC
 
 **5c912e13** finishes the interrupted conditional-callee thread at **41527341**
-(two dirty fixtures; AGENT-SYNC abandonment **05:26:57**). Original helpers called
+(two dirty fixtures; AGENT-SYNC.jsonl abandonment **05:26:57**). Original helpers called
 before and after an entry early return now share the original-body proof; both
 conditional arms must join the same frame state. All 310 previous bodies and ten
 inherited bodies are preserved; ten prior refusals now admit, including nine
@@ -519,7 +519,7 @@ or push. Native Bootstrap and the overall plan remain unfinished.
 ## Conditional dataset iterators and invariant bitwise latches, 2026-09-19 UTC
 
 Resumed **ce49f0dd** and the six dirty paths from the **04:59 conditional/bitwise
-threads**, explicitly abandoned at the **05:01:02 AGENT-SYNC loop exit**.
+threads**, explicitly abandoned at the **05:01:02 AGENT-SYNC.jsonl loop exit**.
 **b290e7e0** admits original early-return class/helper iterators and new holder,
 inverse-guard and nested-conditional specimens. The private snapshot prefix
 retains condition producers and dominating operations; final entry proof still
@@ -557,7 +557,7 @@ are unchanged. Temporary SSH access was removed; no push.
 
 ## Sequential dataset iterators and invariant Add/Sub, 2026-09-19 UTC
 
-Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC closure** and its
+Resumed clean **541ed09b** from the **04:31:10 AGENT-SYNC.jsonl closure** and its
 recorded repeated-iterator boundary; no predecessor edits were pending and
 September 7 WIP is already an ancestor. **56a37fd8** admits the original repeated
 holder, class-method and direct-helper sources. Each sequential top-level
@@ -591,7 +591,7 @@ push; temporary SSH access was removed after verification.
 
 ## Direct dataset helpers and nested invariant latches, 2026-09-19 UTC
 
-Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC closure** and the
+Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC.jsonl closure** and the
 original helper refusal; September 7 WIP is already an ancestor. No predecessor
 edits were pending. **e5426f3c** admits the unchanged `class_dynamic_helper` body:
 original callback enclosures are proved before the helper receiver, then inert
@@ -625,7 +625,7 @@ or push; temporary SSH access was removed after verification.
 
 ## Class dataset loops and invariant powers, 2026-09-19 UTC
 
-Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC closure**. The latest
+Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC.jsonl closure**. The latest
 work was committed; September 7 WIP is already an ancestor. Three parallel agents
 supplied the escape implementation and class/casing findings before service
 limits; root completed diagnosis, integration and focused validation.
@@ -673,7 +673,7 @@ Exact commands, probe outcomes and skipped coverage are recorded in ctcompile/do
 
 ## Confined class callbacks and invariant division, 2026-09-19 UTC
 
-Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC closure**. Both agents'
+Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC.jsonl closure**. Both agents'
 commits and unmerged branches were reviewed; the September 7 WIP is already an
 ancestor and the interrupted UTF-16 extraction was already landed. Three agents
 supplied casing/alias analysis, fixture recommendations and a partial escape draft
@@ -728,7 +728,7 @@ whole plan remain unfinished. No full-suite or whole-bundle admission gain is cl
 
 Resumed clean **fb55eb20** and its original H Unicode boundary. The branch census
 also found **ecca5b66**, a public UTF-16 extraction committed and gated on September
-18 but never merged (AGENT-SYNC 02:05:29/02:11:42). **0eadd9a0** finishes that
+18 but never merged (AGENT-SYNC.jsonl 02:05:29/02:11:42). **0eadd9a0** finishes that
 interrupted thread by atomic merge from an isolated current-tip worktree. Existing
 CharacterData conversion bodies now live in public Core; the binding calls those
 same functions. Browser behavior and Script implementation are unchanged.

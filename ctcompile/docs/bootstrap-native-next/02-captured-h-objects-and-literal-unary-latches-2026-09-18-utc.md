@@ -2,7 +2,7 @@
 
 ## Captured H objects and literal unary latches, 2026-09-18 UTC
 
-Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC closure** and its
+Continued clean **ce4c9628** from the **18:59:17 AGENT-SYNC.jsonl closure** and its
 unfinished class-method H-object capture thread. The September 7 WIP is already
 an ancestor. **ed69f95a** proves fixed local holder captures and aliases in DOM
 class methods. Shared holder analysis checks every original use and slot; all
@@ -43,7 +43,7 @@ native Bootstrap and the overall plan are unfinished.
 
 ## Captured local H helpers and Boolean Add latches, 2026-09-18 UTC
 
-Continued clean **9b9ca236** from the **18:35:50 AGENT-SYNC closure**; no predecessor
+Continued clean **9b9ca236** from the **18:35:50 AGENT-SYNC.jsonl closure**; no predecessor
 edits remained. The September 7 WIP exists and is already an ancestor.
 **51d419c2** composes original one-slot H.getDataAttribute with class results and
 fixed sibling M/F captures. Complete identities, source order, implicit arguments
@@ -84,7 +84,7 @@ plan are unfinished.
 
 ## Local callable holders and negative String latches, 2026-09-18 UTC
 
-Continued clean **414d395e** from the **18:13:26 AGENT-SYNC closure**; no predecessor
+Continued clean **414d395e** from the **18:13:26 AGENT-SYNC.jsonl closure**; no predecessor
 edits remained. The September 7 WIP branch exists and is already an ancestor.
 **6c965f19** composes entry-local callable holders with original class/DOM proofs.
 Exact identities, source order and callback premises precede direct-call rewriting;
@@ -210,7 +210,7 @@ and the application driver remain unfinished.
 
 ## Entry-local Bootstrap M and primitive addition, 2026-09-18 UTC
 
-Continued clean **92192514** after the **16:07:54 AGENT-SYNC closure** confirmed
+Continued clean **92192514** after the **16:07:54 AGENT-SYNC.jsonl closure** confirmed
 all interrupted work committed. **5d12efaa** composes exact local helper calls
 with DOM classes, retaining original intrinsic and exception operations for the
 existing typed proof. Ordinary and resolved entry calls work. Every affected
@@ -247,7 +247,7 @@ driver remain open. Native Bootstrap and the overall plan are unfinished.
 
 ## Mixed class/DOM intrinsics and primitive subtraction, 2026-09-18 UTC
 
-Continued clean **051ab3d2** after the **15:45 AGENT-SYNC closure** confirmed
+Continued clean **051ab3d2** after the **15:45 AGENT-SYNC.jsonl closure** confirmed
 all interrupted Error/power work committed. **690ff8b6** composes class helper
 and optional Error declarations with existing DOM intrinsics. Only class
 identities are consumed; DOM identities survive every method probe and final
@@ -285,7 +285,7 @@ unfinished.
 ## Declared Error class/DOM composition and primitive powers, 2026-09-18 UTC
 
 Recovered eight dirty files plus the primitive-power oracle at **c2108572** from
-the **15:25:30 AGENT-SYNC loop failure**. **4bcc196c** reuses the original class
+the **15:25:30 AGENT-SYNC.jsonl loop failure**. **4bcc196c** reuses the original class
 binding/getter proof for optional unique Error declarations in DOM requests.
 Unused literal-message throwing `NAME` getters now compose with typed DOM
 methods. Complete source and binding checks precede erasure; live throws,
@@ -324,7 +324,7 @@ conversions remain open. Native Bootstrap and the overall plan are unfinished.
 ## Original Config defaults and void DOM returns, 2026-09-18 UTC
 
 **b871feb2** finishes the native part of the six-file interrupted thread
-recorded by the **14:17:21 AGENT-SYNC loop failure**. Omitted/undefined arguments
+recorded by the **14:17:21 AGENT-SYNC.jsonl loop failure**. Omitted/undefined arguments
 now compose through transitive methods, literal/static-getter defaults and fresh
 empty `DefaultType` objects. The existing lifter already supplies undefined;
 complete typed proof checks both branches before private normalization selects
@@ -419,7 +419,7 @@ Required pinned formatting retains 26 diagnostics in nine unchanged files.
 
 ## Captured local class getters, 2026-09-18 UTC
 
-Resumed clean **1b941768** after the **12:36 AGENT-SYNC failure** explicitly
+Resumed clean **1b941768** after the **12:36 AGENT-SYNC.jsonl failure** explicitly
 abandoned the previous capture work. The **12:34 journal** and this handoff named
 `press$4`'s captured `Button.NAME` as the interrupted thread; no dirty draft
 remained. September 7 WIP was already merged. Parallel agents supplied tests and
@@ -473,7 +473,7 @@ Native Bootstrap and the overall plan are unfinished.
 
 ## Original class/DOM composition and String BitNot, 2026-09-18 UTC
 
-Started clean at **4961fffd** after the **12:09:01 AGENT-SYNC session closure**.
+Started clean at **4961fffd** after the **12:09:01 AGENT-SYNC.jsonl session closure**.
 No interrupted edits remained and September 7 WIP was absent. Resumed the recorded
 `class_key`/`class_order` composition boundary. Independent agents supplied focused
 native tests, String BitNot and a read-only proof audit; root completed integration
@@ -545,7 +545,7 @@ the overall plan are unfinished.
 
 ## Confined DOM fields and canonical String powers, 2026-09-18 UTC
 
-Continued clean **86ebc737** after the **11:56:44 AGENT-SYNC journal** closed
+Continued clean **86ebc737** after the **11:56:44 AGENT-SYNC.jsonl journal** closed
 its interrupted receiver work. Resumed the ordinary instance-field boundary
 recorded in HANDOFF/master00; September 7 WIP was absent from unmerged branches.
 Three agents handled escape analysis, native tests and a read-only composition
@@ -619,7 +619,7 @@ broader Number/String conversions remain open. Native Bootstrap is incomplete.
 ## Direct DOM receivers and canonical String bitwise snapshots, 2026-09-18 UTC
 
 Recovered dirty **43860a33**, resuming the receiver-normalization thread named
-by AGENT-SYNC at **11:38:29** and abandoned at **11:38:51**. Independent agents
+by AGENT-SYNC.jsonl at **11:38:29** and abandoned at **11:38:51**. Independent agents
 recovered tests and audited the proof; root completed drafts after service limits.
 
 **3c4e3b1e** expands already normalized direct DOM helper calls through the
@@ -668,7 +668,7 @@ application driver and further String power/conversion proofs remain open.
 ## Explicit class entries and canonical String division, 2026-09-18 UTC
 
 Continued clean **18cc8b1b**, resuming the explicit-entry boundary after the
-**11:14:38 AGENT-SYNC journal** closed the previous interruption.
+**11:14:38 AGENT-SYNC.jsonl journal** closed the previous interruption.
 **1ed820cb** admits class preparation for an explicit imported entry with
 an inert declaration wrapper and unused parameters. Callee/receiver/new.target
 identity and every original body/effect remain checked. Wrapper/publication and
@@ -710,7 +710,7 @@ conversions remain open. Historical Bootstrap measurements were not replayed.
 ## Shared DOM preparation and canonical String products, 2026-09-18 UTC
 
 Continued clean **a4a35dcc**, whose previous interruption was closed by the
-**10:57:53 AGENT-SYNC journal**. **2c4eb46a** moves the existing complete DOM
+**10:57:53 AGENT-SYNC.jsonl journal**. **2c4eb46a** moves the existing complete DOM
 preparation transaction into `HostContract/prepareDOMEntry`: URI, helpers,
 element guards, iteration, wrapper/force normalization and final source reproof.
 Source and refreshed host contract publish together; two successful provider checks
@@ -750,7 +750,7 @@ Whole-Bootstrap/Button/Data measurements remain historical.
 ## Native global helpers and canonical String unary snapshots, 2026-09-18 UTC
 
 Continued clean **c32fee6a**; the prior interruption was explicitly closed by
-AGENT-SYNC at **10:33:17**. **6774a550** closes the four prepared global-holder
+AGENT-SYNC.jsonl at **10:33:17**. **6774a550** closes the four prepared global-holder
 native refusals: class preparation turns capture-free, receiver-blind calls into
 direct private helpers after the complete source/prototype proof. It removes
 unobserved holder storage and unreferenced helper definitions. Host-requested
@@ -786,7 +786,7 @@ application driver remain open. Whole-Bootstrap/Button/Data counts are historica
 ## Recovered global holders and String-left subtraction, 2026-09-18 UTC
 
 Resumed five dirty predecessor files at **0d85f2d9**, explicitly abandoned by
-AGENT-SYNC's **10:13:29** journal. **acd89055** proves unique global callable-holder
+AGENT-SYNC.jsonl's **10:13:29** journal. **acd89055** proves unique global callable-holder
 publication after an entry prefix incapable of calling source code, with all
 fixed slots initialized before publication and all aliases/uses checked.
 Four global holders now prepare, preserving their original stores/loads/calls;

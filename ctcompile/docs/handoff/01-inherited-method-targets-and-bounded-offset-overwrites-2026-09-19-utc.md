@@ -3,7 +3,7 @@
 ## Inherited method targets and bounded offset overwrites, 2026-09-19 UTC
 
 Resumed seven dirty ctcompile paths left by the session explicitly abandoned
-at 14:30:15 in AGENT-SYNC: inherited methods and the frozen Number-offset escape
+at 14:30:15 in AGENT-SYNC.jsonl: inherited methods and the frozen Number-offset escape
 draft. Both agents' histories, unmerged branches and current handoffs were read;
 September 7 WIP is already an ancestor. Three agents supplied escape review,
 concrete native defect findings and the authentic Bootstrap continuation; two
@@ -93,7 +93,7 @@ application driver remains incomplete.
 ## Explicit super construction and visited-index reloads, 2026-09-19 UTC
 
 Resumed clean **ca62d3e8** and the explicit-super thread in the latest
-HANDOFF/master 00/24 and AGENT-SYNC's 13:47 closure. Both agents' histories and
+HANDOFF/master 00/24 and AGENT-SYNC.jsonl's 13:47 closure. Both agents' histories and
 unmerged branches were reviewed. Contrary to earlier journal wording, the
 September 7 WIP branch exists, but it is already an ancestor of `ctcompile-v1`;
 no recovery merge was needed. Three agents returned super/fixture reviews and a
@@ -281,7 +281,7 @@ are unchanged. No push; the plan remains unfinished.
 ## Inheritance helper declarations and invariant overwrites, 2026-09-19 UTC
 
 Resumed clean **57d8d421** and the W/B/Qi thread in the latest handoff and
-12:40 AGENT-SYNC closure. Both agents' histories and unmerged branches were read;
+12:40 AGENT-SYNC.jsonl closure. Both agents' histories and unmerged branches were read;
 September 7 WIP is absent and already recorded as merged. The predecessor's dirty
 escape work was already committed. Three parallel agents returned findings before
 service limits; none left edits. Root completed both changes and focused gates.
@@ -438,7 +438,7 @@ claimed. The overall plan remains unfinished. No push.
 ## Constructor-origin DOM calls, 2026-09-19 UTC
 
 **a0644324** resumes clean **2f279dc4** and the actual Dropdown caller thread
-in the preceding handoff and 11:17 AGENT-SYNC closure. Both agents' histories and
+in the preceding handoff and 11:17 AGENT-SYNC.jsonl closure. Both agents' histories and
 unmerged branches were reviewed; September 7 WIP is already an ancestor.
 Parallel agents identified the constructor-call gap and completed a separate
 escape proposal; root integrated the native change and owns validation/commits.
@@ -513,7 +513,7 @@ claim. The application driver and overall plan remain unfinished. No push.
 ## Actual H callers and guarded array overwrites, 2026-09-19 UTC
 
 **75e341e0** continues clean **aa80f5b5** and the full-H authority boundary
-recorded in the 11:04 AGENT-SYNC closure. Both agents' histories and unmerged
+recorded in the 11:04 AGENT-SYNC.jsonl closure. Both agents' histories and unmerged
 branches were reviewed; September 7 WIP is already an ancestor. Three agents
 supplied call-graph and escape findings before service limits; root implemented
 and validated the escape change. No predecessor edits were pending.
@@ -633,7 +633,7 @@ guess values or delete unproved siblings. Standalone helper registration remains
 separate. Part 25 still needs real own-data definition semantics/provenance,
 preserving assignment setters, literal `__proto__` and computed-key order.
 The existing class-field `emit_define_own`/`define_own_name` implementation was
-recorded in Part 25 and AGENT-SYNC for coordinated runtime work; it is not a
+recorded in Part 25 and AGENT-SYNC.jsonl for coordinated runtime work; it is not a
 trusted definition opcode. No escape code or precision measurement changed.
 W, nested iterators, broader ownership and the application driver remain.
 

@@ -79,7 +79,7 @@ recorder, citation and the complete native DOM Strings lit passed. DOM Strings m
 controls were corrected while preserving their source and relevant refusals;
 no compiler admission or runtime behavior was changed. The pinned formatter
 retains 20 baseline diagnostics in six untouched files; changed files pass.
-AGENT-SYNC history is archived under the user's approval. Full suites and broad
+AGENT-SYNC.jsonl history is archived under the user's approval. Full suites and broad
 matrices were skipped. [Detailed changes and validation](handoff/2026-09-19-file-splits.md).
 
 All eight devbox source copies match home by checksum. Twelve retired source

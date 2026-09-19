@@ -34,7 +34,7 @@ reader and writer support the partitioned default and flat custom files. All
 partitioned without re-downloading or regenerating its values; generators now
 write bounded parts as well.
 
-AGENT-SYNC history was archived with user approval. The complete 14,024-line
+AGENT-SYNC.jsonl history was archived with user approval. The complete 14,024-line
 original remains at `../AGENT-SYNC-archive/2026-09-19.md`; a final dated archive
 also preserves the entries added during this session. The active file keeps the
 protocol, live claims and latest 100 journal entries.

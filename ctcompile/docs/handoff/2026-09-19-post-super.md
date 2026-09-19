@@ -1,6 +1,6 @@
 # Post-super calls, scaled overwrites and loop handoff — 2026-09-19 UTC
 
-Resumed clean `aec2f3b7`. The interrupted thread was recorded in AGENT-SYNC at
+Resumed clean `aec2f3b7`. The interrupted thread was recorded in AGENT-SYNC.jsonl at
 15:18/15:20 and in HANDOFF/master 00/24: B's ordinary `this._getConfig(t)` after
 its own `super()`, followed by Qi's lexical-super lookup. File splits, CMake
 ownership and worktree synchronization had completed since that interruption.

@@ -3,7 +3,7 @@
 ## Original dataset filter and moved-VM recovery, 2026-09-16 UTC
 
 Resumed the interrupted dataset filter and runtime integration from **17 dirty
-ctcompile paths** and the **16:07:28 abandoned-loop AGENT-SYNC entry**. Both commit
+ctcompile paths** and the **16:07:28 abandoned-loop AGENT-SYNC.jsonl entry**. Both commit
 histories and pending branches were checked; September 7 work was already landed.
 Three delegated recovery tasks hit service limits before editing; root completed
 them. A later agent reviewed the next iteration boundary and found no concrete defects
@@ -86,7 +86,7 @@ Earlier entries below are historical checkpoints.
 
 ## Dataset key snapshots and dynamic Add induction, 2026-09-16 UTC
 
-Continued **c5682b0f** and the **10:24:07 AGENT-SYNC** next-boundary journal.
+Continued **c5682b0f** and the **10:24:07 AGENT-SYNC.jsonl** next-boundary journal.
 The starting tree was clean; both histories and unmerged branches were checked.
 Earlier interrupted work was already landed or explicitly superseded. Three agents
 were delegated independent work; service limits stopped their drafts before edits.
@@ -169,7 +169,7 @@ Earlier entries below are historical checkpoints.
 
 Resumed the interrupted 09:13/09:15 Config-spread and negated-guard drafts,
 found as six dirty files plus `negated-guard.test` and the abandoned 09:15:56
-AGENT-SYNC loop. Both histories/unmerged branches were checked; September 7 WIP
+AGENT-SYNC.jsonl loop. Both histories/unmerged branches were checked; September 7 WIP
 was already an ancestor. Three agents recovered regressions, checked proof
 soundness and surveyed the next independent boundaries. No browser/VM source changed.
 
@@ -228,7 +228,7 @@ Earlier entries below are historical checkpoints.
 ## Config JSON tags and reversed array guards, 2026-09-16 UTC
 
 Continued the exact Config `typeof` boundary recorded in **cb002682**, HANDOFF,
-plan00 and the 07:09:54 AGENT-SYNC journal. The starting tree was clean; both
+plan00 and the 07:09:54 AGENT-SYNC.jsonl journal. The starting tree was clean; both
 commit histories and unmerged branches confirmed the interrupted September 7
 and JSON-chain work were already resolved. Three agents split native regressions,
 proof review and an independent escape-analysis increment. Root recovered two
@@ -308,7 +308,7 @@ The entries below are historical checkpoints.
 ## Original Bootstrap attribute normalization, 2026-09-16 UTC
 
 Resumed **codex-m-finish's four dirty M-prefix files**, identified through the
-04:52 AGENT-SYNC journal, the abandoned 04:53:42 loop and **e7c14d27**. Started
+04:52 AGENT-SYNC.jsonl journal, the abandoned 04:53:42 loop and **e7c14d27**. Started
 at **5e3d3b86**, with the test-registry audit merged. Three agents split tests,
 declaration metadata and review; root recovered service-limited drafts and
 completed integration. The old September 7 and JSON-chain threads were already
@@ -369,7 +369,7 @@ The entries below are historical checkpoints.
 
 ## Native JSON chain recovered and gated, 2026-09-16 UTC
 
-Resumed **efe8daa8**, identified in the previous handoff and AGENT-SYNC, by
+Resumed **efe8daa8**, identified in the previous handoff and AGENT-SYNC.jsonl, by
 replaying its draft over the audit landings in `codex-json-resume-20260916`.
 **53b9f68a** and **0a7c0302** finish that thread; the old `claude-json-chain`
 draft is superseded. Three agents split recovery review, native regressions and
