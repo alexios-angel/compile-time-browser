@@ -1044,6 +1044,35 @@ void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
     }
 }
 
+void boundedNumberDifference(const ContentsValue & left, const ContentsValue & right,
+                             ContentsValue & result) {
+    const auto original = boundedConvertedNumber(left);
+    const auto offset = boundedConvertedNumber(right);
+    // Boolean/null and canonical Strings share unary's exact conversion.
+    // Saved operands retain their values; bound magnitudes before arithmetic.
+    if (original && offset) {
+        if (*offset <= *original) {
+            result.integerNumber = *original - *offset;
+        } else {
+            result.negativeIntegerNumber = *offset - *original;
+        }
+    } else if (const auto magnitude = boundedConvertedNumber(right, true);
+               original && magnitude && *magnitude <= 4294967295ULL - *original) {
+        result.integerNumber = *original + *magnitude;
+    } else if (const auto negative = boundedConvertedNumber(left, true); negative) {
+        // Cancellation remains exact; keep the original result's signed zero.
+        if (offset && *offset <= 4294967295ULL - *negative) {
+            result.negativeIntegerNumber = *negative + *offset;
+        } else if (magnitude) {
+            if (*magnitude >= *negative) {
+                result.integerNumber = *magnitude - *negative;
+            } else {
+                result.negativeIntegerNumber = *negative - *magnitude;
+            }
+        }
+    }
+}
+
 } // namespace
 
 ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t workLimit) {
@@ -1260,14 +1289,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
             } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition);
-                       binary && (binary.getKind() == ctjs::BinaryKind::Mul ||
+                       binary && (binary.getKind() == ctjs::BinaryKind::Add ||
+                                  binary.getKind() == ctjs::BinaryKind::Sub ||
+                                  binary.getKind() == ctjs::BinaryKind::Mul ||
                                   binary.getKind() == ctjs::BinaryKind::Div ||
                                   binary.getKind() == ctjs::BinaryKind::Mod ||
                                   binary.getKind() == ctjs::BinaryKind::Pow)) {
                 const auto left = self(self, binary.getLhs(), depth + 1);
                 const auto right = self(self, binary.getRhs(), depth + 1);
                 if (!left || !right) { return std::nullopt; }
-                if (binary.getKind() == ctjs::BinaryKind::Mul) {
+                if (binary.getKind() == ctjs::BinaryKind::Add) {
+                    boundedNumberSum(*left, *right, result);
+                } else if (binary.getKind() == ctjs::BinaryKind::Sub) {
+                    boundedNumberDifference(*left, *right, result);
+                } else if (binary.getKind() == ctjs::BinaryKind::Mul) {
                     boundedNumberProduct(*left, *right, result);
                 } else if (binary.getKind() == ctjs::BinaryKind::Pow) {
                     boundedNumberPower(*left, *right, result);
@@ -1847,38 +1882,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     boundedNumberSum(left, right, result);
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
-                    const auto original = boundedConvertedNumber(left);
-                    const auto offset = boundedConvertedNumber(right);
-                    // Boolean/null and canonical Strings share unary's exact
-                    // conversion. Held operands keep their read-time values;
-                    // guard bounded subtraction before unsigned wrap.
-                    if (original && offset && *offset <= *original) {
+                    boundedNumberDifference(left, right, result);
+                    if (result.integerNumber || result.negativeIntegerNumber) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = *original - *offset;
-                    } else if (original && offset && *original < *offset) {
-                        // The same exact canonical String conversion can yield
-                        // a negative Number; keep its magnitude out of indices.
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.negativeIntegerNumber = *offset - *original;
-                    } else if (const auto magnitude = boundedConvertedNumber(right, true);
-                               original && magnitude && *magnitude <= 4294967295ULL - *original) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        result.integerNumber = *original + *magnitude;
-                    } else if (const auto negative = boundedConvertedNumber(left, true); negative) {
-                        // Negative left Numbers use the same exact offset proof.
-                        // Cancellation is bounded; adding magnitudes must exclude
-                        // overflow. The result keeps its original zero.
-                        if (offset && *offset <= 4294967295ULL - *negative) {
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            result.negativeIntegerNumber = *negative + *offset;
-                        } else if (magnitude) {
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            if (*magnitude >= *negative) {
-                                result.integerNumber = *magnitude - *negative;
-                            } else {
-                                result.negativeIntegerNumber = *negative - *magnitude;
-                            }
-                        }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {

@@ -449,10 +449,16 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("a swapping carried step cannot borrow another register's initial Number one",
            replace(carriedUnit, "^header(%base, %step, %added, %d",
                    "^header(%base, %step, %d, %added"));
-    reject("a body-computed unit step needs its own invariant proof",
-           replace(replace(computedUnit, makeUnit, ""), "  %step =", makeUnit + "  %step ="));
-    reject("a header-computed unit step needs the same invariant proof",
-           replace(replace(computedUnit, makeUnit, ""), "  %key =", makeUnit + "  %key ="));
+    run({.what = "a body-computed subtraction proves its invariant unit step",
+         .body = replace(replace(computedUnit, makeUnit, ""), "  %step =", makeUnit + "  %step ="),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    run({.what = "a header-computed subtraction proves its invariant unit step",
+         .body = replace(replace(computedUnit, makeUnit, ""), "  %key =", makeUnit + "  %key ="),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
     reject("a held unit step still cannot hide loop mutation",
            replace(computedUnit, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="));
     reject("an untaken predecessor must independently supply a Number-one step",
@@ -640,6 +646,43 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(replace(replace(invariantProduct, "mul %d, %one", "div %d, %one"), makeUnit,
                            "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
                    "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    for (const std::string expression :
+         {"add %d, %zero", "add %zero, %d", "sub %d, %zero", "sub %two, %d", "sub %zero, %d"}) {
+        auto source = replace(invariantProduct, "mul %d, %one", expression);
+        if (expression == "sub %zero, %d") {
+            source = replace(source, "binary add %i, %product", "binary sub %i, %product");
+        }
+        run({.what = "invariant Add/Sub preserves original signed operands and transport",
+             .body = source,
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
+        reject("Add/Sub operands retain their original backedge identity",
+               replace(source, "^header(%base, %step, %added, %d",
+                       "^header(%base, %step, %added, %one"));
+        reject("Add/Sub cannot borrow a changing operand",
+               replace(source, expression, replace(expression, "%d", "%i")));
+        reject("Add/Sub cannot borrow an unknown operand",
+               replace(source, expression, replace(expression, "%d", "%p")));
+        const auto string =
+            replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"1\">\n");
+        if (expression.starts_with("add")) {
+            reject("invariant Add cannot borrow numeric String conversion", string);
+        } else {
+            run({.what = "invariant Sub converts each original canonical String",
+                 .body = string,
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one; a[1]=two; a[2]=three",
+                 .exit = "added -> {}"});
+            reject("invariant Sub refuses noncanonical original Strings",
+                   replace(string, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
+        }
+    }
+    reject("invariant addition cannot exceed the exact magnitude bound",
+           replace(replace(invariantProduct, "mul %d, %one", "add %d, %one"), makeUnit,
+                   "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"));
+    reject("invariant subtraction cannot certify a zero stride",
+           replace(invariantProduct, "mul %d, %one", "sub %d, %d"));
     const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
     for (const auto & source :
          {invariantPower, replace(invariantPower, "pow %d, %one", "pow %one, %d"),
@@ -713,7 +756,8 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     for (const std::string expression :
          {"ctjs.unary plus %one", "ctjs.unary neg %one", "ctjs.unary bitnot %zero",
           "ctjs.binary mul %one, %one", "ctjs.binary div %one, %one", "ctjs.binary mod %one, %two",
-          "ctjs.binary pow %one, %two"}) {
+          "ctjs.binary pow %one, %two", "ctjs.binary add %one, %zero",
+          "ctjs.binary sub %one, %zero"}) {
         auto source = replace(nested, "ctjs.unary plus %one", expression);
         if (expression == "ctjs.unary neg %one" || expression == "ctjs.unary bitnot %zero") {
             source = replace(source, "binary add %i, %stride", "binary sub %i, %stride");
@@ -735,7 +779,6 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     }
     for (const std::string expression :
          {"ctjs.unary plus %i", "ctjs.unary plus %p", "ctjs.get_property %base[%zero]",
-          "ctjs.binary add %one, %zero", "ctjs.binary sub %one, %zero",
           "ctjs.binary div %one, %two", "ctjs.binary div %one, %zero", "ctjs.binary pow %two, %two",
           "ctjs.binary mul %one, %zero"}) {
         reject("nested induction requires exact invariant operations and a positive stride",
@@ -962,8 +1005,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(subtract, "sub %i, %minus", "sub %minus, %i"));
     reject("subtraction cannot borrow an opaque negative stride",
            replace(subtract, "sub %i, %minus", "sub %i, %p"));
-    reject("a repeated computed negative stride needs an independent invariant proof",
-           replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"));
+    run({.what = "a repeated subtraction proves its fixed negative stride",
+         .body = replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     run({.what = "repeated original String Neg supplies its invariant literal stride",
          .body =
              replace(subtractNegated, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"1\">"),
@@ -1669,8 +1715,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             reject("addition cannot turn its original Boolean/null into an own key",
                    replace(source, "%base[%i]", "%base[%primitive]"),
                    ArrayContentsFailure::UnknownIndex);
-            reject("repeated primitive addition needs independent invariance",
-                   replace(replace(source, sum, ""), "  %step =", sum + "  %step ="));
+            run({.what = "repeated primitive addition retains its saved operand snapshot",
+                 .body = replace(replace(source, sum, ""), "  %step =", sum + "  %step ="),
+                 .arrays = "a:[one,x]; inputs:[x]",
+                 .reads = "inputs[0]=primitive; a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
             reject("primitive addition cannot borrow an unknown operand",
                    replace(source, "ctjs.constant " + literal, "ctjs.unary plus %p"),
                    ArrayContentsFailure::UnsupportedOperation);
@@ -1724,8 +1773,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             reject("subtraction cannot turn its original Boolean/null into an own key",
                    replace(source, "%base[%i]", "%base[%primitive]"),
                    ArrayContentsFailure::UnknownIndex);
-            reject("repeated primitive subtraction needs independent invariance",
-                   replace(replace(source, difference, ""), "  %step =", difference + "  %step ="));
+            run({.what = "repeated primitive subtraction retains its saved operand snapshot",
+                 .body = replace(replace(source, difference, ""),
+                                 "  %step =", difference + "  %step ="),
+                 .arrays = "a:[one,x]; inputs:[x]",
+                 .reads = "inputs[0]=primitive; a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
             reject("primitive subtraction cannot borrow an unknown operand",
                    replace(source, "ctjs.constant " + literal, "ctjs.unary plus %p"),
                    ArrayContentsFailure::UnsupportedOperation);
@@ -1794,9 +1847,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("a negative String-offset snapshot cannot change on the CFG backedge",
            replace(carriedStringSub, "^header(%base, %step, %added, %d",
                    "^header(%base, %step, %added, %one"));
-    reject("repeated String-offset producers still need independent invariance",
-           replace(replace(stringSub, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
-                   "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="));
+    run({.what = "repeated subtraction proves original signed primitive operands",
+         .body = replace(replace(stringSub, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
+                         "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("a negative String-offset snapshot cannot become an own array index",
            replace(stringSub, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
     for (const std::string text :
@@ -1816,9 +1872,13 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
             reject("left String subtraction requires bounded canonical decimal conversion", left);
         }
     }
-    reject("repeated left String producers still need independent invariance",
-           replace(replace(leftStringSub, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
-                   "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="));
+    run({.what = "repeated subtraction proves original signed primitive operands",
+         .body =
+             replace(replace(leftStringSub, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
+                     "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("a negative left String result cannot become an own array index",
            replace(leftStringSub, "%base[%i]", "%base[%minus]"),
            ArrayContentsFailure::UnknownIndex);
@@ -1839,9 +1899,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(subChild, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
     reject("Add cannot use a negative Sub snapshot as its positive stride",
            replace(subChild, "binary sub %i, %minus", "binary add %i, %minus"));
-    reject("repeated Sub producers need an independent invariant proof",
-           replace(replace(subChild, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
-                   "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="));
+    run({.what = "repeated subtraction proves original signed primitive operands",
+         .body = replace(replace(subChild, "  %minus = ctjs.binary sub %left, %magnitude\n", ""),
+                         "  %step =", "  %minus = ctjs.binary sub %left, %magnitude\n  %step ="),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("a carried Sub snapshot cannot change on the backedge",
            replace(carriedSub, "^header(%base, %step, %added, %d",
                    "^header(%base, %step, %added, %one"));
@@ -1888,8 +1951,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("negative-left Sub cannot supply an own index",
            replace(negativeLeft, "%base[%i]", "%base[%difference]"),
            ArrayContentsFailure::UnknownIndex);
-    reject("repeated negative-left Sub still needs independent invariance",
-           replace(replace(negativeLeft, difference, ""), "  %step =", difference + "  %step ="));
+    run({.what = "repeated negative-left subtraction retains saved input values",
+         .body =
+             replace(replace(negativeLeft, difference, ""), "  %step =", difference + "  %step ="),
+         .arrays = "a:[one,one,x]; seed:[]",
+         .reads = "a[0]=one; a[2]=x",
+         .exit = "x -> {x}"});
     for (const std::string constant :
          {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>",
           "#ctjs.number<4751297606875873280>"}) {
@@ -1977,8 +2044,17 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                  .arrays = "a:[one,x]; seed:[]",
                  .reads = "a[1]=x; a[1]=x",
                  .exit = "x -> {x}"});
-            reject("repeated Add cancellation needs independent invariance",
-                   replace(replace(cancelled, cancel, ""), "  %step =", cancel + "  %step ="));
+            const auto repeated =
+                replace(replace(cancelled, cancel, ""), "  %step =", cancel + "  %step =");
+            if (opcode == "binary") {
+                run({.what = "repeated dynamic Add cancellation proves its saved operands",
+                     .body = repeated,
+                     .arrays = "a:[one,x]; seed:[]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("repeated static Add retains its independent invariant boundary", repeated);
+            }
         }
     }
     const std::string cancel = "  %cancelled = ctjs.binary add %minus, %two "
@@ -2063,8 +2139,12 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(negativeAdd, "^header(%a, %zero, %zero", "^header(%a, %negativeSum, %zero"));
     reject("a negative Add snapshot cannot supply a positive Add stride",
            replace(negativeAdd, "binary sub %i, %negativeSum", "binary add %i, %negativeSum"));
-    reject("a repeated negative Add producer needs independent invariance",
-           replace(replace(negativeAdd, negativeSum, ""), "  %step =", negativeSum + "  %step ="));
+    run({.what = "repeated negative addition retains its original saved magnitude",
+         .body =
+             replace(replace(negativeAdd, negativeSum, ""), "  %step =", negativeSum + "  %step ="),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     for (const std::string constant :
          {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>",
           "#ctjs.number<4751297606875873280>"}) {

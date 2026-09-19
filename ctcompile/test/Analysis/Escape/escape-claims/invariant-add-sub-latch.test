@@ -1,0 +1,150 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | FileCheck %s --check-prefix=IMPORT
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-add-sub-latch
+// RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-add-sub-latch.claims
+
+// Original invariant Add/Sub uses bounded primitive snapshots. Add never borrows
+// Sub's String conversion; changing/reloaded/deep inputs and unsafe bounds refuse.
+// IMPORT-LABEL: ctjs.func @addBoolean$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @addNegative$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @subString$
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @subNegative$
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @nestedCancellation$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @bothSides$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.unary plus
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @changing$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @repeatedRead$
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @concatenated$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @noncanonical$
+// IMPORT: ctjs.binary sub
+// IMPORT-LABEL: ctjs.func @deep$
+// IMPORT: ctjs.binary sub
+// IMPORT: ctjs.binary add
+// IMPORT: ctjs.unary plus
+// IMPORT-LABEL: ctjs.func @overflow$
+// IMPORT: ctjs.binary add
+// IMPORT-LABEL: ctjs.func @zeroStride$
+// IMPORT: ctjs.binary sub
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 1 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 2 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 3 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 11 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CLAIM: escape {{[0-9a-f]+}} 12 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 13 {{[0-9]+}} arr escapes:passed
+
+//--- source.js
+function addBoolean() {
+    var child = {}, array = [child], inputs = [true], base = inputs[0], saved = 0;
+    inputs[0] = child;
+    for (var i = 0; i < array.length; i += base + null) saved = array[i];
+    return 0;
+}
+function addNegative() {
+    var child = {}, array = [child], saved = 0, base = -1;
+    for (var i = 0; i < array.length; i += base + 2) saved = array[i];
+    return saved;
+}
+function subString() {
+    var child = {}, array = [child], saved = 0, base = '2';
+    for (var i = 0; i < array.length; i += base - true) saved = array[i];
+    return 0;
+}
+function subNegative() {
+    var child = {}, array = [child], saved = 0, base = '-1';
+    for (var i = 0; i < array.length; i -= base - null) saved = array[i];
+    return saved;
+}
+function nestedCancellation() {
+    var child = {}, array = [child], saved = 0, base = 1;
+    for (var i = 0; i < array.length; i += (base - 2) + 2) saved = array[i];
+    return 0;
+}
+function bothSides() {
+    var child = {}, array = [child], saved = 0, left = true, right = false;
+    for (var i = 0; i < array.length; i += (left - null) + (+right)) saved = array[i];
+    return 0;
+}
+function changing() {
+    var child = {}, array = [child], saved = 0, base = 1;
+    for (var i = 0; i < array.length; i += base + 0) {
+        saved = array[i];
+        base = base + 1;
+    }
+    return 0;
+}
+function repeatedRead() {
+    var child = {}, array = [child], inputs = [1], saved = 0;
+    for (var i = 0; i < array.length; i += inputs[0] - 0) saved = array[i];
+    return 0;
+}
+function concatenated() {
+    var child = {}, array = [child], saved = 0, base = '1';
+    for (var i = 0; i < array.length; i += base + 0) saved = array[i];
+    return 0;
+}
+function noncanonical() {
+    var child = {}, array = [child], saved = 0, base = '01';
+    for (var i = 0; i < array.length; i += base - 0) saved = array[i];
+    return 0;
+}
+function deep() {
+    var child = {}, array = [child], saved = 0, base = 1;
+    for (var i = 0; i < array.length; i += +((base - 2) + 2)) saved = array[i];
+    return 0;
+}
+function overflow() {
+    var child = {}, array = [child, child], saved = 0, base = 4294967295;
+    for (var i = 1; i < array.length; i += base + 0) saved = array[i];
+    return 0;
+}
+function zeroStride() {
+    var child = {}, array = [], saved = 0, base = 1;
+    for (var i = 0; i < array.length; i += base - base) saved = array[i];
+    return 0;
+}
+addBoolean();
+var heldAddNegative = addNegative();
+subString();
+var heldSubNegative = subNegative();
+nestedCancellation();
+bothSides();
+changing();
+repeatedRead();
+concatenated();
+noncanonical();
+deep();
+overflow();
+zeroStride();

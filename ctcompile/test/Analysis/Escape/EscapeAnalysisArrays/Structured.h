@@ -594,6 +594,43 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(divisionProduct, "mul %d, %one", "div %d, %two"));
     reject("structured zero remainders cannot certify termination",
            replace(divisionProduct, "mul %d, %one", "mod %d, %one"));
+    for (const std::string expression :
+         {"add %d, %zero", "add %zero, %d", "sub %d, %zero", "sub %two, %d", "sub %zero, %d"}) {
+        auto source = replace(divisionProduct, "mul %d, %one", expression);
+        if (expression == "sub %zero, %d") {
+            source = replace(source, "binary add %i, %product", "binary sub %i, %product");
+        }
+        rows.push_back(
+            {.what = "invariant Add/Sub preserves original signed operands and transport",
+             .body = source,
+             .arrays = "a:[x,y]",
+             .reads = "a[0]=x; a[1]=y",
+             .exit = "y -> {y}"});
+        reject("Add/Sub operands retain their original backedge identity",
+               replace(source, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+        reject("Add/Sub cannot borrow a changing operand",
+               replace(source, expression, replace(expression, "%d", "%i")));
+        reject("Add/Sub cannot borrow an unknown operand",
+               replace(source, expression, replace(expression, "%d", "%p")));
+        const auto string =
+            replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"1\">\n");
+        if (expression.starts_with("add")) {
+            reject("invariant Add cannot borrow numeric String conversion", string);
+        } else {
+            rows.push_back({.what = "invariant Sub converts each original canonical String",
+                            .body = string,
+                            .arrays = "a:[x,y]",
+                            .reads = "a[0]=x; a[1]=y",
+                            .exit = "y -> {y}"});
+            reject("invariant Sub refuses noncanonical original Strings",
+                   replace(string, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
+        }
+    }
+    reject("invariant addition cannot exceed the exact magnitude bound",
+           replace(replace(invariantProduct, "mul %d, %one", "add %d, %one"), makeUnit,
+                   "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"));
+    reject("invariant subtraction cannot certify a zero stride",
+           replace(invariantProduct, "mul %d, %one", "sub %d, %d"));
     const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
     for (const auto & source :
          {invariantPower, replace(invariantPower, "pow %d, %one", "pow %one, %d"),
@@ -663,8 +700,9 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     const auto nested = replace(invariantProduct, "    %product = ctjs.binary mul %d, %one",
                                 "    %inner = ctjs.unary plus %d\n"
                                 "    %product = ctjs.binary mul %inner, %one");
-    for (const std::string expression : {"ctjs.unary plus %d", "ctjs.binary mul %d, %one",
-                                         "ctjs.binary div %d, %one", "ctjs.binary pow %d, %one"}) {
+    for (const std::string expression :
+         {"ctjs.unary plus %d", "ctjs.binary mul %d, %one", "ctjs.binary div %d, %one",
+          "ctjs.binary pow %d, %one", "ctjs.binary add %d, %zero", "ctjs.binary sub %d, %zero"}) {
         const auto source = replace(nested, "ctjs.unary plus %d", expression);
         rows.push_back({.what = "mixed nested operations retain reordered structured snapshots",
                         .body = source,
@@ -681,8 +719,7 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     }
     for (const std::string expression :
          {"ctjs.unary plus %i", "ctjs.unary plus %p", "ctjs.get_property %base[%zero]",
-          "ctjs.binary add %d, %zero", "ctjs.binary sub %d, %zero", "ctjs.binary div %d, %zero",
-          "ctjs.binary mul %d, %zero"}) {
+          "ctjs.binary div %d, %zero", "ctjs.binary mul %d, %zero"}) {
         reject("nested structured induction needs exact invariant operations and a positive stride",
                replace(nested, "ctjs.unary plus %d", expression));
     }
@@ -840,8 +877,11 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(subtract, negativeLiteral, "#ctjs.bigint<\"-1\">"));
     reject("structured Sub cannot borrow an unknown stride",
            replace(subtract, "sub %i, %minus", "sub %i, %p"));
-    reject("a structured computed negative stride needs an independent invariant proof",
-           replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"));
+    rows.push_back({.what = "a structured subtraction proves its invariant negative stride",
+                    .body = replace(subtractNegated, "unary neg %one", "binary sub %zero, %one"),
+                    .arrays = "a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
     reject("structured negative subtraction still bounds its final update",
            replace(replace(subtract, negativeLiteral, "#ctjs.number<13974669643728551936>"),
                    "%index = %zero", "%index = %one"));
@@ -1220,10 +1260,14 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            ArrayContentsFailure::UnsupportedOperation);
     reject("Undefined cannot borrow structured primitive subtraction evidence",
            replace(primitiveSub, "#ctjs.null", "#ctjs.undefined"));
-    reject("repeated structured primitive subtraction needs independent invariance",
-           replace(replace(primitiveSub, "    %step =",
-                           replace(primitiveDifference, "%unit =", "%repeated =") + "    %step ="),
-                   "binary sub %i, %d", "binary sub %i, %repeated"));
+    rows.push_back({.what = "repeated structured subtraction proves each original predecessor",
+                    .body = replace(replace(primitiveSub, "    %step =",
+                                            replace(primitiveDifference, "%unit =", "%repeated =") +
+                                                "    %step ="),
+                                    "binary sub %i, %d", "binary sub %i, %repeated"),
+                    .arrays = "a:[x,y] | a:[x,y]",
+                    .reads = "a[0]=x; a[1]=y; a[0]=x",
+                    .exit = "y -> {y}; x -> {x}"});
     rows.push_back({.what = "structured Sub snapshots preserve exact reordered transport",
                     .body = carriedSub,
                     .arrays = "a:[x,y]",
@@ -1299,9 +1343,14 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                    "    scf.yield %bad : !ctjs.value\n  }\n"));
     reject("structured negative Sub snapshots cannot be own indices",
            replace(subSnapshot, "%base[%i]", "%base[%unit]"), ArrayContentsFailure::UnknownIndex);
-    reject("repeated structured Sub producers need independent invariance",
-           replace(replace(subSnapshot, "  %unit = ctjs.binary sub %zero, %magnitude\n", ""),
-                   "    %step =", "    %unit = ctjs.binary sub %zero, %magnitude\n    %step ="));
+    rows.push_back(
+        {.what = "repeated structured subtraction retains the saved length snapshot",
+         .body =
+             replace(replace(subSnapshot, "  %unit = ctjs.binary sub %zero, %magnitude\n", ""),
+                     "    %step =", "    %unit = ctjs.binary sub %zero, %magnitude\n    %step ="),
+         .arrays = "a:[x,y]; seed:[]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
     reject("structured negative Sub snapshots still bound the last exact update",
            replace(replace(replace(carriedSub, "binary sub %one, %magnitude",
                                    "binary sub %zero, %magnitude"),
