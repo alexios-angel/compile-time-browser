@@ -1,5 +1,39 @@
 # What native Bootstrap needs next
 
+## Direct dataset helpers and nested invariant latches, 2026-09-19 UTC
+
+Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC closure** and the
+original helper refusal; September 7 WIP is already an ancestor. No predecessor
+edits were pending. **e5426f3c** admits the unchanged `class_dynamic_helper` body:
+original callback enclosures are proved before the helper receiver, then inert
+direct callee operands use the existing captured-helper cleanup. Every callback,
+argument and unused body still requires complete proof. All 279 prior class
+source bodies are preserved; 14 new bodies cover order, snapshots and refusals.
+
+Parallel **0414c4e0** reuses bounded scalar transfers for two invariant arithmetic
+layers, with charged recursion and unchanged original snapshots. Twenty-four
+older CFG/SCF expressions are now proved without changing their bodies; 58 new
+rows and an eleven-function source oracle cover the extension.
+
+Focused passes: transaction **1/1 (4.35s)**, contract **1/1 (0.46s)**, class DOM
+**1/1 (123.43s; 364 source observations, 8 native executions, 2,754 refusals)**,
+public class **1/1 (199.25s)**, arrays **1/1 (1.19s)**, six escape oracles **6/6
+(0.15s)**. New oracle: **35 sites / 8 sound / 8 of 23 precision**, zero violations.
+Ten tested hashes match; output Script/dispatch exclusions pass. Formatting
+retains 26 existing diagnostics in nine unchanged files; changed checks pass.
+First arrays failed on 13 older nested BitNot expectations, subsequently corrected
+without changing source expressions. Exact targets, failures, commands and
+skipped coverage are in `ctcompile/docs/HANDOFF.md`; evidence is under
+`/tmp/ctcompile-class-helper/`. No broad/full-suite or bundle-admission claim.
+
+**Next:** full original H still needs Unicode-correct lowercase and normalized
+key collision/prototype proof. Dataset suffixes can be non-ASCII; keep the VM's
+ASCII casing unchanged. Early-return/repeated iterators, unused H slots, global
+publication and W's Object.entries/destructuring/original s/RegExp/TypeError/
+spread remain before inheritance. Deeper/recomputed induction, broader part 25,
+the application driver and native Bootstrap remain unfinished. No browser edits
+or push; temporary SSH access was removed after verification.
+
 ## Class dataset loops and invariant powers, 2026-09-19 UTC
 
 Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC closure**. The latest

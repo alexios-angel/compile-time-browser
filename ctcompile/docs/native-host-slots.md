@@ -175,6 +175,13 @@ also defer, whether their original call is ordinary or already resolved. Their
 calls survive class rewriting; all global-holder targets retain the stricter
 census because unused slots can be removed earlier. Original helper exception
 CFGs stay intact for the existing URI/JSON normalization and final typed proof.
+Before checking a direct entry helper's receiver, the census proves every
+original callee use as an inert replacement/filter callback enclosure. Only
+then may its resolved call drop the unobserved callee operand; the existing
+captured-helper cleanup removes a closure only when no observable use remains.
+Callback bodies and actual arguments still pass complete DOM proof. This lets
+an entry-local dataset loop compose with class methods without weakening the
+receiver, callback identity, binding-replacement or unused-body checks.
 
 Entry-local callable holders can use the same DOM transaction when every slot
 has an exact target and all holder reads/calls are ordered after their alias

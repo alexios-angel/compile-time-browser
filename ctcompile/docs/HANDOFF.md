@@ -15,6 +15,89 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Direct dataset helpers and nested invariant latches, 2026-09-19 UTC
+
+Resumed clean **1ffeea81** from the **04:11:27 AGENT-SYNC closure** and the
+original `class_dynamic_helper` refusal in HANDOFF. Both-agent logs and unmerged
+branches were reviewed; September 7 WIP is already an ancestor. There were no
+uncommitted predecessor edits. Three agents supplied the escape implementation
+and fixture/Unicode recommendations; two hit service limits, and root completed
+native implementation, review and focused gates.
+
+**e5426f3c** admits the unchanged original `class_dynamic_helper` body.
+Direct entry helpers prove their original callback enclosures before their
+unused receiver census. Only proved inert callee operands are cleared; the
+existing captured-helper cleanup removes a closure only without remaining
+observable uses. Original callbacks and actual arguments retain the complete
+DOM proof. Captured class-method calls, argument write order and saved String
+results are covered. All **279 previous class source bodies are unchanged**;
+**14 new bodies** add positive and refusal coverage. Observable callback
+receivers/identity, effects, escaped/replaced helpers, invalid arguments,
+new.target, unused helpers and early-return/repeated iterators still refuse.
+
+**0414c4e0** proves two original invariant operation layers with the
+existing Plus/Neg/BitNot/Mul/Div/Mod/Pow transfers. Every recursive value consumes
+budget; leaves retain their original literal or unchanged saved snapshot. The
+change removes duplicated one-operation handling. Repeated property reads,
+Add/Sub recomputation, deeper/changing operands, noncanonical conversions,
+zero/fractional strides and final-index bounds retain their checks. Twenty-four
+prior nested CFG/SCF rows retain their expressions with newly proved outcomes;
+58 added rows and an eleven-function source oracle cover the extension.
+
+Focused passes: native transaction **1/1 (4.35s)**, host contract **1/1
+(0.46s; total 0.47s)**, class DOM **1/1 (123.43s)**: **364 source observations,
+8 combined native executions, 2,754 refusals**. Public class **1/1 (199.25s)**.
+The 20 existing VM byte-index divergences remain explicit; native matches Node.
+Arrays **1/1 (1.19s)** and six selected escape oracles **6/6 (0.15s)** pass.
+New oracle: **35 observed sites / 8 sound / 8 of 23 precision**, zero violations,
+partial, pending or unclaimed sites. All **ten tested hashes** match the devbox.
+Generated output uses `element_ref`, ordinary owning strings/vectors, direct
+predicates and existing dataset helpers; source/binary Script and dispatch
+exclusions pass. Required formatting retains **26 existing diagnostics in nine
+unchanged files**; changed checks pass. Evidence: `/tmp/ctcompile-class-helper/`.
+
+**Next:** full original H still needs Unicode-correct `toLowerCase` and normalized
+assignment-key collision/prototype proof. Dataset suffixes are not necessarily
+ASCII; public Core/Boost.URL/simdutf provide no existing correct casing API, and
+Script's intentionally ASCII behavior is unchanged. Early-return loops and
+actual repeated iterators still need a complete top-level-iterator proof.
+Unused H slots, global publication and W's Object.entries/destructuring/original
+s/RegExp/TypeError/spread remain before inheritance. Deeper/recomputed induction,
+broader part 25, the application driver and native Bootstrap remain unfinished.
+No whole-bundle admission gain or full-suite pass is claimed.
+
+Exact validation and limits:
+
+- Native builds used `ctjs-opt ctjs-translate ctcompile-test-native-reference`
+  for two **5-action** probes, then those targets plus
+  `ctcompile-test-exception-recovery ctcompile-test-host-contract` (**2 actions**).
+  Exact CTests: `ctcompile_exception_recovery`, `ctcompile_host_contract`.
+  Lit: `CTNative/Lowering/Objects/{class-dom,class-initialization}.mlir` through
+  the generated `build/ctcompile/test` configuration. Baseline helper refusal
+  advanced from the direct-call census to lifted closure bookkeeping, then
+  passed; full original H kept its typed DOM member refusal throughout.
+- Escape builds used `ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle` (**3 actions**, then
+  **2** for corrected expectations). Exact CTest:
+  `ctcompile_escape_analysis_arrays`. Lit:
+  `Analysis/Escape/escape-claims/{nested-invariant-latch,invariant-unary-latch,invariant-product-latch,invariant-division-latch,invariant-power-latch,bitnot-latch}.test`.
+  First array attempt failed **50 assertions (1.20s)**: 13 older `~(+literal)`
+  expressions now prove. Their source bodies were preserved and their expected
+  reads/escapes corrected. No production change followed that failure. Three
+  older source-oracle bodies remain byte-identical; their nested result claims
+  are the only changed expected verdicts.
+- All devbox actions held `/tmp/ctbrowser-devbox-build.lock`; explicit target
+  builds used `tools/remote-build.sh`. Selected CTests used anchored exact-name
+  `-R` expressions with `--no-tests=error`; lit used anchored case filters.
+  Logs: `baseline-probe.log`, `probe-gate.log`, `callee-probe.log`,
+  `native-gate.log`, `escape-gate.log`, `escape-final-gate.log`, `evidence.log`,
+  `final-format.log`. Fourteen new JS syntax checks and 16 Node observations pass.
+- Full CTest/compiler lit, complete DOM/String suites, broad corpus/native
+  matrices, WPT/test262, whole Bootstrap and independent dataset lifetime
+  replays were skipped. Browser compliance counts remain historical. No browser
+  implementation or Script semantics changed. Temporary task SSH access was
+  removed after verification, preserving other keys. No push.
+
 ## Class dataset loops and invariant powers, 2026-09-19 UTC
 
 Resumed clean **24b6383e** from the **03:46:37 AGENT-SYNC closure**. The latest
