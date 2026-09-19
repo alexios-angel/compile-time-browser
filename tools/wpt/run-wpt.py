@@ -167,9 +167,7 @@ class Plan:
     query: str = ""
 
 
-VARIANT_RE = re.compile(
-    rb'<meta\s+name="?variant"?\s+content="?([^">]*)"?', re.IGNORECASE
-)
+VARIANT_RE = re.compile(rb'<meta\s+name="?variant"?\s+content="?([^">]*)"?', re.IGNORECASE)
 
 
 def with_variants(plan: Plan, variants) -> list[Plan]:
@@ -199,19 +197,13 @@ def plan_for(path: Path, wpt: Path) -> list[Plan]:
         # WPT would generate for it is not one we can open. Named as the missing
         # feature, which is what a skip has to be.
         if scopes and "window" not in scopes and "default" not in scopes:
-            return [
-                Plan(
-                    rel, skip=f"global={scopes}: no Worker/ServiceWorker in this engine"
-                )
-            ]
+            return [Plan(rel, skip=f"global={scopes}: no Worker/ServiceWorker in this engine")]
         # THE WRAPPER WPT'S MANIFEST WOULD HAVE GENERATED. A .any.js test has no
         # HTML on disk at all - wptrunner synthesises `<test>.any.html` at
         # request time - so the runner has to build the same page, beside the
         # script so that its relative <script src> resolves.
         long_timeout = "long" in meta.get("timeout", [""])[0]
-        extra = "".join(
-            f'<script src="{src}"></script>\n' for src in meta.get("script", [])
-        )
+        extra = "".join(f'<script src="{src}"></script>\n' for src in meta.get("script", []))
         wrapper_name = path.name.rsplit(".js", 1)[0] + WRAPPER_SUFFIX
         wrapper = path.parent / wrapper_name
         wrapper.write_text(
@@ -236,16 +228,12 @@ def plan_for(path: Path, wpt: Path) -> list[Plan]:
     # this runner has no reference rendering to compare against - the render
     # goldens are a different instrument (tools/check/check-render.cmake).
     if b"rel=match" in head or b'rel="match"' in head or b"rel=mismatch" in head:
-        return [
-            Plan(rel, skip="reftest: needs a reference render, not a harness result")
-        ]
+        return [Plan(rel, skip="reftest: needs a reference render, not a harness result")]
     if b"testharness.js" not in head:
         return [Plan(rel, skip="not a testharness test")]
     if b"testdriver.js" in head:
         return [Plan(rel, skip="testdriver: needs WebDriver input injection")]
-    long_timeout = (
-        b'name="timeout" content="long"' in head or b"name=timeout content=long" in head
-    )
+    long_timeout = b'name="timeout" content="long"' in head or b"name=timeout content=long" in head
     # THE VARIANTS, from the whole file rather than its head: html5lib_write.html
     # lists fifty `<meta name=variant>` lines, one .dat fixture each, and the
     # 8 KB head holds only the first thirty.
@@ -442,9 +430,7 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
                 if time.monotonic() > deadline:
                     break
                 try:
-                    reply = send_command(
-                        sock, {"cmd": "eval", "script": PROBE}, deadline
-                    )
+                    reply = send_command(sock, {"cmd": "eval", "script": PROBE}, deadline)
                 except (TimeoutError, ConnectionError, OSError):
                     if gone():
                         return ended("mid-command")
@@ -453,9 +439,7 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
                 logged = reply.get("console") or []
                 last_probe = logged[-1] if logged else ""
                 if last_probe.startswith("D"):
-                    return classify(
-                        last_probe[1:], output(), time.monotonic() - started
-                    )
+                    return classify(last_probe[1:], output(), time.monotonic() - started)
                 # A SCRIPT ERROR THE HARNESS NEVER SAW. testharness.js installs
                 # its own error handler, so a page that reaches this has thrown
                 # somewhere the harness could not catch - during load, most
@@ -532,13 +516,9 @@ def classify(payload: str, log: str, seconds: float) -> DriverResult:
     subtests = state.get("subtests", [])
     message = state.get("message", "")
     if harness == "ERROR":
-        return DriverResult(
-            Outcome.HARNESS_ERROR, message, subtests, log=log, seconds=seconds
-        )
+        return DriverResult(Outcome.HARNESS_ERROR, message, subtests, log=log, seconds=seconds)
     if harness == "TIMEOUT":
-        return DriverResult(
-            Outcome.TIMEOUT, message, subtests, log=log, seconds=seconds
-        )
+        return DriverResult(Outcome.TIMEOUT, message, subtests, log=log, seconds=seconds)
     if harness != "OK":
         return DriverResult(
             Outcome.HARNESS_ERROR,
@@ -589,8 +569,7 @@ def expectation_lines(results):
         for one in result.subtests:
             if one.get("status") != "PASS":
                 lines.append(
-                    f"{result.rel}\tSUBTEST\t{one['status']}\t"
-                    f"{json.dumps(one.get('name', ''))}"
+                    f"{result.rel}\tSUBTEST\t{one['status']}\t" f"{json.dumps(one.get('name', ''))}"
                 )
     return lines
 
@@ -610,9 +589,7 @@ def gate(results, path: Path):
     green tree, which is a gate that gets switched off.
     """
     ran = {result.rel for result in results}
-    expected = {
-        line for line in parse_expectations(path) if line.split("\t", 1)[0] in ran
-    }
+    expected = {line for line in parse_expectations(path) if line.split("\t", 1)[0] in ran}
     actual = set(expectation_lines(results))
     return sorted(actual - expected), sorted(expected - actual)
 
@@ -626,11 +603,7 @@ def table(results, corpus, elapsed):
         by_dir.setdefault(str(Path(result.rel).parent), []).append(result)
     sub_total = {}
     print(f"\nwpt {corpus[:10]}  {len(results)} files  {elapsed:.1f}s")
-    print(
-        f"{'directory':<34}"
-        + "".join(f"{name:>10}" for name in ORDER)
-        + f"{'subtests':>10}"
-    )
+    print(f"{'directory':<34}" + "".join(f"{name:>10}" for name in ORDER) + f"{'subtests':>10}")
     print("-" * (34 + 10 * len(ORDER) + 10))
     totals = {name: 0 for name in ORDER}
     for where in sorted(by_dir):
@@ -643,15 +616,10 @@ def table(results, corpus, elapsed):
             for one in result.subtests:
                 key = one.get("status", "UNKNOWN")
                 sub_total[key] = sub_total.get(key, 0) + 1
-        print(
-            f"{where:<34}" + "".join(f"{counts[n]:>10}" for n in ORDER) + f"{subs:>10}"
-        )
+        print(f"{where:<34}" + "".join(f"{counts[n]:>10}" for n in ORDER) + f"{subs:>10}")
     print("-" * (34 + 10 * len(ORDER) + 10))
     print(f"{'TOTAL':<34}" + "".join(f"{totals[n]:>10}" for n in ORDER))
-    print(
-        "\nsubtests: "
-        + "  ".join(f"{k}={v}" for k, v in sorted(sub_total.items()) if v)
-    )
+    print("\nsubtests: " + "  ".join(f"{k}={v}" for k, v in sorted(sub_total.items()) if v))
     return totals, sub_total
 
 
@@ -794,9 +762,7 @@ def main():
         help="per-driver address-space cap (ulimit -v)",
     )
     parser.add_argument("--wpt-dir", type=Path, default=DEFAULT_WPT)
-    parser.add_argument(
-        "--driver", type=Path, default=ROOT / "build" / "tools" / "ctdrive"
-    )
+    parser.add_argument("--driver", type=Path, default=ROOT / "build" / "tools" / "ctdrive")
     parser.add_argument("--json", type=Path, help="write the full results here")
     parser.add_argument("--tsv", type=Path, help="write one line per test here")
     parser.add_argument("--expectations", type=Path, default=EXPECTATIONS)
@@ -836,9 +802,7 @@ def main():
     # OUR REPORT HOOK, INSTALLED. WPT ships a do-nothing testharnessreport.js
     # and expects the vendor to replace it; this is that replacement, copied in
     # on every run so a re-fetch can never leave the corpus reporting nothing.
-    shutil.copyfile(
-        HERE / "testharnessreport.js", wpt / "resources" / "testharnessreport.js"
-    )
+    shutil.copyfile(HERE / "testharnessreport.js", wpt / "resources" / "testharnessreport.js")
 
     if args.selftest:
         return selftest(args.driver, wpt, args.memory_mb)
@@ -883,9 +847,7 @@ def main():
                 try:
                     outcome = future.result()
                 except Exception as bad:  # a bug in the runner is not a test result
-                    outcome = DriverResult(
-                        Outcome.HARNESS_ERROR, f"runner error: {bad!r}"
-                    )
+                    outcome = DriverResult(Outcome.HARNESS_ERROR, f"runner error: {bad!r}")
                 # log="" drops the driver's stdout, which nothing reports
                 # after this point and which would otherwise sit in memory
                 # for every test until the run ends.
@@ -922,9 +884,7 @@ def main():
     )
     causes([r.message for r in results if r.status == Outcome.SKIP], "skips", limit=20)
 
-    slowest = sorted(
-        (r for r in results if r.status != Outcome.SKIP), key=lambda r: -r.seconds
-    )[:5]
+    slowest = sorted((r for r in results if r.status != Outcome.SKIP), key=lambda r: -r.seconds)[:5]
     if slowest:
         print(
             "\nslowest: "
@@ -952,11 +912,7 @@ def main():
                             # ride in the JSON, because a CRASH row that says
                             # only "SIGABRT" cannot be diagnosed from the
                             # JSON alone and the log is gone with the process.
-                            **(
-                                {"log": r.log.strip()[-1500:]}
-                                if r.status == Outcome.CRASH
-                                else {}
-                            ),
+                            **({"log": r.log.strip()[-1500:]} if r.status == Outcome.CRASH else {}),
                         }
                         for r in sorted(results, key=lambda r: r.rel)
                     ],
@@ -1013,9 +969,7 @@ def main():
             lines,
             split=args.expectations.resolve() == EXPECTATIONS.resolve(),
         )
-        print(
-            f"wrote {args.expectations} ({len(lines)} lines, {len(kept)} carried over)"
-        )
+        print(f"wrote {args.expectations} ({len(lines)} lines, {len(kept)} carried over)")
         return 0
 
     if args.check or args.gate:
@@ -1025,9 +979,7 @@ def main():
             for line in regressions[:40]:
                 print(f"  + {line}")
         if fixed:
-            print(
-                f"\n{len(fixed)} UNEXPECTED PASS(ES) - the expectations are now wrong:"
-            )
+            print(f"\n{len(fixed)} UNEXPECTED PASS(ES) - the expectations are now wrong:")
             for line in fixed[:40]:
                 print(f"  - {line}")
         if regressions or fixed:
