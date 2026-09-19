@@ -1,5 +1,58 @@
 # What native Bootstrap needs next
 
+## Confined class callbacks and invariant division, 2026-09-19 UTC
+
+Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC closure**. Both agents'
+commits and unmerged branches were reviewed; the September 7 WIP is already an
+ancestor and the interrupted UTF-16 extraction was already landed. Three agents
+supplied casing/alias analysis, fixture recommendations and a partial escape draft
+before service limits; root completed, reviewed and gated the changes.
+
+**6a1f3147** lets DOM class methods retain Bootstrap's original dataset
+predicate when its callback saves lexical `this` but never reads it. The complete
+original callback/callee/receiver census precedes clearing that inert operand.
+Fixed method-local cells reuse the existing ordered identity proof; cell and
+callback identities follow private method normalization. Constructor fields,
+receiver aliases, actual parameters, early returns and repeated calls are covered.
+Observed callback receivers, changing cells, escapes, invalid later inputs and unused
+method effects still refuse. All prior fixture dictionary entries are unchanged;
+three new strict-number-equality bodies and two unused borrowed-field bodies
+are preserved as refusals.
+
+**11f707a4** shares the existing bounded signed Div/Mod transfer with one invariant
+quotient/remainder latch. Both operands must remain original literal or saved
+primitive values; division additionally requires an integral quotient. Zero
+divisors/strides, noncanonical/unknown/changing/nested operands, original property
+keys and final-index bounds retain their checks. Ten older expressions retain their
+source bodies with updated outcomes; 37 CFG/SCF rows and a nine-function source
+oracle were added. Arrays **1/1 (1.15s; total 1.16s)** and three selected escape
+oracles **3/3 (0.13s)** pass. New oracle: **28 observed sites / 6 sound / 6 of 18
+precision**, zero violations, partial, pending or unclaimed sites.
+
+Final native transaction **1/1 (4.40s)**, host contract **1/1 (0.46s; total
+0.47s)** and class DOM **1/1 (107.33s)** pass. Class DOM checks **328 source
+observations, 8 combined native executions and 2,416 refusals**. The 20 explicit
+VM byte-indexing divergences remain pinned; native agrees with Node. Public class:
+**1/1 (198.66s)**. Generated-source and binary Script/dispatch exclusions pass.
+All **seven tested hashes** match the devbox. Required formatting retains 26
+existing diagnostics in nine unchanged files; changed checks pass. Exact commands, retries and skipped coverage are in [HANDOFF](HANDOFF.md).
+Evidence: `/tmp/ctcompile-class-alias/`.
+
+**Next:** original H still needs Unicode-correct lowercase and normalized output-key
+proof. Script's String casing is deliberately ASCII-only and no public Unicode
+casing implementation exists; extracting the ASCII binding cannot meet that
+contract. Keep the VM behavior unchanged. Lowercase collisions must preserve
+insertion/overwrite order and the `__proto__` setter constraint; transformed keys
+must never acquire dataset-membership authority. `class_dynamic_method` stops at
+nonlocal/unordered method-cell uses,
+`class_dynamic_capture` at an observable lifted closure, and
+`class_dynamic_helper` at its unsupported `ctjs.call_direct`. Original H retains
+the typed property/member refusal. Repeated iterators, unused H slots and global
+publication remain. W still needs Object.entries/destructuring/original s/RegExp/
+TypeError/spread before inheritance. One invariant Pow latch and broader part-25
+work remain. Full H, W/W+r/W+r+H, native Bootstrap, the application driver and the
+whole plan remain unfinished. No full-suite or whole-bundle admission gain is claimed.
+
 ## Shared UTF-16 indexing and invariant products, 2026-09-19 UTC
 
 Resumed clean **fb55eb20** and its original H Unicode boundary. The branch census

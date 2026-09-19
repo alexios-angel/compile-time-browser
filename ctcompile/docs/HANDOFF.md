@@ -15,6 +15,103 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Confined class callbacks and invariant division, 2026-09-19 UTC
+
+Resumed clean **768a71c5** from the **03:18:30 AGENT-SYNC closure**. Both agents'
+commits and unmerged branches were reviewed; the September 7 WIP is already an
+ancestor and the interrupted UTF-16 extraction was already landed. Three agents
+supplied casing/alias analysis, fixture recommendations and a partial escape draft
+before service limits; root completed, reviewed and gated the changes.
+
+**6a1f3147** lets DOM class methods retain Bootstrap's original dataset
+predicate when its callback saves lexical `this` but never reads it. The complete
+original callback/callee/receiver census precedes clearing that inert operand.
+Fixed method-local cells reuse the existing ordered identity proof; cell and
+callback identities follow private method normalization. Constructor fields,
+receiver aliases, actual parameters, early returns and repeated calls are covered.
+Observed callback receivers, changing cells, escapes, invalid later inputs and unused
+method effects still refuse. All prior fixture dictionary entries are unchanged;
+three new strict-number-equality bodies and two unused borrowed-field bodies
+are preserved as refusals.
+
+**11f707a4** shares the existing bounded signed Div/Mod transfer with one invariant
+quotient/remainder latch. Both operands must remain original literal or saved
+primitive values; division additionally requires an integral quotient. Zero
+divisors/strides, noncanonical/unknown/changing/nested operands, original property
+keys and final-index bounds retain their checks. Ten older expressions retain their
+source bodies with updated outcomes; 37 CFG/SCF rows and a nine-function source
+oracle were added. Arrays **1/1 (1.15s; total 1.16s)** and three selected escape
+oracles **3/3 (0.13s)** pass. New oracle: **28 observed sites / 6 sound / 6 of 18
+precision**, zero violations, partial, pending or unclaimed sites.
+
+Final native transaction **1/1 (4.40s)**, host contract **1/1 (0.46s; total
+0.47s)** and class DOM **1/1 (107.33s)** pass. Class DOM checks **328 source
+observations, 8 combined native executions and 2,416 refusals**. The 20 explicit
+VM byte-indexing divergences remain pinned; native agrees with Node. Public class:
+**1/1 (198.66s)**. Generated-source and binary Script/dispatch exclusions pass.
+All **seven tested hashes** match the devbox. Required formatting retains 26
+existing diagnostics in nine unchanged files; changed checks pass. Exact commands, retries and skipped coverage are below.
+Evidence: `/tmp/ctcompile-class-alias/`.
+
+**Next:** original H still needs Unicode-correct lowercase and normalized output-key
+proof. Script's String casing is deliberately ASCII-only and no public Unicode
+casing implementation exists; extracting the ASCII binding cannot meet that
+contract. Keep the VM behavior unchanged. Lowercase collisions must preserve
+insertion/overwrite order and the `__proto__` setter constraint; transformed keys
+must never acquire dataset-membership authority. `class_dynamic_method` stops at
+nonlocal/unordered method-cell uses,
+`class_dynamic_capture` at an observable lifted closure, and
+`class_dynamic_helper` at its unsupported `ctjs.call_direct`. Original H retains
+the typed property/member refusal. Repeated iterators, unused H slots and global
+publication remain. W still needs Object.entries/destructuring/original s/RegExp/
+TypeError/spread before inheritance. One invariant Pow latch and broader part-25
+work remain. Full H, W/W+r/W+r+H, native Bootstrap, the application driver and the
+whole plan remain unfinished. No full-suite or whole-bundle admission gain is claimed.
+
+Exact validation and limits:
+
+- Native build targets: `ctjs-opt`, `ctjs-translate`,
+  `ctcompile-test-native-reference`, `ctcompile-test-exception-recovery`,
+  `ctcompile-test-host-contract`. Initial build: **7 actions**, including the
+  escape production change. Receiver-rewrite and method-cell revisions rebuilt
+  the affected compiler/recovery targets in **4 actions each**; fixture-only
+  syncs rebuilt nothing. Exact CTests: `ctcompile_exception_recovery` and
+  `ctcompile_host_contract`. Final-source timings are above.
+- Native lit: `CTNative/Lowering/Objects/{class-dom,class-initialization}.mlir`
+  through the generated `build/ctcompile/test` configuration. Public controls
+  record 154 source observations, 380 native executions, 308 unprepared refusals
+  and 190 preparation refusals; separate constructed-method/original-r/prototype
+  controls also pass. The inspected new output uses a borrowed `element_ref`,
+  ordinary vectors/strings/optionals and the existing dataset/filter helpers.
+- Escape build: `ctjs-translate`, `ctcompile-test-escape-analysis-arrays`,
+  `ctcompile-test-escape-claims`, `ctcompile-test-type-oracle`: **5 actions**,
+  then **2** after fixture corrections. Exact CTest:
+  `ctcompile_escape_analysis_arrays`. Lit:
+  `Analysis/Escape/escape-claims/{invariant-division-latch,invariant-product-latch,signed-division}.test`.
+- First array attempt failed **52 assertions (1.14s; total 1.15s)**: ten older
+  expected refusals now prove, plus eight added SCF specimens lacked a constant.
+  Older source expressions are preserved; the added specimens were repaired.
+  Native preliminary class failures were **18.00s** (retained inert receiver),
+  **18.10s** (strict Number equality), **18.70s** (method parameter cell), and
+  **19.02s** (unused borrowed constructor field). The latter equality/field
+  bodies remain explicit refusals. Earlier public compatibility **199.37s**
+  tested the callback-only draft; **198.66s** above tests final production.
+- Logs: `escape-gate.log`, `escape-retry.log`, `native-gate.log`,
+  `native-retry.log`, `native-numeric-gate.log`, `native-final-gate.log`,
+  `native-field-gate.log`, `compat-gate.log`, `final-evidence.log`,
+  `native-inspect.log`, and `commit-format.log`. All prior fixture dictionaries
+  were compared against the initial snapshot and retained unchanged.
+- Required `tools/format.sh --check` reports the same **26 diagnostics in nine
+  unchanged files**. Changed C++/Python formatting and `git diff --check` pass.
+  No browser implementation or Script semantics changed. Authenticated Azure
+  run-command supplied a temporary task SSH key after the normal key failed;
+  it was removed after verification, preserving all other authorized keys.
+- Full CTest/compiler lit, complete DOM/String suites, broad corpus/native
+  matrices, WPT/test262, whole Bootstrap and independent dataset lifetime
+  replays were skipped. Browser compliance counts remain historical. No
+  full-suite pass, whole-bundle admission gain, application-driver completion
+  or push is claimed.
+
 ## Shared UTF-16 indexing and invariant products, 2026-09-19 UTC
 
 Resumed clean **fb55eb20** and its original H Unicode boundary. The branch census
