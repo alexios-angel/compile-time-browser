@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 157; ++control) {
+        for (unsigned control = 0; control < 165; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -887,6 +887,41 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                   "if (t.hasAttribute('later')) joined = 0; ");
                 }
             }
+            if (control >= 157) {
+                source = R"js(function guarded(element) {
+                    function readDataset(t) {
+                        const keys = Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"));
+                        let joined = '';
+                        for (const n of keys) joined = joined + t.dataset[n] + '|';
+                        return joined;
+                    }
+                    class Shape { constructor() { this.key = 'x'; } }
+                    const shape = new Shape();
+                    const saved = readDataset(element);
+                    if (element.hasAttribute(shape.key)) return false;
+                    return saved + readDataset(element) === 'value|value|';
+                })js";
+                if (control == 158) {
+                    source.insert(source.find("return saved"),
+                                  "element.setAttribute('marker', 'between'); ");
+                }
+                if (control == 159) {
+                    source.insert(source.find("return saved"), "element.unknown(); ");
+                }
+                if (control == 160 || control == 161) {
+                    const std::string call = "return saved + readDataset(element)";
+                    source.replace(source.find(call), call.size(),
+                                   control == 160 ? "return saved + readDataset({})"
+                                                  : "return saved + readDataset(element, 1)");
+                }
+                if (control == 162) {
+                    source.insert(source.find("return saved"),
+                                  "element.setAttribute('leak', readDataset); ");
+                }
+                if (control == 163) {
+                    source.replace(source.find("let joined = '';"), 16, "let joined = this;");
+                }
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -952,7 +987,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 *candidate, request,
                 control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
                         control == 91 || control == 103 || control == 115 || control == 125 ||
-                        control == 139 || control == 147 || control == 153
+                        control == 139 || control == 147 || control == 153 || control == 164
                     ? 0
                 : control == 4 || control == 17 ? 1000
                 : control >= 47                 ? 1000000
@@ -963,7 +998,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
                 control != 100 && control != 104 && control != 105 && control != 116 &&
                 control != 117 && control != 128 && control != 129 && control != 130 &&
-                control != 140 && control != 141 && control != 151) {
+                control != 140 && control != 141 && control != 151 && control != 157 &&
+                control != 158) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -1009,6 +1045,30 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                         request.moduleSha256 == ctnative::hostContractFingerprint(*candidate) &&
                         !(*candidate)->hasAttr("ctnative.supplied"),
                     "class/DOM composition publishes only the fresh typed DOM proof");
+                if (control == 157 && checked.proved()) {
+                    for (const bool duplicate : {false, true}) {
+                        mlir::OwningOpRef<mlir::ModuleOp> broken(candidate->clone());
+                        ctjs::FrameExitOp exit;
+                        guarded(*broken).walk([&](ctjs::FrameExitOp op) {
+                            if (!exit && op->getParentOfType<mlir::scf::IfOp>()) { exit = op; }
+                        });
+                        if (!check(static_cast<bool>(exit),
+                                   "conditional entry retains its exits")) {
+                            continue;
+                        }
+                        if (duplicate) {
+                            mlir::OpBuilder at(exit);
+                            at.clone(*exit);
+                        } else {
+                            exit.erase();
+                        }
+                        auto malformed = request;
+                        malformed.moduleSha256 = ctnative::hostContractFingerprint(*broken);
+                        const ctnative::DOMEntryAnalysis refused(*broken, malformed);
+                        check(!refused.proved(),
+                              "missing or repeated conditional frame exits cannot receive a proof");
+                    }
+                }
             }
         }
     }

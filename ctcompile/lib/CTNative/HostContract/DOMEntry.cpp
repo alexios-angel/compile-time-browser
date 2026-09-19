@@ -280,7 +280,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         // Both arms are checked. Loop-carried values have invariant scalar
         // kinds; indexed snapshots additionally require the exact 0/+1 proof.
         const auto visit = [&](auto && self, mlir::Block & body, unsigned depth,
-                               mlir::Value frame) -> bool {
+                               mlir::Value & frame) -> bool {
             if (depth == 64 ||
                 (!body.getArguments().empty() && depth != 0 &&
                  !llvm::isa<ctjs::InvokeOp, mlir::scf::WhileOp>(body.getParentOp()))) {
@@ -458,6 +458,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         return false;
                     }
                     llvm::SmallVector<Kind> joined;
+                    mlir::Value thenFrame = frame, elseFrame = frame;
                     const auto known = constantBooleans.find(branch.getCondition());
                     const std::optional<bool> selected = known == constantBooleans.end()
                                                              ? std::nullopt
@@ -491,7 +492,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                 provedRefinements.push_back({&region.front(), refined, {}});
                             }
                         }
-                        if (!self(self, region.front(), depth + 1, frame)) { return false; }
+                        auto & armFrame = first ? thenFrame : elseFrame;
+                        if (!self(self, region.front(), depth + 1, armFrame)) { return false; }
                         auto yielded =
                             llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
                         if (!yielded || yielded.getNumOperands() != branch.getNumResults()) {
@@ -548,6 +550,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                             joined[index] = Kind::optionalString;
                         }
                     }
+                    if (thenFrame != elseFrame) {
+                        refusal = "DOM entry branch has inconsistent shadow frame exits";
+                        return false;
+                    }
+                    frame = thenFrame;
                     if (joined.size() != branch.getNumResults() ||
                         (branch.getNumResults() && branch.getElseRegion().empty())) {
                         refusal = "DOM entry branch is missing a scalar arm";
@@ -775,9 +782,17 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     continue;
                 }
                 if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
-                    if (depth || !frame || exit.getContext() != frame) {
+                    if (!frame || exit.getContext() != frame) {
                         refusal = "DOM entry exits an unknown shadow frame";
                         return false;
+                    }
+                    for (auto * parent = exit->getParentOp(); parent != function;
+                         parent = parent->getParentOp()) {
+                        if (!spend()) { return false; }
+                        if (!llvm::isa<mlir::scf::IfOp>(parent)) {
+                            refusal = "DOM entry frame exit requires an acyclic conditional path";
+                            return false;
+                        }
                     }
                     frame = {};
                     continue;
@@ -1445,7 +1460,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
             return true;
         };
-        if (!visit(visit, block, 0, {})) { return; }
+        mlir::Value frame;
+        if (!visit(visit, block, 0, frame)) { return; }
         if (callbackBody) {
             if (!spend()) { return; }
             auto returned = llvm::cast<ctjs::ReturnOp>(block.getTerminator());

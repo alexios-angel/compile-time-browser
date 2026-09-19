@@ -79,3 +79,7 @@
 // retaining condition producers, prior loops, saved results and intervening writes.
 // The final entry proof checks both arms and joined scalar state. Loop-nested
 // iterators, stale snapshots, unknown effects and invalid later calls still refuse.
+// Original helper calls before and after entry early returns keep saved results,
+// captured helper calls and intervening DOM writes. Both arms must close the same
+// frame. Identity observations, escapes, implicit receivers/new.target, excess
+// arguments and later invalid calls refuse.

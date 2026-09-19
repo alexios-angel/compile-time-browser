@@ -58,7 +58,7 @@ struct classInitialization {
     llvm::SetVector<mlir::Operation *> capturedHelpers;
     llvm::SmallVector<ctjs::CreateClosureOp> capturedClosures;
     llvm::SmallVector<ctjs::CreateClosureOp> inertReceiverClosures;
-    llvm::SmallVector<ctjs::CallDirectOp> inertCalleeCalls;
+    llvm::SmallVector<mlir::Operation *> inertCalleeCalls;
     llvm::SetVector<mlir::Operation *> dispatchMethods;
     llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>> normalizedMethods;
 
@@ -1037,10 +1037,13 @@ struct classInitialization {
                 // complete typed DOM proof. Uncalled holder slots may disappear
                 // during rewriting, so they retain the strict source census.
                 domEntryHelpers.insert(fn);
-                if (direct) {
-                    inertCalleeCalls.push_back(direct);
-                    capturedHelpers.insert(closure);
+                if (method &&
+                    method.getArgs().size() + ctjs::implicit_arguments > block.getNumArguments()) {
+                    refuse("DOM class helper call has excess arguments");
+                    return mlir::WalkResult::interrupt();
                 }
+                inertCalleeCalls.push_back(op);
+                capturedHelpers.insert(closure);
             }
             return mlir::WalkResult::advance();
         };
@@ -1705,12 +1708,27 @@ struct classInitialization {
         // The original capture proof checked every implicit argument before any
         // mutation. Only an unobserved sibling closure can disappear here; a
         // remaining entry call still goes through the ordinary closure lift.
-        for (ctjs::CallDirectOp call : inertCalleeCalls) {
+        for (mlir::Operation * operation : inertCalleeCalls) {
             // Entry-local calls survive method normalization. Their original
             // callee uses were proved to be only inert callback enclosures.
-            mlir::OpBuilder at(call);
-            call.getCalleeValueMutable().assign(ctjs::ConstantOp::create(
-                at, call.getLoc(), ctjs::UndefinedAttr::get(module.getContext())));
+            mlir::OpBuilder at(operation);
+            auto absent = ctjs::ConstantOp::create(at, operation->getLoc(),
+                                                   ctjs::UndefinedAttr::get(module.getContext()));
+            if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
+                direct.getCalleeValueMutable().assign(absent);
+                continue;
+            }
+            auto call = llvm::cast<ctjs::CallOp>(operation);
+            auto helper = target(call.getCallee().getDefiningOp<ctjs::CreateClosureOp>());
+            llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+            arguments.resize(helper.getBody().front().getNumArguments() - ctjs::implicit_arguments,
+                             absent);
+            auto direct =
+                ctjs::CallDirectOp::create(at, call.getLoc(), call.getType(),
+                                           mlir::FlatSymbolRefAttr::get(helper.getSymNameAttr()),
+                                           absent, absent, absent, arguments, nullptr, nullptr);
+            call.getResult().replaceAllUsesWith(direct.getResult());
+            call.erase();
         }
         for (mlir::Operation * operation : capturedHelpers) {
             auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);

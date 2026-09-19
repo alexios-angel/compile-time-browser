@@ -1373,6 +1373,84 @@ for name, bits in (
     ("class_dynamic_conditional_nested_if", "1000"),
 ):
     DYNAMIC_CASES[name] = (DYNAMIC_REFUSALS.pop(name), bits)
+# Repeated helpers keep their identity and saved results across branch transport.
+CONDITIONAL_SEQUENTIAL = DYNAMIC_REFUSALS.pop("class_dynamic_conditional_sequential")
+DYNAMIC_CASES.update(
+    {
+        "class_dynamic_conditional_sequential": (CONDITIONAL_SEQUENTIAL, "1000"),
+        "class_dynamic_conditional_discarded": (
+            CONDITIONAL_SEQUENTIAL.replace(
+                "const saved = readDataset(element);", "readDataset(element);"
+            )
+            .replace("saved + readDataset(element)", "readDataset(element)")
+            .replace("'value|value|'", "'value|'"),
+            "1000",
+        ),
+        "class_dynamic_conditional_saved": (
+            CONDITIONAL_SEQUENTIAL.replace(
+                "return saved + readDataset(element)",
+                "element.setAttribute('marker', 'between'); "
+                "const next = readDataset(element); "
+                "return element.getAttribute('marker') === 'between' && saved + next",
+            ),
+            "1000",
+        ),
+        "class_dynamic_conditional_three": (
+            CONDITIONAL_SEQUENTIAL.replace(
+                "return saved + readDataset(element) === 'value|value|'",
+                "const next = readDataset(element); "
+                "return saved + next + readDataset(element) === 'value|value|value|'",
+            ),
+            "1000",
+        ),
+        "class_dynamic_conditional_capture": (
+            DYNAMIC_HELPER_METHOD.replace(
+                "return new Shape(element).read() === 'value|'",
+                "const shape = new Shape(element); const saved = shape.read(); "
+                "if (element.getAttribute('x') !== null) return false; "
+                "return saved + shape.read() === 'value|value|'",
+            ),
+            "1000",
+        ),
+    }
+)
+DYNAMIC_REFUSALS.update(
+    {
+        "class_dynamic_conditional_nested_calls": CONDITIONAL_SEQUENTIAL.replace(
+            "if (element.getAttribute('x') !== null) return false;",
+            "if (element.hasAttribute('x')) { "
+            "if (element.getAttribute('x') !== null) return false; }",
+        ),
+        "class_dynamic_conditional_identity": CONDITIONAL_SEQUENTIAL.replace(
+            "return saved + readDataset(element)",
+            "return readDataset === readDataset && saved + readDataset(element)",
+        ),
+        "class_dynamic_conditional_escape": CONDITIONAL_SEQUENTIAL.replace(
+            "return saved + readDataset(element)",
+            "element.setAttribute('leak', readDataset); return saved + readDataset(element)",
+        ),
+        "class_dynamic_conditional_receiver": CONDITIONAL_SEQUENTIAL.replace(
+            "let joined = '';", "let joined = this;"
+        ),
+        "class_dynamic_conditional_new_target": CONDITIONAL_SEQUENTIAL.replace(
+            "let joined = '';", "let joined = new.target;"
+        ),
+        "class_dynamic_conditional_later_effect": CONDITIONAL_SEQUENTIAL.replace(
+            "return saved + readDataset(element)",
+            "element.unknown(); return saved + readDataset(element)",
+        ),
+        "class_dynamic_conditional_later_invalid": CONDITIONAL_SEQUENTIAL.replace(
+            "return saved + readDataset(element)", "return saved + readDataset({})"
+        ),
+        "class_dynamic_conditional_excess": CONDITIONAL_SEQUENTIAL.replace(
+            "return saved + readDataset(element)", "return saved + readDataset(element, 1)"
+        ),
+        "class_dynamic_conditional_excess_effect": CONDITIONAL_SEQUENTIAL.replace(
+            "return saved + readDataset(element)",
+            "return saved + readDataset(element, element.unknown())",
+        ),
+    }
+)
 FILTER_CASES.update(DYNAMIC_CASES)
 FILTER_REFUSALS.update(DYNAMIC_REFUSALS)
 # Retain the entire original method as the next boundary, including M, for-of
@@ -1393,7 +1471,7 @@ for refusals in (FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS):
     refusals["class_dynamic_original"] = ORIGINAL_ATTRIBUTES
 # The VM still indexes bytes. Pin its known divergence separately from the
 # Node/native UTF-16 contract; all pre-existing differential expectations remain.
-UTF16_CASES, UTF16_VM_BITS, UTF16_EARLY_REFUSALS = {}, {}, {}
+UTF16_CASES, UTF16_VM_BITS = {}, {}
 for name, text, first, rest, agrees in (
     ("empty", "", "", "", True),
     ("ascii", "ab", "a", "b", True),
@@ -1425,7 +1503,8 @@ for name, text, first, rest, agrees in (
     && first + rest === text && element.getAttribute(shape.key) === 'later';
 """
     )
-    UTF16_EARLY_REFUSALS[name + "_early"] = body
+    UTF16_CASES[name + "_early"] = (body, "1111")
+    UTF16_VM_BITS[name + "_early"] = "1111" if agrees else "0000"
     body = (
         body.replace(
             "if (text === null) return false;", "let answer = false; if (text !== null) {"
@@ -1462,7 +1541,6 @@ UTF16_REFUSALS = {
     )
 }
 CLASS_CASES.update(UTF16_CASES)
-UTF16_REFUSALS.update(UTF16_EARLY_REFUSALS)
 CLASS_REFUSALS.update(UTF16_REFUSALS)
 # The arrow saves lexical this, but its original Bootstrap predicate never reads it.
 DIRECT_FILTER_EQUALITY_CLASS = (
