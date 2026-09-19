@@ -13,7 +13,9 @@ def rows(text):
 
 
 checker, dump, expected = map(Path, sys.argv[1:])
-want, got = rows(expected.read_text()), rows(dump.read_text())
+want, got = rows("".join(p.read_text() for p in sorted(expected.glob("*.txt")))), rows(
+    dump.read_text()
+)
 if want != got:
     sys.stderr.writelines(difflib.unified_diff(want, got, str(expected), str(dump)))
     raise SystemExit("escape fixture allocation/observation/claim snapshot changed")
@@ -99,18 +101,42 @@ with tempfile.TemporaryDirectory(prefix="escape-dump-") as directory:
             recording.replace("globals:1,temporaries:2", "globals:2,temporaries:1"),
             claims,
         ),
-        ("changed count", recording.replace("made 3 confined 0", "made 4 confined 1"), claims),
-        ("missing claim", recording, claims.replace("escape abc 0 1 obj escapes:stored\n", "")),
+        (
+            "changed count",
+            recording.replace("made 3 confined 0", "made 4 confined 1"),
+            claims,
+        ),
+        (
+            "missing claim",
+            recording,
+            claims.replace("escape abc 0 1 obj escapes:stored\n", ""),
+        ),
         (
             "missing unobserved claim",
             recording,
             claims.replace("escape abc 0 5 arr confined\n", ""),
         ),
-        ("implicit Error claimed", recording, claims + "escape abc 0 2 obj escapes:thrown\n"),
+        (
+            "implicit Error claimed",
+            recording,
+            claims + "escape abc 0 2 obj escapes:thrown\n",
+        ),
         ("extra unobserved claim", recording, claims + "escape abc 0 9 obj confined\n"),
-        ("unrecorded function claim", recording, claims + "escape abc 2 1 obj confined\n"),
-        ("unrecorded program claim", recording, claims + "escape def 0 1 obj confined\n"),
-        ("changed claim", recording, claims.replace("escapes:stored", "escapes:returned")),
+        (
+            "unrecorded function claim",
+            recording,
+            claims + "escape abc 2 1 obj confined\n",
+        ),
+        (
+            "unrecorded program claim",
+            recording,
+            claims + "escape def 0 1 obj confined\n",
+        ),
+        (
+            "changed claim",
+            recording,
+            claims.replace("escapes:stored", "escapes:returned"),
+        ),
     ]
     for name, rec, claim in mutations:
         result, observed = run(rec, claim)
@@ -130,14 +156,22 @@ with tempfile.TemporaryDirectory(prefix="escape-dump-") as directory:
             recording + "fn 1 entries 0 params 0 frame 0 name duplicate\n",
             claims,
         ),
-        ("duplicate program", recording + "program abc size 0 functions 0 label -\n", claims),
+        (
+            "duplicate program",
+            recording + "program abc size 0 functions 0 label -\n",
+            claims,
+        ),
         (
             "duplicate root route",
             recording.replace("globals:1,temporaries:2", "globals:1,globals:2"),
             claims,
         ),
         ("malformed site", recording.replace("made 3", "lost 3"), claims),
-        ("malformed allocation", recording.replace("alloc 1 kind obj", "alloc 1 lost obj"), claims),
+        (
+            "malformed allocation",
+            recording.replace("alloc 1 kind obj", "alloc 1 lost obj"),
+            claims,
+        ),
     ]
     for name, rec, claim in rejected:
         result, _ = run(rec, claim)

@@ -26,7 +26,7 @@ provenance record, every function a classification); these are coverage and
 link-integrity gates, never precision counts or new confinement claims.
 
 --strict (the fixture) adds: partial and pending both zero; the checker's dump
-against expected.txt through check-dump.py; the inherited-accessor programs
+against the expected/ snapshot parts through check-dump.py; the inherited-accessor programs
 (inherited-*.js, each in a fresh runtime context) whose child argument must
 stay Stored after deletion; and the SHA-256 pins on the fixture functions whose
 measured bytecode coordinates the snapshot names - a pinned body that changed
@@ -386,7 +386,7 @@ def main():
         check_pins(args.corpus)
         dumped = run(
             [sys.executable, str(HERE / "check-dump.py"), args.script, str(dump)]
-            + [str(HERE / "expected.txt")]
+            + [str(HERE / "expected")]
         )
         print(dumped.stdout + dumped.stderr)
         if dumped.returncode != 0:
