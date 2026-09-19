@@ -64,7 +64,11 @@
 // Complete original H admits when every slot has original entry calls. Sibling
 // String arguments bind before shared F specialization; distinct literal keys
 // retain their union, and any matching or unknown later key still refuses.
-// H inside a class method retains the prototype-write census boundary.
+// Complete H also runs inside original instance methods. Fresh result literals,
+// including fixed local aliases, cannot overwrite prototype methods; constructor
+// fields retain their original DOM receiver. Real prototype/instance aliases,
+// joined fresh/instance locals and unknown formals still count as writes.
+// Replacement, deletion, borrowed methods and prototype escape retain refusal.
 // Direct class methods retain the original filter predicate and its lexical-this
 // enclosure when that callback never reads this. Constructor fields, actual
 // parameters, early-return branches and repeated calls retain their source order.

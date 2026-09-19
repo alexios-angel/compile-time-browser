@@ -998,8 +998,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
                 control != 100 && control != 104 && control != 105 && control != 116 &&
                 control != 117 && control != 128 && control != 129 && control != 130 &&
-                control != 140 && control != 141 && control != 151 && control != 157 &&
-                control != 158) {
+                control != 140 && control != 141 && control != 148 && control != 151 &&
+                control != 157 && control != 158) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -1071,7 +1071,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 }
             }
         }
-        for (unsigned control = 0; control < 7; ++control) {
+        for (unsigned control = 0; control < 13; ++control) {
             std::string source = R"js(function guarded(element) {
                 const H = { read(t) {
                     const result = {};
@@ -1095,6 +1095,31 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             if (control == 4) {
                 source.replace(source.find("i.charAt(0).toLowerCase()"), 25, "i.toLowerCase()");
             }
+            if (control >= 7) {
+                const std::string original = "class Shape { constructor() { this.key = 'x'; } }";
+                source.replace(source.find(original), original.size(),
+                               "class Shape { read(element) { return typeof H.read(element) === "
+                               "'object'; } }");
+                const std::string observation = "return typeof H.read(element) === 'object' && "
+                                                "element.hasAttribute(shape.key);";
+                source.replace(source.find(observation), observation.size(),
+                               "return shape.read(element);");
+            }
+            if (control == 8) {
+                source.replace(source.find("const result = {};"), 18,
+                               "const fresh = {}; const result = fresh;");
+            }
+            if (control == 9) {
+                source.insert(source.find("return shape.read"),
+                              "shape[element.getAttribute('slot')] = element => true; ");
+            }
+            if (control == 10) {
+                source.insert(source.find("return shape.read"),
+                              "const alias = shape; alias.read = element => true; ");
+            }
+            if (control == 11) {
+                source.insert(source.find("return shape.read"), "element.unknown(); ");
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             const auto original = printed(*candidate);
@@ -1113,8 +1138,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             if (control != 5) { request.initialIntrinsics.push_back("String"); }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
-            auto error = ctnative::prepareDOMEntry(*candidate, request, control == 6 ? 0 : 1000000);
-            if (control) {
+            auto error = ctnative::prepareDOMEntry(*candidate, request,
+                                                   control == 6 || control == 12 ? 0 : 1000000);
+            if (control != 0 && control != 7 && control != 8) {
                 check(static_cast<bool>(error), "unproved normalized output keys refuse");
                 llvm::consumeError(std::move(error));
                 check(printed(*candidate) == original &&

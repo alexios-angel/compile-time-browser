@@ -1546,9 +1546,79 @@ FULL_H_REFUSALS = {
         "H.removeDataAttribute(element, 'config')", "H.removeDataAttribute({}, 'config')"
     ),
 }
-# Dynamic writes in H still conservatively block prototype-method stability.
-# Keep this complete original body for the next receiver-alias proof.
-FULL_H_REFUSALS["class_h_full_method"] = FULL_H_CASES.pop("class_h_full_method")[0]
+# Fresh H results are distinct from the class prototype and each instance.
+# Keep the complete original bodies while checking aliases and real writes.
+FULL_H_METHOD = FULL_H_CASES["class_h_full_method"][0]
+FULL_H_CASES.update(
+    {
+        "class_h_full_method_result_alias": (
+            FULL_H_METHOD.replace("const e = {},", "const result = {}; const e = result,"),
+            "1000",
+        ),
+        "class_h_full_method_field": (
+            FULL_H_METHOD.replace(
+                "class Shape { read(element) {",
+                "class Shape { constructor(element) { this.element = element; } "
+                "read() { const element = this.element;",
+            ).replace("new Shape().read(element)", "new Shape(element).read()"),
+            "1000",
+        ),
+    }
+)
+FULL_H_REFUSALS.update(
+    {
+        "class_h_full_method_prototype_write": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "const prototype = Shape.prototype; "
+            "prototype[element.getAttribute('slot')] = element => true; "
+            "return new Shape().read(element);",
+        ),
+        "class_h_full_method_instance_write": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "const shape = new Shape(); const alias = shape; "
+            "alias[element.getAttribute('slot')] = element => true; "
+            "return shape.read(element);",
+        ),
+        "class_h_full_method_parameter_write": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "function change(target, key) { target[key] = element => true; } "
+            "const shape = new Shape(); change(shape, element.getAttribute('slot')); "
+            "return shape.read(element);",
+        ),
+        "class_h_full_method_joined_instance_write": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "const shape = new Shape(); let alias = {}; "
+            "if (element.getAttribute('slot') === null) alias = shape; "
+            "alias.read = element => false; return shape.read(element);",
+        ),
+        "class_h_full_method_prototype_replaced": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "Shape.prototype.read = element => true; return new Shape().read(element);",
+        ),
+        "class_h_full_method_instance_replaced": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "const shape = new Shape(); shape.read = element => true; "
+            "return shape.read(element);",
+        ),
+        "class_h_full_method_prototype_deleted": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "delete Shape.prototype.read; return new Shape().read(element);",
+        ),
+        "class_h_full_method_instance_deleted": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "const shape = new Shape(); delete shape.read; return shape.read(element);",
+        ),
+        "class_h_full_method_borrowed": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "const shape = new Shape(); const borrowed = {read: shape.read}; "
+            "return borrowed.read(element);",
+        ),
+        "class_h_full_method_prototype_escape": FULL_H_METHOD.replace(
+            "return new Shape().read(element);",
+            "element.saved = Shape.prototype; return new Shape().read(element);",
+        ),
+    }
+)
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC_CASES):
     cases.update(FULL_H_CASES)
 for refusals in (CLASS_REFUSALS, FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS, F_REFUSALS):
