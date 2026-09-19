@@ -15,6 +15,25 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## CMake ownership, 2026-09-19 UTC
+
+**099852d2** atomically merges the CMake hygiene work. All **192 maintained C++
+folders** now have local CMake ownership; 183 `CMakeLists.txt` files were added.
+Sibling source lists and parent-relative CMake paths are gone. Existing compiled
+sources, flags, link commands, executable paths and test settings are preserved,
+with normalized paths and a relocated test PCH. The new deduction executable is
+optional; the new `cmake_hygiene` CTest checks ownership and paths.
+
+Ten distinct focused CTests and two lit cases passed. Browser-only configuration
+with LLVM/MLIR disabled, the installed package consumer, and a standalone
+MLIR-off compiler build passed. Four missing public files and installed subsystem
+aliases were fixed. The pinned formatter retains 20 baseline diagnostics in six
+untouched files; changed Python formatting passes. Full suites and corpus runs
+were skipped. [Exact changes and validation](handoff/2026-09-19-cmake-hygiene.md).
+
+The next native boundary remains B's `this._getConfig(t)` after its own `super()`,
+then Qi's lexical home/base lookup. No native admission or runtime behavior changed.
+
 ## Repository file splits, 2026-09-19 UTC
 
 **76df4a57** atomically merges the browser cleanup after separate area commits.
