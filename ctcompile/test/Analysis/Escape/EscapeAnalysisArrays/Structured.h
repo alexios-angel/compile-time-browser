@@ -477,6 +477,80 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     reject("an unvisited structured slot still cannot overlap a fixed write",
            replace(visitedIndex,
                    "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
+    const auto offsetIndex =
+        replace(replace(replace(replace(replace(original, "[%x]", "[%one, %y, %one, %y]"),
+                                        "  ctjs.append %y to %a\n", ""),
+                                "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                        "    %read =",
+                        "    %position = ctjs.binary add %i, %one\n"
+                        "    ctjs.set_property %base[%position], %zero\n    %read ="),
+                "    %step = ctjs.binary_static add %i, %one",
+                "    %step = ctjs.binary_static add %i, %two");
+    for (const auto & expression : {"ctjs.binary add %i, %one", "ctjs.binary add %one, %i",
+                                    "ctjs.binary_static add %i, %one"}) {
+        rows.push_back({.what = "structured Number offsets write only bounded shifted positions",
+                        .body = replace(offsetIndex, "ctjs.binary add %i, %one", expression),
+                        .arrays = "a:[one,zero,one,zero]",
+                        .reads = "a[0]=one; a[2]=one",
+                        .exit = "one -> {}"});
+    }
+    const auto previousIndex =
+        replace(replace(replace(offsetIndex, "[%one, %y, %one, %y]", "[%y, %one, %y, %one]"),
+                        "%index = %zero", "%index = %one"),
+                "ctjs.binary add %i, %one", "ctjs.binary sub %i, %one");
+    rows.push_back({.what = "structured subtracted offsets retain a nonzero start",
+                    .body = previousIndex,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[1]=one; a[3]=one",
+                    .exit = "one -> {}"});
+    rows.push_back({.what = "structured signed offsets preserve their Number snapshot",
+                    .body = replace(replace(previousIndex,
+                                            "  %a =", "  %negative = ctjs.unary neg %one\n  %a ="),
+                                    "ctjs.binary sub %i, %one", "ctjs.binary add %i, %negative"),
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[1]=one; a[3]=one",
+                    .exit = "one -> {}"});
+    const auto reloadedOffset = replace(offsetIndex, "    %position = ctjs.binary add %i, %one",
+                                        "    %offset = ctjs.get_property %base[%zero]\n"
+                                        "    %position = ctjs.binary add %i, %offset");
+    rows.push_back({.what = "structured offsets may reload outside every shifted write",
+                    .body = reloadedOffset,
+                    .arrays = "a:[one,zero,one,zero]",
+                    .reads = "a[0]=one; a[0]=one; a[0]=one; a[2]=one",
+                    .exit = "one -> {}"});
+    rows.push_back({.what = "structured offset overwrites keep a previously saved child",
+                    .body = replace(replace(offsetIndex, "  %finalIndex,",
+                                            "  %held = ctjs.get_property %a[%one]\n  %finalIndex,"),
+                                    "ctjs.return %result", "ctjs.return %held"),
+                    .arrays = "a:[one,zero,one,zero]",
+                    .reads = "a[1]=y; a[0]=one; a[2]=one",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured zero-trip offset stores preserve all children",
+                    .body = replace(replace(replace(offsetIndex, "%index = %zero", "%index = %two"),
+                                            "[%one, %y, %one, %y]", "[%one, %y]"),
+                                    "ctjs.return %result", "ctjs.return %a"),
+                    .arrays = "a:[one,y]",
+                    .exit = "a -> {a,y}"});
+    for (const auto & body :
+         {replace(previousIndex, "%index = %one", "%index = %zero"),
+          replace(offsetIndex, "[%one, %y, %one, %y]", "[%one, %y, %one]"),
+          replace(replace(reloadedOffset, "[%one, %y, %one, %y]", "[%one, %one, %y, %one]"),
+                  "%offset = ctjs.get_property %base[%zero]",
+                  "%offset = ctjs.get_property %base[%one]"),
+          replace(
+              replace(replace(reloadedOffset, "[%one, %y, %one, %y]", "[%one, %y, %one, %one]"),
+                      "    %offset =", "    %three = ctjs.binary add %two, %one\n    %offset ="),
+              "%offset = ctjs.get_property %base[%zero]",
+              "%offset = ctjs.get_property %base[%three]"),
+          replace(reloadedOffset,
+                  "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="),
+          replace(offsetIndex, "ctjs.binary add %i, %one", "ctjs.binary add %i, %last"),
+          replace(
+              replace(offsetIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
+              "ctjs.binary add %i, %one", "ctjs.binary add %i, %text")}) {
+        reject("structured offset stores reject invalid bounds, mutable values and non-Numbers",
+               body);
+    }
     const auto disjointReload =
         replace(replace(replace(reloaded, "  %finalIndex,",
                                 "  %seed = ctjs.create_array [%one] {storage_test_id = \"seed\"}\n"

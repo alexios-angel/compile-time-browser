@@ -1471,11 +1471,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return unsupported;
         }
         const std::size_t size = found->second.size();
-        // ponytail: one header/body pair, with writes only to its current or
-        // invariant own element. Other mutations need a termination proof. Primitive
-        // kinds and every element still pass the ordinary operation transfers.
+        const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
+        // ponytail: one header/body pair, with writes only to its current,
+        // invariant or Number-offset own element. Other mutations need a termination proof.
+        // Primitive kinds and every element still pass the ordinary operation transfers.
         llvm::SmallDenseSet<std::size_t, 4> guardStores;
-        bool storesCurrentIndex = false;
+        llvm::SmallVector<std::pair<std::size_t, std::size_t>, 4> guardStoreRanges;
         for (mlir::Block * block : {header, body}) {
             for (mlir::Operation & operation : *block) {
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
@@ -1483,13 +1484,56 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                     if (block != body) { return unsupported; }
                     if (fromHeader(store.getKey()) == index) {
-                        storesCurrentIndex = true;
+                        if (*start < size) { guardStoreRanges.emplace_back(*start, last); }
                     } else {
-                        const auto key = invariant(invariant, store.getKey(), 0);
-                        if (!key) { return invariantFailure; }
-                        const auto position = ownArrayIndex(*key);
-                        if (!position || *position >= size) { return unsupported; }
-                        guardStores.insert(*position);
+                        auto * expression = store.getKey().getDefiningOp();
+                        auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
+                        auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
+                        const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
+                        if (expression && expression->getBlock() == body &&
+                            (subtract || (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
+                             (addition && addition.getKind() == ctjs::BinaryKind::Add)) &&
+                            (fromHeader(expression->getOperand(0)) == index ||
+                             (!subtract && fromHeader(expression->getOperand(1)) == index))) {
+                            const unsigned offsetOperand =
+                                fromHeader(expression->getOperand(0)) == index ? 1U : 0U;
+                            const auto offset =
+                                invariant(invariant, expression->getOperand(offsetOperand), 0);
+                            if (!offset) { return invariantFailure; }
+                            // Only exact Number offsets: String Add concatenates, and
+                            // other primitive conversions need their own source proof.
+                            if (!offset->integerNumber && !offset->negativeIntegerNumber &&
+                                !boundedNumber(offset->origin()) &&
+                                !boundedNumber(offset->origin(), true)) {
+                                return unsupported;
+                            }
+                            std::pair<std::size_t, std::size_t> range;
+                            for (auto [endpoint, position] : {std::pair{*start, &range.first},
+                                                              std::pair{last, &range.second}}) {
+                                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                                ContentsValue result;
+                                const ContentsValue current{index, ContentsKind::NonBigInt,
+                                                            endpoint};
+                                if (subtract) {
+                                    boundedNumberDifference(current, *offset, result);
+                                } else {
+                                    boundedNumberSum(current, *offset, result);
+                                }
+                                if (*start < size) {
+                                    if (!result.integerNumber || *result.integerNumber >= size) {
+                                        return unsupported;
+                                    }
+                                    *position = *result.integerNumber;
+                                }
+                            }
+                            if (*start < size) { guardStoreRanges.push_back(range); }
+                        } else {
+                            const auto key = invariant(invariant, store.getKey(), 0);
+                            if (!key) { return invariantFailure; }
+                            const auto position = ownArrayIndex(*key);
+                            if (!position || *position >= size) { return unsupported; }
+                            guardStores.insert(*position);
+                        }
                     }
                     // A saved or reloaded receiver must keep the same allocation
                     // across transport, without reading an overwritten element.
@@ -1506,13 +1550,16 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
         }
         // Check after every key and receiver was resolved: a later store can
-        // reveal a reload overlapping an earlier write. Current-index writes
-        // visit only start + n * stride below length; every reload is own/in-bounds.
+        // reveal a reload overlapping an earlier write. Offset writes retain the
+        // same stride between their proved first/last own positions.
         for (const auto position : guardReloads) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-            if (guardStores.contains(position) ||
-                (storesCurrentIndex && position >= *start && (position - *start) % *stride == 0)) {
-                return unsupported;
+            if (guardStores.contains(position)) { return unsupported; }
+            for (const auto & [first, last] : guardStoreRanges) {
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                if (position >= first && position <= last && (position - first) % *stride == 0) {
+                    return unsupported;
+                }
             }
         }
         // SCF can eliminate an invariant array parameter. A direct allocation
@@ -1528,7 +1575,6 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // addition; overshooting length must stay in the exact Number range.
         std::size_t finalIndex = *start;
         if (*start < size) {
-            const std::size_t last = size - 1 - (size - 1 - *start) % *stride;
             if (*stride > 4294967295ULL - last) { return unsupported; }
             finalIndex = last + *stride;
         }

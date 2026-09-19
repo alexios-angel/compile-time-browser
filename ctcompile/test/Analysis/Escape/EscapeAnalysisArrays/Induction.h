@@ -207,6 +207,83 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .body = replace(visitedIndex,
                          "  %step =", "  ctjs.set_property %base[%zero], %one\n  %step ="),
          .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    const auto offsetIndex = replace(
+        replace(replace(replace(savedChild, "[%one, %x]", "[%one, %x, %one, %x]"), "  %read =",
+                        "  %position = ctjs.binary add %i, %one\n"
+                        "  ctjs.set_property %base[%position], %zero\n  %read ="),
+                "add %i, %one\n  cf.br", "add %i, %two\n  cf.br"),
+        "ctjs.return %result", "ctjs.return %a");
+    for (const auto & expression : {"ctjs.binary add %i, %one", "ctjs.binary add %one, %i",
+                                    "ctjs.binary_static add %i, %one"}) {
+        run({.what = "bounded Number offsets overwrite only the shifted visited positions",
+             .body = replace(offsetIndex, "ctjs.binary add %i, %one", expression),
+             .arrays = "a:[one,zero,one,zero]",
+             .reads = "a[0]=one; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto previousIndex =
+        replace(replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%x, %one, %x, %one]"),
+                        "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+                "ctjs.binary add %i, %one", "ctjs.binary sub %i, %one");
+    run({.what = "subtracted Number offsets stay relative to a nonzero start",
+         .body = previousIndex,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[1]=one; a[3]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "signed Number offset snapshots preserve the same visited writes",
+         .body =
+             replace(replace(previousIndex, "  %a =", "  %negative = ctjs.unary neg %one\n  %a ="),
+                     "ctjs.binary sub %i, %one", "ctjs.binary add %i, %negative"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[1]=one; a[3]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto reloadedOffset = replace(offsetIndex, "  %position = ctjs.binary add %i, %one",
+                                        "  %offset = ctjs.get_property %base[%zero]\n"
+                                        "  %position = ctjs.binary add %i, %offset");
+    run({.what = "an offset reload outside the shifted footprint stays invariant",
+         .body = reloadedOffset,
+         .arrays = "a:[one,zero,one,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a saved child survives an offset overwrite of its former slot",
+         .body = replace(replace(offsetIndex, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[one,zero,one,zero]",
+         .reads = "a[1]=x; a[0]=one; a[2]=one",
+         .exit = "x -> {x}"});
+    run({.what = "a zero-trip offset loop preserves every original child",
+         .body =
+             replace(replace(previousIndex, "^header(%a, %one, %zero", "^header(%a, %three, %zero"),
+                     "[%x, %one, %x, %one]", "[%x, %one, %x]"),
+         .arrays = "a:[x,one,x]",
+         .exit = "a -> {a,x}"});
+    for (const auto & body :
+         {replace(previousIndex, "^header(%a, %one, %zero", "^header(%a, %zero, %zero"),
+          replace(offsetIndex, "[%one, %x, %one, %x]", "[%one, %x, %one]"),
+          replace(replace(reloadedOffset, "[%one, %x, %one, %x]", "[%one, %one, %x, %one]"),
+                  "%offset = ctjs.get_property %base[%zero]",
+                  "%offset = ctjs.get_property %base[%one]"),
+          replace(replace(reloadedOffset, "[%one, %x, %one, %x]", "[%one, %x, %one, %one]"),
+                  "%offset = ctjs.get_property %base[%zero]",
+                  "%offset = ctjs.get_property %base[%three]"),
+          replace(reloadedOffset, "  %step =", "  ctjs.set_property %base[%zero], %two\n  %step ="),
+          replace(offsetIndex, "ctjs.binary add %i, %one", "ctjs.binary add %i, %s"),
+          replace(
+              replace(offsetIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
+              "ctjs.binary add %i, %one", "ctjs.binary add %i, %text"),
+          replace(replace(offsetIndex, "  %a =",
+                          "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
+                  "ctjs.binary add %i, %one", "ctjs.binary add %i, %maximum")}) {
+        run({.what =
+                 "offset stores refuse bounds, mutable reloads, changing values and non-Numbers",
+             .body = body,
+             .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    }
     const std::string reversed =
         replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
