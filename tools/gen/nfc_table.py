@@ -13,10 +13,10 @@ Three tables, all from Python's own unicodedata, which carries the UCD:
     second file: a pair is in the table only when NFC itself puts it back
     together, which is the property's definition rather than a copy of it.
 
-    python3 tools/gen/nfc_table.py > ctbrowser/lib/Shell/net/nfc_table.inc
+    python3 tools/gen/nfc_table.py
 """
 
-import sys
+from cpp_table import generate
 import unicodedata
 
 SBASE, LBASE, VBASE, TBASE = 0xAC00, 0x1100, 0x1161, 0x11A7
@@ -106,4 +106,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(generate(main, "ctbrowser/lib/Shell/net/nfc_table.inc"))
