@@ -15,6 +15,97 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Explicit super construction and visited-index reloads, 2026-09-19 UTC
+
+Resumed clean **ca62d3e8** and the explicit-super thread in the latest
+HANDOFF/master 00/24 and AGENT-SYNC's 13:47 closure. Both agents' histories and
+unmerged branches were reviewed. Contrary to earlier journal wording, the
+September 7 WIP branch exists, but it is already an ancestor of `ctcompile-v1`;
+no recovery merge was needed. Three agents returned super/fixture reviews and a
+four-file escape draft before service limits; root completed integration and gates.
+
+**883cac8e** admits explicit `super(...)` statements for field-only local
+class chains. The private candidate proves the fresh Boolean guard, one ordered
+base invocation, immediate new.target forwarding, receiver binding, absent field
+initializers and final receiver completion. Base bodies must return undefined
+and cannot observe new.target. Argument producers and field writes stay in source
+order on the same final receiver. Only completely proved, unconstructed base
+closures with no remaining callable/symbol use disappear. A separately constructed
+base remains. Refusal publishes no partial source transformation.
+
+Four sources now execute natively: the predecessor's unchanged explicit-super
+specimen, ordered derived writes, a three-level chain, and separate base/derived
+instances. Their observations are **7, 312, 13 and 27**; optimized/unoptimized,
+explicit/deduced C++ and both compilers give **32 new native executions**. Generated
+C++ uses a stack object and borrowed receiver pointer with existing finite native
+scalar helpers; no Script/VM or prototype storage appears. All **164** previous
+split-file JavaScript specimens retain their statements. Nine source specimens
+and eight guard/identity/budget mutations were added.
+
+**0be3bd32** proves current-index overwrites whose actual `start + n * stride`
+visits exclude every invariant guard-array reload. Reload indices already have
+own-element bounds; fixed-write overlap still refuses. Exact replay, saved-child
+retention, historical cycles and work limits remain. Six CFG/six SCF controls and
+ten source functions cover starts, stride gaps, zero trips, aliases and overlap.
+
+**Next native:** `ClassInitialization.cpp::examine` still refuses inherited method
+keys before super normalization. Prove inherited target tables and original bodies,
+keeping leaf `this` dispatch separate from lexical `super` selection. The original
+W/B fixture still stops at its captured-helper proof; default derived rest/apply,
+replacement/primitive returns, public field initializers, observed new.target,
+constructor declarations/global writes and broader control flow remain outside
+this slice. Exercise inheritance with the DOM provider and authentic W/B/Qi calls;
+do not insert H calls, invent parameter facts or erase shadowed bodies. Real
+configuration, selectors, events, Popper and the application driver remain.
+Part 25 own-data definition provenance and broader ownership/control flow remain.
+This is a native inheritance gain, **not whole-Bootstrap admission**.
+
+Focused devbox validation, all under `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-escape-analysis-arrays
+  ctcompile-test-escape-claims ctcompile-test-type-oracle`.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`: **1/1, 1.27s
+  (1.28s total)**.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(visited-index-overwrite|disjoint-index-overwrite|own-element-overwrite)[.]test$'`:
+  **3/3, 0.11s**. New oracle: **31 sites / 6 sound / 6 of 7 confined precision**.
+  Existing oracles: **25 / 5 / 5 of 7** and **37 / 6 / 6 of 15**. All have zero
+  violations, partial, pending and unclaimed sites.
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+  ctcompile-test-native-reference`; the same CTest command with
+  `-R '^ctcompile_host_contract$'`: final **1/1, 0.48s**.
+- `~/.lit-venv/bin/lit -sva -j2 projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-(initialization|dom)[.]mlir$'`:
+  **2/2, 304.36s total**. Initialization: **166 source observations, 412 main native
+  executions, 332 unprepared/211 preparation refusals**; additional **28 native
+  executions / 30 refusals**, plus **11 prepared refusals**. DOM classes retain
+  **632 Node/interpreter observations, eight combined native executions and
+  4,910 refusals**. Individual final case timings were not recorded.
+
+The first native build found const-qualified MLIR wrapper accessor errors; fixed
+before testing. The first class case failed **137.46s** after successful super
+normalization because the unused base closure blocked native lowering. Complete
+body proof plus dead-identity removal fixed that boundary. A cleanup-order review
+kept the heritage load alive until its call was erased; the next direct probe
+caught its missing census admission, corrected by retaining it through the census.
+The resulting narrow probe passed **nine observations / 24 native executions /
+18 unprepared and 19 preparation refusals**, plus 24 existing native executions /
+24 refusals. Final tests include two later source controls as well. Earlier host
+check: 1/1, 0.47s. No browser/Script source or semantics changed.
+
+All seven final code/test hashes match the devbox. Required
+`tools/format.sh --check` completes with **26 baseline diagnostics in nine
+HEAD-identical files**; changed C++/Python formatting, Python/source-JavaScript
+syntax/execution and gate shell syntax/whitespace checks pass. Source preservation
+was checked against HEAD before the native commit. Logs, scripts and an inspected
+generated C++ specimen: `/tmp/ctcompile-super-1350/`.
+
+Full CTest/compiler lit, standalone transaction/lifetime checks, broad native and
+corpus matrices, WPT/test262 and whole Bootstrap were skipped. Focused passes are
+not full-suite or compliance measurements. No push; the plan remains unfinished.
+
+
 ## Ordered class ancestry and disjoint overwrite reloads, 2026-09-19 UTC
 
 Resumed clean **7725dc25** and the W/B/Qi plus disjoint-index threads explicitly
