@@ -26,6 +26,10 @@ CASES = {
     + GUARD
     + "let saved = 'before'; try { saved = t; saved = decodeURIComponent(t); } catch (ignored) { return saved; } return saved;",
     # Original M shape: the guard and the handler live in a local helper.
+    "nullable_uri_helper_branch_call": READ
+    + "if (t === null) return t; "
+    + HELPER
+    + "return decode(t);",
     "nullable_uri_helper": HELPER + "return decode(element.getAttribute('data-bs-config'));",
     "nullable_uri_helper_saved": READ + HELPER + "return decode(t);",
     "nullable_uri_helper_arrow": "const decode = t => { "
@@ -211,10 +215,6 @@ REFUSALS = {
     "nullable_uri_helper_unguarded": "function decode(t) { "
     + DECODE
     + " } return decode(element.getAttribute('data-bs-config'));",
-    "nullable_uri_helper_branch_call": READ
-    + "if (t === null) return t; "
-    + HELPER
-    + "return decode(t);",
 }
 
 
