@@ -926,6 +926,10 @@ H_OBJECT_CASES["class_h_object_order"] = (
     "1000",
 )
 H_OBJECT_CASES["class_h_object_alias"] = (H_OBJECT_REFUSALS.pop("class_h_object_alias"), "1000")
+H_OBJECT_CASES["class_h_object_unused_slot"] = (
+    H_OBJECT_REFUSALS.pop("class_h_object_unused_slot"),
+    "1000",
+)
 H_CAPTURE_CASES.update(H_OBJECT_CASES)
 H_CAPTURE_REFUSALS.update(H_OBJECT_REFUSALS)
 for cases in (M_CASES, NUMBER_CASES, F_CASES, CLASS_CASES):
@@ -993,6 +997,7 @@ FILTER_REFUSALS.update(
         ),
     }
 )
+FILTER_CASES["class_holder_unused"] = (FILTER_REFUSALS.pop("class_holder_unused"), "1000")
 # Bounded composition: original M and predicate share one slot's callee.
 # Complete H's dynamic-key loop and unused slots remain separate proof obligations.
 H_COMBINED_CLASS = (
@@ -1619,6 +1624,33 @@ FULL_H_REFUSALS.update(
         ),
     }
 )
+# An uncalled leaf needs no invented argument values: every operation must be
+# inert for all values. Keep unknown calls, conversions and captures refused.
+for name, method in {
+    "ignored": "unused(t) { return 'safe'; }",
+    "identity": "unused(t) { return t; }",
+    "typeof": "unused(t) { return typeof t; }",
+    "not": "unused(t) { return !t; }",
+    "void": "unused(t) { return void t; }",
+    "strict": "unused(t, e) { return t === e; }",
+}.items():
+    FULL_H_CASES["class_h_unused_" + name] = (
+        FULL_H_CALLS.replace("const H = {", "const H = { " + method + ","),
+        "1000",
+    )
+for name, method in {
+    "property": "unused(t) { return t.value; }",
+    "coercion": "unused(t) { return +t; }",
+    "loose": "unused(t, e) { return t == e; }",
+    "call": "unused(t) { return t(); }",
+    "capture": "unused() { return element; }",
+    "receiver": "unused() { return this; }",
+    "nested": "unused() { function hidden() { return 'safe'; } return hidden(); }",
+}.items():
+    FULL_H_REFUSALS["class_h_unused_" + name] = FULL_H_CALLS.replace(
+        "const H = {", "const H = { " + method + ","
+    )
+FULL_H_CASES["class_h_full_unused_slot"] = (FULL_H_REFUSALS.pop("class_h_full_unused_slot"), "1000")
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC_CASES):
     cases.update(FULL_H_CASES)
 for refusals in (CLASS_REFUSALS, FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS, F_REFUSALS):
@@ -1842,6 +1874,10 @@ FIELD_CASES = {
         "1000",
     ),
 }
+FIELD_CASES["field_unused_helper"] = (
+    "function unused(t) { return t; } return element.getAttribute('x') === null;",
+    "1000",
+)
 CASES.update(FIELD_CASES)
 FIELD_CHECKS = {
     "field_order": 'assert(doc.read().attribute_value(node, atoms.intern("marker")) == "done");\n'
@@ -1869,6 +1905,7 @@ FIELD_CHECKS["class_element"] = FIELD_CHECKS["class_unused_element"] = (
     'assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");'
 )
 FIELD_REFUSALS = {
+    "unused_helper_effect": "function unused(t) { return t(); } return element.getAttribute('x') === null;",
     "missing_field": "const holder = {}; return element.getAttribute(holder.key) === null;",
     "read_before_write": "const holder = {}; const key = holder.key; holder.key = 'x'; return element.getAttribute(key) === null;",
     "prototype_key": "const holder = {}; holder.__proto__ = element; return holder.__proto__.getAttribute('x') === null;",

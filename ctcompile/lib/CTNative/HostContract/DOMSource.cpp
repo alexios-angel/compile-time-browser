@@ -1297,6 +1297,35 @@ struct DOMSource {
         return visit(visit, block, 0, frame);
     }
 
+    bool proveUnusedBody(ctjs::FuncOp function) {
+        if (function.getUpvalueCount() != 0 || !checkBody(function, false)) { return false; }
+        // No invocation supplies parameter facts. These operations are inert for
+        // every value, including Objects and Symbols; conversions and calls are
+        // deliberately excluded. Check the original body before retiring it.
+        // ponytail: straight-line uncaptured leaves; branches and helper calls
+        // need their own complete independent body proof.
+        for (mlir::Operation & operation : function.getBody().front()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                          ctjs::ReturnOp>(operation)) {
+                continue;
+            }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+                unary && (unary.getKind() == ctjs::UnaryKind::TypeOf ||
+                          unary.getKind() == ctjs::UnaryKind::Not ||
+                          unary.getKind() == ctjs::UnaryKind::Void)) {
+                continue;
+            }
+            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                continue;
+            }
+            return refuse("unused DOM helper body contains an unproved operation");
+        }
+        expanded.insert(function);
+        return true;
+    }
+
     bool inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Operation * call,
                     mlir::ValueRange arguments, mlir::Value receiver, mlir::Value callee,
                     llvm::MutableArrayRef<Capture> captures, unsigned depth) {
@@ -1645,9 +1674,16 @@ struct DOMSource {
                         calls.push_back({operation, arguments});
                     }
                 }
-                if (calls.empty()) { return refuse("DOM helper has no source invocation"); }
-                if (!bindConstantArguments(closure, target)) { return false; }
-                if (!expand(target, depth + 1)) { return false; }
+                if (calls.empty()) {
+                    if (!closure.getUpvalues().empty() ||
+                        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
+                        !proveUnusedBody(target)) {
+                        return refuse("DOM helper has no independently proved unused body");
+                    }
+                } else {
+                    if (!bindConstantArguments(closure, target)) { return false; }
+                    if (!expand(target, depth + 1)) { return false; }
+                }
                 for (const Call & call : calls) {
                     // Live closure metadata retains its enclosing identities;
                     // receiver-observing direct functions bind the actual instead.
@@ -1729,8 +1765,21 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
             (void)index;
             if (!source.step()) { break; }
             if (function != wrapper && !source.expanded.contains(function)) {
-                source.refuse("DOM helper source contains an unvisited function");
-                break;
+                // Class lifting can retire an unread holder slot while retaining
+                // its original body. Numeric closures and symbolic calls must
+                // both be absent before its independent leaf proof can suffice.
+                if (source.remaining / 2 < source.operationCount) {
+                    source.refuse("DOM helper expansion work budget exhausted");
+                    break;
+                }
+                source.remaining -= 2 * source.operationCount;
+                if (source.creations.lookup(index) != 0 ||
+                    !mlir::SymbolTable::symbolKnownUseEmpty(function, candidate.getOperation()) ||
+                    !mlir::SymbolTable::symbolKnownUseEmpty(function, &candidate.getBodyRegion()) ||
+                    !source.proveUnusedBody(function)) {
+                    source.refuse("DOM helper source contains an unvisited function");
+                    break;
+                }
             }
         }
     }

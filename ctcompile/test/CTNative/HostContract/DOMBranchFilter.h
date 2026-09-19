@@ -461,6 +461,24 @@ module {
         }
     }
 
+    const auto unusedSource = replaced(source, "\n}\n", R"MLIR(
+  ctjs.func private @unused$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    ctjs.return %u
+  }
+}
+)MLIR");
+    auto unused = mlir::parseSourceString<mlir::ModuleOp>(unusedSource, &context);
+    check(static_cast<bool>(unused), "original unvisited literal body parses");
+    if (unused) {
+        auto proved = expandDOMHelpers(*unused, "branch$0", 100000);
+        check(!proved && !unused->lookupSymbol<ctjs::FuncOp>("unused$2") &&
+                  hostContractFingerprint(*unused) == fingerprint,
+              "an unreferenced original inert body proves independently before retirement");
+        if (proved) { llvm::consumeError(std::move(proved)); }
+        checkPrepared(*unused, "branch$0");
+    }
+
     for (const auto & invalid :
          {replaced(source,
                    "%filtered =", "ctjs.store_global \"saved\", %callback\n      %filtered ="),
@@ -485,20 +503,20 @@ module {
           replaced(source, "%filtered =",
                    "%result = ctjs.create_object\n      ctjs.set_property %result[%filterName], "
                    "%callback\n      %filtered ="),
-          replaced(source, "\n}\n", R"MLIR(
-  ctjs.func private @unused$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %u = ctjs.constant #ctjs.undefined
-    ctjs.return %u
-  }
-}
-)MLIR")}) {
+          replaced(unusedSource, "%u = ctjs.constant #ctjs.undefined\n    ctjs.return %u",
+                   "%u = ctjs.load_global \"unknown\"\n    ctjs.return %u"),
+          replaced(unusedSource, "attributes {upvalue_count = 0 : i32}",
+                   "attributes {upvalue_count = 0 : i32, test.reference = @unused$2}")}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(input), "unsupported branch-local identity fixture parses");
         if (!input) { continue; }
         const auto before = hostContractFingerprint(*input);
         auto refused = expandDOMHelpers(*input, "branch$0", 100000);
+        if (!refused) {
+            std::fprintf(stderr, "unexpected source admission:\n%s\n", invalid.c_str());
+        }
         check(static_cast<bool>(refused) && before == hostContractFingerprint(*input),
-              "escaping, captured, repeated, generic or unvisited identities remain refused");
+              "escaping, captured, repeated, generic or unproved unused identities remain refused");
         if (refused) { llvm::consumeError(std::move(refused)); }
     }
 

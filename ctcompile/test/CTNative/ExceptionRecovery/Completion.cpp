@@ -385,7 +385,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     // A late typed-DOM refusal must roll back consumed class metadata too.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
-        for (unsigned control = 0; control < 165; ++control) {
+        for (unsigned control = 0; control < 172; ++control) {
             std::string source =
                 control >= 5
                     ? "function guarded(element) { class Shape { "
@@ -922,6 +922,22 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                     source.replace(source.find("let joined = '';"), 16, "let joined = this;");
                 }
             }
+            if (control >= 165) {
+                source = R"js(function guarded(element) {
+                    const H = { unused(t, e) { return t; },
+                        read(t) { return t.getAttribute('x'); } };
+                    class Shape { constructor() { this.key = 'x'; } }
+                    const shape = new Shape();
+                    return H.read(element) === null && element.getAttribute(shape.key) === null;
+                })js";
+                const std::string expression = control == 166   ? "typeof t"
+                                               : control == 167 ? "t === e"
+                                               : control == 168 ? "+t"
+                                               : control == 169 ? "t.value"
+                                               : control == 170 ? "element"
+                                                                : "t";
+                source.replace(source.find("return t;"), 9, "return " + expression + ";");
+            }
             auto candidate = import(context, source, true);
             if (!candidate) { return; }
             // Input reports cannot bypass any source proof.
@@ -987,7 +1003,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 *candidate, request,
                 control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
                         control == 91 || control == 103 || control == 115 || control == 125 ||
-                        control == 139 || control == 147 || control == 153 || control == 164
+                        control == 139 || control == 147 || control == 153 || control == 164 ||
+                        control == 171
                     ? 0
                 : control == 4 || control == 17 ? 1000
                 : control >= 47                 ? 1000000
@@ -996,10 +1013,11 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
                 control != 60 && control != 70 && control != 71 && control != 82 && control != 92 &&
-                control != 100 && control != 104 && control != 105 && control != 116 &&
-                control != 117 && control != 128 && control != 129 && control != 130 &&
-                control != 140 && control != 141 && control != 148 && control != 151 &&
-                control != 157 && control != 158) {
+                control != 93 && control != 121 && control != 100 && control != 104 &&
+                control != 105 && control != 116 && control != 117 && control != 128 &&
+                control != 129 && control != 130 && control != 140 && control != 141 &&
+                control != 148 && control != 151 && control != 157 && control != 158 &&
+                control != 165 && control != 166 && control != 167) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }

@@ -93,3 +93,7 @@
 // captured helper calls and intervening DOM writes. Both arms must close the same
 // frame. Identity observations, escapes, implicit receivers/new.target, excess
 // arguments and later invalid calls refuse.
+// Uncalled straight-line leaves prove their original bodies without parameter
+// facts: literals, identity returns, typeof/Not/Void and strict equality are inert.
+// Both live closures and class-retired slots retain this proof; captures, calls,
+// coercions and unknown properties refuse. Complete H still needs general F keys.
