@@ -4,7 +4,7 @@
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-add-sub-latch.claims
 
 // Original invariant Add/Sub uses bounded primitive snapshots. Add never borrows
-// Sub's String conversion; changing/reloaded inputs and unsafe bounds refuse.
+// Sub's String conversion; changing inputs and unsafe bounds refuse.
 // IMPORT-LABEL: ctjs.func @addBoolean$
 // IMPORT: ctjs.binary add
 // IMPORT-LABEL: ctjs.func @addNegative$
@@ -51,9 +51,9 @@
 // CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 9 {{[0-9]+}} arr escapes:passed
 // CLAIM: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored

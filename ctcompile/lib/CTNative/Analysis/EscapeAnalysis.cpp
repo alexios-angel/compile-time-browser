@@ -1306,10 +1306,26 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 return held(operand);
             }
             // Every visited value spends the shared proof budget. Keep a stack
-            // ceiling; repeated reads never borrow a previous snapshot.
+            // ceiling; repeated reads need unchanged base and key identities.
             if (depth == 64) { return std::nullopt; }
             ContentsValue result{operand, ContentsKind::NonBigInt};
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
+            if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(definition)) {
+                const auto base = self(self, load.getObject(), depth + 1);
+                const auto key = self(self, load->getOperand(1), depth + 1);
+                if (!base || !key || !base->origin() || !key->origin()) { return std::nullopt; }
+                const auto array = state.arrays.find(base->origin().getDefiningOp());
+                auto position = ownArrayIndex(key->origin());
+                if (key->integerNumber && *key->integerNumber < 4294967295ULL) {
+                    position = key->integerNumber;
+                }
+                if (array == state.arrays.end() || !position || *position >= array->second.size()) {
+                    return std::nullopt;
+                }
+                // The complete loop census below rejects all mutations and
+                // effects. Replay still checks every actual own-element read;
+                // retaining the original element keeps primitive keys intact.
+                return array->second[*position];
+            } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
                 if (unary.getKind() != ctjs::UnaryKind::Plus &&
                     unary.getKind() != ctjs::UnaryKind::Neg &&
                     unary.getKind() != ctjs::UnaryKind::BitNot) {

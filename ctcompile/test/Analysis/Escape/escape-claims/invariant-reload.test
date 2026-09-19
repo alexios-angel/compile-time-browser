@@ -1,0 +1,67 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-reload
+// RUN: FileCheck %s < %t/escape-claims-invariant-reload.claims
+
+// Reloads require dense own elements, unchanged original base/key identities and
+// a read-only loop. Retaining the loaded primitive never changes its property key.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function reloadReleased() {
+    var child = {}, array = [child], inputs = [1], saved = 0;
+    for (var i = 0; i < array.length; i += +inputs[0]) saved = array[i];
+    return 0;
+}
+function reloadRetained() {
+    var child = {}, array = [child], inputs = [1], saved = 0;
+    for (var i = 0; i < array.length; i += +inputs[0]) saved = array[i];
+    return saved;
+}
+function stringKey() {
+    var child = {}, array = [child], inputs = ['1'], saved = 0;
+    for (var i = 0; i < array.length; i += +inputs['0']) saved = array[i];
+    return 0;
+}
+function nestedReload() {
+    var child = {}, array = [child], inputs = [[1]], saved = 0;
+    for (var i = 0; i < array.length; i += +inputs[0][0]) saved = array[i];
+    return 0;
+}
+function noncanonicalKey() {
+    var child = {}, array = [child], inputs = [1], saved = 0;
+    for (var i = 0; i < array.length; i += +inputs['00']) saved = array[i];
+    return 0;
+}
+function mutatedInput() {
+    var child = {}, array = [child], inputs = [1], saved = 0;
+    for (var i = 0; i < array.length; i += +inputs[0]) {
+        saved = array[i];
+        inputs[0] = 2;
+    }
+    return 0;
+}
+function changedKey() {
+    var child = {}, array = [child], inputs = [1, 2], key = 0, saved = 0;
+    for (var i = 0; i < array.length; i += +inputs[key]) {
+        saved = array[i];
+        key = 1;
+    }
+    return 0;
+}
+function varyingKey() {
+    var child = {}, array = [child], inputs = [1, 2], key = 0, saved = 0;
+    for (var i = 0; i < array.length; i += +inputs[key]) {
+        saved = array[i];
+        key = key + 1;
+    }
+    return 0;
+}
+reloadReleased(); reloadRetained(); stringKey(); nestedReload();
+noncanonicalKey(); mutatedInput(); changedKey(); varyingKey();

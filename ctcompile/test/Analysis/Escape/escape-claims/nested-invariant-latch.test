@@ -4,7 +4,7 @@
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-nested-invariant-latch.claims
 
 // Budgeted pure operation layers retain original snapshots, Number conversion
-// and child escape. Changing/reloaded operands and unbounded results refuse.
+// and child escape. Changing operands and unbounded results refuse.
 // IMPORT-LABEL: ctjs.func @mixedPositive$
 // IMPORT: ctjs.binary mod
 // IMPORT: ctjs.binary mul
@@ -51,9 +51,9 @@
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
 // CLAIM: escape {{[0-9a-f]+}} 7 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored

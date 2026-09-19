@@ -423,6 +423,31 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                                 ArrayContentsFailure::UnsupportedControlFlow) {
         run({.what = what, .body = std::move(body), .failure = failure});
     };
+    const auto reloaded = replace(
+        replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
+        "add %i, %one", "add %i, %unit");
+    run({.what = "dense own-element reloads retain the original array and key",
+         .body = reloaded,
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[0]=one; a[1]=x; a[0]=one",
+         .exit = "x -> {x}"});
+    run({.what = "reloaded invariant stride leaves unreturned children confined",
+         .body = replace(reloaded, "ctjs.return %result", "ctjs.return %zero"),
+         .arrays = "a:[one,x]",
+         .reads = "a[0]=one; a[0]=one; a[1]=x; a[0]=one",
+         .exit = "zero -> {}"},
+        "x");
+    for (const std::string key : {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">",
+                                  "#ctjs.boolean<false>", "#ctjs.number<4613937818241073152>"}) {
+        reject(
+            "invariant reload cannot coerce or inherit an absent own key",
+            replace(replace(reloaded, "  %unit =", "  %bad = ctjs.constant " + key + "\n  %unit ="),
+                    "%base[%zero]", "%base[%bad]"));
+    }
+    reject("a reloaded stride cannot borrow a changing index",
+           replace(reloaded, "%base[%zero]", "%base[%i]"));
+    reject("an invariant reload cannot overlook loop mutation",
+           replace(reloaded, "  %unit =", "  ctjs.set_property %base[%zero], %two\n  %unit ="));
     reject("a negative computed start has no bounded Number certificate",
            replace(computed, "binary sub %one, %one", "binary sub %zero, %one"));
     reject("even an untaken predecessor must independently supply a bounded Number",
@@ -766,8 +791,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,two,three]",
          .reads = "a[0]=one; a[1]=two; a[2]=three",
          .exit = "added -> {}"});
-    reject("a repeated property read cannot borrow its previous bitwise operand snapshot",
-           replace(nestedBits, "ctjs.binary sub %d, %zero", "ctjs.get_property %base[%zero]"));
+    run({.what = "a repeated bitwise operand reads its unchanged own element",
+         .body = replace(nestedBits, "ctjs.binary sub %d, %zero", "ctjs.get_property %base[%zero]"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[0]=one; a[1]=two; a[0]=one; a[2]=three; a[0]=one",
+         .exit = "added -> {}"});
     reject("a zero bitwise stride does not certify termination",
            replace(invariantBits, "bitand %d, %one", "bitxor %d, %d"));
     reject("a negative bitwise stride cannot make Add induction increase",
@@ -875,8 +903,17 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          {"ctjs.unary plus %i", "ctjs.unary plus %p", "ctjs.get_property %base[%zero]",
           "ctjs.binary div %one, %two", "ctjs.binary div %one, %zero", "ctjs.binary pow %two, %two",
           "ctjs.binary mul %one, %zero"}) {
-        reject("nested induction requires exact invariant operations and a positive stride",
-               replace(nested, "ctjs.unary plus %one", expression));
+        const auto body = replace(nested, "ctjs.unary plus %one", expression);
+        if (expression == "ctjs.get_property %base[%zero]") {
+            run({.what = "nested induction rechecks an unchanged own element",
+                 .body = body,
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[0]=one; a[1]=x; a[0]=one",
+                 .exit = "x -> {x}"});
+        } else {
+            reject("nested induction requires exact invariant operations and a positive stride",
+                   body);
+        }
     }
     run({.what = "deeper invariant induction retains the returned child",
          .body = replace(nested, "  %inner = ctjs.unary plus %one",

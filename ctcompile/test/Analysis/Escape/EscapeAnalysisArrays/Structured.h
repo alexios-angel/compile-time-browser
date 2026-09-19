@@ -403,6 +403,32 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                                 ArrayContentsFailure::UnsupportedControlFlow) {
         rows.push_back({.what = what, .body = std::move(body), .failure = failure});
     };
+    const auto reloaded =
+        replace(replace(replace(original, "[%x]", "[%one]"),
+                        "    %step =", "    %unit = ctjs.get_property %base[%zero]\n    %step ="),
+                "add %i, %one", "add %i, %unit");
+    rows.push_back({.what = "structured dense own-element reload retains original aliases",
+                    .body = reloaded,
+                    .arrays = "a:[one,y]",
+                    .reads = "a[0]=one; a[0]=one; a[1]=y; a[0]=one",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured reloaded stride leaves discarded children confined",
+                    .body = replace(reloaded, "ctjs.return %result", "ctjs.return %zero"),
+                    .arrays = "a:[one,y]",
+                    .reads = "a[0]=one; a[0]=one; a[1]=y; a[0]=one",
+                    .exit = "zero -> {}"});
+    for (const std::string key : {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">",
+                                  "#ctjs.boolean<false>", "#ctjs.number<4613937818241073152>"}) {
+        reject("structured reload cannot coerce or inherit an absent own key",
+               replace(replace(reloaded,
+                               "    %unit =", "    %bad = ctjs.constant " + key + "\n    %unit ="),
+                       "%base[%zero]", "%base[%bad]"));
+    }
+    reject("structured reload cannot borrow a changing index",
+           replace(reloaded, "%base[%zero]", "%base[%i]"));
+    reject(
+        "structured reload cannot overlook loop mutation",
+        replace(reloaded, "    %unit =", "    ctjs.set_property %base[%zero], %zero\n    %unit ="));
     reject("structured induction refuses a computed negative start",
            replace(computedStart, "unary plus %zero", "unary neg %one"));
     reject("structured induction cannot convert a String start into a Number proof",
