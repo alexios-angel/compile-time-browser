@@ -1,5 +1,38 @@
 # What native Bootstrap needs next
 
+## Full H entry calls and invariant array lengths, 2026-09-19 UTC
+
+Resumed **59d28a62** and the five dirty files from the **06:19 H-slot/own-length
+threads**, abandoned at **06:21:33** in AGENT-SYNC. September 7 WIP is already an
+ancestor. Three agents supplied escape review, H fixtures and native audit;
+root completed the two service-limited threads and the focused gates.
+
+**186afb38** admits complete original H/M/F with all four slots called from the
+entry, beside a constructor-only class. Sibling String actuals bind before the
+shared F callee expands; complete-use, identity and effect proofs remain. Two
+new positives include distinct config/toggle inputs; 13 new refusals and six
+transaction controls per provider cover the boundary. All 346 prior bodies stay
+unchanged. **45365d98** finishes invariant own-array-length reloads, retaining
+base/key identity, the read-only census, budgets and final-index bounds.
+
+Focused passes: transaction **1/1 (4.38s)**, host contract **1/1 (0.46s)**,
+class DOM **1/1 (174.59s; 480 observations, eight native executions, 3,584
+refusals)**, arrays **1/1 (1.23s)**, length/prior-reload oracles **2/2 (0.10s)**.
+New escape oracle: **38 sites / 14 sound / 14 of 27 precision**, zero violations.
+All eight tested hashes match. Inspected C++ calls existing public Core/DOM
+helpers with ordinary owners; Script/dispatch exclusions pass. Required format
+check retains 26 baseline diagnostics in nine unchanged files; changed checks
+pass. Exact commands and evidence: repository HANDOFF and `/tmp/ctcompile-h-resume/`.
+
+**Next:** the class-method full-H case is blocked by the whole-module dynamic-write
+census in `ClosureLifting/Methods.cpp`, which prevents prototype-method stability.
+Its later unique-callable-slot diagnostic names the residual class prototype,
+not H. Establish receiver provenance, then recheck constructor method-value reads
+and independent unused H bodies before publication. W operations, nested iterators,
+complex entry completion, broader part 25 and the application driver remain.
+Full suites, broad matrices, WPT/test262 and whole Bootstrap were skipped; no
+whole-bundle gain is claimed. Browser/Script semantics are unchanged.
+
 ## Original H key normalization and invariant array reloads, 2026-09-19 UTC
 
 Resumed clean **dadadb5c** and its recorded original-H boundary in HANDOFF and

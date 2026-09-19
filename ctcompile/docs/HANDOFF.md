@@ -15,6 +15,84 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Full H entry calls and invariant array lengths, 2026-09-19 UTC
+
+Resumed **59d28a62** and five dirty ctcompile paths from the **06:19 H-slot /
+own-length threads**, explicitly abandoned by the **06:21:33 AGENT-SYNC loop
+exit**. Both-agent histories and unmerged branches were reviewed; September 7
+WIP is already an ancestor. The native draft was diagnostic instrumentation;
+the four-file escape draft was complete but ungated. Three agents reviewed
+escape, added H fixtures and audited the native proof. The latter two reached
+service limits; root completed their work and all gates.
+
+**45365d98** proves invariant dense-array own-length reloads through the existing
+base/key identity proof and complete read-only loop census. Primitive snapshots,
+work/64-layer limits and final-index bounds remain checked. Eighteen CFG/SCF rows
+and a ten-function source oracle cover returned/discarded children, nested reads,
+mutation, changing bases/keys, conversion and budget cutoffs. String and object
+lengths remain refused. The inherited draft needed no production correction.
+
+**186afb38** admits the complete original H/M/F bodies when all four H slots have
+original entry calls, beside a constructor-only class. Each sibling's complete
+String-argument census now runs before expansion reaches their shared F callee.
+This preserves the existing all-use proof, including distinct config/toggle
+inputs; one matching or unknown later key still refuses. No callable-slot,
+receiver, effect or unused-body check was weakened. All **346 prior source bodies
+are unchanged**; 15 new bodies supply two positives and 13 refusals. Six new
+transaction controls per provider check success, later inputs/effects, missing
+identity and rollback. No browser or Script semantics changed.
+
+Measured focused gates, all devbox work under `/tmp/ctbrowser-devbox-build.lock`:
+
+- Native build: `tools/remote-build.sh ctjs-opt ctjs-translate
+  ctcompile-test-native-reference ctcompile-test-exception-recovery
+  ctcompile-test-host-contract` (**10 actions**, including removal of temporary
+  diagnostics). Exact CTests `ctcompile_exception_recovery` **1/1 (4.38s total)**
+  and `ctcompile_host_contract` **1/1 (0.46s total)**, using
+  `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^<exact-name>$'` on the devbox.
+- Generated-config lit: `~/.lit-venv/bin/lit -sva
+  projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$'`:
+  **1/1 (174.59s)**; **480 Node/interpreter observations, eight GCC/Clang native
+  executions, 3,584 refusals**, both providers, optimization policies and layouts.
+  Forty existing VM byte-index differences remain explicitly pinned. Inspected
+  full-H output uses `element_ref`, owning strings/vectors/JSON, public Core
+  casing and existing DOM helpers; source/binary Script and dispatch gates pass.
+- Escape build: `tools/remote-build.sh ctjs-translate
+  ctcompile-test-escape-analysis-arrays ctcompile-test-escape-claims
+  ctcompile-test-type-oracle` (**3 actions**, analysis built by the earlier probe).
+  Exact `ctcompile_escape_analysis_arrays`: **1/1 (1.23s total)**. The same
+  generated-config lit command selected only
+  `^ctcompile :: Analysis/Escape/escape-claims/(invariant-length-reload|invariant-reload)[.]test$`:
+  **2/2 (0.10s)**. Sites / sound / confined precision: new length **38 / 14 /
+  14 of 27**; prior reload **33 / 15 / 15 of 24**. Zero soundness violations,
+  partial, pending or unclaimed sites. All focused gates passed on first run.
+- Required `tools/format.sh --check` returns the existing **26 diagnostics in
+  nine HEAD-identical files** with pinned clang-format 23.0.0git. Changed C++/
+  Python formatting, Python/JS syntax, source preservation and `git diff --check`
+  pass. All **eight tested source/test hashes** match the devbox. Evidence and
+  runnable commands: `/tmp/ctcompile-h-resume/`. Documentation needs no build.
+
+**Next:** H inside an instance method (`class_h_full_method`) still refuses.
+The old `DOM helper object requires unique own callable slots` message is about
+an **unlifted class prototype**, not H's slots. The earlier failure is
+`ClosureLifting/Methods.cpp`'s whole-module write census: H's dynamic result
+writes prevent prototype-method stability. Prove which receiver those writes
+can reach before narrowing that census. Then check the constructor's method-value
+read census and independent unused H bodies; the unchanged `class_filter_full_h`
+still lacks actual calls for its unused parameterized slots. Do not discard them.
+Publication, W's Object.entries/destructuring/original s/RegExp/TypeError/spread,
+complex entry completion, nested iterators, invariant object-property reloads,
+broader part 25 and the application driver remain. No whole-bundle admission
+measurement is claimed; native Bootstrap and the overall plan are unfinished.
+
+Skipped: full CTest/compiler lit, public-class replay, complete DOM/String/
+assignment suites, separate lifetime matrices, broad corpus/native matrices,
+WPT/test262 and whole Bootstrap. These are focused results. Browser compliance
+counts remain historical. The predecessor temporary SSH authorized/private key
+was removed at closure, preserving other keys. No push.
+
 ## Original H key normalization and invariant array reloads, 2026-09-19 UTC
 
 Resumed clean **dadadb5c**, its HANDOFF promise to handle original H casing, and

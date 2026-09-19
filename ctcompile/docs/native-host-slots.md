@@ -106,6 +106,15 @@ Holder calls are proved before their enclosing direct callers, whose lexical
 receiver may be saved by an unused-this arrow. Holder operations stay intact for
 normal closure lowering.
 
+For typed DOM preparation, each direct sibling's complete String-argument
+census runs before expansion reaches their shared callees. This admits original
+H/M/F with all four H slots invoked from the entry, including distinct literal
+keys. Unknown or matching F inputs still poison its complete no-match proof;
+unused slots still need independent body proof. H inside a class method remains
+blocked by the conservative whole-module dynamic-write census in closure lifting;
+its later callable-slot error describes an unlifted class prototype. No receiver
+alias or slot-stability premise is supplied by this argument normalization.
+
 Global callable holders additionally require a unique publication from the closed
 script entry, after every fixed callable slot is initialized. Before publication,
 only constants, closure/object creation, ordinary stores to fresh objects, global
