@@ -10,7 +10,7 @@
 # as macros, and that the call-path and GC-root inventories hold the properties
 # later phases are built on. It also compiles EngineContract.hpp, which is
 # nothing but static_asserts about the engine's layout.
-add_executable(ctcompile-test-inventories Core/Inventories.cpp)
+add_executable(ctcompile-test-inventories)
 # THE ROLE CLASSIFIER IS HEADER-ONLY and reads only ctbrowser's ABI table, so
 # this test needs no MLIR - which is the point of the experiment it carries:
 # whether the roles are derivable is answerable before a line of MLIR is written.
@@ -25,11 +25,11 @@ add_test(NAME ctcompile_inventories COMMAND ctcompile-test-inventories)
 # is what has drifted here before.
 #
 # IT NEEDS NO MLIR either - it reads a .cpp as text.
-add_executable(ctcompile-test-importer-coverage CTJS/Import/Coverage.cpp)
+add_executable(ctcompile-test-importer-coverage)
 target_compile_definitions(ctcompile-test-importer-coverage PRIVATE
-  CTCOMPILE_IMPORTER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/BytecodeImport.cpp"
-  CTCOMPILE_IMPORTER_DISPATCH="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/Bytecode/Instructions.cpp"
-  CTCOMPILE_IMPORTER_TABLES="${CMAKE_CURRENT_SOURCE_DIR}/../lib/CTJS/Import/Bytecode/OperatorTables.h")
+  CTCOMPILE_IMPORTER_SOURCE="${PROJECT_SOURCE_DIR}/lib/CTJS/Import/BytecodeImport.cpp"
+  CTCOMPILE_IMPORTER_DISPATCH="${PROJECT_SOURCE_DIR}/lib/CTJS/Import/Bytecode/Instructions.cpp"
+  CTCOMPILE_IMPORTER_TABLES="${PROJECT_SOURCE_DIR}/lib/CTJS/Import/Bytecode/OperatorTables.h")
 target_link_libraries(ctcompile-test-importer-coverage PRIVATE ctcompile::support)
 ctcompile_target(ctcompile-test-importer-coverage)
 add_test(NAME ctcompile_importer_coverage COMMAND ctcompile-test-importer-coverage)
@@ -64,7 +64,7 @@ set_tests_properties(ctcompile_rejects_nonsense PROPERTIES WILL_FAIL TRUE)
 # THE COMPARATOR THAT ACCEPTS PHASE 16A, and the negative cases that stop it
 # from accepting anything. A comparator too lenient does not fail to catch a
 # bad blueprint - it certifies one.
-add_executable(ctcompile-test-html_comparator Comparison/Html.cpp)
+add_executable(ctcompile-test-html_comparator)
 target_link_libraries(ctcompile-test-html_comparator PRIVATE ctcompile::html)
 ctcompile_target(ctcompile-test-html_comparator)
 add_test(NAME ctcompile_html_comparator COMMAND ctcompile-test-html_comparator)
@@ -73,7 +73,7 @@ add_test(NAME ctcompile_html_comparator COMMAND ctcompile-test-html_comparator)
 # selector_count() and rule_count() untouched and changes what the page looks
 # like - which is exactly the class of difference the two counts cannot see and
 # the reason engine::for_each_rule exists.
-add_executable(ctcompile-test-css_comparator Comparison/Css.cpp)
+add_executable(ctcompile-test-css_comparator)
 target_link_libraries(ctcompile-test-css_comparator PRIVATE ctcompile::css)
 ctcompile_target(ctcompile-test-css_comparator)
 add_test(NAME ctcompile_css_comparator COMMAND ctcompile-test-css_comparator)
@@ -82,7 +82,7 @@ add_test(NAME ctcompile_css_comparator COMMAND ctcompile-test-css_comparator)
 # refuse. An image is executable input - the VM reads its pools with unchecked
 # operator[] and one of those reads is a WRITE - so the negative cases here are
 # the point of the file.
-add_executable(ctcompile-test-program_image Packaging/ProgramImage.cpp)
+add_executable(ctcompile-test-program_image)
 target_link_libraries(ctcompile-test-program_image PRIVATE ctcompile::javascript)
 ctcompile_target(ctcompile-test-program_image)
 add_test(NAME ctcompile_program_image COMMAND ctcompile-test-program_image)
@@ -90,7 +90,7 @@ add_test(NAME ctcompile_program_image COMMAND ctcompile-test-program_image)
 # THE MANIFEST. Phase 1's gate asks for one; this checks the part of it that can
 # be wrong, which is the string escaping - a resource name is whatever the
 # document said, and a document may say `p5"; drop</script>`.
-add_executable(ctcompile-test-manifest Packaging/Manifest.cpp)
+add_executable(ctcompile-test-manifest)
 target_link_libraries(ctcompile-test-manifest PRIVATE ctcompile::support)
 ctcompile_target(ctcompile-test-manifest)
 add_test(NAME ctcompile_manifest COMMAND ctcompile-test-manifest)
@@ -101,7 +101,7 @@ add_test(NAME ctcompile_manifest COMMAND ctcompile-test-manifest)
 # that file is the one that matters - it asserts the COUNTER that says the
 # images were used, because a page that quietly recompiled produces an
 # identical document.
-add_executable(ctcompile-test-app_bundle Packaging/AppBundle.cpp)
+add_executable(ctcompile-test-app_bundle)
 target_link_libraries(ctcompile-test-app_bundle PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-app_bundle)
 # THE BINARY DIRECTORY IS AN ARGUMENT because two of its cases cannot be run
@@ -185,7 +185,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set_source_files_properties("${_gc_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
 
-  add_executable(ctcompile-test-gc_roots Runtime/GC/Roots.cpp "${_gc_cpp}" "${_gc_inc}")
+  add_executable(ctcompile-test-gc_roots "${_gc_cpp}" "${_gc_inc}")
   target_include_directories(ctcompile-test-gc_roots PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-gc_roots PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-gc_roots)
@@ -243,7 +243,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
 
   set_source_files_properties("${_diff_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-differential Runtime/Differential/Differential.cpp "${_diff_cpp}" "${_diff_inc}")
+  add_executable(ctcompile-test-differential "${_diff_cpp}" "${_diff_inc}")
   target_include_directories(ctcompile-test-differential PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-differential PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-differential)
@@ -311,8 +311,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
 
   set_source_files_properties("${_mod_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-module_differential
-                 Runtime/Modules/Differential.cpp "${_mod_cpp}" ${_mod_incs})
+  add_executable(ctcompile-test-module_differential "${_mod_cpp}" ${_mod_incs})
   target_include_directories(ctcompile-test-module_differential
                              PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-module_differential PRIVATE ctbrowser::script)
@@ -350,7 +349,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
 
   set_source_files_properties("${_link_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-linkable Runtime/Linking/Linkable.cpp "${_link_cpp}")
+  add_executable(ctcompile-test-linkable "${_link_cpp}")
   target_link_libraries(ctcompile-test-linkable PRIVATE ctbrowser::script)
   ctcompile_target(ctcompile-test-linkable)
   add_test(NAME ctcompile_linkable COMMAND ctcompile-test-linkable)

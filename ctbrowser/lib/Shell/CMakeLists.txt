@@ -6,7 +6,17 @@
 # internal.hpp is private to it; bindings/names.hpp is the one header two of
 # them share.
 add_library(ctbrowser-shell)
-ctbrowser_subsystem_sources(ctbrowser-shell shell)
+target_sources(ctbrowser-shell PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
+target_sources(ctbrowser-shell PRIVATE
+  app_bundle.cpp
+  embedded_fonts.cpp
+)
+
+add_subdirectory(bindings)
+add_subdirectory(browser)
+add_subdirectory(image)
+add_subdirectory(net)
+add_subdirectory(page)
 
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-shell)

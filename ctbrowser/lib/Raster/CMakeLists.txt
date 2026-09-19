@@ -4,7 +4,15 @@
 # layout - only about paint's recorded commands. gl/ is the GL device: an
 # ANGLE branch and a stub branch of one #if, both always compiled.
 add_library(ctbrowser-raster)
-ctbrowser_subsystem_sources(ctbrowser-raster raster)
+target_sources(ctbrowser-raster PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
+target_sources(ctbrowser-raster PRIVATE
+  draw.cpp
+  svg.cpp
+)
+
+add_subdirectory(backend)
+add_subdirectory(gl)
+add_subdirectory(text)
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
@@ -68,7 +76,7 @@ if(plutosvg_FOUND)
 
   # VERSION PARITY IS LOAD-BEARING, so it is checked rather than hoped for.
   # test/golden/svg.ppm is ONE image compared byte-for-byte on both Linux and
-  # Windows, and the Windows sysroot pins whatever ../llvm-mingw/build-sdl3.sh
+  # Windows, and the Windows sysroot pins whatever tools/mingw/build-sdl3.sh
   # fetched. If a host's plutosvg drifts ahead of that, the golden moves on one
   # platform and not the other - which is exactly how the renders diverged over
   # a HarfBuzz version once already (docs/raster.md).

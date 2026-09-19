@@ -1,0 +1,19 @@
+target_sources(ctbrowser-script PRIVATE
+  rx_binary-01.inc
+  rx_folds-01.inc
+  rx_general_category-01.inc
+  rx_ranges-01.inc
+  rx_ranges-02.inc
+  rx_ranges-03.inc
+  rx_ranges-04.inc
+  rx_ranges-05.inc
+  rx_ranges-06.inc
+  rx_ranges-07.inc
+  rx_script-01.inc
+  rx_script_extensions-01.inc
+  rx_sequences-01.inc
+  rx_sequences-02.inc
+  rx_sequences-03.inc
+  rx_strings-01.inc
+  rx_unfolds-01.inc
+)

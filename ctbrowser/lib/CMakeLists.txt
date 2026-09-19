@@ -1,4 +1,4 @@
-# The engine: ten subsystems, one per directory, one CMake target each.
+# The engine: nine subsystems, one per directory, one CMake target each.
 #
 #   cmake/dependencies.cmake   everything the engine LOOKS FOR
 #   lib/<Subsystem>/           that subsystem's target and its dependencies
@@ -39,28 +39,9 @@ function(ctbrowser_target name)
   endif()
 endfunction()
 
-# Headers live in include/ctbrowser/<subsystem>/ - LOWERCASE, because that is
-# what every #include in the tree says and an include path is a public name -
-# and implementations in lib/<Subsystem>/, which is LLVM's spelling and is
-# private to the build. A header declares, its .cpp defines, and the few that are
-# templates (slab, handle) or constexpr value types (geometry) stay whole in
-# the header because there is nothing to move out of them.
-set(CTBROWSER_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")
-
-# A subsystem's sources are every .cpp under its lib/ directory and its
-# installed headers every .hpp under its include/ directory - globbed, so a new
-# file is a new file and not a new file plus a registration that, forgotten,
-# left the build tree fine and the INSTALLED package unusable. Platform choice
-# is #if inside a file, never a file left off the list.
-function(ctbrowser_subsystem_sources target sub)
-  file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-  file(GLOB_RECURSE headers CONFIGURE_DEPENDS "${CTBROWSER_INCLUDE_DIR}/ctbrowser/${sub}/*.hpp")
-  target_sources(${target}
-    PRIVATE ${sources}
-    PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}" FILES ${headers})
-endfunction()
-
 # --- the subsystems ------------------------------------------------------
+# Each target declares its header set before private include directories so
+# the public include root keeps precedence. include/ supplies the files later.
 # In dependency order, which is also the order of the pipeline: HTML -> dom ->
 # style -> layout -> paint -> raster -> pixels, with script and shell across
 # the top. Nothing upstream knows what is downstream of it, and that is what
@@ -79,12 +60,7 @@ add_subdirectory(App)
 # --- ctbrowser (umbrella) ------------------------------------------------
 # What an application imports and links. One of each.
 add_library(ctbrowser INTERFACE)
-target_sources(ctbrowser
-  INTERFACE
-    FILE_SET HEADERS
-      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
-      FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser.hpp")
+target_sources(ctbrowser INTERFACE FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 target_compile_features(ctbrowser INTERFACE cxx_std_23)
 target_link_libraries(ctbrowser INTERFACE
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
@@ -165,6 +141,12 @@ file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
 "include(CMakeFindDependencyMacro)
 ${CTBROWSER_CONFIG_DEPS}
 include(\"\${CMAKE_CURRENT_LIST_DIR}/ctbrowser-targets.cmake\")
+# Match build-tree aliases while retaining the existing exported target names.
+foreach(subsystem core dom script style layout paint raster shell app)
+  if(NOT TARGET ctbrowser::\${subsystem})
+    add_library(ctbrowser::\${subsystem} ALIAS ctbrowser::ctbrowser-\${subsystem})
+  endif()
+endforeach()
 ")
 install(FILES "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
         DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ctbrowser")

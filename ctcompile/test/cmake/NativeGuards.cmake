@@ -17,7 +17,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
     DEPENDS "${_values_module}" ctjs-translate
     COMMENT "Emitting native-values-fixture.emitc.mlir to C++ for the VM-linked control"
     VERBATIM)
-  add_executable(ctcompile-test-native-values-vm-linked Runtime/Reference/VmLinked.cpp "${_values_cpp}")
+  add_executable(ctcompile-test-native-values-vm-linked "${_values_cpp}")
   target_link_libraries(ctcompile-test-native-values-vm-linked PRIVATE ctbrowser::ctbrowser)
   target_compile_features(ctcompile-test-native-values-vm-linked PRIVATE cxx_std_23)
   target_compile_options(ctcompile-test-native-values-vm-linked PRIVATE
@@ -39,12 +39,7 @@ endif()
 # Source invocation recovery is structural only until native admission and
 # emission consume both completions. Keep its original checks available for rollback.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-exception-recovery
-    CTNative/ExceptionRecovery/Main.cpp
-    CTNative/ExceptionRecovery/Completion.cpp
-    CTNative/ExceptionRecovery/Completion/DOMURI.cpp
-    CTNative/ExceptionRecovery/Completion/ClassTransactions.cpp
-    CTNative/ExceptionRecovery/Guards.cpp)
+  add_executable(ctcompile-test-exception-recovery)
   target_link_libraries(ctcompile-test-exception-recovery
     PRIVATE ctcompile::ctnative-lowering ctcompile::ctjs-lowering ctcompile::ctjs-import
     # Guards.cpp parses its fixtures itself; the lowering library no longer

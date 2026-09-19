@@ -16,7 +16,7 @@
 #
 # It needs no MLIR: a recording is the INTERPRETER's opinion, and asking the
 # compiler anything here would beg the question.
-add_executable(ctcompile-test-type-oracle Analysis/Types/Oracle.cpp)
+add_executable(ctcompile-test-type-oracle)
 target_link_libraries(ctcompile-test-type-oracle PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-type-oracle)
 
@@ -43,15 +43,7 @@ find_package(Python3 QUIET COMPONENTS Interpreter)
 #
 # Behind the MLIR guard, like every other target that names a dialect.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-type-inference
-    Analysis/Types/TypeInference/Main.cpp
-    Analysis/Types/TypeInference/Helpers.cpp
-    Analysis/Types/TypeInference/IdentityFields.cpp
-    Analysis/Types/TypeInference/MapPresence.cpp
-    Analysis/Types/TypeInference/MapDeletePresence.cpp
-    Analysis/Types/TypeInference/FieldEffects.cpp
-    Analysis/Types/TypeInference/ComparisonIdentity.cpp
-    Analysis/Types/TypeInference/ScalarGlobals.cpp)
+  add_executable(ctcompile-test-type-inference)
   target_link_libraries(ctcompile-test-type-inference
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect MLIRSCFDialect MLIRUBDialect)
@@ -75,7 +67,7 @@ endif()
 # Phase 54B wrote for it - and its precision is stated against the registers
 # it actually reaches, which is an eighth of the bundle.
 if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
-  add_executable(ctcompile-test-type-claims Analysis/Types/Claims.cpp)
+  add_executable(ctcompile-test-type-claims)
   target_link_libraries(ctcompile-test-type-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
@@ -117,7 +109,7 @@ add_custom_command(
   DEPENDS "${_cyc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
   COMMENT "Embedding escape-cycle.js for the driver"
   VERBATIM)
-set(_cyc_sources Analysis/Escape/Cycle.cpp "${_cyc_inc}")
+set(_cyc_sources "${_cyc_inc}")
 set(_cyc_has_module OFF)
 if(TARGET ctjs-translate)
   # THE PRINTED MODULE, embedded the same way. ctjs-translate is an
@@ -172,14 +164,14 @@ add_test(NAME ctcompile_escape_cycle COMMAND ctcompile-test-escape-cycle)
 # the all-write census, loads, provenance) and the array contents/retention
 # tables. Every row is where it was, verbatim; they share EscapeAnalysisHarness.h.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-analysis-sinks Analysis/Escape/Sinks.cpp)
+  add_executable(ctcompile-test-escape-analysis-sinks)
   target_link_libraries(ctcompile-test-escape-analysis-sinks
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
   ctcompile_target(ctcompile-test-escape-analysis-sinks)
   add_test(NAME ctcompile_escape_analysis_sinks COMMAND ctcompile-test-escape-analysis-sinks)
 
-  add_executable(ctcompile-test-escape-analysis-completion Analysis/Escape/Completion.cpp)
+  add_executable(ctcompile-test-escape-analysis-completion)
   target_link_libraries(ctcompile-test-escape-analysis-completion
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -187,50 +179,14 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_test(NAME ctcompile_escape_analysis_completion
            COMMAND ctcompile-test-escape-analysis-completion)
 
-  add_executable(ctcompile-test-escape-analysis-storage Analysis/Escape/Storage.cpp)
+  add_executable(ctcompile-test-escape-analysis-storage)
   target_link_libraries(ctcompile-test-escape-analysis-storage
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
   ctcompile_target(ctcompile-test-escape-analysis-storage)
   add_test(NAME ctcompile_escape_analysis_storage COMMAND ctcompile-test-escape-analysis-storage)
 
-  add_executable(ctcompile-test-escape-analysis-arrays
-    Analysis/Escape/EscapeAnalysisArrays/main.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Harness.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Contents.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Objects.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Selectors.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Primitives.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Primitives/BigInt.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/Setup.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/OverwritesAndTransport.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/InvariantReads.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/SignedStrides.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/SignedArithmetic.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/PowersAndProducts.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/Validation.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/Finish.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Induction/Cases.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/Setup.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/Reloads.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/InvariantArithmetic.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/SignedArithmetic.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/PowersAndProducts.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/MutationRefusals.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/Finish.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Structured/Cases.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/Setup.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/IndexSnapshots.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/Arithmetic.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/ShrinkArithmetic.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/ShrinkRetention.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/LiveMutations.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/Finish.cpp
-    Analysis/Escape/EscapeAnalysisArrays/Length/Cases.cpp
-    Analysis/Escape/EscapeAnalysisArrays/BigIntErrors.cpp
-    Analysis/Escape/EscapeAnalysisArrays/BigIntProducers.cpp
-    Analysis/Escape/EscapeAnalysisArrays/BigIntStrings.cpp
-    Analysis/Escape/EscapeAnalysisArrays/ControlFlow.cpp)
+  add_executable(ctcompile-test-escape-analysis-arrays)
   target_link_libraries(ctcompile-test-escape-analysis-arrays
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -247,7 +203,7 @@ endif()
 # interpreter's recording are registered with the recorder (55O), which they
 # need and which lands separately.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-claims Analysis/Escape/Claims.cpp)
+  add_executable(ctcompile-test-escape-claims)
   target_link_libraries(ctcompile-test-escape-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
@@ -286,7 +242,7 @@ add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escap
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
 # allowing their uninstrumented allocations to join native escape claims.
-add_executable(ctcompile-test-escape-oracle-aot Analysis/Escape/AOTOracle.cpp)
+add_executable(ctcompile-test-escape-oracle-aot)
 target_link_libraries(ctcompile-test-escape-oracle-aot PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-escape-oracle-aot)
 add_test(NAME ctcompile_escape_oracle_aot COMMAND ctcompile-test-escape-oracle-aot)
@@ -311,8 +267,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
       "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake" VERBATIM)
   set_source_files_properties("${_aot_return_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
-  add_executable(ctcompile-test-escape-oracle-aot-return
-    Analysis/Escape/AOTReturnOracle.cpp "${_aot_return_cpp}" "${_aot_return_inc}")
+  add_executable(ctcompile-test-escape-oracle-aot-return "${_aot_return_cpp}" "${_aot_return_inc}")
   target_include_directories(ctcompile-test-escape-oracle-aot-return PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-escape-oracle-aot-return PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-escape-oracle-aot-return)
@@ -321,40 +276,22 @@ endif()
 
 # A slot census is usable only after its entire bounded proof completes.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-owned-method-table-slots Analysis/Ownership/MethodTableSlots.cpp)
+  add_executable(ctcompile-test-owned-method-table-slots)
   target_link_libraries(ctcompile-test-owned-method-table-slots PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-method-table-slots)
   add_test(NAME ctcompile_owned_method_table_slots COMMAND ctcompile-test-owned-method-table-slots)
-  add_executable(ctcompile-test-owned-global-roots Analysis/Ownership/GlobalRoots.cpp)
+  add_executable(ctcompile-test-owned-global-roots)
   target_link_libraries(ctcompile-test-owned-global-roots PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-roots)
   add_test(NAME ctcompile_owned_global_roots COMMAND ctcompile-test-owned-global-roots)
-  add_executable(ctcompile-test-owned-global-methods Analysis/Ownership/GlobalMethods.cpp)
+  add_executable(ctcompile-test-owned-global-methods)
   target_link_libraries(ctcompile-test-owned-global-methods PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-methods)
   add_test(NAME ctcompile_owned_global_methods COMMAND ctcompile-test-owned-global-methods)
   # checkSharedMap - the shared two- and three-method Map family and its refusals -
   # has been its own executable since 2026-09-08, when OwnedGlobalMethods.cpp
   # reached 1,099 lines. Same fixtures (OwnedGlobalMethodsFixtures.h).
-  add_executable(ctcompile-test-owned-global-shared-map
-    Analysis/Ownership/OwnedGlobalSharedMap/Main.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/SavedScalarReads.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/NumericEntry.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedClear.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedZeroSize.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedExactSize.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/CapturedDeleteSize.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/DefiniteAbsence.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/LeafReadbacks.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/LeafReadbacks/Mixed.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/LeafObjects.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/LeafObjects/Children.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/NestedCalls.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/ObjectKeyArguments.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/RetainedObjectKeyFamily.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/DOMKeyInputs.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/SharedMap.cpp
-    Analysis/Ownership/OwnedGlobalSharedMap/SharedMap/Captured.cpp)
+  add_executable(ctcompile-test-owned-global-shared-map)
   target_link_libraries(ctcompile-test-owned-global-shared-map PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-shared-map)
   add_test(NAME ctcompile_owned_global_shared_map COMMAND ctcompile-test-owned-global-shared-map)
@@ -362,7 +299,7 @@ endif()
 
 # Private provider transactions preserve JS Map equality and withhold partial state.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-provider-state CTNative/HostContract/ProviderState.cpp)
+  add_executable(ctcompile-test-provider-state)
   target_link_libraries(ctcompile-test-provider-state PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-provider-state)
   add_test(NAME ctcompile_provider_state COMMAND ctcompile-test-provider-state)

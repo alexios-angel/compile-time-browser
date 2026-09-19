@@ -9,60 +9,13 @@
 # naming both dialects is its entire job.
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
-  Inference/Initialization.cpp
   ClosedCallable.cpp
   OwnedMethodTableSlots.cpp
   OwnedGlobalRoots.cpp
   OwnedGlobalMethods.cpp
-  ../HostContract/Contract.cpp
-  ../HostContract/DOMEntry.cpp
-  ../HostContract/DOMEntry/Body.cpp
-  ../HostContract/DOMEntry/ControlFlow.cpp
-  ../HostContract/DOMEntry/BrowserOperations.cpp
-  ../HostContract/DOMSource.cpp
-  ../HostContract/DOMSource/Captures.cpp
-  ../HostContract/DOMSource/Entry.cpp
-  ../HostContract/DOMSource/Completion.cpp
-  ../HostContract/DOMSource/Bodies.cpp
-  ../HostContract/DOMSource/Expansion.cpp
-  ../HostContract/DOMIteration.cpp
-  ../HostContract/Values.cpp
-  ../HostContract/Values/CapturedMap.cpp
-  ../HostContract/CapturedMapBody.cpp
-  ../HostContract/CapturedMapBody/Walk.cpp
-  ../HostContract/ScalarCallbacks.cpp
-  ../HostContract/Slots.cpp
-  ../HostContract/Analysis.cpp
-  ../HostContract/PrefixAnalysis.cpp
-  ../HostContract/PrefixValues.cpp
-  ../HostContract/PrefixIdentity.cpp
-  ../HostContract/PrefixFactories.cpp
-  ../HostContract/PrefixReads.cpp
-  ../HostContract/PrefixMutations.cpp
-  ../HostContract/ProviderState.cpp
-  ../HostContract/ProviderObjects.cpp
-  ../HostContract/ProviderDiagnostics.cpp
-  ../HostContract/ProviderCallbacks.cpp
-  BindingTime/Analysis.cpp
-  BindingTime/Effects.cpp
-  BindingTime/EffectQuery.cpp
-  BindingTime/Captures.cpp
-  BindingTime/Operations.cpp
-  BindingTime/Flow.cpp
-  BindingTime/Memory.cpp
-  Inference/Exceptions.cpp
-  Inference/Shapes.cpp
   EscapeAnalysis.cpp
-  EscapeAnalysis/ArrayContents.cpp
-  EscapeAnalysis/Primitives.cpp
-  EscapeAnalysis/LoopProof.cpp
   NativeMap.cpp
-  NativeMap/Presence.cpp
-  NativeMap/SnapshotCopies.cpp
   NativeObjectIdentity.cpp
-  NativeObject/ValueFlow.cpp
-  NativeObject/InertSlots.cpp
-  NativeObject/Fields.cpp
 
   LINK_LIBS PUBLIC
     CTNativeDialect
@@ -86,3 +39,25 @@ target_compile_features(CTNativeAnalysis PRIVATE cxx_std_23)
 if(TARGET obj.CTNativeAnalysis)
   target_compile_features(obj.CTNativeAnalysis PRIVATE cxx_std_23)
 endif()
+
+# MLIR compiles through an object target on supported generators. Reuse it for
+# sources owned by Analysis children and the sibling HostContract directory.
+set(CTNATIVE_ANALYSIS_SOURCE_TARGET CTNativeAnalysis)
+if(TARGET obj.CTNativeAnalysis)
+  set(CTNATIVE_ANALYSIS_SOURCE_TARGET obj.CTNativeAnalysis)
+endif()
+set(CTNATIVE_ANALYSIS_SOURCE_TARGET "${CTNATIVE_ANALYSIS_SOURCE_TARGET}" PARENT_SCOPE)
+
+target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
+  ClosedValueFlow.h
+  OwnedGlobalRoots.h
+  OwnedMethodTableSlots.h
+  PrimitiveAlternatives.h
+  PrimitiveMapKey.h
+)
+
+add_subdirectory(BindingTime)
+add_subdirectory(EscapeAnalysis)
+add_subdirectory(Inference)
+add_subdirectory(NativeMap)
+add_subdirectory(NativeObject)

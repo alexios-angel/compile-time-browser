@@ -1,0 +1,12 @@
+add_subdirectory(AOT)
+add_subdirectory(CSS)
+add_subdirectory(HTML)
+add_subdirectory(JavaScript)
+add_subdirectory(StdLib)
+add_subdirectory(Support)
+
+if(CTCOMPILE_ENABLE_MLIR)
+  add_subdirectory(CTJS)
+  add_subdirectory(CTNative)
+  add_subdirectory(Target)
+endif()
