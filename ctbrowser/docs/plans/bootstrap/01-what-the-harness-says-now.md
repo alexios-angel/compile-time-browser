@@ -1,0 +1,839 @@
+[Back to bootstrap.md](../bootstrap.md)
+
+## What the harness says now
+
+`tools/check/css-parity.py` on `bootstrap-box.html`, the smallest fixture — 40
+elements, 48 compared columns:
+
+```
+BY CAUSE
+  27 elements share a @x offset of +44px      first at html>body:1>div:0>h1:0
+  @h: 35 of 40 differ                         line-height: 34 of 40 differ
+  height: 35 of 40 differ                     text-align:  34 of 40 differ
+
+ELEMENT                PROPERTY          ctbrowser                   chrome
+html                   @w                1009                        1024
+body                   line-height       var(--bs-body-line-height)  24
+body                   color             var(--bs-body-color)        rgb(33, 37, 41)
+div.container.probe    @x                0                           32
+div.container.probe    max-width         1320                        960
+div.container.probe    margin-left       auto                        32
+div.container.probe    padding-right     auto                        12
+
+40 elements, 48 properties: 343 differ / 1920, substituted=1354
+```
+
+Every line of that is a predicted failure arriving on schedule, which is the
+first evidence that the harness measures what it claims to:
+
+- **`var(--bs-body-line-height)` as a literal value** — the headline gap. Note
+  that the inheritance walk *worked*: those are `body`'s declarations, found by
+  `getComputedStyle` walking ancestors.
+- **`max-width: 1320` where Chrome says `960`** — `@media` flattening, with the
+  `xxl` breakpoint winning at a 1024 viewport.
+- **`margin-left: auto` and `@x: 0` where Chrome centres at 32** — no
+  auto-margin resolution.
+- **`padding-right: auto`** — `calc(var(--bs-gutter-x) * .5)` fails
+  `parse_length`, which returns a default-constructed `length` whose unit is
+  `auto_`.
+- **`substituted=1354` of 1920** — 70% of compared values ctbrowser did not
+  answer at all. This is the number that stops "no difference" being mistaken
+  for "implemented", and it is ratcheted alongside `differ`.
+
+### What S1 measured
+
+`style/css/` is ~1,000 lines: a §4 tokenizer, a §5 grammar over component values,
+and a selector parser that writes `compiled_selector` directly - so
+`engine::compile_selector` is gone, and with it the bug where a selector was
+compiled once per DECLARATION and pushed before being checked.
+
+| | |
+|---|---|
+| Bootstrap: rules / selectors / declarations | 2,539 / 2,950 / 5,524 |
+| tokens / component values | 68,584 / 53,097, both dropped after parsing |
+| compiled selectors RETAINED | **2,550** - exactly the 2,950 parsed less the 400 that cannot match. Was ~6,289 with ~650 permanently dead |
+| `add_sheet` (parse + compile + index) | **3.5 ms**; the parse alone is 2.4 ms, about 124 MB/s |
+
+The selector subset was deliberately NOT widened, which is what makes those
+numbers trustworthy: the resolved styles are byte-identical to the old front end's
+on all six fixtures, so the only thing that changed is how they were arrived at.
+Two spec details corrected a wrong assumption along the way, both recorded in
+`ctbrowser/unittests/unit/css_syntax.cpp`: a `<hash-token>`'s id flag does not distinguish a
+colour from a selector (`#fff` is id-like, and `#fff {}` really does select
+`id="fff"`), and a `<percentage-token>` carries no type flag at all.
+
+The one real bug the gate caught was worth the gate: a component value's extent
+was being inferred from its last CHILD, so `var(--x)` came back as `var(--x` and
+every `rgba(...)` lost its `)` - the colour then failed to parse and the element
+was painted with nothing. `component_value` records `[token, end_token)` now.
+
+### S2a, and a finding about the harness itself
+
+Attribute selectors and `:root` landed, and **the Chrome parity numbers did not move
+by one**: 343/564/1596/2435/724/2158 differ, byte-identical before and after.
+
+That is not a failure, it is the plan's own warning arriving — *"the front end will
+outrun layout; score the front end separately or the win is invisible"*. The
+compared set is 48 properties layout and paint consume. Everything the newly
+matching rules deliver is either a custom property, which nothing reads until S4,
+or a property not in the set (`border-radius` on `.form-check-input[type=checkbox]`,
+for instance). The parity harness measures the END of the pipeline and cannot see a
+correct front-end rung at all.
+
+So the front end now has its own score, in `ctbrowser/unittests/unit/css_syntax.cpp`: how many of
+Bootstrap's 2,950 selectors can match, with a FLOOR that may only be raised. A rung
+that widens the grammar and does not move that number has not done what it claimed.
+
+|  | matchable | unmatchable |
+|---|---|---|
+| after S1 (tag/id/class, descendant/child) | 2,550 (86.4%) | 400 |
+| after S2a (+ attributes, `:root`) | 2,603 (88.2%) | 347 |
+| after S2b (+ `+` and `~`) | 2,651 (89.9%) | 299 |
+| after S2c (+ functional and structural pseudos) | **2,767 (93.8%)** | 183 |
+
+The remaining 183 are pseudo-ELEMENTS (123 of them) and the form-state pseudos that
+need shell wiring - `:focus-visible`, `:focus-within`, `:placeholder-shown`,
+`:valid`, `:invalid`, `:indeterminate`, `:required`, `:read-only`. Neither is a
+selector-grammar gap: a pseudo-element cannot match an element by definition, and it
+is box generation (S6) that gives `::before` something to match. ~94% is where the
+grammar tops out, not ~100%, and the plan was wrong to say otherwise.
+
+**And the census cannot see correctness.** A selector counts as matchable if it
+parses into something the matcher will consider. `:disabled` counted from the very
+first rung - as a state bit that NOTHING EVER SET. It parsed, it was counted, and it
+never matched. That was invisible while `:not()` was unsupported; implementing
+`:not()` turned it into a wrong render, because `.btn:not(:disabled)` then matched
+disabled buttons too, and Bootstrap writes exactly that eight times. So `:disabled`,
+`:checked` and `:link` became facts about the element in the same rung, and the
+number did not move by one. Countable is not correct; the tests are where correct
+lives.
+
+`:root` is worth more than its 5 selectors suggest: it and
+`[data-bs-theme=light]` are the two alternatives on the rule carrying every global
+`--bs-*`, and both were dead. `getComputedStyle(document.documentElement)` now
+answers `--bs-blue: #0d6efd`, and `body` inherits it — which is the input S4's
+`var()` substitution needs to exist at all.
+
+Of Bootstrap's 93 attribute selectors, 48 are now in selectors that can match; the
+other 45 sit in selectors still dead for a second reason (`+`, `~`, `:not()`), which
+is what S2b and S2c clear.
+
+### S2b, and what a sibling combinator costs
+
+`+` and `~` cannot be answered from the tree: there is no previous-sibling link to
+walk back along. So the traversal keeps what it has already seen - `levels_[d]` is
+every element visited so far at depth d, `path_[d]` says which of them the current
+chain runs through - and the matcher's cursor becomes a `(depth, index)` pair rather
+than a node, because a sibling combinator moves SIDEWAYS.
+
+That same structure removes the thing the plan named as probably the hottest single
+cost in the engine: `matches` used to call `facts_of` for every ancestor of every
+candidate rule, and `facts_of` interns the element's id and each of its classes,
+each intern taking a `shared_mutex`. For an element twelve deep with four classes
+against forty candidates that is up to 2,400 lock acquisitions to re-answer what the
+DFS already knew on its way down. **Matching now asks the tree nothing.**
+
+Three details that a node-walking implementation gets wrong, each with a test: a
+TEXT node between two elements is not a sibling (`+` is about elements); siblings do
+not cross a parent boundary; and the first element of a level has nothing before it,
+so the cursor must fail rather than read off the front of the list. A fourth is
+about reuse rather than CSS - `levels_` is kept for its capacity across
+`resolve_all` calls, so its CONTENTS have to be cleared, or a second document finds
+the first one's `<html>` sitting before its own and `html ~ x` matches across two
+documents.
+
+The measured effect on the render is honest and small: five values across two
+fixtures now arrive that did not before - `.breadcrumb-item+.breadcrumb-item`'s
+`padding-left`, `.card-link+.card-link`'s `margin-left`,
+`.list-group-item+.list-group-item.active`'s `margin-top` - so `substituted` falls
+by 5 and `differ` does not move at all, because every one of them arrives as `auto`:
+their values are `var()` and `calc()`, which is S4's business. S2b fixed the
+MATCHING. No geometry moved.
+
+### S2c, and the rung where the Chrome gate finally moved
+
+The functional pseudos needed the matcher to become RE-ENTRANT: `:not(.wrap > p)` has
+the same subject as the compound it sits in, so its argument runs the whole walk from
+that same cursor. Once the cursor was a `(depth, index)` pair rather than a node -
+which S2b needed anyway for `+` - that was a wrapper around the existing walk rather
+than a second matcher.
+
+`:has()` was deliberately absent at this rung: it looks FORWARD at descendants the
+traversal has not visited yet. It arrived on 2026-09-12 as exactly the second pass
+that paragraph predicted - a scoped query run by a second `engine` from the subject,
+because the first is mid-traversal (`engine::has_walker_`). Bootstrap still uses
+none. An argument the engine cannot represent makes the whole pseudo unmatchable
+rather than vacuously true - the direction matters, because a dead branch inside
+`:not()` would otherwise read as "matches nothing, therefore `:not` passes".
+
+The measured effect on the render is the first one the parity harness could see:
+
+| | differ | substituted |
+|---|---|---|
+| after S2b | 7,820 | 19,876 |
+| after S2c | **7,703** | **19,848** |
+
+Most of it is one rule. `.collapse:not(.show) { display: none }` now matches, so the
+closed accordion section stops generating a box at all - `display: block` becomes
+`none` and the element loses its width, height and font-size because it has no box to
+read them from. `examples/pages/bootstrap-components.html` carries the comment
+"Hidden, so it must generate no box" on that element, written before the engine could
+do it.
+
+### S3a: inheritance, and what the split cost
+
+Before this, `resolve` produced only the declarations that MATCHED, and inheritance
+happened five separate ad-hoc ways downstream - `font-size`, the face, text decoration
+and white-space threaded as parameters through `box_builder`, `color` threaded through
+the recorder, and a fifth walk in `getComputedStyle`. Five mechanisms for one idea,
+none of them reachable from the cascade, and no way for a custom property to travel at
+all.
+
+`computed_style` now holds an OWN declaration list and a pointer to an interned
+INHERITED half, and `get` checks own then inherited - which is the cascade in one line.
+The split is what keeps the interning invariant alive: a single combined list would
+make an element's style depend on its parent's, so two `<li>` in different lists would
+stop sharing and the rate would collapse to (inheritance contexts x own halves).
+
+**The load-bearing shortcut:** an element that declares nothing inherited keeps its
+parent's pointer VERBATIM - no copy, no hash, no intern. That is the difference between
+this being an optimisation and a regression, because Bootstrap's `:root` carries 128
+custom properties and a 2,500-element page would otherwise hold 2,500 copies of them.
+
+Measured, per fixture:
+
+| fixture | elements | distinct inherited halves | largest half | resolve_all |
+|---|---|---|---|---|
+| box | 40 | **4** | 134 | 5.4 µs/el |
+| grid | 111 | **9** | 134 | 4.8 µs/el |
+| position | 64 | 16 | 183 | 7.3 µs/el |
+| type | 62 | 26 | 136 | 5.9 µs/el |
+| kitchen | 165 | 69 | 164 | 7.0 µs/el |
+| components | 189 | 88 | 171 | 8.1 µs/el |
+
+The sharing works: 9 halves for 111 elements on the repetitive page, 4 for 40 on the
+box one. **Two targets are NOT met and should be read carefully.** "Distinct styles
+under 15% of elements" runs at 37-90% here - but these fixtures were built so that
+every element isolates a different concern, which is the least shareable document
+possible; the target was written about a large repetitive page and cannot be judged on
+them. "Under 4 µs/element" runs at 4.8-8.1, genuinely over, on pages small enough that
+per-element fixed costs dominate - and the three perf items the plan lists for this
+rung (O(1) `put()`, values as views, packed specificity in `rule`) are still deferred.
+
+`inherit` reads the parent's WHOLE style rather than its inherited half, which is what
+makes `display: inherit` work at all - the keyword takes the parent's value for any
+property, inherited or not. `initial` is an EMPTY own value that shadows the inherited
+one, since every consumer already treats empty as "nothing said". `unset` drops the
+declaration, which is correct for both kinds. `revert` is treated as `unset`: doing it
+properly needs the value the previous ORIGIN would have produced, which means keeping
+the cascade's intermediate states rather than folding as it goes.
+
+**`font-size` is deliberately NOT in the inherited set**, and it is the one real gap.
+Its computed value is an absolute length, so inheriting the text would let `1.5em`
+compound against each descendant's own size instead of being resolved once.
+`box_builder` already resolves it correctly against the parent's px, so it stays there
+until S3b's unit folding moves the resolution into the cascade. The same argument
+covers any inherited property carrying a relative unit.
+
+The render effect: 24 lines across four fixtures, all of one shape - the literal string
+`inherit` becoming the parent's actual value. `.alert-heading { color: inherit }` and
+`.form-check-input { line-height: inherit }` used to reach paint as the word "inherit",
+where `parse_color` simply failed. The Chrome diff falls 7,703 -> 7,695, and only that
+much because the values those now resolve to are themselves unresolved `var()`.
+
+### S4a: the rung where Bootstrap starts looking like Bootstrap
+
+Substitution is a TOKEN-STREAM operation, and `rgba(var(--bs-body-color-rgb), .5)` is
+the case that settles why: the var() expands to `33, 37, 41`, three arguments where the
+source had one. So it runs on text, at computed-value time, before any grammar looks at
+a value - which is also what will let `border: var(--w) solid var(--c)` be expanded into
+longhands once S4b can count its components.
+
+**753 unresolved `var()` in the baselines became 0**, and `.btn` came alive:
+`padding: auto auto` became `6px 12px`, `line-height` became `1.5`, and the button grew
+from 128x26 to 152x38 as its padding finally applied.
+
+| | differ | substituted |
+|---|---|---|
+| after S3a | 7,695 | 19,848 |
+| after S4a | **5,355 (-30.4%)** | 20,364 (+516) |
+
+**`substituted` went UP, and that is the metric being honest about something rather
+than a regression.** Bootstrap ships seventeen EMPTY custom properties, and
+`body { text-align: var(--bs-body-text-align) }` reads one of them. An empty token
+stream is a valid substitution but not a valid value for an ordinary property, so per
+§3 the declaration is invalid at computed-value time and therefore `unset` - which is
+why ctbrowser now answers nothing where it used to answer the literal string
+`var(--bs-body-text-align)`. The harness substitutes the CSS initial value, `start`,
+Chrome says `start`, and the difference disappears. So `differ` fell *because*
+`substituted` rose: garbage was replaced by a correct absence. The ratchet treats a
+rising `substituted` as a regression and it is right to in general - but not across a
+rung that makes wrong values correctly absent, and it needed `--advance` for that
+reason.
+
+Getting that right was worth the detour. Storing the empty value instead of unsetting
+would have SHADOWED the inherited one - behaving like `initial` rather than `unset` - on
+405 elements of a single fixture.
+
+Two spec details that are easy to get backwards, both now pinned by tests. IACVT means
+`unset`, NOT "drop the declaration and let the earlier one win": `color: red; color:
+var(--missing)` renders as the INHERITED colour in Chrome, not red. And `!important` on
+a custom property is the DECLARATION's importance, so it is peeled where every other
+declaration's is and a var() cannot smuggle it into the property that reads it - the
+obvious guess is that the value keeps it.
+
+### S4b: why the cascade needs two passes
+
+Custom properties are themselves cascaded, so substitution cannot run inside the fold
+that produces the values it needs to read. Pass one applies ONLY custom properties; pass
+two substitutes everything else against them, expands shorthands, and folds. Both passes
+walk the same sorted list with the same inline-style splice, so priority is identical -
+and expansion in pass two keeps source order for free, because a shorthand's longhands
+land at the shorthand's position in the fold. That is exactly what
+`test_shorthands_expand` pins, and it passes verbatim.
+
+Expansion HAD to move there. `border: var(--all)` is one token that becomes three, so a
+shorthand's component count is unknowable before substitution - which is why the `border`
+shorthand had never been expandable and had therefore never been expanded. Paint reads
+`border-width` and `border-color`; the shorthand set neither; every card, alert and table
+border was invisible. Bootstrap writes it 34 times.
+
+`border` is `<width> || <style> || <color>` in ANY ORDER, so its parts are classified by
+what they are rather than by where they sit - unlike the positional side lists. And a
+shorthand sets every longhand it governs including the ones it did not mention, which is
+what makes `border: 0` reset a style set elsewhere.
+
+**I added this without a test first, and it was wrong in a way the render hid.** The page
+came back byte-identical, which I nearly accepted: `<button>` is a REPLACED element whose
+border is drawn by the widget painter rather than from CSS, so the buttons that fill the
+visible region looked right either way. Querying the computed values instead showed
+`.alert` reporting `border-color: "1px solid #9ec5fe"` - the whole shorthand in the
+colour - because a stale expansion site was still running BEFORE substitution. The
+lesson is the ordinary one: the test would have said so in one second, and the render
+could not.
+
+### S10 has a dependency the plan did not record: inline-block shrink-to-fit
+
+`display: inline-block` is PARSED and then never used. `parse_display` returns
+`display_kind::inline_block`, and `box_builder` maps everything that is not
+`inline_level` to `box_kind::block` (`include/ctbrowser/layout/box.hpp`), so an
+inline-block box fills its containing block. That is already visible: `.btn` on an
+`<a>`, and `.btn` with `.d-grid`, span the whole row in the components render.
+
+So de-replacing `<button>` cannot come first. Today a button's width is
+`text_width(label) + 16`, which shrink-wraps by accident because it is a REPLACED
+element sized from its content; take that away and every button becomes full-width.
+The order has to be:
+
+1. **inline-block as an inline-LEVEL box with shrink-to-fit width** -
+   `clamp(min-content, available, max-content)`. The machinery is already there:
+   `intrinsic_sizes` with `min_content`/`max_content`, and `inline_flow` already
+   measures children that way. The likely shape is a `bool inline_level` on
+   `box_node` - `kind = block` for the inside, inline-level for the outside - which
+   is the same field S9 needs for `inline-flex`, so it should be added once.
+2. **then** `<button>` out of `is_replaced_tag`, with its size coming from the UA
+   sheet's padding and border rather than from `intrinsic_size_of`.
+
+Worth knowing before starting: the button branch of `browser::paint_replaced` draws
+only a frame and the label - the FACE already comes from the UA sheet's
+`button, select { background-color: #e9e9ed }` through the ordinary paint path. And
+`<input type=button|submit|reset>` stays replaced and keeps using that branch, so it
+does not move.
+
+**AND THE IMAGE GOLDENS DO RUN ON THE DEVBOX**, which S0 left as unverified and
+`docs/build.md` still denies: `ctest -R "render-widgets|render-elements"` passes there
+with no SDL and no display, because `check-render.cmake` pins `CTBROWSER_FONTS=font8x8`
+and the software rasteriser is deterministic. So a golden-moving rung can be verified
+in the ordinary loop after all, rather than needing a machine with SDL.
+
+### @media is now the bottleneck, and that reorders the plan
+
+The biggest single cluster left is a `+44px` `@x` shift on 27 of 40 elements of the
+smallest fixture: `.container`'s auto-margin centring (32px) plus its padding (12px).
+`min/max-width` and auto margins are implemented and tested now - and they buy **six**
+differences, because:
+
+    .container  max-width=1320px      ctbrowser
+    .container  max-width=960px       Chrome at a 1024 viewport
+
+Every `@media` block flattens in, so the `xxl` breakpoint's 1320px wins by source
+order, and 1320 does not clamp 1009. Auto margins then have no remainder to centre
+with, because `.container` is `width: 100%` and only a clamped max-width creates one.
+So the whole cluster - the shift, the widths, and everything measured against the
+wrong basis - is one missing feature: **real media-query evaluation**. It should move
+ahead of the rest of the box model.
+
+`line-height` was the other half of the text work and it did pay: 5,355 → 4,451
+across two changes, because it needed BOTH the layout fix and a reporting fix -
+`getComputedStyle` answered the cascade's factor `1.5` where Chrome reports the
+resolved `24px`, which differed on every text-bearing element for a reason that had
+nothing to do with layout.
+
+**Two bugs in this rung were caught by tests that did not exist an hour earlier**, and
+both would have shipped silently. An unset margin is `unit::auto_` exactly like an
+explicit `auto`, so reading the length rather than a flag centred every definite-width
+box that declared no margins - the event tests found it by clicking where an element
+used to be. And `min_width_`/`max_width_` never reached the constructor's initialiser
+list, so they were null atoms reading empty strings and the clamping was dead code that
+compiled, linked and passed everything except its own test.
+
+### S9: flex, and the grid stops being a stack of full-width blocks
+
+The remainder really was concentrated in one feature. On the grid fixture 102 of 111
+elements differed on `@y` for a single reason - every `.col` was a block, so every
+column sat below the one before it.
+
+| fixture | differ before | after | substituted before | after |
+|---|---|---|---|---|
+| box | 69 | 69 | 1,387 | 1,308 |
+| type | 136 | 136 | 2,093 | 1,969 |
+| **grid** | **490** | **173** | 3,457 | 3,234 |
+| components | 1,091 | 977 | 5,921 | 5,554 |
+| position | 303 | 291 | 2,078 | 1,951 |
+| kitchen | 1,051 | 886 | 5,243 | 4,915 |
+| **total** | **3,140** | **2,532** | 20,179 | 18,931 |
+
+(and 2,458 after the intrinsic-sizing bug flex uncovered in `block_flow::measure`, below)
+
+The grid fixture is where the rung is gated and it fell **65%**. What is left on it is
+no longer flex: 102 of its 173 are one `@y` offset of **-0.0156px** - a single 1/64
+rounding difference on `h1.fs-4`'s height, propagated down the page by the report's
+own ranking rule - 24 are `.row`'s `margin-top: calc(-1 * var(--bs-gutter-y))`
+answering `auto` where Chrome reports the initial `0px`, and most of the rest are
+Chrome's `LayoutUnit` flooring `33.333333%` of 960 to 319.984375 where this answers 320.
+
+The traced case works exactly as predicted: `.container` 960 with 12px padding gives
+936, `.row`'s -12px margins widen it back to **960**, three `.col`s take **320** each.
+So does the case that needs the real §9.7 loop rather than one proportional pass - a
+`.col` holding one unbreakable 624px token takes 648 and its sibling the remaining 312,
+and the row below it with `min-width: 0` splits 480/480, which is why Bootstrap's
+`.card` carries that declaration.
+
+**`min-width`/`min-height` are answered rather than left blank, and the answer depends
+on the parent.** Chrome reports `auto` for a flex item - where `auto` means the
+content-based minimum and genuinely is not a length - and resolves it to `0px`
+everywhere else. That was 139 of the grid fixture's 490 differences, every one about
+which parent an element has rather than about the element. The harness's initial-value
+table cannot fix it: forcing `auto` there moved 566 differences the *wrong* way,
+because most elements on most pages are not flex items.
+
+**Two things landed with flex because flex cannot be correct without them.**
+`display` is *blockified* on a flex item (CSS Display 3 §2.7), which is why
+`<a class="nav-link">` inside a `.nav` reports `block`; and anonymous item generation
+wraps **text runs only** - an `<img>` between two text nodes is an item in its own
+right, and wrapping it would make two images one item.
+
+**The parallel driver was the thing most likely to ship broken, and it did not.**
+`engine::run_parallel`'s guard existed for inline containers, whose children merely
+share a line. A flex container's children share *free space*, so item i's width is a
+function of item j's - the exact opposite of the independence the driver rests on.
+Both halves are closed: `split_point` refuses to descend into a flex container, and the
+guard refuses to split at one. Two cases in the parallel-equals-sequential test landed
+in the same commit, at `parallel_min_boxes = 0`: 64 flex rows (the driver must split
+*above* them) and one flex container holding 64 items (it must refuse and fall back).
+
+**An 18-claim adversarial review of the freeze loop found six real spec bugs that 25
+passing tests could not see**, all of them latent on Bootstrap - `bootstrap_layout` came
+back byte-identical after fixing them, which is the evidence that they were latent
+rather than that the fixes were nothing:
+
+- **§9.7.4's sub-one factor share is of the INITIAL free space**, not of what is left
+  after some other item froze. `flex-grow: .25` beside an item that hit its `max-width`
+  came out 225 where Chrome says 250. Invisible with one item or with factors summing
+  past one, which is every other test here.
+- **A shrink is weighted by the item's INNER (content-box) base size.** Two 200px items
+  shrinking into 300px are 150/150 only if neither is padded; give one 100px of padding
+  and it gives up a third of the deficit rather than half.
+- **"Single-line" means `flex-wrap: nowrap`** (§5.2), not "produced one line". The two
+  agree for the default `align-content`, which stretches the one line to fill the
+  container anyway - which is why the Bootstrap rows do not move.
+- **Stretch is clamped by the item's own min/max cross size** (§9.4.11). The column axis
+  already clamped and the row axis did not, so the two disagreed about one rule.
+- **A percentage maximum that cannot resolve behaves as `none`.** Resolved against zero
+  it became a definite maximum of 0, which clamped the automatic minimum to 0 too and
+  collapsed the item - `max-height: 100%` in a column with no stated height gave 0.
+- **The leading margin is the one at the flex-START edge**, which under `row-reverse` is
+  `margin-right`. Naming them physically offset every reversed item by exactly
+  (trailing - leading), which is invisible whenever the two are equal.
+
+Recorded as known differences rather than approximated: `flex-basis: content`, baseline
+alignment, absolutely-positioned items, a `%` basis against an indefinite main size, and
+§9.9.1's max-content flex fraction (a growable item's max-content contribution is the
+larger of its base and its content size, which is the same answer when one item
+dominates and an under-estimate otherwise).
+
+### And one bug flex found in code eight rungs older than it
+
+`block_flow::measure` and `inline_flow::measure` asked how wide a child's CONTENT
+wanted to be and then added nothing - so a child's own padding, margins and stated
+width were dropped from every intrinsic size in the engine. A `<td>` holding a
+`<div style="padding: 50px">hello</div>` measured 19px wide, and the div was then laid
+out at a content width of `max(0, 19 - 100) = 0`, where `words_that_fit` answers 0 for a
+non-positive width and **the text produced no fragment at all**.
+
+Before flex that path was reachable only from a table cell, and no page in the suite
+puts a padded box in one, which is why it sat there. Flex reaches it on every item whose
+base size comes from its content, and the visible symptom was every Bootstrap
+`.nav-item` measuring exactly its `.nav-link` child's padding too narrow. `outer_intrinsic`
+is now the one function that answers "what does this child contribute", and flex asks it
+too rather than keeping a second copy: components 977 → **927**, kitchen 886 → **862**,
+no image golden moved.
+
+### An invalid calc() is an invalid declaration, not a string nobody can read
+
+`fold_calc` left an unevaluable `calc()` as text, on the stated reasoning that
+"whoever reads the value next cannot parse it and drops the declaration". That was
+wrong, and only the Chrome diff could show it: layout's `parse_length` answers
+**`auto`** for a string it cannot read, and `auto` is not the same as absent. Chrome
+reports the property's *initial* value, which is what an absent declaration produces
+here.
+
+Bootstrap hits it on every `.row`: `margin-top: calc(-1 * var(--bs-gutter-y))` with a
+gutter of `0` multiplies a number by a number and gets a **number**, which is not a
+length. 24 elements of the grid fixture, and 36 differences once the rows below moved
+with them.
+
+Which *kind* of invalid it is decides what happens to an earlier declaration, and the
+two are observably different - so `fold_calc` reports failure and the cascade
+remembers whether the value went through `var()`. A substituted value is invalid at
+computed-value time, which §3 spells `unset`, so it removes the earlier declaration it
+beat; one that never contained a `var()` is invalid at parse time, so the earlier
+declaration simply wins. Both are pinned. grid 173 → **137**, kitchen 862 → **859**,
+and `substituted` rose by exactly the same count - the S4a effect again, a wrong value
+replaced by a correct absence.
+
+### S10 and S12a: the rung a SCREENSHOT chose, not the harness
+
+The computed-style gate said components was the biggest number left, but not why.
+`tools/check/compare.py shot` said why in one image, once it could screenshot a remote
+engine at all - and the answer was three things the property diff was blind to or
+quiet about.
+
+**Every `.text-bg-*` element painted nothing.** `parse_color` matched `rgb(`
+case-SENSITIVELY and Bootstrap writes `RGBA(...)` in capitals 62 times, so every badge
+and every coloured label was laid out at the right size, reported the right computed
+value, and drew a blank rectangle. **The parity numbers did not move by one when it was
+fixed**: css-parity.py normalises both sides' text, so the two spellings already
+compared equal. The harness measures computed values and this lived entirely
+downstream of them - the plan's "the front end will outrun layout" warning, arriving
+from the other end.
+
+**`inline-block` was parsed and thrown away.** Every `.badge` was a full-width bar and
+`.btn` on an `<a>` spanned the row. `inline_level` already existed for `inline-flex`;
+`shrink_to_fit_width` moved beside the other width functions and flex's private copy
+went. Its BASELINE is its last line's, not its font ascent (§10.8.1) - a difference of
+exactly the top padding, which is what hangs a badge above the sentence it is in.
+
+**`border-radius`**, as radii on `fill_rect` rather than a second op, with `ring` for
+the border. A ring is the difference of two coverages of a signed distance field, which
+antialiases both edges for free and gets `.btn-outline-primary` right - a 1px ring
+around nothing, which "fill the box then fill the inside" would flood. The §5.1 scaling
+is in `display_list::fill_rounded`, the one place every producer goes through: it is
+what turns `.rounded-pill`'s 50rem into half a badge's height.
+
+**`<button>` left `is_replaced_tag`** and its size moved into the UA sheet as real
+`padding: 3px 8px; border: 1px solid`, chosen to reproduce the old intrinsic numbers
+exactly - so the widgets golden moved by a 1px label shift and nothing else. Being
+replaced was the only reason it shrink-wrapped, and also the reason a `.btn`'s padding,
+border and radius did nothing at all.
+
+That last one put the ratchet UP - components 906 → 964 - because a `.btn` is
+`border: 1px solid transparent` and **borders were not in the box model at all**. Every
+button came out 2px narrower and 2px shorter, and over fifty button rows that is a
+hundred pixels of drift. Rather than record the regression, the border half of S7b
+landed with it: `resolved_edges` carries four border floats, `horizontal_inner()` and
+`content_top()` replace the padding-only accessors at every one of the twenty call
+sites, and `border-style: none` means a used width of zero.
+
+| fixture | before S10 | after |
+|---|---|---|
+| box | 69 | **49** |
+| grid | 137 | 137 |
+| components | 906 | **704** |
+| position | 291 | **272** |
+| kitchen | 835 | **738** |
+| **total** | 2,458 | **2,036** |
+
+`bootstrap-components.html` now reads as Bootstrap: rounded buttons at Chrome's
+widths, outline buttons as rings, pills, and alerts with their rule and their last
+line. What is left on it is `position`, `box-shadow` and `text-align`.
+
+### S11a: positioning is a PASS, not a formatting context
+
+Every other piece of layout here is a box asking about its own children.
+Positioning is the one part of CSS where the box that decides where a child goes is
+**not its parent** - an `absolute` box is placed against the nearest positioned
+ancestor, which may be ten levels up and which finished laying out long before the
+child was reached.
+
+So the flows do the one thing they can: an out-of-flow child reserves no space and
+leaves an **empty fragment where it would have gone**. That marker is not
+bookkeeping - it *is* the static position, which is exactly the number CSS says to
+use for whichever offset is `auto`, and `.position-absolute` with no offsets at all
+relies on it. `layout::apply_positioning` then walks down carrying the ancestor
+chain and by the time it reaches the marker it knows both the containing block and
+the static position. Running after layout also keeps the parallel driver's
+invariant intact: an out-of-flow box affects no sibling, so the concurrent pass
+never has to know it exists.
+
+Three things that look alike and are not, each with a test:
+
+- `relative` **leaves its slot behind** and `absolute` does not.
+- the containing block is a **padding** box, not a content box - invisible until
+  the anchor has padding, and then wrong by exactly that padding on every
+  descendant.
+- **both** offsets on an axis stretch a box where **one** shrink-wraps it, which is
+  why `.position-absolute.top-0.start-0` is the size of its text.
+
+`fixed` is placed against the **window**, not the document, which is what puts
+`.fixed-bottom` on screen rather than after the last paragraph - that needed a
+viewport height threaded into `engine::run`, and it is the only thing in layout
+that uses one. `translateX()` and `translateY()` are separate functions from
+`translate()`, and Bootstrap writes both.
+
+**The insets are reported as USED values**, which is what Chrome does: `auto` only
+for a static element, and for a positioned one the number the box ended up at
+whether or not the sheet wrote it. Answering the declared text was 104 of the
+position fixture's 222 - and it also drops `substituted` by about 2,000 across the
+six fixtures, because four properties on every element stopped being unanswered.
+
+| fixture | before S11a | after |
+|---|---|---|
+| box | 49 | 49 |
+| type | 136 | **132** |
+| grid | 137 | 137 |
+| components | 704 | **574** |
+| position | 272 | **129** |
+| kitchen | 738 | **680** |
+| **total** | 2,036 | **1,701** |
+
+`bootstrap-position.html` now renders the way Chrome renders it, `fixed-top` and
+`fixed-bottom` included. What is left on it is `z-index` and the 1/64px cluster.
+
+### S11b: a stack level belongs to a CONTEXT, not a parent
+
+Sorting each fragment's direct children would pass the three-sibling demo and be
+wrong everywhere that matters. A positioned descendant of an ordinary ancestor
+participates in the nearest *stacking context*, however many DOM levels away it
+is; a descendant of a real context cannot escape it however large its own
+`z-index` is. The fixture states both traps explicitly: siblings arrive in source
+order 1, 3, 2, and a child at 999 sits inside a parent at 0.
+
+The box tree therefore keeps `z-index` as `optional<int>`: absence is the keyword
+`auto`, while integer zero is present and creates a context. Paint collects the
+atomic descendants of each context and emits the subset of CSS 2.1 Appendix E
+that this engine can express:
+
+1. the context owner's background, border and marker;
+2. negative contexts, most negative first and stable in tree order;
+3. ordinary in-flow content;
+4. positioned `auto` pseudo-contexts and level-zero contexts in tree order;
+5. positive contexts, least positive first and stable in tree order.
+
+Floats and outlines do not exist yet, so their Appendix E phases do not exist
+either; block and inline content remain one source-ordered normal stream. This is
+the supported no-float/no-outline subset, not a claim that the rest of Appendix E
+has been approximated. A positioned integer, opacity below one, any non-`none`
+transform, fixed and sticky establish atomic contexts. An ordinary static box's
+`z-index` is ignored. Static flex-item stack levels remain a later extension.
+
+`z-index:auto` is a pseudo-context for its ordinary contents only. Its positioned
+descendants and real descendant contexts are extracted into the nearest real
+context, which is the exact distinction from integer zero. Reordering also has to
+carry every intervening `overflow:hidden` clip: a context can escape an ancestor's
+stacking order without escaping its clip. The collector snapshots those ancestor
+rectangles, reopens them around the moved context, and leaves the context owner's
+own background outside its child clip. Opacity is folded only after the complete
+atomic context has been emitted, so a high-z child is trapped and faded once.
+
+The standard parity ratchet deliberately does **not** move. Computed `z-index` was
+already reported correctly, geometry does not change, and the position fixture's
+overlaps begin below the harness's 768px screenshot. All six fixtures remain at
+**1,443 properties / 29 cells**, with every per-fixture difference, substitution
+and cell count unchanged; no text baseline or image golden moves.
+
+A screenshot supplies the missing number. On a temporary top-of-page copy of the
+fixture's two overlap probes - the three siblings at z 1, 3, 2, and a z-index:999
+child of a z-index:0 frame overlapping a z-index:1 box outside it that comes
+EARLIER in source order - the same tree was screenshotted against Chrome with the
+new recorder and with the one at HEAD. ImageMagick's mean absolute error falls
+**1,094.74 (1.67%) -> 59.20 (0.09%)**, a 94.6% drop. Before, green z=2 covered red
+z=3 and the trapped yellow z=999 covered the outside blue z=1; after, both
+decisions match Chrome pixel for pixel and the remainder is the text
+rasterisation this engine already differs by. The temporary page was removed after
+the paired screenshots.
+
+Sixteen focused paint tests pin sibling levels, equal positive and negative
+stability, negative-vs-flow phases, `auto` escape versus zero trapping,
+normal-flow ordering, opacity, transform, static-box rejection, owner and
+ancestor clipping. The whole ctest suite passes - 89 tests, every render golden
+among them, so no image moved.
+
+**A click has to land where the pixel is.** Paint order stopped being document
+order, which retires `deepest_at`: a reverse walk of the fragment tree returns the
+last box in SOURCE order that contains the point, and that is now the wrong
+answer whenever `z-index` was what decided the top. The display list already
+holds the right sequence, so hit testing moved into it. `display_list::hit`
+records a region per box beside the drawing commands, and `hit_test` scans those
+in reverse. It is a separate vector rather than a paint command because a
+transparent box is still clickable while `fill()` correctly records nothing for a
+transparent colour. Clips travel with it: a region is stored already intersected
+with the clip stack in force when it was recorded, so an escaped context that
+kept its ancestor's `overflow: hidden` cannot be clicked outside that clip
+either, and a shared const list needs no clip replay per pointer move.
+`layer_tree::hit_test` undoes each layer's compositor offset and asks its list
+front to back, which is also what makes a scroll stay one offset rather than a
+second geometry traversal.
+
+### A percentage height needs a containing block to be a percentage OF
+
+A screenshot of `bootstrap-kitchen.html` showed the three feature cards collapsed
+to their headers with the table below them drawn straight through the wreckage.
+The cause was two halves of one rule, neither of them modelled:
+
+`block_flow::arrange` **never passed its own height down** - every child was handed
+an `available_height` of zero - and a percentage resolved against zero is zero
+rather than `auto`. So `.h-100` on a card resolved to **0**, three times per card
+(header, body, footer), and the `.col` holding it had nothing to be as tall as.
+
+Both halves are the same CSS 2.1 §10.5 sentence: a percentage height whose
+containing block's height depends on its own content behaves as `auto`, and
+otherwise it is a percentage of that height. `has_definite_height` says which, and
+a block resolves its own height *before* laying its children out so there is
+something for them to resolve against.
+
+The numbers barely move - 4 across two fixtures - and the render changes
+completely, which is the same lesson as the `RGBA(` case from the other direction:
+the computed-style gate scores an element's own properties, and "the box below me
+is drawn on top of me" is not one of them.
+
+### The screen-cell metric, and the largest paint bug this project has had
+
+The property diff scores each element's own computed values, so it cannot see a
+box that reports everything correctly and is never painted, or one drawn on top
+of another. Both had shipped. `css-parity.py` now carries a third ratcheted
+number: both screenshots reduced to a coarse grid of mean colours, counting cells
+that disagree. **Not a pixel diff** - pixel-identical to Chrome is unreachable
+with a different rasteriser, and a metric that can never reach zero is one nobody
+reads. A 32×32 cell is far larger than any rasteriser difference and far smaller
+than any component.
+
+It reordered the work immediately, and not the way `differ` does: the **grid
+fixture is visually identical to Chrome** and still carries 137 property
+differences, which is the 1/64px `LayoutUnit` cluster - worth a great deal
+numerically and nothing at all visually. It also points at a band of rows, which
+is what turns a count into a lead.
+
+Pointed at the kitchen fixture's cards, it found this:
+
+**`value_parts` split inside parentheses.** `border: 1px solid rgba(0, 0, 0, .175)`
+is three parts; split on the spaces inside the colour it is five, of which the
+third - and therefore the whole `border-color` - is the string `rgba(0,`. That
+fails to parse, so **every card, alert, table and input in Bootstrap had a border
+in the box model and nothing drawn**. One function, four lines, and it had been
+there since the `border` shorthand landed.
+
+**The per-side shorthands expanded to nothing.** `border-bottom` is how Bootstrap
+draws every divider it has. Layout and paint both read the twelve per-side
+longhands now, falling back to the uniform trio, and `border` sets all twelve so
+a later `border-bottom-color` can override one edge.
+
+An intermediate version set the uniform trio as well "so it draws", and **that
+put the ratchet up** - a `border-bottom` then inset the box on all four sides and
+painted a full ring, costing 8 differences on one fixture and 18 on another. The
+half-answer was worse than nothing and the numbers said so within one run.
+
+`raster_basics`' own golden page turned out to write `border-color` and
+`border-width` with no `border-style`, which draws nothing in any browser: the
+old painter never asked about style, so the page had a border paint that layout
+did not know about. The page now says `border: 2px solid` - what it meant - and
+the two agree.
+
+    box         49    type 132    grid 137
+    components 574 -> 544
+    position   127 -> 117
+    kitchen    678 -> 602      cells 72 -> 65
+
+Also landed with the metric: `text-align` (read by nothing, so every `.btn` label
+sat hard left in a box that scored as correct), `opacity` applied to what a
+subtree appended rather than per command kind, and `list-style: none`.
+
+### `initial` on a custom property, and the shadow Bootstrap paints tables with
+
+The screen-cell metric pointed at the kitchen table: Chrome stripes it, ctbrowser
+did not. Bootstrap 5.3 paints **every table cell's background** with
+`box-shadow: inset 0 0 0 9999px <colour>` - a spread so large the inner hole
+vanishes and the shadow floods the cell. No stripes, no hover, no themed row
+without it.
+
+Implementing `box-shadow` was not enough, because the colour never arrived. The
+declaration reads
+`var(--bs-table-bg-state, var(--bs-table-bg-type, var(--bs-table-accent-bg)))`,
+and `.table` defines the first two as **`--bs-table-bg-type: initial`**. On a
+custom property `initial` is the *guaranteed-invalid value* (CSS Variables §3),
+which makes `var()` take its fallback - it is the sentinel the whole 5.3 theming
+layer is built on. ctbrowser stored it as an empty string, which is a *valid*
+empty substitution, so the colour was substituted away to nothing.
+
+The two are genuinely different and both occur in Bootstrap: `--x: initial` must
+fall through, `--x: ;` must substitute to nothing, and neither may let an
+inherited value show. The sentinel is a byte no stylesheet can contain, because a
+value is NUL-filtered at parse time.
+
+`box-shadow` covers the cases that need no blur. A blurred shadow is **skipped
+rather than drawn hard-edged** - a sharp black rectangle where a soft one belongs
+is further from Chrome, not closer - and a real blur is a rasteriser primitive,
+which is what `.shadow` and the focus rings still want.
+
+The paren-aware splitter moved to `core/algorithms.hpp`: a shorthand's parts are
+separated by whitespace and a list's by commas, same rule, different separator.
+
+    components 544 -> 536
+    kitchen    602 -> 590,  cells 65 -> 60
+
+### The table, and three shorthands that were not shorthands
+
+Reported by eye: the Bundle table showed a separation between rows, a sliver of
+grey in rows that should be white, and slivers of white beside each cell where
+grey belonged - and the list group had sub-boxes drawn around "Harness", "Front
+end" and "Flex".
+
+Four causes, none of them where the description pointed:
+
+**`table_flow` had two hardcoded 2px constants** - `cell_spacing` and
+`cell_padding` - so every table was laid out as though a sheet had asked for
+separated borders, and a cell was inset twice because its CSS padding was applied
+inside it as well. Bootstrap's Reboot collapses every table's borders. Both are
+CSS now: `border-collapse`, `border-spacing`, and the cell's own padding through
+the same `forced_width` channel a flex item's main size uses.
+
+**An anonymous box carried its parent's whole style.** A `.list-group-item.d-flex`
+wraps its text in one, so every list item painted a second copy of its own border
+and background around the words alone. An anonymous box inherits the *inherited*
+properties and takes the initial value for everything else - which the split
+halves express exactly, rather than a list of properties to exclude.
+
+**The list marker keyed off the tag.** It belongs to `display: list-item`, so any
+other display takes it away - which is why Bootstrap's navs and list groups, all
+`display: flex`, show no bullets in Chrome.
+
+**`border-width`, `border-style` and `border-color` are themselves shorthands over
+the four sides.** `.table-bordered` is `border-width: 0 var(--bs-border-width)`,
+read as a single length that is `0`, so every column separator in every bordered
+table was missing - the near-white slivers were the antialiased seam between two
+flooded cells, not a border at all. That seam is gone too: a square ring that
+swallows its own hole is a solid rectangle and is now drawn as one.
+
+Measured at the pixel afterwards: the separators are `(222,226,230)` in both
+engines, at x=37, 230/231, 428/430 and 572/574.
+
+**Still different, and measured rather than guessed:** a collapsed shared edge is
+painted twice, so interior separators are 2px where Chrome's are 1px. Overlapping
+the cells fixes the width and is the *wrong model* - Chrome's cells abut exactly
+(`37.00 + 193.45 = 230.45`) and split the shared border between them - so it moved
+the table's right edge instead. §17.6.2 conflict resolution is the rung.
+
+The kitchen fixture's `differ` rises 570 → 610 and that is not hidden: cells now
+have the 1px side borders they actually have, so their widths include them and the
+remaining disagreement is text measurement rather than a missing border. The
+picture is better - 58 → 55 screen cells - and the mechanism is right.
