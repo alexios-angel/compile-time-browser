@@ -567,6 +567,44 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
            replace(dynamic, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("a dynamic subtract latch cannot borrow the Add proof",
            replace(dynamic, "binary add %i, %one", "binary sub %i, %one"));
+    const auto invariantProduct = replace(carriedUnit, "  %step = ctjs.binary_static add %i, %d",
+                                          "  %product = ctjs.binary mul %d, %one\n"
+                                          "  %step = ctjs.binary add %i, %product");
+    for (const auto & source :
+         {invariantProduct, replace(invariantProduct, "mul %d, %one", "mul %one, %d"),
+          replace(invariantProduct, "mul %d, %one", "mul %d, %delta"),
+          replace(replace(invariantProduct, "  %product = ctjs.binary mul %d, %one\n", ""),
+                  "  %key =", "  %product = ctjs.binary mul %delta, %one\n  %key =")}) {
+        run({.what = "one repeated product proves both invariant CFG operands",
+             .body = source,
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
+    }
+    reject("a product operand must retain identity even when the replacement is equal",
+           replace(invariantProduct, "^header(%base, %step, %added, %d",
+                   "^header(%base, %step, %added, %one"));
+    for (const std::string operands : {"%i, %one", "%one, %i", "%p, %one", "%one, %p"}) {
+        reject("both product operands need independently invariant bounded values",
+               replace(invariantProduct, "mul %d, %one", "mul " + operands));
+    }
+    reject("a repeated nested product cannot borrow an earlier scalar snapshot",
+           replace(invariantProduct, "  %product = ctjs.binary mul %d, %one",
+                   "  %nested = ctjs.binary mul %d, %one\n"
+                   "  %product = ctjs.binary mul %nested, %one"));
+    for (const std::string literal : {"#ctjs.number<0>", "#ctjs.string<\"01\">",
+                                      "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>"}) {
+        reject("product latches require exact nonzero primitive conversion",
+               replace(invariantProduct, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+    }
+    reject("an invariant product must still bound the final index update",
+           replace(replace(invariantProduct, makeUnit,
+                           "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
+                   "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
+    reject("two invariant operands cannot certify an overflowing product",
+           replace(replace(invariantProduct, makeUnit,
+                           "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
+                   "mul %d, %one", "mul %d, %two"));
     for (const std::string unary : {"plus", "neg", "bitnot"}) {
         const auto source =
             replace(carriedUnit, "  %step = ctjs.binary_static add %i, %d",
@@ -2366,8 +2404,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("a product cannot turn its original Boolean factor into an own index",
            replace(booleanProduct, "%base[%i]", "%base[%factor]"),
            ArrayContentsFailure::UnknownIndex);
-    reject("a repeated Boolean product still needs independent invariance",
-           replace(replace(booleanProduct, product, ""), "  %step =", product + "  %step ="));
+    run({.what = "a repeated Boolean product proves its original invariant operands",
+         .body = replace(replace(booleanProduct, product, ""), "  %step =", product + "  %step ="),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     reject("an Undefined factor cannot borrow Boolean product evidence",
            replace(booleanProduct, "#ctjs.boolean<true>", "#ctjs.undefined"));
     for (const auto & source :
@@ -2409,8 +2450,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,x]; seed:[]; holder:[x]",
          .reads = "holder[0]=ctjs.constant; a[0]=one; a[1]=x",
          .exit = "x -> {x}"});
-    reject("a repeated String product needs independent invariance",
-           replace(replace(stringProduct, product, ""), "  %step =", product + "  %step ="));
+    run({.what = "a repeated String product proves its original invariant operands",
+         .body = replace(replace(stringProduct, product, ""), "  %step =", product + "  %step ="),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     const auto positiveProduct =
         replace(replace(productChild, factor, "  %factor = ctjs.unary neg %one\n"),
                 "binary sub %i, %product", "binary_static add %i, %product");
@@ -2439,8 +2483,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
     reject("a negative product cannot supply an own array index",
            replace(productChild, "%base[%i]", "%base[%product]"),
            ArrayContentsFailure::UnknownIndex);
-    reject("a repeated product needs independent invariance",
-           replace(replace(productChild, product, ""), "  %step =", product + "  %step ="));
+    run({.what = "a repeated signed product proves its original invariant operands",
+         .body = replace(replace(productChild, product, ""), "  %step =", product + "  %step ="),
+         .arrays = "a:[one,x]; seed:[]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
     for (const std::string constant :
          {"#ctjs.number<0>", "#ctjs.number<4602678819172646912>",
           "#ctjs.number<4751297606875873280>", "#ctjs.string<\"01\">", "#ctjs.string<\"-1\">",

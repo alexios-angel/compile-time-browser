@@ -514,6 +514,38 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
            replace(commuted, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("commuted structured Add still requires its exact induction formal",
            replace(commuted, "add %one, %i", "add %one, %last"));
+    const auto invariantProduct = replace(carriedUnit, "    %step = ctjs.binary_static add %i, %d",
+                                          "    %product = ctjs.binary mul %d, %one\n"
+                                          "    %step = ctjs.binary add %i, %product");
+    for (const auto & source :
+         {invariantProduct, replace(invariantProduct, "mul %d, %one", "mul %one, %d"),
+          replace(invariantProduct, "mul %d, %one", "mul %unit, %d")}) {
+        rows.push_back({.what = "product latches preserve reordered structured operand transport",
+                        .body = source,
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "y -> {y}"});
+        rows.push_back({.what = "invariant products release only unreturned structured children",
+                        .body = replace(source, "ctjs.return %result", "ctjs.return %zero"),
+                        .arrays = "a:[x,y]",
+                        .reads = "a[0]=x; a[1]=y",
+                        .exit = "zero -> {}"});
+    }
+    reject("a structured product operand cannot change even to the same Number value",
+           replace(invariantProduct, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
+    for (const std::string operands : {"%i, %one", "%one, %i", "%p, %one", "%one, %p"}) {
+        reject("both structured product operands need invariant bounded values",
+               replace(invariantProduct, "mul %d, %one", "mul " + operands));
+    }
+    reject("a nested structured product is not a saved invariant",
+           replace(invariantProduct, "    %product = ctjs.binary mul %d, %one",
+                   "    %nested = ctjs.binary mul %d, %one\n"
+                   "    %product = ctjs.binary mul %one, %nested"));
+    for (const std::string literal :
+         {"#ctjs.number<0>", "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
+        reject("structured product strides need exact nonzero primitive conversion",
+               replace(invariantProduct, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+    }
     for (const std::string unary : {"plus", "neg", "bitnot"}) {
         const auto source =
             replace(carriedUnit, "    %step = ctjs.binary_static add %i, %d",
@@ -1538,9 +1570,13 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .exit = "zero -> {}"});
     reject("a signed product stride must remain unchanged across structured yields",
            replace(carriedProduct, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
-    reject("a repeated structured product cannot borrow an earlier iteration",
-           replace(replace(savedProduct, "  %unit = ctjs.binary mul %one, %negative\n", ""),
-                   "    %step =", "    %unit = ctjs.binary mul %one, %negative\n    %step ="));
+    rows.push_back(
+        {.what = "a repeated structured product proves its original invariant operands",
+         .body = replace(replace(savedProduct, "  %unit = ctjs.binary mul %one, %negative\n", ""),
+                         "    %step =", "    %unit = ctjs.binary mul %one, %negative\n    %step ="),
+         .arrays = "a:[x,y]; seed:[]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
     rows.push_back(
         {.what = "structured products convert the original canonical negative String",
          .body = replace(carriedProduct, "unary neg %magnitude", "constant #ctjs.string<\"-2\">"),

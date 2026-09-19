@@ -944,6 +944,26 @@ void boundedNumberComplement(const ContentsValue & input, ContentsValue & result
     }
 }
 
+void boundedNumberProduct(const ContentsValue & left, const ContentsValue & right,
+                          ContentsValue & result) {
+    auto a = boundedConvertedNumber(left);
+    auto b = boundedConvertedNumber(right);
+    const bool negative = a.has_value() != b.has_value();
+    if (!a) { a = boundedConvertedNumber(left, true); }
+    if (!b) { b = boundedConvertedNumber(right, true); }
+    // Original Boolean/null and canonical Strings share unary's exact
+    // conversion. A bounded product excludes rounding and wrap; zero keeps
+    // its original signed value as the origin.
+    if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
+        const auto product = *a * *b;
+        if (negative && product != 0) {
+            result.negativeIntegerNumber = product;
+        } else {
+            result.integerNumber = product;
+        }
+    }
+}
+
 void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result) {
     // Add selects concatenation before Number conversion; even canonical
@@ -1148,6 +1168,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             const mlir::Value next = backedge[argument.getArgNumber()];
             return next == value || fromHeader(next) == value;
         };
+        const auto invariant = [&](mlir::Value operand) -> std::optional<ContentsValue> {
+            if (mlir::Value forwarded = fromHeader(operand)) { operand = forwarded; }
+            auto literal = operand.getDefiningOp<ctjs::ConstantOp>();
+            auto * definition = operand.getDefiningOp();
+            if (!unchanged(operand) ||
+                (!literal && definition &&
+                 (definition->getBlock() == header || definition->getBlock() == body))) {
+                return std::nullopt;
+            }
+            return literal ? ContentsValue{operand, llvm::isa<ctjs::StringAttr>(literal.getValue())
+                                                        ? ContentsKind::String
+                                                        : ContentsKind::Identity}
+                           : held(operand);
+        };
         auto * step = backedge[index.getArgNumber()].getDefiningOp();
         auto dynamic = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step);
         auto numeric = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step);
@@ -1191,29 +1225,31 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             auto unary = increment.getDefiningOp<ctjs::UnaryOp>();
             if (unary) {
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-                mlir::Value operand = unary.getOperand();
-                if (mlir::Value forwarded = fromHeader(operand)) { operand = forwarded; }
-                auto literal = operand.getDefiningOp<ctjs::ConstantOp>();
-                auto * definition = operand.getDefiningOp();
-                if (!unchanged(operand) ||
-                    (!literal && definition &&
-                     (definition->getBlock() == header || definition->getBlock() == body))) {
-                    return unsupported;
-                }
-                const ContentsValue input =
-                    literal ? ContentsValue{operand, llvm::isa<ctjs::StringAttr>(literal.getValue())
-                                                         ? ContentsKind::String
-                                                         : ContentsKind::Identity}
-                            : held(operand);
+                const auto input = invariant(unary.getOperand());
+                if (!input) { return unsupported; }
                 if (unary.getKind() == ctjs::UnaryKind::BitNot) {
                     ContentsValue result;
-                    boundedNumberComplement(input, result);
+                    boundedNumberComplement(*input, result);
                     stride = subtract ? result.negativeIntegerNumber : result.integerNumber;
                 } else if (unary.getKind() == ctjs::UnaryKind::Plus ||
                            unary.getKind() == ctjs::UnaryKind::Neg) {
                     stride = boundedConvertedNumber(
-                        input, subtract != (unary.getKind() == ctjs::UnaryKind::Neg));
+                        *input, subtract != (unary.getKind() == ctjs::UnaryKind::Neg));
                 }
+            }
+        }
+        if (!stride) {
+            // ponytail: one product of saved primitives; deeper repeated
+            // expressions need their own charged invariance proof.
+            auto product = increment.getDefiningOp<ctjs::BinaryOp>();
+            if (product && product.getKind() == ctjs::BinaryKind::Mul) {
+                if (!spend(2)) { return ArrayContentsFailure::WorkLimit; }
+                const auto left = invariant(product.getLhs());
+                const auto right = invariant(product.getRhs());
+                if (!left || !right) { return unsupported; }
+                ContentsValue result;
+                boundedNumberProduct(*left, *right, result);
+                stride = subtract ? result.negativeIntegerNumber : result.integerNumber;
             }
         }
         if (!stride) {
@@ -1805,22 +1841,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                    auto a = boundedConvertedNumber(left);
-                    auto b = boundedConvertedNumber(right);
-                    const bool negative = a.has_value() != b.has_value();
-                    if (!a) { a = boundedConvertedNumber(left, true); }
-                    if (!b) { b = boundedConvertedNumber(right, true); }
-                    // Original Boolean/null and canonical Strings share unary's
-                    // exact conversion. A bounded product excludes rounding and
-                    // wrap; zero keeps its original signed value as the origin.
-                    if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
+                    boundedNumberProduct(left, right, result);
+                    if (result.integerNumber || result.negativeIntegerNumber) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        const auto product = *a * *b;
-                        if (negative && product != 0) {
-                            result.negativeIntegerNumber = product;
-                        } else {
-                            result.integerNumber = product;
-                        }
                     }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Div ||
