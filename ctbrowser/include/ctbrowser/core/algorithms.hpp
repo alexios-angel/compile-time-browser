@@ -123,8 +123,8 @@ inline constexpr std::string_view js_whitespace = " \t\n\r\f\v";
 // --- utf-8 ----------------------------------------------------------------
 
 // One code point, appended as UTF-8. A byte encoder and nothing more: the
-// caller has already turned surrogates, NUL and out-of-range values into
-// U+FFFD, because each spec says which of those to replace.
+// caller decides which values, if any, to replace with U+FFFD. WTF-8 callers
+// preserve lone surrogates; other specifications require replacement.
 constexpr void append_utf8(std::string & out, char32_t cp) {
     const auto v = static_cast<std::uint32_t>(cp);
     if (v < 0x80) {
@@ -214,6 +214,17 @@ inline void join_surrogates(std::string & text) {
     at += extra + 1;
     return built;
 }
+
+// UTF-16 code units over the engine's WTF-8 storage. Lone surrogates and
+// embedded NULs are preserved; supplementary code points become two units.
+// Uses decode_utf8's permissive policy: a bad/truncated sequence consumes one
+// byte as its value; overlong and out-of-range encodings are not rejected.
+// This is not validation, and arbitrary bytes need not round-trip unchanged.
+[[nodiscard]] std::u16string wtf8_to_utf16(std::string_view text);
+
+// Encode UTF-16 units as WTF-8: adjacent high/low surrogates become one
+// four-byte code point, while lone surrogates use their three-byte encoding.
+[[nodiscard]] std::string utf16_to_wtf8(std::u16string_view units);
 
 // --- base64 ---------------------------------------------------------------
 
