@@ -15,6 +15,92 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Known matching F inputs and ASCII String indices, 2026-09-19 UTC
+
+Resumed **28aa6180** and the three dirty files from the **08:55 session**,
+explicitly abandoned at **08:58:27** in AGENT-SYNC. Both agents' histories and
+unmerged branches were reviewed; September 7 WIP is already an ancestor.
+Three agents supplied native/escape findings before service limits; root
+completed the interrupted code, fixtures and focused gates.
+
+**da3602e3** proves original ASCII String indexed snapshots and invariant
+reloads through the shared contents proof. Number keys, original SSA identity,
+read-only loop census, 256-byte ASCII ceiling, conversion, work/depth and final
+index bounds remain checked. Indexed digits can supply Number strides; the
+character stays a String for property-key and addition semantics. Twenty-six
+CFG/SCF rows and ten source functions cover retained/discarded children, saved
+characters, nested reads, Unicode/key refusals, mutation and incomplete budgets.
+
+**5b01f648** proves known matching inputs to Bootstrap's original F. The complete
+call-input census remains; `/[A-Z]/g` additionally requires the complete original
+`'-' + t.toLowerCase()` callback body, including discarded operations and implicit
+arguments. Shared public Core `ascii_lower` computes the exact constant results;
+String comparisons select among the proved inputs. Non-ASCII bytes remain
+unchanged. Unknown inputs, changed callbacks, captures, effects and intrinsic
+mutation still refuse. All **388 prior class-driver bodies**, **17 raw C++ JS
+bodies** and **49 standalone RegExp refusal bodies** are preserved. Seven class
+bodies and six transaction controls per provider were added; 11 standalone
+matching bodies moved to value/effect differential checks. A RegExp-only entry
+point avoids replaying the complete String/Number/URI suite.
+
+Focused passes: arrays **1/1 (1.24s; total 1.25s)**; String-index/String-length
+oracles **2/2 (0.38s)**; transaction **1/1 (4.47s; total 4.48s)**; host contract
+**1/1 (0.47s)**; class DOM **1/1 (245.16s)**, **568 Node/interpreter observations,
+eight GCC/Clang executions, 4,290 refusals**; standalone RegExp **1/1 (12.95s)**,
+**24 original observations, four GCC/Clang executions, 169 source/provenance/budget
+checks**. New index oracle: **31 sites / 10 sound / 10 of 20 confined precision**;
+prior length oracle: **28 / 10 / 10 of 18**. Zero soundness violations, partial,
+pending or unclaimed sites. All ten tested source/test hashes match the devbox.
+Emitted C++ inspection and Script/dispatch exclusions pass: ordinary String and
+document owners, public Core/DOM APIs. Existing pinned VM UTF-16 differences
+remain. Required formatting retains **26 baseline diagnostics in nine unchanged
+files**; all changed formatting, JS syntax and `git diff --check` pass.
+
+**Next:** an exact original `class_filter_full_h` probe still refuses at
+`native DOM class: DOM class method body: native DOM source: DOM direct helper
+contains an unproved closure or capture`. Its unused parameterized H slots call
+F with unknown keys. Known matching replacement is now proved; general dynamic
+String replacement and independent parameterized H-body proof still precede
+publication. Do not insert calls or erase unproved siblings. Part 25 object
+reloads still need real literal own-data definition provenance, preserving
+assignment setters; general String indices need agreement with Script's byte
+and Number-key semantics. W operations, nested iterators, complex completion,
+broader ownership work and the application driver remain. No whole-Bootstrap
+admission gain is claimed. No browser/Script semantics or historical compliance
+measurements changed.
+
+Exact validation, with every devbox command under `/tmp/ctbrowser-devbox-build.lock`:
+
+- `tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference
+  ctcompile-test-exception-recovery ctcompile-test-host-contract
+  ctcompile-test-escape-analysis-arrays ctcompile-test-escape-claims
+  ctcompile-test-type-oracle`; subsequent builds selected only affected native
+  targets. The final RegExp retry had no C++ build work.
+- `ctest --test-dir projects/compile-time-browser/build --output-on-failure
+  --no-tests=error -R '^ctcompile_escape_analysis_arrays$'`; separate exact
+  selections `'^ctcompile_exception_recovery$'` and `'^ctcompile_host_contract$'`.
+- `~/.lit-venv/bin/lit -sva projects/compile-time-browser/build/ctcompile/test
+  --filter='^ctcompile :: Analysis/Escape/escape-claims/(invariant-string-index|invariant-string-length)[.]test$'`.
+- The same generated-config lit command separately selecting
+  `'^ctcompile :: CTNative/Lowering/Objects/class-dom[.]mlir$'` and
+  `'^ctcompile :: CTNative/Browser/native-dom-regexp[.]test$'`.
+- First native transaction failed eight assertions in **4.52s** because unchanged
+  controls 114/122 now admit matching H inputs. Their bodies were preserved and
+  expectations corrected; no production correction followed. First RegExp run
+  failed native harness compilation in **2.48s** because its element handle used
+  the wrong namespace. Fixed to public `ctbrowser::element_ref`; only that lit
+  case was retried. All other focused gates passed on their first run.
+- `tools/format.sh --check` reports the unchanged baseline above; pinned
+  clang-format checks every changed C++ file, `black --check` covers changed
+  Python, and new class JS bodies pass Node syntax checks. Temporary gate scripts
+  pass `bash -n`. Documentation needs no build or CTest.
+
+Skipped: full CTest/compiler lit, complete DOM/String/Number/URI suites, separate
+lifetime matrices, broad corpus/native matrices, WPT/test262 and whole Bootstrap.
+These are focused results. Scripts, logs, hashes, emitted C++ inspection and the
+exact full-H diagnostic are in `/tmp/ctcompile-h-0903/`. No push. Native Bootstrap
+and the overall plan remain unfinished.
+
 ## Inert unused bodies and ASCII String lengths, 2026-09-19 UTC
 
 Resumed **01c63ec8**, the dirty `EscapeAnalysis.cpp` draft from the **08:05

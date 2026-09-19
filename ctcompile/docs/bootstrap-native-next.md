@@ -1,5 +1,34 @@
 # What native Bootstrap needs next
 
+## Known matching Bootstrap F inputs, 2026-09-19 UTC
+
+**5b01f648** finishes the interrupted 08:55 F fixtures abandoned at 08:58:27.
+Known matching inputs to original Bootstrap F now retain the full all-call input
+census and prove the entire `'-' + t.toLowerCase()` callback. Only `/[A-Z]/g`
+matching is added; public Core `ascii_lower` computes constant outputs, with
+ordinary String comparisons selecting the proved result. Non-ASCII bytes stay
+unchanged. Unknown inputs, changed callbacks, captures/effects and intrinsic
+mutation still refuse. All 388 prior class bodies, 17 raw C++ JS bodies and 49
+standalone RegExp refusal bodies stay intact; 11 matching standalone bodies now
+have return-value and attribute-state differential checks.
+
+Focused transaction **1/1 (4.48s total)**, host contract **1/1 (0.47s)**,
+class DOM **1/1 (245.16s; 568 observations, eight executions, 4,290 refusals)**,
+new RegExp-only lit **1/1 (12.95s; 24 observations, four executions, 169 checks)**.
+All ten native/escape hashes match; emitted C++ and Script exclusions pass.
+Formatting retains 26 baseline diagnostics/nine unchanged files; changed checks
+pass. Parallel **da3602e3** finishes bounded ASCII String-index escape snapshots.
+Exact commands, initial expectation/harness failures and skipped coverage are in
+HANDOFF and `/tmp/ctcompile-h-0903/`; full suites/broad matrices were skipped.
+
+**Next:** original `class_filter_full_h` still refuses at the DOM class-method
+proof's `DOM direct helper contains an unproved closure or capture` (fresh probe).
+Unused parameterized H slots still pass unknown keys to F; dynamic String
+replacement and independent original H-body proof remain before publication.
+Do not insert calls or delete unproved siblings. Object definitions, W operations,
+nested iterators, complex completion and the application driver remain. No
+browser/Script behavior changed and no whole-Bootstrap gain is claimed.
+
 ## Inert unused bodies and the remaining H boundary, 2026-09-19 UTC
 
 **3c16788b** proves unused uncaptured straight-line leaves independently of
