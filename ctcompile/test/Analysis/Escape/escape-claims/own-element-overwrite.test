@@ -1,0 +1,92 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name own-element-overwrite
+// RUN: FileCheck %s < %t/escape-claims-own-element-overwrite.claims
+
+// Only the current own element may be overwritten. Saved values retain their
+// identity; skipped elements, resizing and element-dependent strides stay distinct.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function overwriteReleased() {
+    var child = {}, array = [child];
+    for (var i = 0; i < array.length; i++) array[i] = 0;
+    return array;
+}
+function savedBeforeOverwrite() {
+    var child = {}, array = [child], saved = array[0];
+    for (var i = 0; i < array.length; i++) array[i] = 0;
+    return saved;
+}
+function savedDuringOverwrite() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i++) {
+        saved = array[i];
+        array[i] = 0;
+    }
+    return saved;
+}
+function overwrittenRead() {
+    var child = {}, array = [child], saved = 0;
+    for (var i = 0; i < array.length; i++) {
+        array[i] = 0;
+        saved = array[i];
+    }
+    return saved;
+}
+function skippedChild() {
+    var child = {}, array = [0, child];
+    for (var i = 0; i < array.length; i += 2) array[i] = 0;
+    return array;
+}
+function zeroTrip() {
+    var child = {}, array = [child];
+    for (var i = array.length; i < array.length; i++) array[i] = 0;
+    return array;
+}
+function changingStride() {
+    var child = {}, array = [child, 1];
+    for (var i = 0; i < array.length; i += +array[1]) array[i] = 2;
+    return 0;
+}
+function differentArray() {
+    var child = {}, array = [child], inputs = [1];
+    for (var i = 0; i < array.length; i++) inputs[i] = 0;
+    return 0;
+}
+function resizedArray() {
+    var child = {}, array = [child];
+    for (var i = 0; i < array.length; i++) array.length = 0;
+    return 0;
+}
+function savedStride() {
+    var child = {}, array = [child, 1], step = array[1];
+    for (var i = 0; i < array.length; i += step) array[i] = 0;
+    return array;
+}
+function transientCycle() {
+    var child = {}, array = [child];
+    for (var i = 0; i < array.length; i++) {
+        array[i] = array;
+        array[i] = 0;
+    }
+    return array;
+}
+function retainedCycle() {
+    var child = {}, array = [child];
+    for (var i = 0; i < array.length; i++) array[i] = array;
+    return array;
+}
+overwriteReleased(); savedBeforeOverwrite(); savedDuringOverwrite(); overwrittenRead();
+skippedChild(); zeroTrip(); changingStride(); differentArray(); resizedArray(); savedStride();
+transientCycle(); retainedCycle();

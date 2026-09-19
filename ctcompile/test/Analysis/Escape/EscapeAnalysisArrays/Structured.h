@@ -2128,8 +2128,32 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
     reject("a reordered structured condition must still supply the induction formal",
            replace(original, "scf.condition(%continue) %index, %saved, %array",
                    "scf.condition(%continue) %saved, %index, %array"));
-    reject("structured loop mutation refuses before replay",
-           replace(original, "    %read =", "    ctjs.set_property %base[%i], %zero\n    %read ="));
+    rows.push_back({.what = "structured current-element overwrites precede subsequent reads",
+                    .body = replace(original, "    %read =",
+                                    "    ctjs.set_property %base[%i], %zero\n    %read ="),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "zero -> {}"});
+    const std::string overwritten =
+        replace(original, "    %step =", "    ctjs.set_property %base[%i], %zero\n    %step =");
+    rows.push_back({.what = "structured overwrites retain the value saved before the store",
+                    .body = overwritten,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "y -> {y}"});
+    rows.push_back({.what = "structured overwrites release former children of returned arrays",
+                    .body = replace(overwritten, "ctjs.return %result", "ctjs.return %a"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=y",
+                    .exit = "a -> {a}"});
+    reject("structured element-dependent strides cannot survive overwrites",
+           replace(reloaded, "    %unit =", "    ctjs.set_property %base[%i], %zero\n    %unit ="));
+    reject("structured header stores can reach outside the guarded own elements",
+           replace(original,
+                   "    %less =", "    ctjs.set_property %array[%index], %zero\n    %less ="));
+    reject("structured next-index stores can extend the array",
+           replace(original, "    scf.yield %base, %step",
+                   "    ctjs.set_property %base[%step], %zero\n    scf.yield %base, %step"));
     reject("structured loop allocation cannot collapse repeated instances",
            replace(original, "    %read =", "    %fresh = ctjs.create_array []\n    %read ="));
     reject("structured nested control needs a separate lifetime proof",
@@ -2168,6 +2192,12 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
+    rows.push_back(
+        {.what = "direct structured arrays permit guarded current-element overwrites",
+         .body = replace(direct, "    %read =", "    ctjs.set_property %a[%i], %zero\n    %read ="),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "zero -> {}"});
     rows.push_back(
         {.what = "reversed strict guards also support direct structured array aliases",
          .body = replace(direct, "compare lt %index, %length", "compare gt %length, %index"),

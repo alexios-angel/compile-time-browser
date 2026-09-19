@@ -87,6 +87,32 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .reads = "a[0]=one; a[1]=x",
          .exit = "zero -> {}"},
         "x");
+    const std::string overwritten =
+        replace(savedChild, "  %step =", "  ctjs.set_property %base[%i], %zero\n  %step =");
+    run({.what = "overwriting current own elements preserves a saved child",
+         .body = overwritten,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "returning an overwritten array releases its former children",
+         .body = replace(overwritten, "ctjs.return %result", "ctjs.return %a"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "reading after an own-element overwrite sees the new value",
+         .body =
+             replace(savedChild, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "zero -> {}"},
+        "x");
+    run({.what = "zero-trip overwrite loops preserve existing children",
+         .body =
+             replace(replace(overwritten, "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
+                     "ctjs.return %result", "ctjs.return %a"),
+         .arrays = "a:[one,x]",
+         .exit = "a -> {a,x}"});
     const std::string reversed =
         replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
@@ -650,8 +676,20 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
          .arrays = "a:[one,two,three]",
          .reads = "a[0]=one; a[1]=two; a[2]=three",
          .exit = "added -> {}"});
-    reject("a held unit step still cannot hide loop mutation",
-           replace(computedUnit, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="));
+    run({.what = "a held unit step permits current own-element overwrites",
+         .body =
+             replace(computedUnit, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "added -> {}"});
+    reject("an element-dependent stride cannot borrow pre-overwrite contents",
+           replace(reloaded, "  %unit =", "  ctjs.set_property %base[%i], %zero\n  %unit ="));
+    reject(
+        "an overwrite in the header is not guarded by the own-length comparison",
+        replace(savedChild, "  %less =", "  ctjs.set_property %array[%index], %zero\n  %less ="));
+    reject("a next-index overwrite may extend past the last own element",
+           replace(savedChild, "  cf.br ^header(%base, %step",
+                   "  ctjs.set_property %base[%step], %zero\n  cf.br ^header(%base, %step"));
     reject("an untaken predecessor must independently supply a Number-one step",
            replace(alternateUnit, "^entry(%one :", "^entry(%zero :"));
     reject("a positive carried stride cannot change even to another positive Number",
@@ -3272,8 +3310,11 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                 "^header(%base, %step, %added, %zero : !ctjs.value, !ctjs.value, "
                 "!ctjs.value, !ctjs.value)");
     reject("a changing guard property cannot borrow its first length snapshot", changedKey);
-    reject("array mutation inside the loop refuses before replay",
-           replace(original, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="));
+    run({.what = "current own-element overwrites preserve the stable bound",
+         .body = replace(original, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read ="),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "added -> {}"});
     reject("length mutation inside the loop invalidates the stable bound",
            replace(original, "  %read =", "  ctjs.set_property %base[%key], %zero\n  %read ="));
     reject("allocation in a repeated block cannot collapse dynamic instances",

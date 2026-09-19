@@ -1328,6 +1328,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return next == value || fromHeader(next) == value;
         };
         auto invariantFailure = unsupported;
+        bool reloadsElement = false;
         const auto invariant = [&](auto && self, mlir::Value operand,
                                    unsigned depth) -> std::optional<ContentsValue> {
             if (!spend()) {
@@ -1358,7 +1359,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (const auto string = boundedStringRead(*base, *key, operand)) { return string; }
                 const auto array = state.arrays.find(base->origin().getDefiningOp());
                 if (array == state.arrays.end()) { return std::nullopt; }
-                // The complete loop census below rejects mutations and effects.
+                // The complete loop census below rejects effects and any writes
+                // when the stride depends on an element that could change.
                 // Replay still checks every own read and snapshots its value.
                 const auto name = ownObjectKey(key->origin());
                 if (name && name.getValue() == "length") {
@@ -1368,6 +1370,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 const auto position = ownArrayIndex(*key);
                 if (!position || *position >= array->second.size()) { return std::nullopt; }
+                reloadsElement = true;
                 // Retaining the original element keeps primitive keys intact.
                 return array->second[*position];
             } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(definition)) {
@@ -1458,13 +1461,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (!number || (start && start != number)) { return unsupported; }
             start = number;
         }
-        // ponytail: one read-only header/body pair; nested control, allocation
-        // and mutation need a separate instance/lifetime proof. Primitive kinds
-        // and every indexed element still pass the ordinary operation transfers.
+        // ponytail: one header/body pair, with writes only to its current own
+        // element. Other mutations need their own termination proof. Primitive
+        // kinds and every element still pass the ordinary operation transfers.
         for (mlir::Block * block : {header, body}) {
             for (mlir::Operation & operation : *block) {
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 if (&operation == block->getTerminator()) { continue; }
+                if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                    if (block != body || reloadsElement ||
+                        (store.getObject() != array && fromHeader(store.getObject()) != array) ||
+                        fromHeader(store.getKey()) != index) {
+                        return unsupported;
+                    }
+                    continue;
+                }
                 if (!llvm::isa<ctjs::ConstantOp, ctjs::GetPropertyOp, ctjs::CompareOp,
                                ctjs::TruthyOp, ctjs::UnaryOp, ctjs::BinaryOp, ctjs::BinaryStaticOp,
                                ctjs::ConvertOp, ctjs::RootOp>(&operation)) {
@@ -1475,7 +1486,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         const mlir::Value base = origin(array);
         // SCF can eliminate an invariant array parameter. A direct allocation
         // already executed on this exact path needs no backedge transport;
-        // the read-only body census above still excludes repeated allocation.
+        // the body census above still excludes repeated allocation and resizing.
         if (directArray && (base != array || directArray->getBlock() == header ||
                             directArray->getBlock() == body)) {
             return unsupported;
