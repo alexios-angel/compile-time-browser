@@ -1,0 +1,71 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name aliased-element-overwrite
+// RUN: FileCheck %s < %t/escape-claims-aliased-element-overwrite.claims
+
+// The receiver must retain the guard allocation's exact identity. Saved children,
+// changing aliases, zero trips and historical cycles remain distinct.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function savedReceiver() {
+    var child = {}, array = [child, child], box = [array], alias = box[0];
+    for (var i = 0; i < array.length; i++) alias[i] = 0;
+    return array;
+}
+function savedChild() {
+    var child = {}, array = [child], box = [array], alias = box[0], saved = array[0];
+    for (var i = 0; i < array.length; i++) alias[i] = 0;
+    return saved;
+}
+function reloadedReceiver() {
+    var child = {}, array = [child, child], box = [array];
+    for (var i = 0; i < array.length; i++) box[0][i] = 0;
+    return array;
+}
+function nestedReceiver() {
+    var child = {}, array = [child], box = [array], outer = [box];
+    for (var i = 0; i < array.length; i++) outer[0][0][i] = 0;
+    return array;
+}
+function changingReceiver() {
+    var child = {}, array = [child, child], other = [0, 0], alias = array;
+    for (var i = 0; i < array.length; i++) {
+        alias[i] = 0;
+        alias = other;
+    }
+    return array;
+}
+function unrelatedReceiver() {
+    var child = {}, array = [child], other = [0], box = [other];
+    for (var i = 0; i < array.length; i++) box[0][i] = 0;
+    return array;
+}
+function zeroTrip() {
+    var child = {}, array = [child], box = [array], alias = box[0];
+    for (var i = array.length; i < array.length; i++) alias[i] = 0;
+    return array;
+}
+function transientCycle() {
+    var child = {}, array = [child], box = [array];
+    for (var i = 0; i < array.length; i++) {
+        box[0][i] = array;
+        box[0][i] = 0;
+    }
+    return array;
+}
+function overwrittenReceiverSource() {
+    var child = {}, array = [0, child];
+    array[0] = array;
+    for (var i = 0; i < array.length; i++) array[0][i] = array;
+    return array;
+}
+savedReceiver(); savedChild(); reloadedReceiver(); nestedReceiver(); changingReceiver();
+unrelatedReceiver(); zeroTrip(); transientCycle(); overwrittenReceiverSource();

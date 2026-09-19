@@ -433,6 +433,32 @@ inline void checkStructuredContents(mlir::MLIRContext & context) {
                     .arrays = "a:[zero,zero]; seed:[one]",
                     .reads = "a[0]=one; seed[0]=one; a[1]=y; seed[0]=one",
                     .exit = "a -> {a}"});
+    const auto savedReceiver =
+        replace(replace(disjointReload, "  %finalIndex,",
+                        "  %box = ctjs.create_array [%a] {storage_test_id = \"box\"}\n"
+                        "  %alias = ctjs.get_property %box[%zero]\n  %finalIndex,"),
+                "set_property %base[", "set_property %alias[");
+    rows.push_back({.what = "structured saved receiver aliases release overwritten children",
+                    .body = replace(savedReceiver, "ctjs.return %result", "ctjs.return %a"),
+                    .arrays = "a:[zero,zero]; seed:[one]; box:[a]",
+                    .reads = "box[0]=a; a[0]=one; seed[0]=one; a[1]=y; seed[0]=one",
+                    .exit = "a -> {a}"});
+    const auto reloadedReceiver =
+        replace(replace(savedReceiver, "  %alias = ctjs.get_property %box[%zero]\n", ""),
+                "    ctjs.set_property %alias[",
+                "    %alias = ctjs.get_property %box[%zero]\n    ctjs.set_property %alias[");
+    rows.push_back({.what = "structured disjoint receiver reloads preserve a saved child",
+                    .body = reloadedReceiver,
+                    .arrays = "a:[zero,zero]; seed:[one]; box:[a]",
+                    .reads = "a[0]=one; box[0]=a; seed[0]=one; a[1]=y; box[0]=a; seed[0]=one",
+                    .exit = "y -> {y}"});
+    reject("structured unrelated receiver aliases cannot borrow the loop bound",
+           replace(savedReceiver, "create_array [%a]", "create_array [%seed]"));
+    reject("structured receiver reloads cannot use the changing induction index",
+           replace(reloadedReceiver, "%box[%zero]", "%box[%i]"));
+    reject("structured receiver proof cannot reload overwritten storage",
+           replace(reloadedReceiver, "%alias = ctjs.get_property %box[%zero]",
+                   "%alias = ctjs.get_property %base[%zero]"));
     const auto nestedReload = replace(
         replace(replace(disjointReload, "  %finalIndex,",
                         "  %box = ctjs.create_array [%seed, %a] {storage_test_id = \"box\"}\n"

@@ -449,6 +449,55 @@ inline void checkArrayInduction(mlir::MLIRContext & context) {
                                 ArrayContentsFailure::UnsupportedControlFlow) {
         run({.what = what, .body = std::move(body), .failure = failure});
     };
+    const auto directOverwrite = replace(overwritten, "set_property %base[", "set_property %a[");
+    run({.what = "the guard allocation may also be the direct overwrite receiver",
+         .body = directOverwrite,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    const auto savedReceiver =
+        replace(replace(overwritten, "  cf.br ^header",
+                        "  %box = ctjs.create_array [%a] {storage_test_id = \"box\"}\n"
+                        "  %alias = ctjs.get_property %box[%zero]\n  cf.br ^header"),
+                "set_property %base[", "set_property %alias[");
+    run({.what = "a saved receiver alias releases overwritten children",
+         .body = replace(savedReceiver, "ctjs.return %result", "ctjs.return %a"),
+         .arrays = "a:[zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=one; a[1]=x",
+         .exit = "a -> {a}"},
+        "x");
+    const auto reloadedReceiver =
+        replace(replace(savedReceiver, "  %alias = ctjs.get_property %box[%zero]\n", ""),
+                "  ctjs.set_property %alias[",
+                "  %alias = ctjs.get_property %box[%zero]\n  ctjs.set_property %alias[");
+    run({.what = "a disjoint receiver reload retains a previously read child",
+         .body = reloadedReceiver,
+         .arrays = "a:[zero,zero]; box:[a]",
+         .reads = "a[0]=one; box[0]=a; a[1]=x; box[0]=a",
+         .exit = "x -> {x}"},
+        "a");
+    const auto carriedReceiver = replace(
+        replace(replace(replace(overwritten, "^header(%a, %zero, %zero", "^header(%a, %zero, %a"),
+                        "set_property %base[", "set_property %s["),
+                "^header(%base, %step, %read", "^header(%base, %step, %s"),
+        "ctjs.return %result", "ctjs.return %a");
+    run({.what = "an invariant transported receiver keeps its exact allocation",
+         .body = carriedReceiver,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "a -> {a}"},
+        "x");
+    reject("a changed receiver cannot borrow the initial array identity",
+           replace(carriedReceiver, "^header(%base, %step, %s", "^header(%base, %step, %zero"));
+    reject("a disjoint array cannot borrow the guard allocation's bound",
+           replace(savedReceiver, "create_array [%a]", "create_array [%x]"));
+    reject("receiver reloads cannot borrow the changing induction index",
+           replace(reloadedReceiver, "%box[%zero]", "%box[%i]"));
+    reject("receiver alias proof cannot read the overwritten allocation",
+           replace(replace(reloadedReceiver, "  cf.br ^header",
+                           "  ctjs.set_property %a[%zero], %a\n  cf.br ^header"),
+                   "%alias = ctjs.get_property %box[%zero]",
+                   "%alias = ctjs.get_property %base[%zero]"));
     const auto reloaded = replace(
         replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
         "add %i, %one", "add %i, %unit");

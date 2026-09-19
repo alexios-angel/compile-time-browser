@@ -1474,10 +1474,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (&operation == block->getTerminator()) { continue; }
                 if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                     if (block != body || reloadsGuardElement ||
-                        (store.getObject() != array && fromHeader(store.getObject()) != array) ||
                         fromHeader(store.getKey()) != index) {
                         return unsupported;
                     }
+                    // A saved or reloaded receiver must keep the same allocation
+                    // across transport, without reading an overwritten element.
+                    const auto receiver = invariant(invariant, store.getObject(), 0);
+                    if (!receiver) { return invariantFailure; }
+                    if (receiver->origin() != base || reloadsGuardElement) { return unsupported; }
                     continue;
                 }
                 if (!llvm::isa<ctjs::ConstantOp, ctjs::GetPropertyOp, ctjs::CompareOp,
