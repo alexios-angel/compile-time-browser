@@ -14,6 +14,15 @@ namespace ctcompile::ctnative::host_detail {
 
 inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_defined";
 
+// Invocation shape only: identity does not prove heritage, receiver rebinding,
+// field initialization or super lookup, and never authorizes erasing a call.
+inline unsigned classIntrinsicArity(llvm::StringRef name) {
+    if (name == classDefinedIntrinsic || name == "__ctbrowser_bind_this") { return 1; }
+    if (name == "__ctbrowser_init_fields") { return 2; }
+    if (name == "__ctbrowser_class_heritage" || name == "__ctbrowser_super_get") { return 3; }
+    return 0;
+}
+
 // Complete original Bootstrap F callback; callers still prove enclosure, uses,
 // intrinsic identity and the actual replacement receiver.
 bool isLowercaseReplacement(ctjs::FuncOp function, llvm::function_ref<bool()> step);

@@ -91,7 +91,17 @@ authorize the complete slot query when another obligation fails.
 class-descriptor initialization helper. This is an explicit initial identity,
 not an exemption based on a global's spelling. Source replacement and escaping
 uses still fail validation. The other host analyses do not interpret its effects.
-It also accepts `Error` for construction with one literal string and the exact
+
+The declarations also accept `__ctbrowser_class_heritage` (three arguments),
+`__ctbrowser_bind_this` (one), `__ctbrowser_init_fields` (two), and
+`__ctbrowser_super_get` (three). Their identities may only reach direct calls
+with an undefined receiver and that exact arity. Source replacement, reflection,
+and passing the helper itself still refuse. Argument values, heritage, receiver
+rebinding, fields and super lookup need separate semantic proofs. These calls
+are preserved and remain unsupported by native class preparation; declaring
+their identities does not authorize executing or deleting them.
+
+`initial_intrinsics` also accepts `Error` for construction with one literal string and the exact
 same constructor/new-target identity. This declares no general exception or
 payload representation support.
 
@@ -246,8 +256,10 @@ calls expand; JSON aggregate behavior is unchanged.
 Class/DOM composition now reuses the complete original class proof in that private
 transaction. The public class pass remains closed-source-only with unused entry
 parameters. A DOM request may supply `__ctbrowser_class_defined` and optional
-unique `Error` alongside existing DOM intrinsic declarations. The class helper
-and Error bindings and complete original getter bodies are proved before only
+unique `Error` alongside existing DOM intrinsic declarations. It may also declare
+the four heritage/super helpers above when `__ctbrowser_class_defined` is present.
+Those declarations remain until their operations have a semantic normalization.
+The class helper and Error bindings and complete original getter bodies are proved before only
 those declarations are consumed. DOM identities survive every method probe and
 final typed reproof. The original source census rejects declared intrinsic
 replacement before any method can disappear. Unused literal-message Error

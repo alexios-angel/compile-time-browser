@@ -6,6 +6,7 @@
 // the shared two-method Map fixture builders moved to HostContractFixtures.h.
 // Everything else is verbatim, in its original order.
 
+#include "ClassIntrinsics.h"
 #include "DOMBranchFilter.h"
 #include "DOMDataset.h"
 #include "DOMIteration.h"
@@ -873,6 +874,7 @@ int main() {
     checkCallables(context);
     checkCapturedCallables(context);
     checkFingerprint(context);
+    checkClassIntrinsics(context);
     checkDOMEntry(context);
     checkDOMNumbers(context);
     checkDOMDataset(context);

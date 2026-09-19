@@ -1808,12 +1808,12 @@ struct CTNativeSpecializeClassInitializationPass
             !llvm::is_contained(contract->initialIntrinsics, host_detail::classDefinedIntrinsic) ||
             llvm::any_of(contract->initialIntrinsics,
                          [](const auto & name) {
-                             return name != host_detail::classDefinedIntrinsic && name != "Error";
+                             return !host_detail::classIntrinsicArity(name) && name != "Error";
                          }) ||
             contract->realmGlobalThis || contract->classicScriptRealm ||
             !contract->absentBindings.empty() || !contract->undefinedBindings.empty()) {
-            module.emitError("class initialization requires the standard class helper and optional "
-                             "Error identity");
+            module.emitError("class initialization requires standard class helper identities and "
+                             "optional Error identity");
             return signalPassFailure();
         }
         classInitialization proof{module, maxSteps};
@@ -1859,7 +1859,7 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     binding.provider = HostContract::Provider::closedSource;
     binding.elementParameters.clear();
     llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
-        return name != host_detail::classDefinedIntrinsic && name != "Error";
+        return !host_detail::classIntrinsicArity(name) && name != "Error";
     });
     if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
         return refuse(problem);
@@ -1867,6 +1867,8 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     if (!proof.normalizeMethods()) { return refuse(proof.reason); }
     proof.rewrite();
     llvm::erase_if(contract.initialIntrinsics, [](const auto & name) {
+        // Heritage and super helpers remain declared until their operations
+        // have a semantic normalization; binding identity alone consumes none.
         return name == host_detail::classDefinedIntrinsic || name == "Error";
     });
     if (!proof.proveDOMMethods(contract)) { return refuse(proof.reason); }

@@ -812,6 +812,15 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
+        if name in ("inherited", "inherited-dispatch", "bootstrap-base"):
+            # Declare the mutable implementation hooks emitted by the source.
+            # Their identities do not establish ancestry or super semantics.
+            manifest["initial_intrinsics"] += [
+                "__ctbrowser_class_heritage",
+                "__ctbrowser_bind_this",
+                "__ctbrowser_init_fields",
+                "__ctbrowser_super_get",
+            ]
         if name.startswith(("static-throw-", "static-error-")) or name in (
             "bootstrap-config-defaults",
             "bootstrap-config-r-defaults",
