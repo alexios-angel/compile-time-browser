@@ -27,16 +27,19 @@ inline bool reservedCallbackBinding(llvm::StringRef name) {
 // Invocation shape only: identity does not prove heritage, receiver rebinding,
 // field initialization or super lookup, and never authorizes erasing a call.
 inline unsigned classIntrinsicArity(llvm::StringRef name) {
-    if (name == classDefinedIntrinsic || name == "__ctbrowser_bind_this") { return 1; }
-    if (name == "__ctbrowser_init_fields") { return 2; }
-    if (name == "__ctbrowser_class_heritage" || name == "__ctbrowser_super_get") { return 3; }
-    return 0;
+    static const llvm::StringMap<unsigned> arities{{classDefinedIntrinsic, 1},
+                                                   {"__ctbrowser_bind_this", 1},
+                                                   {"__ctbrowser_init_fields", 2},
+                                                   {"__ctbrowser_class_heritage", 3},
+                                                   {"__ctbrowser_super_get", 3}};
+    return name.size() <= 26 ? arities.lookup(name) : 0;
 }
 
 inline unsigned iteratorIntrinsicArity(llvm::StringRef name) {
-    if (name == "__ctbrowser_for_of_open" || name == "__ctbrowser_iter_next") { return 1; }
-    if (name == "__ctbrowser_iter_close") { return 2; }
-    return 0;
+    static const llvm::StringMap<unsigned> arities{{"__ctbrowser_for_of_open", 1},
+                                                   {"__ctbrowser_iter_next", 1},
+                                                   {"__ctbrowser_iter_close", 2}};
+    return name.size() <= 23 ? arities.lookup(name) : 0;
 }
 
 // Complete original Bootstrap F callback; callers still prove enclosure, uses,
