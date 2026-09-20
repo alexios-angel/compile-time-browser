@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor receiver borrows and signed output bands, 2026-09-20 UTC
+
+**622f1ca8** proves read-only helper arguments against fields already present at
+construction. Exact global, captured and holder helpers, two receiver arguments,
+inherited construction and argument order add **48 native executions**. Private
+capture-free direct helpers reuse the shrinking borrowed-parameter proof after
+class preparation consumes their closure. Every symbol/caller remains checked;
+public helpers, module references and mixed or missing arguments refuse.
+**04a622d3** proves left shifts within one signed output conversion band using
+exact wide products, retaining input-band, own-index and reload checks.
+
+Final focused class probe: **63 observations / 168 main native executions / 126
+unprepared and 76 preparation refusals**, plus **11 native boundary controls**.
+Exact host **1/1**, arrays **1/1**, lowering lit **3/3** and escape lit **3/3** pass.
+Left shift: **156 sites / 30 sound / 30 of 35 confined precision**, zero
+violations, partial, pending or unclaimed sites. All eleven tested hashes match.
+Changed formatting passes; the required formatter retains 20 diagnostics in six
+unchanged files. Full suites, whole class lit, DOM replay and broad matrices
+were skipped.
+
+**Next:** original B still refuses receiver observation at `e.set(..., this)`;
+original Data+B now identifies the captured shared Map as an unsupported helper
+capture. Prove that Map's identity, complete constructor/dispose call graph and
+stored class-receiver ownership across set/get/remove, saved aliases and failure.
+The existing Map proof accepts entry-local scalar-field leaves and entry calls;
+it has no typed class-record payload. Borrowing a helper parameter does not
+permit retaining it in a Map. Preserve `e.remove`, `P.off` and all original
+config/disposal bodies. Variable field presence, inherited getter targets,
+full Bootstrap and the application driver remain unfinished.
+No browser/runtime changes or push.
+
+[Exact changes, checks and next boundary](handoff/2026-09-20-borrowed-receivers.md).
+
 ## Construction-time getters and left-shift bands, 2026-09-20 UTC
 
 **5b171856** lets construction-time `this.constructor` reads reach the existing
