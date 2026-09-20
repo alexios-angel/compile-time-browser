@@ -16,6 +16,17 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-constructor-return-object": (709, 709),
+    "class-map-record-constructor-inherited": (799, 799),
+    "class-map-record-constructor-dynamic-key": (707, 707),
+    "class-map-record-constructor-direct": (771, 771),
+    "class-map-record-constructor-overwrite": (5959, 5959),
+    "class-map-record-constructor-snapshot-dispose": (2111, 2111),
+    "class-map-record-constructor-delete": (552, 552),
+    "class-map-record-constructor-observer": (107, 107),
+    "class-map-record-constructor-throw": (709, 709),
+    "class-map-record-constructor-map-escaped": (707, 707),
+    "class-map-record-constructor-helper": (707, 707),
     "class-map-record-alias-snapshot-order": (2126, 2126),
     "class-map-record-alias-snapshot-method": (21707, 21707),
     "class-map-record-alias-snapshot-dispose": (2111, 2111),
@@ -556,6 +567,12 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-alias-method-constructor-publication",
+    "class-map-record-constructor-direct",
+    "class-map-record-constructor-overwrite",
+    "class-map-record-constructor-snapshot-dispose",
+    "class-map-record-constructor-delete",
+    "class-map-record-constructor-publication",
     "class-map-record-alias-snapshot-order",
     "class-map-record-alias-snapshot-method",
     "class-map-record-alias-snapshot-dispose",

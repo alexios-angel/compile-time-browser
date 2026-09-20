@@ -570,6 +570,132 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
     return true;
 }
 
+bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp constructor,
+                                                     llvm::ArrayRef<ctjs::ConstructOp> instances,
+                                                     const HostContract & contract) {
+    // ponytail: one terminal registration in a non-inherited constructor.
+    // Earlier publication needs partial-initialization and reentry proofs.
+    auto function = target(constructor);
+    if (contract.provider != HostContract::Provider::closedSource || instances.empty() ||
+        heritage.count(constructor.getResult()) || baseClasses.contains(constructor.getResult()) ||
+        !function.getBody().hasOneBlock() || constructor.getUpvalues().size() != 1) {
+        return true;
+    }
+    auto & body = function.getBody().front();
+    auto self = body.getArgument(ctjs::arg_receiver);
+    auto cell = constructor.getUpvalues().front();
+    auto map = sourceValue(cells.lookup(cell)).getDefiningOp<ctjs::ConstructOp>();
+    if (!map || !maps.contains(map.getResult()) || map->getBlock() != constructor->getBlock() ||
+        map->getBlock() != &constructor->getParentOfType<ctjs::FuncOp>().getBody().front()) {
+        return true;
+    }
+    ctjs::CallOp publication;
+    for (mlir::OpOperand & use : self.getUses()) {
+        if (!step()) { return false; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+        if (!call || use.getOperandNumber() != 3 || call.getArgs().size() != 2 ||
+            sourceValue(call.getReceiver()) != map.getResult()) {
+            continue;
+        }
+        if (publication || call->getBlock() != &body) { return true; }
+        publication = call;
+    }
+    if (!publication) { return true; }
+    auto selection = publication.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+    auto captured = publication.getReceiver().getDefiningOp<ctjs::LoadUpvalueOp>();
+    auto key = publication.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+    auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
+    if (!selection || selection.getObject() != publication.getReceiver() ||
+        ctjs::constantKey(selection.getKey()) != "set" || !captured ||
+        mapCaptures.lookup(captured.getResult()) != map.getResult() || !key ||
+        !llvm::isa<ctjs::StringAttr>(key.getValue()) || !returned ||
+        !undefined(returned.getValue())) {
+        return true;
+    }
+    for (mlir::Operation * op = publication->getNextNode(); op; op = op->getNextNode()) {
+        if (!step()) { return false; }
+        if (!llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
+            return true;
+        }
+    }
+    // This sole capture must have no other observer, including another class
+    // or helper. Every remaining Map use stays in the completed-owner census.
+    for (mlir::OpOperand & use : cell.getUses()) {
+        if (!step()) { return false; }
+        if (use.getOwner() != constructor && !cellOperations.contains(use.getOwner())) {
+            return true;
+        }
+    }
+    for (mlir::Operation & op : body) {
+        if (!step()) { return false; }
+        if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op); load && load != captured) {
+            return true;
+        }
+    }
+    for (mlir::Operation * user : captured->getUsers()) {
+        if (!step()) { return false; }
+        if (user != selection && user != publication && !llvm::isa<ctjs::RootOp>(user)) {
+            return true;
+        }
+    }
+    for (mlir::Operation * user : selection->getUsers()) {
+        if (!step()) { return false; }
+        if (user != publication && !llvm::isa<ctjs::RootOp>(user)) { return true; }
+    }
+    for (mlir::Operation * user : publication->getUsers()) {
+        if (!step()) { return false; }
+        if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
+    }
+    for (ctjs::ConstructOp made : instances) {
+        if (!step()) { return false; }
+        if (made->getBlock() != map->getBlock() || !map->isBeforeInBlock(made)) { return true; }
+    }
+    // Numeric closure uses were completely enumerated by examine. A symbol
+    // call would bypass that census and must keep the original constructor.
+    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+        if (!uses) { return true; }
+        for (const auto & use : *uses) {
+            if (!step()) { return false; }
+            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                    use.getUser(), use.getSymbolRef()) == function) {
+                return true;
+            }
+        }
+    }
+    if (!proveMaps()) { return false; }
+    if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
+        return refuse(problem);
+    }
+    // There is no observable work between the original set and return. Keep
+    // registration immediately after each exact new, before its caller resumes.
+    // A throwing prefix still skips it; a throwing set still skips the caller.
+    for (ctjs::ConstructOp made : instances) {
+        if (!step()) { return false; }
+        mlir::OpBuilder at(made);
+        at.setInsertionPointAfter(made);
+        auto name = ctjs::ConstantOp::create(at, selection.getLoc(),
+                                             ctjs::StringAttr::get(module.getContext(), "set"));
+        auto select = ctjs::GetPropertyOp::create(at, selection.getLoc(), map.getResult(), name);
+        auto literal = ctjs::ConstantOp::create(at, key.getLoc(), key.getValue());
+        ctjs::CallOp::create(at, publication.getLoc(), publication.getType(), select,
+                             map.getResult(), mlir::ValueRange{literal, made.getResult()});
+    }
+    mapCaptures.erase(captured.getResult());
+    mapOperations.erase(publication);
+    mapOperations.erase(selection);
+    mapOperations.erase(captured);
+    eraseRooted(publication);
+    eraseRooted(selection);
+    eraseRooted(captured);
+    constructor.getUpvaluesMutable().clear();
+    constructor.removeEnclosingIndicesAttr();
+    function.setUpvalueCount(0);
+    mapClosures.erase(constructor);
+    mapCells.erase(cell);
+    return true;
+}
+
 bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                                             llvm::ArrayRef<ctjs::ConstructOp> instances,
                                             llvm::ArrayRef<ctjs::SetPropertyOp> definitions,
@@ -940,10 +1066,11 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
                                              llvm::SmallVectorImpl<mlir::Value> & reads) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     auto owner = sourceValue(use.get()).getDefiningOp<ctjs::ConstructOp>();
-    if (!call || use.getOperandNumber() != 3 || !owner || !maps.contains(call.getReceiver())) {
+    if (!call || use.getOperandNumber() != 3 || !owner ||
+        !maps.contains(sourceValue(call.getReceiver()))) {
         return false;
     }
-    auto map = call.getReceiver().getDefiningOp<ctjs::ConstructOp>();
+    auto map = sourceValue(call.getReceiver()).getDefiningOp<ctjs::ConstructOp>();
     auto function = owner->getParentOfType<ctjs::FuncOp>();
     if (!map || !function || map->getBlock() != owner->getBlock() ||
         owner->getBlock() != &function.getBody().front() || call->getBlock() != owner->getBlock() ||
@@ -953,9 +1080,19 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
     if (!proveMaps()) { return false; }
     // Keep the existing full Map identity/use proof. This narrower source proof
     // cannot capture or transport the Map, so every operation shares its owner.
-    for (mlir::OpOperand & selected : map.getResult().getUses()) {
+    for (auto [cell, initial] : cells) {
         if (!step()) { return false; }
-        auto * op = selected.getOwner();
+        if (sourceValue(initial) != map.getResult()) { continue; }
+        for (mlir::OpOperand & selected : cell.getUses()) {
+            if (!step()) { return false; }
+            if (!cellOperations.contains(selected.getOwner())) {
+                return refuse("class retained Map requires direct entry-block operations");
+            }
+        }
+    }
+    for (mlir::OpOperand * selected : sourceUses(map.getResult())) {
+        if (!step()) { return false; }
+        auto * op = selected->getOwner();
         if (op->getBlock() != map->getBlock() ||
             (!llvm::isa<ctjs::RootOp>(op) && !mapOperations.contains(op))) {
             return refuse("class retained Map requires direct entry-block operations");
@@ -967,7 +1104,7 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
     for (mlir::Operation & op : *map->getBlock()) {
         if (!step()) { return false; }
         auto operation = llvm::dyn_cast<ctjs::CallOp>(op);
-        if (!operation || operation.getReceiver() != map.getResult()) { continue; }
+        if (!operation || sourceValue(operation.getReceiver()) != map.getResult()) { continue; }
         auto method = operation.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         if (!method || !mapOperations.contains(operation)) {
             return refuse("class retained Map has an unproved invocation");

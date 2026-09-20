@@ -98,6 +98,9 @@ struct classInitialization {
                              unsigned depth = 0);
     bool clearOwnFieldLoop(ctjs::CallOp snapshot, llvm::ArrayRef<llvm::StringRef> fields,
                            const HostContract & contract);
+    bool sinkConstructorPublication(ctjs::CreateClosureOp constructor,
+                                    llvm::ArrayRef<ctjs::ConstructOp> instances,
+                                    const HostContract & contract);
     bool ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                            llvm::ArrayRef<ctjs::ConstructOp> instances,
                            llvm::ArrayRef<ctjs::SetPropertyOp> definitions,

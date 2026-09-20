@@ -794,6 +794,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     llvm::DenseSet<mlir::Operation *> methodHomes;
+    if (!sinkConstructorPublication(closure, instances, contract)) { return false; }
     if (!ownFieldSnapshots(closure, instances, definitions, methodKeys, contract)) { return false; }
     llvm::SmallVector<ctjs::SetPropertyOp> allMethods(definitions);
     for (const auto & [key, definition] : staticMethods) {

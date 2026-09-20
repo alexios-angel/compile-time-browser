@@ -297,6 +297,7 @@ def main():
                     or name
                     in (
                         "class-map-record-alias-method-inherited",
+                        "class-map-record-constructor-inherited",
                         "class-map-record-alias-snapshot-inherited",
                     )
                     else []
@@ -329,6 +330,7 @@ def main():
         if (
             name in OWN_FIELDS
             or name.startswith("class-map-record-alias-snapshot-")
+            or name == "class-map-record-constructor-snapshot-dispose"
             or name == "class-map-inherited-early-snapshot"
             or name.startswith("own-fields-branch-")
             or name.startswith("inherited-own-fields-")
@@ -339,6 +341,7 @@ def main():
             "own-fields-loop",
             "inherited-own-fields-loop",
             "class-map-record-alias-snapshot-dispose",
+            "class-map-record-constructor-snapshot-dispose",
         ) or name.startswith("inherited-own-fields-iterate-"):
             manifest["initial_intrinsics"] += [
                 "Array",
@@ -351,6 +354,7 @@ def main():
         ) or name in (
             "class-map-record-alias-method-inherited",
             "class-map-record-alias-snapshot-inherited",
+            "class-map-record-constructor-inherited",
         ):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
@@ -781,6 +785,7 @@ def main():
             "static-defaults-chain",
             "static-throw-chain",
             "class-map-record-overwrite",
+            "class-map-record-constructor-direct",
             "class-map-record-alias-snapshot-overwrite-delete",
             "local-helper-branches",
             "local-holder-arrow",
