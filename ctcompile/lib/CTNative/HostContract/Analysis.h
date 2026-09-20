@@ -23,6 +23,12 @@ inline unsigned classIntrinsicArity(llvm::StringRef name) {
     return 0;
 }
 
+inline unsigned iteratorIntrinsicArity(llvm::StringRef name) {
+    if (name == "__ctbrowser_for_of_open" || name == "__ctbrowser_iter_next") { return 1; }
+    if (name == "__ctbrowser_iter_close") { return 2; }
+    return 0;
+}
+
 // Complete original Bootstrap F callback; callers still prove enclosure, uses,
 // intrinsic identity and the actual replacement receiver.
 bool isLowercaseReplacement(ctjs::FuncOp function, llvm::function_ref<bool()> step);

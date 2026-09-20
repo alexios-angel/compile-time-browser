@@ -176,7 +176,8 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         }
         for (const auto & name : result.initialIntrinsics) {
             if (name != "Map" && name != "Array" && name != "Error" && name != "Object" &&
-                !host_detail::classIntrinsicArity(name)) {
+                !host_detail::classIntrinsicArity(name) &&
+                !host_detail::iteratorIntrinsicArity(name)) {
                 return error("unsupported initial intrinsic identity");
             }
             if (llvm::is_contained(result.absentBindings, name) ||
@@ -391,7 +392,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
     }
     for (const auto & name : contract.initialIntrinsics) {
         if ((name != "Map" && name != "Array" && name != "Error" && name != "Object" &&
-             !classIntrinsicArity(name)) ||
+             !classIntrinsicArity(name) && !iteratorIntrinsicArity(name)) ||
             llvm::is_contained(contract.absentBindings, name) ||
             llvm::is_contained(contract.undefinedBindings, name)) {
             return "invalid standard initial intrinsic declaration";
@@ -450,7 +451,9 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     llvm::isa<ctjs::StringAttr>(message.getValue())) {
                     continue;
                 }
-            } else if (const unsigned arity = classIntrinsicArity(load.getName())) {
+            } else if (const unsigned arity = classIntrinsicArity(load.getName())
+                                                  ? classIntrinsicArity(load.getName())
+                                                  : iteratorIntrinsicArity(load.getName())) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                 auto receiver = call ? call.getReceiver().getDefiningOp<ctjs::ConstantOp>()
                                      : ctjs::ConstantOp{};

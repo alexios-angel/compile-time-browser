@@ -16,6 +16,17 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-own-fields-iterate-shared": (1111, 1111),
+    "inherited-own-fields-iterate-branches": (12113411, 12113411),
+    "inherited-own-fields-iterate-empty": (7, 7),
+    "inherited-own-fields-iterate-effects": (15, 15),
+    "inherited-own-fields-iterate-repeated": (1111, 1111),
+    "inherited-own-fields-iterate-array-replaced": (0, 11),
+    "inherited-own-fields-iterate-snapshot-escape": (2, 2),
+    "inherited-own-fields-iterate-break": (10, 10),
+    "inherited-own-fields-iterate-return": (310, 310),
+    "inherited-own-fields-iterate-throw": (310, 310),
+    "inherited-own-fields-iterate-unused-ambient": (7, 7),
     "captured-holder-method": (8, 8),
     "captured-holder-sibling": (16, 16),
     "inherited-captured-holder-shared": (380, 380),
@@ -344,6 +355,12 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-own-fields-iterate-break",
+    "inherited-own-fields-iterate-shared",
+    "inherited-own-fields-iterate-branches",
+    "inherited-own-fields-iterate-empty",
+    "inherited-own-fields-iterate-effects",
+    "inherited-own-fields-iterate-repeated",
     "captured-holder-method",
     "captured-holder-sibling",
     "inherited-captured-holder-shared",

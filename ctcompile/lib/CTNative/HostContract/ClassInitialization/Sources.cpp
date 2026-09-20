@@ -503,7 +503,7 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
         }
     }
     // ponytail: fixed named fields, with one ordered shape across an inherited
-    // snapshot's receivers. Variable presence and iteration need separate proofs.
+    // snapshot's receivers. Variable presence needs a separate proof.
     if (!function.getBody().hasOneBlock()) {
         return refuse("class own-key snapshot requires fixed constructor fields");
     }
@@ -594,6 +594,7 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     llvm::MapVector<mlir::Value, mlir::Attribute> replacements;
     for (mlir::Operation * operation : snapshots) {
         auto call = llvm::cast<ctjs::CallOp>(operation);
+        if (!clearOwnFieldLoop(call, fields, contract)) { return false; }
         for (mlir::OpOperand & use : call.getResult().getUses()) {
             if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }

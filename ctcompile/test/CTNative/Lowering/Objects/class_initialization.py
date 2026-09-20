@@ -32,6 +32,8 @@ POSITIVES.update(
         "own-fields-clear",
         "own-fields-effects",
         "own-fields-boxed-key",
+        "own-fields-loop",
+        "inherited-own-fields-loop",
     }
 )
 
@@ -226,6 +228,15 @@ def main():
             or name.startswith("bootstrap-base")
         ):
             manifest["initial_intrinsics"].append("Object")
+        if name in ("own-fields-loop", "inherited-own-fields-loop") or name.startswith(
+            "inherited-own-fields-iterate-"
+        ):
+            manifest["initial_intrinsics"] += [
+                "Array",
+                "__ctbrowser_for_of_open",
+                "__ctbrowser_iter_next",
+                "__ctbrowser_iter_close",
+            ]
         if name.startswith(("inherited", "override-", "bootstrap-base")):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
@@ -286,8 +297,6 @@ def main():
             "inherited-own-fields-before-store": "class own-key snapshot requires fixed constructor fields",
             "inherited-own-fields-ancestor-write": "class own-key snapshot field set changes",
             "inherited-own-fields-implicit": "derived class requires receiver-preserving super normalization",
-            "inherited-own-fields-loop": "class own-key snapshot requires fixed length or index reads",
-            "own-fields-loop": "class own-key snapshot requires fixed length or index reads",
             "own-fields-conditional": "class own-key snapshot branches change ordered fields",
             "own-fields-dynamic": "class own-key snapshot requires fixed constructor fields",
             "own-fields-new-field": "class own-key snapshot field set changes",
@@ -355,6 +364,47 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "own-fields-loop":
+            for identity in (
+                "Array",
+                "__ctbrowser_for_of_open",
+                "__ctbrowser_iter_next",
+                "__ctbrowser_iter_close",
+            ):
+                prepare(
+                    args,
+                    "loop-without-" + identity,
+                    structured,
+                    dict(
+                        manifest,
+                        initial_intrinsics=[
+                            item for item in manifest["initial_intrinsics"] if item != identity
+                        ],
+                    ),
+                    success=False,
+                    diagnostic="class own-key loop requires original Array iterator identities",
+                )
+                preparation_refusals += 1
+            original = structured.read_text()
+            opened = re.search(
+                r'^(\s*)(%\w+) = ctjs.load_global "__ctbrowser_for_of_open"$', original, re.M
+            )
+            frame = re.findall(r"(%\w+) = ctjs.frame_enter", original[: opened.start()])[-1]
+            rooted = args.work / "own-loop-root.mlir"
+            rooted.write_text(
+                original[: opened.end()]
+                + f"\n{opened[1]}ctjs.root {opened[2]} in {frame}"
+                + original[opened.end() :]
+            )
+            prepare(
+                args,
+                "own-loop-root",
+                rooted,
+                dict(manifest, module_sha256=host.fingerprint(args.opt, rooted)),
+                success=False,
+                diagnostic="class own-key loop contains an unproved effect",
+            )
+            preparation_refusals += 1
         if name == "own-fields-order":
             prepare(
                 args,
@@ -487,6 +537,7 @@ def main():
                 preparation_refusals += 1
         if name in (
             "own-fields-order",
+            "own-fields-loop",
             "nested-helper-chain",
             "captured-helper-constructor",
             "captured-holder-sibling",
