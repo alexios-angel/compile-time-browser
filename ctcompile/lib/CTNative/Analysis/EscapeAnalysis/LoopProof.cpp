@@ -309,19 +309,17 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             const auto positive = boundedConvertedNumber(*offset);
             const auto negative = boundedConvertedNumber(*offset, true);
-            if ((!positive && !negative) || (bitAnd && (!positive || *positive > 2147483647ULL))) {
-                return std::nullopt;
-            }
+            if (!positive && !negative) { return std::nullopt; }
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
             std::uint32_t first = 0, last = mask;
-            if (!bitAnd) {
+            if (!bitAnd || mask > 2147483647U) {
                 if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
                 const auto lower = numberBits(range->first);
                 const auto upper = numberBits(range->last);
                 // All bits above the highest differing bit are fixed throughout
                 // this unsigned interval. Enclose the lower bits densely: endpoint
-                // OR/XOR results alone miss interior extrema.
+                // bitwise results alone miss interior extrema.
                 const auto varying = static_cast<std::uint32_t>(
                     std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
                 if (varying > 2147483647U) {
@@ -329,11 +327,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     // sign bit needs a union of ranges before composition.
                     return std::nullopt;
                 }
-                first = bitOr ? (lower & ~varying) | mask : (lower ^ mask) & ~varying;
-                last = first | varying;
+                first = bitAnd  ? (lower & ~varying) & mask
+                        : bitOr ? (lower & ~varying) | mask
+                                : (lower ^ mask) & ~varying;
+                last = first | (bitAnd ? varying & mask : varying);
             }
             // Clearing the sign bit bounds every ToInt32 input, including
-            // conversions across a signed boundary for AND.
+            // conversions across a signed boundary for a low-bit AND mask.
             // ponytail: a dense enclosure; sparse mask facts could admit more
             // disjoint reloads. Replay still records only the actual writes.
             IndexRange result{

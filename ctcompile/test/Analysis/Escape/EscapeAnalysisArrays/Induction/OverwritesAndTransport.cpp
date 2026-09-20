@@ -89,14 +89,25 @@ void InductionCases::overwritesAndTransport() {
            replace(masked, "bitand %i, %one", "bitand %i, %two"));
     reject("two varying operands cannot supply an invariant mask",
            replace(masked, "bitand %i, %one", "bitand %i, %i"));
-    for (const auto & value :
+    for (const std::string value :
          {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
           "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
           "#ctjs.bigint<\"1\">"}) {
-        reject("masks require nonnegative signed-i32 integer Numbers",
-               replace(replace(masked, "  %a =",
-                               "  %mask = ctjs.constant " + std::string(value) + "\n  %a ="),
-                       "bitand %i, %one", "bitand %i, %mask"));
+        const auto source =
+            replace(replace(masked, "  %a =", "  %mask = ctjs.constant " + value + "\n  %a ="),
+                    "bitand %i, %one", "bitand %i, %mask");
+        if (value == "#ctjs.number<13830554455654793216>" ||
+            value == "#ctjs.number<4746794007248502784>") {
+            const bool negativeOne = value == "#ctjs.number<13830554455654793216>";
+            run({.what = "signed mask literals retain only the children their exact writes miss",
+                 .body = source,
+                 .arrays = negativeOne ? "a:[zero,zero]" : "a:[zero,x]",
+                 .reads = negativeOne ? "a[0]=zero; a[1]=zero" : "a[0]=zero; a[1]=x",
+                 .exit = negativeOne ? "a -> {a}" : "a -> {a,x}"},
+                negativeOne ? "x" : "");
+        } else {
+            reject("masks require exact integer Numbers", source);
+        }
     }
     for (const std::string kind : {"bitor", "bitxor"}) {
         const bool isOr = kind == "bitor";
@@ -160,6 +171,72 @@ void InductionCases::overwritesAndTransport() {
                                     "  %negativeOne = ctjs.unary neg %one\n"
                                     "  %low = ctjs.constant #ctjs.number<13974669643726454784>\n"
                                     "  %a =");
+    for (const auto & expression : {"%position = ctjs.binary_static bitand %i, %negativeOne",
+                                    "%position = ctjs.binary_static bitand %negativeOne, %i",
+                                    "%full = ctjs.binary add %maximum, %sign\n"
+                                    "  %position = ctjs.binary_static bitand %i, %full",
+                                    "%negative = ctjs.unary bitnot %i\n"
+                                    "  %bits = ctjs.binary_static bitand %negative, %negativeOne\n"
+                                    "  %position = ctjs.unary bitnot %bits",
+                                    "%high = ctjs.binary add %sign, %i\n"
+                                    "  %bits = ctjs.binary_static bitand %high, %negativeOne\n"
+                                    "  %position = ctjs.binary add %bits, %sign",
+                                    "%high = ctjs.binary add %low, %i\n"
+                                    "  %bits = ctjs.binary_static bitand %high, %negativeOne\n"
+                                    "  %position = ctjs.binary sub %bits, %two"}) {
+        run({.what = "signed AND masks preserve exact indices through conversion and composition",
+             .body =
+                 replace(signedBits, "%position = ctjs.binary_static bitand %i, %one", expression),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "a sign-only AND mask clears nonnegative inputs without visiting other slots",
+         .body = replace(signedBits, "bitand %i, %one", "bitand %i, %sign"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero; a[1]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "signed AND enclosures leave sparse unvisited children intact",
+         .body = replace(replace(signedBits, "[%one, %x]", "[%x, %x, %x, %x]"),
+                         "%position = ctjs.binary_static bitand %i, %one",
+                         "%mask = ctjs.unary neg %two\n"
+                         "  %position = ctjs.binary_static bitand %i, %mask"),
+         .arrays = "a:[zero,x,zero,x]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero; a[3]=x",
+         .exit = "a -> {a,x}"});
+    for (const auto & input : {"ctjs.binary sub %i, %one", "ctjs.binary add %maximum, %i",
+                               "ctjs.binary sub %negativeSign, %i"}) {
+        reject("signed AND retains conversion and sign-half guards through a final low mask",
+               replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                       "%part = " + std::string(input) +
+                           "\n"
+                           "  %bits = ctjs.binary_static bitand %part, %negativeOne\n"
+                           "  %position = ctjs.binary_static bitand %bits, %one"));
+    }
+    reject("a signed AND result must still become a nonnegative own key",
+           replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                   "%negative = ctjs.unary bitnot %i\n"
+                   "  %position = ctjs.binary_static bitand %negative, %negativeOne"));
+    const auto andReload =
+        replace(replace(maskedReload, "  %a =",
+                        "  %negativeMask = ctjs.constant #ctjs.number<13970166044099084288> "
+                        "{storage_test_id = \"mask\"}\n  %a ="),
+                "[%x, %x, %one, %zero]", "[%x, %x, %negativeMask, %zero]");
+    run({.what = "signed AND bounds preserve a disjoint invariant mask reload",
+         .body = andReload,
+         .arrays = "a:[zero,zero,mask,zero]",
+         .reads = "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                  "a[2]=mask; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("signed AND cannot borrow a mask reloaded from its overwrite range",
+           replace(replace(andReload, "[%x, %x, %negativeMask, %zero]",
+                           "[%negativeMask, %x, %zero, %zero]"),
+                   "%mask = ctjs.get_property %base[%two]",
+                   "%mask = ctjs.get_property %base[%zero]"));
+    reject("later stores invalidate earlier signed AND mask reloads",
+           replace(andReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
     for (const auto & expression :
          {"%high = ctjs.binary sub %maximum, %i\n"
           "  %position = ctjs.binary_static bitxor %high, %maximum",

@@ -66,6 +66,59 @@ void StructuredCases::reloads() {
                                     "  %two = ctjs.binary add %one, %one\n"
                                     "  %a =");
     for (const auto & expression :
+         {"%position = ctjs.binary_static bitand %i, %negativeOne",
+          "%position = ctjs.binary_static bitand %negativeOne, %i",
+          "%negative = ctjs.unary bitnot %i\n"
+          "    %bits = ctjs.binary_static bitand %negative, %negativeOne\n"
+          "    %position = ctjs.unary bitnot %bits",
+          "%high = ctjs.binary add %sign, %i\n"
+          "    %bits = ctjs.binary_static bitand %high, %negativeOne\n"
+          "    %position = ctjs.binary add %bits, %sign",
+          "%high = ctjs.binary add %low, %i\n"
+          "    %bits = ctjs.binary_static bitand %high, %negativeOne\n"
+          "    %position = ctjs.binary sub %bits, %two"}) {
+        rows.push_back(
+            {.what = "structured signed AND bands preserve exact overwritten aliases",
+             .body =
+                 replace(signedBits, "%position = ctjs.binary_static bitand %i, %one", expression),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"});
+    }
+    for (const auto & input : {"ctjs.binary sub %i, %one", "ctjs.binary add %maximum, %i",
+                               "ctjs.binary sub %negativeSign, %i"}) {
+        reject("structured signed AND retains conversion guards through a final low mask",
+               replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                       "%part = " + std::string(input) +
+                           "\n"
+                           "    %bits = ctjs.binary_static bitand %part, %negativeOne\n"
+                           "    %position = ctjs.binary_static bitand %bits, %one"));
+    }
+    const auto andReload =
+        replace(replace(replace(masked, "[%x]", "[%x, %y, %negativeMask, %zero]"),
+                        "  ctjs.append %y to %a\n", ""),
+                "  %a =",
+                "  %two = ctjs.binary add %one, %one\n"
+                "  %negativeMask = ctjs.constant #ctjs.number<13970166044099084288> "
+                "{storage_test_id = \"mask\"}\n  %a =");
+    const auto readAndMask = replace(andReload, "%position = ctjs.binary_static bitand %i, %one",
+                                     "%mask = ctjs.get_property %base[%two]\n"
+                                     "    %position = ctjs.binary_static bitand %i, %mask");
+    rows.push_back({.what = "structured signed AND masks preserve disjoint reloads",
+                    .body = readAndMask,
+                    .arrays = "a:[zero,zero,mask,zero]",
+                    .reads = "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                             "a[2]=mask; a[3]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured signed AND rejects overlapping mask reloads",
+           replace(replace(readAndMask, "[%x, %y, %negativeMask, %zero]",
+                           "[%negativeMask, %y, %zero, %zero]"),
+                   "%mask = ctjs.get_property %base[%two]",
+                   "%mask = ctjs.get_property %base[%zero]"));
+    reject("later structured stores invalidate earlier signed AND reloads",
+           replace(readAndMask,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    for (const auto & expression :
          {"%high = ctjs.binary sub %maximum, %i\n"
           "    %position = ctjs.binary_static bitxor %high, %maximum",
           "%high = ctjs.binary add %sign, %i\n"
