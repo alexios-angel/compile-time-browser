@@ -331,6 +331,106 @@ inline bool operator<(const nullable_string & a, const nullable_string & b) {
     return a.tag == nullable_string::kind::string && a.value < b.value;
 }
 
+// A proved Number/String union owns exactly those two alternatives. Global
+// storage wraps it in optional so a missing store cannot imitate Number zero.
+using number_string = std::variant<js_num, js_string>;
+
+inline constexpr js_num to_number(js_num value) {
+    return value;
+}
+inline js_num to_number(const number_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_num>) {
+                return alternative;
+            } else {
+                return alternative.to_number();
+            }
+        },
+        value);
+}
+inline js_string number_string_text(const number_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                return alternative;
+            } else {
+                return js_string{} + alternative;
+            }
+        },
+        value);
+}
+inline bool number_string_truthy(const number_string & value) {
+    return std::visit([](const auto & alternative) { return static_cast<bool>(alternative); },
+                      value);
+}
+inline std::string number_string_typeof(const number_string & value) {
+    return std::holds_alternative<js_num>(value) ? "number" : "string";
+}
+inline number_string global_number_string(const std::optional<number_string> & value) {
+    if (!value) { std::terminate(); }
+    return *value;
+}
+inline void print_number_string(const char * name, const number_string & value) {
+    std::visit(
+        [name](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_num>) {
+                print_scalar(name, nullable_scalar{alternative});
+            } else {
+                print_string(name, alternative.value());
+            }
+        },
+        value);
+}
+
+template <class T>
+concept primitive_add_operand =
+    std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t> ||
+    std::is_same_v<T, nullable_scalar> || std::is_same_v<T, js_string> ||
+    std::is_same_v<T, nullable_string> ||
+    std::is_same_v<T, std::variant<js_boolean_t, std::string>> || std::is_same_v<T, number_string>;
+
+template <primitive_add_operand L, primitive_add_operand R>
+number_string add(const L & left, const R & right) {
+    const auto isString = []<class T>(const T & value) {
+        if constexpr (std::is_same_v<T, js_string>) {
+            return true;
+        } else if constexpr (std::is_same_v<T, nullable_string>) {
+            return value.tag == nullable_string::kind::string;
+        } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
+            return std::holds_alternative<std::string>(value);
+        } else if constexpr (std::is_same_v<T, number_string>) {
+            return std::holds_alternative<js_string>(value);
+        } else {
+            return false;
+        }
+    };
+    const auto text = []<class T>(const T & value) {
+        if constexpr (std::is_same_v<T, js_string>) {
+            return value;
+        } else if constexpr (std::is_same_v<T, nullable_scalar>) {
+            return value.to_string();
+        } else if constexpr (std::is_same_v<T, nullable_string>) {
+            return js_string{string_text(value)};
+        } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
+            return boolean_string_text(value);
+        } else if constexpr (std::is_same_v<T, number_string>) {
+            return number_string_text(value);
+        } else {
+            return js_string{} + value;
+        }
+    };
+    const auto number = []<class T>(const T & value) {
+        if constexpr (std::is_same_v<T, js_string> || std::is_same_v<T, nullable_string>) {
+            return value.to_number();
+        } else {
+            return to_number(value);
+        }
+    };
+    if (isString(left) || isString(right)) { return text(left) + text(right); }
+    return number(left) + number(right);
+}
+
 // --- dense arrays - part 24 Phase 57A ----------------------------------------
 //
 // THREE OF THEM AND NO MORE. `push` and `size` are what the plan's rule names;

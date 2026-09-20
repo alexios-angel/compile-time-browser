@@ -25,6 +25,11 @@ concept string_addable = requires(ctnative::js_string text, T value) {
     text + value;
     value + text;
 };
+template <class T>
+concept primitive_addable = requires(ctnative::number_string result, const T & value) {
+    ctnative::add(result, value);
+    ctnative::add(value, result);
+};
 struct convertible_number {
     operator double() const { return 3.0; }
 };
@@ -322,5 +327,90 @@ int main() {
     CHECK(nullable_string{std::string{" 0x10\n"}}.to_number() == ctnative::js_num{16.0});
     CHECK(std::isnan(nullable_string{std::string{"1\0", 2}}.to_number().value()));
     CHECK(std::isnan(nullable_string{high}.to_number().value()));
+
+    static_assert(std::is_same_v<number_string, std::variant<ctnative::js_num, js_string>>);
+    static_assert(std::is_same_v<decltype(add(one, enabled)), number_string>);
+    static_assert(std::is_same_v<decltype(to_number(one)), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(to_number(number_string{})), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(number_string_text(number_string{})), js_string>);
+    static_assert(std::is_same_v<decltype(global_number_string(std::nullopt)), number_string>);
+    static_assert(!primitive_addable<double> && !primitive_addable<bool>);
+    static_assert(!primitive_addable<std::string> && !primitive_addable<const char *>);
+    static_assert(!primitive_addable<convertible_number> && !primitive_addable<unrelated_number>);
+    static_assert(!primitive_addable<object_value> && !primitive_addable<std::nullptr_t>);
+    static_assert(!primitive_addable<std::optional<number_string>>);
+    // Every supported carrier participates in both positions. Boolean true
+    // adds like one numerically but retains its spelling in concatenation.
+    const auto numericOnes =
+        std::tuple{one, enabled, nullable_scalar{one},
+                   std::variant<js_boolean_t, std::string>{enabled}, number_string{one}};
+    const auto stringTwos = std::tuple{js_string{"2"}, nullable_string{std::string{"2"}},
+                                       std::variant<js_boolean_t, std::string>{std::string{"2"}},
+                                       number_string{js_string{"2"}}};
+    const auto exactOnes = std::tuple{one, nullable_scalar{one}, number_string{one}};
+    const auto trueValues = std::tuple{enabled, nullable_scalar{enabled},
+                                       std::variant<js_boolean_t, std::string>{enabled}};
+    const auto checkAdditions = [](const auto & leftValues, const auto & rightValues,
+                                   const auto & expected) {
+        std::apply(
+            [&](const auto &... left) {
+                const auto checkLeft = [&](const auto & value) {
+                    std::apply(
+                        [&](const auto &... right) {
+                            (CHECK(add(value, right) == number_string{expected}), ...);
+                        },
+                        rightValues);
+                };
+                (checkLeft(left), ...);
+            },
+            leftValues);
+    };
+    checkAdditions(numericOnes, numericOnes, two);
+    checkAdditions(exactOnes, stringTwos, js_string{"12"});
+    checkAdditions(stringTwos, exactOnes, js_string{"21"});
+    checkAdditions(trueValues, stringTwos, js_string{"true2"});
+    checkAdditions(stringTwos, trueValues, js_string{"2true"});
+    checkAdditions(stringTwos, stringTwos, js_string{"22"});
+    CHECK(add(disabled, disabled) == number_string{zero});
+    CHECK(add(js_string{"x"}, disabled) == number_string{js_string{"xfalse"}});
+    CHECK(add(disabled, js_string{"x"}) == number_string{js_string{"falsex"}});
+    CHECK(add(std::variant<js_boolean_t, std::string>{disabled}, js_string{"x"}) ==
+          number_string{js_string{"falsex"}});
+    CHECK(add(null, one) == number_string{one} && add(one, nullText) == number_string{one});
+    CHECK(add(nullText, null) == number_string{zero});
+    CHECK(std::isnan(to_number(add(undefined, one)).value()));
+    CHECK(std::isnan(to_number(add(one, absentText)).value()));
+    CHECK(add(nullText, js_string{"x"}) == number_string{js_string{"nullx"}});
+    CHECK(add(js_string{"x"}, null) == number_string{js_string{"xnull"}});
+    CHECK(add(absentText, js_string{"x"}) == number_string{js_string{"undefinedx"}});
+    CHECK(add(js_string{"x"}, undefined) == number_string{js_string{"xundefined"}});
+    CHECK(std::signbit(to_number(add(negativeZero, negativeZero)).value()));
+    CHECK(!std::signbit(to_number(add(negativeZero, nullText)).value()));
+    CHECK(std::isnan(to_number(add(notANumber, one)).value()));
+    CHECK(add(number_string{notANumber}, js_string{}) == number_string{js_string{"NaN"}});
+    CHECK(add(number_string{negativeZero}, js_string{}) == number_string{js_string{"0"}});
+    CHECK(add(binaryText, number_string{js_string{"\0c"}}) == number_string{js_string{"a\0b\0c"}});
+    CHECK(add(nullable_string{high}, number_string{lowUnit}) ==
+          number_string{js_string{"\xF0\x9F\x98\x80"}});
+    CHECK(add(add(one, two), js_string{"4"}) == number_string{js_string{"34"}});
+    CHECK(add(one, add(two, js_string{"4"})) == number_string{js_string{"124"}});
+    CHECK(to_number(number_string{js_string{" 0x10\n"}}) == ctnative::js_num{16.0});
+    CHECK(std::signbit(to_number(number_string{js_string{"-0"}}).value()));
+    CHECK(std::isnan(to_number(number_string{js_string{"1\0"}}).value()));
+    CHECK(!number_string_truthy(number_string{zero}));
+    CHECK(!number_string_truthy(number_string{negativeZero}));
+    CHECK(!number_string_truthy(number_string{notANumber}));
+    CHECK(!number_string_truthy(number_string{js_string{}}));
+    CHECK(number_string_truthy(number_string{js_string{"0"}}));
+    CHECK(number_string_truthy(number_string{js_string{"\0"}}));
+    CHECK(number_string_typeof(number_string{notANumber}) == "number");
+    CHECK(number_string_typeof(number_string{js_string{"NaN"}}) == "string");
+    CHECK(number_string_text(number_string{negativeZero}) == js_string{"0"});
+    CHECK(number_string_text(number_string{js_string{high + low}}).value() == high + low);
+    std::optional<number_string> storedAddition{js_string{"saved\0text"}};
+    const auto savedAddition = global_number_string(storedAddition);
+    storedAddition = one;
+    CHECK(savedAddition == number_string{js_string{"saved\0text"}});
+    CHECK(global_number_string(storedAddition) == number_string{one});
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
