@@ -6,6 +6,7 @@
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::ctnative {
 
@@ -96,9 +97,10 @@ std::string environmentProblem(mlir::ModuleOp module,
             return;
         }
         if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
-            if (text.getValue() == "__proto__" || text.getValue() == "prototype" ||
-                text.getValue() == "constructor" || text.getValue() == "__defineGetter__" ||
-                text.getValue() == "__defineSetter__") {
+            static const llvm::StringSet<> prototypeNames{"__proto__", "prototype", "constructor",
+                                                          "__defineGetter__", "__defineSetter__"};
+            const auto name = text.getValue();
+            if (name.size() <= 16 && prototypeNames.contains(name)) {
                 reason = "module can inspect or mutate shared prototypes";
             }
         }

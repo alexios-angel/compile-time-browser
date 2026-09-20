@@ -12,6 +12,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <cassert>
 #include <cstdint>
@@ -180,8 +181,9 @@ bool prototype_replaced(mlir::ModuleOp module) {
 // invisible after it. The hole belongs to "which values are watched", not to
 // "how far a watched value propagates".
 bool hands_back_the_global_object(llvm::StringRef key) {
-    return key.empty() || key == "window" || key == "globalThis" || key == "self" ||
-           key == "parent" || key == "top" || key == "frames";
+    static const llvm::StringSet<> aliases{"window", "globalThis", "self",
+                                           "parent", "top",        "frames"};
+    return key.empty() || (key.size() <= 10 && aliases.contains(key));
 }
 
 // FROM A VALUE THAT MAY BE `Function`, WHICH NAMED READS CAN HAND IT BACK?
@@ -201,8 +203,9 @@ bool hands_back_the_global_object(llvm::StringRef key) {
 // A COMPUTED KEY IS UNKNOWN and keeps the taint - which is what an empty
 // constantKey means here, and also what `o[""]` gets, harmlessly.
 bool hands_back_the_compiler(llvm::StringRef key) {
-    return key.empty() || key == "constructor" || key == "prototype" || key == "__proto__" ||
-           key == "call" || key == "apply" || key == "bind";
+    static const llvm::StringSet<> aliases{"constructor", "prototype", "__proto__",
+                                           "call",        "apply",     "bind"};
+    return key.empty() || (key.size() <= 11 && aliases.contains(key));
 }
 
 // THE SKIPPED ROWS, READ FOR THE ONE THING THAT STILL REFUSES THE MODULE.

@@ -2,6 +2,7 @@
 
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::cpp {
 
@@ -16,9 +17,13 @@ bool supportsConstBinding(mlir::Type type) {
     // These are copyable native value carriers. Arbitrary opaque C++ types
     // can hide references, move-only ownership or const-sensitive operators.
     const auto name = opaque.getValue();
-    return name == "std::string" || name == "ctnative::nullable_scalar" ||
-           name == "ctnative::nullable_string" || name == "ctnative::object_value" ||
-           name == "std::vector<double>" || name == "std::vector<std::string>" ||
+    static const llvm::StringSet<> copyableCarriers{"std::string",
+                                                    "ctnative::nullable_scalar",
+                                                    "ctnative::nullable_string",
+                                                    "ctnative::object_value",
+                                                    "std::vector<double>",
+                                                    "std::vector<std::string>"};
+    return (name.size() <= 25 && copyableCarriers.contains(name)) ||
            (name.starts_with("std::shared_ptr<") && name.ends_with(">")) ||
            (name.starts_with("ctnative::ctn_env_") &&
             name.find_first_of(" &*") == llvm::StringRef::npos);
