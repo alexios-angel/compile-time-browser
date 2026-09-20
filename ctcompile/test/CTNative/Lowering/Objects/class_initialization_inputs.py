@@ -789,6 +789,7 @@ PREPARED_ONLY = {
     "inherited-own-fields-iterate-borrow-mixed-literal",
     "inherited-own-fields-iterate-borrow-missing-argument",
     "captured-holder-unused",
+    "captured-holder-receiver-escape",
     "inherited-helper-order",
     "override-different-leaves",
     "bootstrap-r",

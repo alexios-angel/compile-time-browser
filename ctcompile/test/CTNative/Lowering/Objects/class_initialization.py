@@ -684,7 +684,11 @@ def main():
                 "captured-holder-unused",
             ):
                 operations = ()
-            elif name in ("class-map-nested-holder", "class-map-helper-numeric-key"):
+            elif name in (
+                "class-map-nested-holder",
+                "class-map-helper-numeric-key",
+                "captured-holder-receiver-escape",
+            ):
                 operations = ("ctjs.construct",)
             elif name == "class-map-inherited":
                 # Super guard Error constructions disappear during normalization.
@@ -898,6 +902,11 @@ def main():
                         "a method field: nothing calls it" not in native_text
                     ):
                         raise RuntimeError("unused holder method lost its invocation refusal")
+                    if name == "captured-holder-receiver-escape" and (
+                        "a method field: it passes `this` as an argument to another function"
+                        not in native_text
+                    ):
+                        raise RuntimeError("holder receiver lost its argument escape refusal")
                     if len(re.findall(r"^\s*ctjs.throw ", native_text, re.M)) != len(
                         re.findall(r"^\s*ctjs.throw ", prepared.read_text(), re.M)
                     ):
