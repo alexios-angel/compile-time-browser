@@ -6,7 +6,7 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Scalars/scalar-unions.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=GLOBAL
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=STRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=STRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/map-key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MAP-KEY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/map-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MAP-VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/array.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=ARRAY
@@ -27,7 +27,7 @@
 // GLOBAL: [[COND:%[^ ]+]] = cast [[FLAG]] : !emitc.opaque<"ctnative::js_boolean_t"> to i1
 // GLOBAL: scf.if [[COND]]
 // GLOBAL-NOT: ctnative.not_native
-// STRING: ctnative.not_native = "a Bool/String temporary needs a single proved return type"
+// STRING: emitc.func @choose_1({{.*}}!emitc.opaque<"ctnative::js_boolean_t">{{.*}}) -> !emitc.opaque<"ctnative::boolean_string">
 // MAP-KEY: ctnative.not_native = "mixed native Map key needs one proved scalar alternative"
 // MAP-VALUE: ctnative.not_native = "mixed native Map write needs one proved scalar alternative"
 // ARRAY: ctnative.not_native = "an array whose elements are !ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>, not numbers"

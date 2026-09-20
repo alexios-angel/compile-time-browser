@@ -25,6 +25,33 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     const auto rawString = ec::OpaqueType::get(context, kRawStringType);
     const auto numberString = carrierType(context, carrier::numberString);
     const auto nullableNumberString = carrierType(context, carrier::nullableNumberString);
+    const auto booleanString = carrierType(context, carrier::booleanString);
+    const auto nullableBooleanString = carrierType(context, carrier::nullableBooleanString);
+    if (target == booleanString &&
+        (isBooleanCarrier(value.getType()) || value.getType() == string)) {
+        return ec::CastOp::create(b, where, target, value);
+    }
+    if (target == nullableBooleanString) {
+        if (isBooleanCarrier(value.getType()) || value.getType() == string) {
+            return ec::CastOp::create(b, where, target, value);
+        }
+        return callWithConstValueOperands(b, where, mlir::TypeRange{target},
+                                          b.getStringAttr("ctnative::to_nullable_boolean_string"),
+                                          mlir::ValueRange{value})
+            .getResult(0);
+    }
+    if (value.getType() == nullableBooleanString && target == booleanString) {
+        return callWithConstValueOperands(b, where, mlir::TypeRange{target},
+                                          b.getStringAttr("ctnative::global_boolean_string"),
+                                          mlir::ValueRange{value})
+            .getResult(0);
+    }
+    if (value.getType() == nullableBooleanString && target == string) {
+        return callWithConstValueOperands(b, where, mlir::TypeRange{target},
+                                          b.getStringAttr("ctnative::nullable_boolean_string_text"),
+                                          mlir::ValueRange{value})
+            .getResult(0);
+    }
     if (target == numberString && (isNumberCarrier(value.getType()) || value.getType() == string)) {
         return ec::CastOp::create(b, where, target, value);
     }
@@ -82,8 +109,7 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     }
     if (value.getType() == string &&
         (target == ec::OpaqueType::get(context, kDOMOptionalStringType) ||
-         target == ec::OpaqueType::get(context, kDOMJSONType) || isNullableStringCarrier(target) ||
-         isBooleanStringCarrier(target))) {
+         target == ec::OpaqueType::get(context, kDOMJSONType) || isNullableStringCarrier(target))) {
         value = convertScalar(b, where, value, rawString);
     }
     if (target.isF64() &&
@@ -152,8 +178,6 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
                                                 string.getResult(0), null);
         ec::YieldOp::create(inside, where, joined);
         return expression.getResult();
-    } else if (isBooleanStringCarrier(target)) {
-        helper = kBooleanStringType;
     } else if (isNullableStringCarrier(target)) {
         helper = "ctnative::to_nullable_string";
     } else if (isNullableStringCarrier(value.getType())) {
@@ -177,6 +201,7 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
                                                       : "ctnative::to_number";
     } else if ((isBooleanCarrier(value.getType()) || isBooleanStringCarrier(value.getType()) ||
                 isNumberStringCarrier(value.getType()) ||
+                isNullableBooleanStringCarrier(value.getType()) ||
                 isNullableNumberStringCarrier(value.getType())) &&
                isNumberCarrier(target)) {
         helper = "ctnative::to_number";
@@ -203,10 +228,7 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                              const OwnedGlobalRoots * roots) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
-        if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c) &&
-            c != carrier::numberString && c != carrier::nullableNumberString) {
-            return {};
-        }
+        if (!isPrimitiveCarrier(c) && !isObjectCarrier(c)) { return {}; }
         needsObjectValue |= c == carrier::objectValue;
         return carrierType(context, c);
     };

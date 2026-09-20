@@ -73,7 +73,7 @@
 // BINARY-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.bool, !ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
 
 // GENERIC: call_opaque "ctnative::add"
-// UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"std::variant<ctnative::js_boolean_t, std::string>">{{.*}} -> !emitc.opaque<"ctnative::js_num">
+// UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"ctnative::boolean_string">{{.*}} -> !emitc.opaque<"ctnative::js_num">
 // OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 
 // --- a formerly refused Boolean global ------------------------------------

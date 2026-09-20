@@ -20,6 +20,8 @@ bool supportsConstBinding(mlir::Type type) {
     static const llvm::StringSet<> copyableCarriers{"std::string",
                                                     "ctnative::js_num",
                                                     "ctnative::js_string",
+                                                    "ctnative::boolean_string",
+                                                    "ctnative::nullable_boolean_string",
                                                     "ctnative::number_string",
                                                     "ctnative::nullable_number_string",
                                                     "std::optional<ctnative::number_string>",

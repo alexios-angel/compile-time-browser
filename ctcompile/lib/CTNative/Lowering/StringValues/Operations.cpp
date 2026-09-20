@@ -49,38 +49,38 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         return true;
     }
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
-        unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
-        isNullableNumberStringCarrier(unary.getOperand().getType())) {
-        auto result = callWithConstValueOperands(
-                          b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
-                          b.getStringAttr("ctnative::nullable_number_string_typeof"),
-                          mlir::ValueRange{unary.getOperand()})
-                          .getResult(0);
-        swap(convertScalar(b, where, result, op->getResult(0).getType()));
-        return true;
+        unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
+        static const llvm::StringMap<llvm::StringRef> helpers{
+            {kNullableStringType, "ctnative::string_typeof"},
+            {kBooleanStringType, "ctnative::boolean_string_typeof"},
+            {kNullableBooleanStringType, "ctnative::nullable_boolean_string_typeof"},
+            {kNumberStringType, "ctnative::number_string_typeof"},
+            {kNullableNumberStringType, "ctnative::nullable_number_string_typeof"}};
+        mlir::Type type = unary.getOperand().getType();
+        if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
+        auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+        if (auto helper = opaque ? helpers.find(opaque.getValue()) : helpers.end();
+            helper != helpers.end()) {
+            auto result =
+                callWithConstValueOperands(
+                    b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
+                    b.getStringAttr(helper->second), mlir::ValueRange{unary.getOperand()})
+                    .getResult(0);
+            swap(convertScalar(b, where, result, op->getResult(0).getType()));
+            return true;
+        }
     }
     llvm::StringRef helper;
     llvm::SmallVector<mlir::Value> operands;
     mlir::Type result;
-    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
-        unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
-        (isNullableStringCarrier(unary.getOperand().getType()) ||
-         isNumberStringCarrier(unary.getOperand().getType()))) {
-        helper = isNumberStringCarrier(unary.getOperand().getType())
-                     ? "ctnative::number_string_typeof"
-                     : "ctnative::string_typeof";
-        operands.push_back(unary.getOperand());
-        result = ec::OpaqueType::get(context, kRawStringType);
-    } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
-               compare &&
-               (compare.getKind() == ctjs::CompareKind::Eq ||
-                compare.getKind() == ctjs::CompareKind::StrictEq) &&
-               ((isNullableStringCarrier(compare.getLhs().getType()) ||
-                 isNullableStringCarrier(compare.getRhs().getType())) ||
-                (compare.getLhs().getType() == string &&
-                 isNullableCarrier(compare.getRhs().getType())) ||
-                (compare.getRhs().getType() == string &&
-                 isNullableCarrier(compare.getLhs().getType())))) {
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
+        compare &&
+        (compare.getKind() == ctjs::CompareKind::Eq ||
+         compare.getKind() == ctjs::CompareKind::StrictEq) &&
+        ((isNullableStringCarrier(compare.getLhs().getType()) ||
+          isNullableStringCarrier(compare.getRhs().getType())) ||
+         (compare.getLhs().getType() == string && isNullableCarrier(compare.getRhs().getType())) ||
+         (compare.getRhs().getType() == string && isNullableCarrier(compare.getLhs().getType())))) {
         helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::string_equal"
                                                             : "ctnative::string_strict_equal";
         operands = {compare.getLhs(), compare.getRhs()};

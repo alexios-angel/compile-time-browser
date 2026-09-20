@@ -68,9 +68,10 @@ bool lowering::replaceMap(mlir::Operation * o) {
                                   ? ec::OpaqueType::get(context, kRawStringType)
                                   : carrierType(context, scalar);
             if (isBooleanStringCarrier(value.getType())) {
-                const auto helper =
-                    tag == "string" ? "std::get<std::string>" : "std::get<ctnative::js_boolean_t>";
-                return callWithConstValueOperands(b, where, mlir::TypeRange{type},
+                const auto helper = tag == "string" ? "std::get<ctnative::js_string>"
+                                                    : "std::get<ctnative::js_boolean_t>";
+                return callWithConstValueOperands(b, where,
+                                                  mlir::TypeRange{carrierType(context, scalar)},
                                                   b.getStringAttr(helper), mlir::ValueRange{value})
                     .getResult(0);
             }

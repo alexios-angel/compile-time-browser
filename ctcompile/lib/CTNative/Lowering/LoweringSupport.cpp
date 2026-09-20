@@ -56,6 +56,9 @@ carrier carrierOf(mlir::Type type) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
+        if (carrierOf(opt.getElementType()) == carrier::booleanString) {
+            return carrier::nullableBooleanString;
+        }
         if (carrierOf(opt.getElementType()) == carrier::numberString) {
             return carrier::nullableNumberString;
         }
@@ -127,6 +130,20 @@ bool isScalarCarrier(carrier value) {
     return value == carrier::number || value == carrier::boolean || value == carrier::nullable;
 }
 
+bool isStringUnionCarrier(carrier value) {
+    switch (value) {
+    case carrier::booleanString:
+    case carrier::nullableBooleanString:
+    case carrier::numberString:
+    case carrier::nullableNumberString: return true;
+    default: return false;
+    }
+}
+
+bool isPrimitiveCarrier(carrier value) {
+    return isScalarCarrier(value) || isStringCarrier(value) || isStringUnionCarrier(value);
+}
+
 bool isNullableCarrier(mlir::Type type) {
     if (!type) { return false; }
     if (auto value = llvm::dyn_cast<ec::LValueType>(type)) { type = value.getValueType(); }
@@ -166,6 +183,14 @@ bool isNumberStringCarrier(mlir::Type type) {
     return opaque && opaque.getValue() == kNumberStringType;
 }
 
+bool isNullableBooleanStringCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNullableBooleanStringType;
+}
+
 bool isNullableNumberStringCarrier(mlir::Type type) {
     if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
         type = value.getValueType();
@@ -193,7 +218,7 @@ llvm::StringRef mixedMapSpelling(mlir::Type type) {
         string |= carrierOf(alternative) == carrier::string;
     }
     if (boolean && number) { return "std::variant<ctnative::js_boolean_t, double>"; }
-    if (boolean && string) { return kBooleanStringType; }
+    if (boolean && string) { return kBooleanStringMapType; }
     return {};
 }
 
@@ -212,12 +237,12 @@ llvm::StringRef mixedMapKeySpelling(mlir::Type type) {
 }
 
 // Closed owning storage for nullable String, optionally composed with Bool.
-// This does not add a general optional-union scalar/signature or snapshot.
+// Map storage remains independent of scalar/signature and snapshot carriers.
 llvm::StringRef nullableMapSpelling(mlir::Type type) {
     auto optional = llvm::dyn_cast<OptType>(type);
     if (!optional) { return {}; }
     if (carrierOf(optional.getElementType()) == carrier::string) { return kNullableStringType; }
-    if (mixedMapSpelling(optional.getElementType()) == kBooleanStringType) {
+    if (mixedMapSpelling(optional.getElementType()) == kBooleanStringMapType) {
         return "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>";
     }
     return {};
@@ -304,6 +329,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::json: return ec::OpaqueType::get(c, kDOMJSONType);
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
     case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);
+    case carrier::nullableBooleanString: return ec::OpaqueType::get(c, kNullableBooleanStringType);
     case carrier::numberString: return ec::OpaqueType::get(c, kNumberStringType);
     case carrier::nullableNumberString: return ec::OpaqueType::get(c, kNullableNumberStringType);
     case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);

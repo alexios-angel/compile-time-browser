@@ -375,7 +375,15 @@ def main():
                     "mixed-nullable-temporary-refused",
                     "mixed-nullable-payload-temporary-refused",
                 }:
-                    assert "a value of type !ctnative.opt<!ctnative.variant<" in result, name
+                    # The scalar union now has a carrier; Map storage still
+                    # requires an independently proved alternative.
+                    boundary_kind = (
+                        "write" if name == "mixed-nullable-payload-temporary-refused" else "key"
+                    )
+                    assert (
+                        f"nullable native Map {boundary_kind} needs a proved String, absent or "
+                        "Boolean alternative with an owning carrier" in result
+                    ), name
                 elif name == "mixed-nullable-branch-callee-refused":
                     assert (
                         "native Map instance escapes or is mutated through `ctjs.call`" in result

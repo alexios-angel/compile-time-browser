@@ -51,6 +51,7 @@ enum class carrier {
     string,
     nullableString,
     booleanString,
+    nullableBooleanString,
     numberString,
     nullableNumberString,
     map,
@@ -71,7 +72,10 @@ inline constexpr llvm::StringLiteral kStringType = "ctnative::js_string";
 inline constexpr llvm::StringLiteral kRawStringType = "std::string";
 inline constexpr llvm::StringLiteral kNumberType = "ctnative::js_num";
 inline constexpr llvm::StringLiteral kBooleanType = "ctnative::js_boolean_t";
-inline constexpr llvm::StringLiteral kBooleanStringType =
+inline constexpr llvm::StringLiteral kBooleanStringType = "ctnative::boolean_string";
+inline constexpr llvm::StringLiteral kNullableBooleanStringType =
+    "ctnative::nullable_boolean_string";
+inline constexpr llvm::StringLiteral kBooleanStringMapType =
     "std::variant<ctnative::js_boolean_t, std::string>";
 inline constexpr llvm::StringLiteral kNumberStringType = "ctnative::number_string";
 inline constexpr llvm::StringLiteral kNullableNumberStringType = "ctnative::nullable_number_string";
@@ -83,12 +87,15 @@ inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrow
 // The lattice's json rung, carried by the shared Core parser's owning tree.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
 bool isScalarCarrier(carrier value);
+bool isStringUnionCarrier(carrier value);
+bool isPrimitiveCarrier(carrier value);
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
 bool isNullableCarrier(mlir::Type type);
 bool isNumberCarrier(mlir::Type type);
 bool isBooleanCarrier(mlir::Type type);
 bool isNullableStringCarrier(mlir::Type type);
 bool isBooleanStringCarrier(mlir::Type type);
+bool isNullableBooleanStringCarrier(mlir::Type type);
 bool isNumberStringCarrier(mlir::Type type);
 bool isNullableNumberStringCarrier(mlir::Type type);
 bool isStringCarrier(carrier value);
