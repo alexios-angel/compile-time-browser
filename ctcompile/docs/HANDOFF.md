@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited getters and signed remainder bounds, 2026-09-20 UTC
+
+**ddf01d98** preserves exact inherited static getter environments, including
+transitive dependencies, constructor reads, shared methods and direct/static
+reads. Four unchanged sources and seven new positives add **88 native
+executions**. Getter overrides and changed dependencies remain refused.
+**d121e11b** proves bounded signed remainder indices while retaining exact
+replay, valid final indices and complete reload checks.
+
+Two disjoint focused class selections total **40 observations / 144 main native
+executions / 80 unprepared and 49 preparation refusals**. Exact host and arrays
+CTests each pass **1/1**; lowering lit **3/3** and escape lit **3/3** pass.
+Remainder oracle: **99 sites / 18 sound / 18 of 23 confined precision**, zero
+violations, partial, pending or unclaimed sites. All eleven tested hashes match.
+Required formatting retains 20 diagnostics in six unchanged files; changed
+files pass. Original class source files 01–24 remain unchanged.
+
+**Next:** original B/Data+B still refuse receiver observation at registration.
+First prove typed record retention after completed construction in a local Map,
+including saved reads across overwrite/delete and enclosing owner lifetime.
+Existing Map runtime templates can carry record pointers; source/closure proofs,
+Map family/origin evidence and shape inference still need to connect. Constructor
+publication needs a separate exception/reentry proof before the original nested
+Data Maps can retain `this`. Preserve conflict checks, `e.set`, `e.remove`,
+`P.off` and configuration/disposal bodies. Full Bootstrap and the application
+driver remain unfinished. No browser/runtime-oracle edits or push. Full suites,
+whole class lit, DOM replay and broad matrices were skipped.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-inherited-getters.md).
+
 ## Optional scalar Map keys and remainder indices, 2026-09-20 UTC
 
 **7b456d79** preserves optional Number/Boolean/Null/Undefined Map keys with the
