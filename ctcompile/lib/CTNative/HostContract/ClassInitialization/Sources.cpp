@@ -558,6 +558,19 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                           mlir::arith::ConstantOp, mlir::ub::PoisonOp, mlir::scf::YieldOp>(op)) {
                 continue;
             }
+            if (llvm::isa<ctjs::LoadGlobalOp, ctjs::LoadUpvalueOp, ctjs::CellGetOp,
+                          ctjs::GetPropertyOp, ctjs::CallOp, ctjs::CallDirectOp>(op)) {
+                // Retain helper computations for the complete callable/body
+                // census. They cannot observe a partially initialized receiver,
+                // including through a method that snapshots its current fields.
+                for (mlir::Value operand : op.getOperands()) {
+                    if (!step()) { return false; }
+                    if (sourceValue(operand) == self) {
+                        return refuse("class own-key snapshot constructor observes its receiver");
+                    }
+                }
+                continue;
+            }
             auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
             auto key = write ? ctjs::constantKey(write.getKey()) : llvm::StringRef{};
             if (!write || write.getObject() != self || !ctjs::ordinaryKey(key) ||
