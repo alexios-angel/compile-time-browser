@@ -22,6 +22,70 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Element query snapshots and indexed DOM loops, 2026-09-20 UTC
+
+**c5bcd3de** adds `Element.querySelectorAll(String)` through public
+`style::engine::select(..., first_only=false)`. Generated code uses a local
+`std::vector<ctbrowser::element_ref>`; the document owns the nodes. The existing
+Style core supplies ordering, deduplication, root/scope/shadow behavior and
+detached-subtree queries. Selected elements retain the input's live Style engine.
+No browser code or runtime-oracle semantics changed, and native binaries link
+DOM/Core/Style without Script/AOT.
+
+Exact zero/+1 indices guarded by the same snapshot's length now work in both
+structured loop forms, including ordinary `for` bodies in the after region.
+Attribute/class mutations preserve saved membership. Contracts with dataset
+parameters retain the conservative backedge alias refusal. Snapshot writes,
+unsafe indices, escaping handles/callbacks and unproved methods still refuse.
+Raw-IR tests cover permuted state tuples, false/before edges, bad latches and
+every insufficient work budget; partial proofs publish no index/element evidence.
+
+Measured on the devbox: **16 native executions / 44 refusals**, across both
+providers, optimization policies, printing layouts and GCC/Clang. Final
+`native-dom-query-all.test` passed **1/1** (39.33s). Initial runtime/host CTests
+passed **2/2** (0.53s); after the loop fix, host CTest passed **1/1** (0.59s).
+Existing `native-dom-query.test` and `native-dom-dataset.test` passed; dataset
+was repeated after the loop change. All **16** final code/test hashes match.
+
+Exact focused commands, under `/tmp/ctbrowser-devbox-build.lock` with SSH/helper
+stdin redirected from `/dev/null`:
+
+```sh
+# Local helper:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract ctcompile-test-native-runtime ctcompile-test-native-reference
+# On devbox, from projects/compile-time-browser:
+ctest --test-dir build --output-on-failure --no-tests=error -R '^(ctcompile_host_contract|ctcompile_native_runtime)$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-(query-all|query|dataset)[.]test$'
+# After the loop proof fix, local helper then devbox checks:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_host_contract$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-(query-all|dataset)[.]test$'
+# Test-fixture correction: same three-target helper, then query-all alone;
+# final correction used these commands:
+tools/remote-build.sh ctjs-opt ctjs-translate
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-query-all[.]test$'
+```
+
+The first source gate exposed the missing ordinary-loop proof, now fixed.
+Another control incorrectly expected an immediate local helper to refuse;
+it now tests an escaping closure. Adding that helper to the branch-local
+positive snapshot hit the existing local-identity boundary, so the positive
+retains its direct length return. No helper proof was widened. Required
+`tools/format.sh --check` retains **20** baseline diagnostics in six untouched
+files; changed C++/Python, syntax and whitespace checks pass. Full CTest,
+compiler lit, broad corpus/matrix, WPT/test262 and sanitizers were skipped.
+
+**Next exact browser boundary:** Bootstrap `bootstrap.bundle.js:341–342` uses
+`Element.prototype.querySelectorAll.call(e, t)` and `querySelector.call(e, t)`.
+Prove the original Element/prototype method and Function.call identities for
+an explicit element and String, then reuse the existing selector helpers.
+Its default `document.documentElement` receiver and NodeList spread/concat
+need separate contracts; String-array iteration does not prove NodeList
+iteration. Event callbacks, parent traversal and sanitizer-owned DOMParser
+documents remain further boundaries. Original B/Data+B helper/inherited
+constructor publication, nested Map lifetimes, full Bootstrap initialization
+and the native application driver are unfinished. No push.
+
 ## LLVM command lines and lookup tables, 2026-09-20 UTC
 
 **a21ee995** moves `ctcompile` to a generated `llvm::opt::GenericOptTable` and

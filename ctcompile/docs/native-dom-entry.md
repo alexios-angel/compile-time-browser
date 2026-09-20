@@ -7,9 +7,9 @@ contract for one synchronous function. Its explicit parameters are borrowed
 the call. Identity compares both fields, including across documents; detaching
 a node does not destroy it.
 
-Entries using `matches`, `closest` or `querySelector` also take the caller's live
-`ctbrowser::style::engine &` for each element parameter used as a selector
-receiver, appended after the element parameters in source parameter order.
+Entries using `matches`, `closest`, `querySelector` or `querySelectorAll` also take
+the caller's live `ctbrowser::style::engine &` for each element parameter used as
+a selector receiver, appended after the element parameters in source parameter order.
 For example, `closest(element, expected)` takes `(element_ref, element_ref,
 style::engine &)`, and two queried elements take two engine references. The
 caller supplies the engine associated with each document, so hover/focus state
@@ -227,9 +227,9 @@ including same-value writes, but leave an absent attribute absent. Membership
 does not write and preserves the current browser behavior for empty or
 whitespace-containing tokens: false. Add/remove invalidate saved dataset
 presence proofs, including calls with no arguments; contains preserves them.
-`contains(otherElement)`, `matches(selector)`, `closest(selector)` and
-`querySelector(selector)` also use proved element receivers. Selectors are
-source strings, parsed by the
+`contains(otherElement)`, `matches(selector)`, `closest(selector)`,
+`querySelector(selector)` and `querySelectorAll(selector)` also use proved element
+receivers. Selectors are source strings, parsed by the
 existing Style parser at the source call; invalid syntax throws
 `std::invalid_argument` after any preceding source effects. `contains` preserves
 document identity before calling `read_txn::is_ancestor_of`. Selector calls use
@@ -237,7 +237,38 @@ document identity before calling `read_txn::is_ancestor_of`. Selector calls use
 as the bindings. Element `querySelector` returns the first descendant in current
 tree order, excludes the receiver itself, binds `:scope` to that receiver and
 preserves the platform's shadow boundaries. It also works in detached subtrees.
-Document receivers and `querySelectorAll` remain outside this contract.
+Document receivers remain outside this contract.
+
+`querySelectorAll(String)` calls public `engine::select` with `first_only=false`
+and returns a local `std::vector<ctbrowser::element_ref>`. The vector owns its
+slots; the caller or session document owns the nodes. The shared selector engine
+provides tree order, deduplication, root exclusion, `:scope`, detached-subtree
+queries and shadow boundaries. Attribute/class changes leave saved membership
+unchanged; a later query sees current membership.
+
+Snapshot `.length` and exact indexed loops are supported:
+
+```javascript
+const buttons = element.querySelectorAll('.selected');
+for (let i = 0; i < buttons.length; i++) {
+  buttons[i].classList.remove('selected');
+}
+return buttons.length;
+```
+
+The index must start at zero, advance by one on every backedge, and be guarded
+by `index < snapshot.length` for that same snapshot. Both structured loop forms
+are proved: a guarded body before `scf.condition`, or an after body entered on
+its true edge. Indexed elements retain their document and live Style engine,
+so existing DOM/selector operations are ordinary public C++ calls. Attribute
+and class writes are allowed when the contract has no dataset parameters;
+dataset-enabled loops still need a separate backedge alias proof. No supported
+operation can reclaim a selected node or reenter script.
+
+Snapshot writes, out-of-bounds or unproved indices, identity observation,
+borrowed returns, retained callbacks and NodeList `forEach`/iterator protocols
+remain refused. The original String-array iterator proof does not authorize
+NodeList iteration.
 
 A `closest` or `querySelector` result is a local borrowed identity, with a
 canonical empty `element_ref{}` for no match. Strict equality compares it with another result or
@@ -253,9 +284,10 @@ if (button) {
 }
 ```
 
-Guarded results may also be passed to `contains` or call `matches`, `closest`
-and `querySelector`. Selector chains retain the original input's live Style
-engine; each new `closest` or `querySelector` result requires its own guard.
+Guarded results may also be passed to `contains` or call `matches`, `closest`,
+`querySelector` and `querySelectorAll`. Selector chains retain the original input's
+live Style engine; each new `closest` or `querySelector` result requires its
+own guard.
 The absent branch, another result and uses after the guard acquire no
 dereference permission. Borrowed returns, property storage,
 branch/loop transport, dataset access on derived elements and explicit source
