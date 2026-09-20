@@ -5,6 +5,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/TypeID.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Error.h"
 
 #include <optional>
@@ -243,7 +244,7 @@ private:
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;
-    std::vector<std::pair<ctjs::GetPropertyOp, mlir::Value>> datasetValues;
+    llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> datasetValues;
     std::vector<ctjs::CallOp> stringPrefixRegExps;
     std::vector<mlir::BlockArgument> datasetElements;
     std::vector<ctjs::LoadGlobalOp> numberIntrinsics;
@@ -254,7 +255,7 @@ private:
     std::vector<HostDOMStringRefinement> refinements;
     std::vector<mlir::Value> strings;
     std::vector<std::pair<mlir::Value, bool>> booleans;
-    std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> methods;
+    llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> methods;
     std::vector<HostDOMCall> calls;
     std::vector<ctjs::CreateObjectOp> jsonObjects;
     std::vector<ctjs::CopyPropsOp> jsonCopies;

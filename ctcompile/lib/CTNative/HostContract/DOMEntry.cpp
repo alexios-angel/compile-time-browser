@@ -148,12 +148,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     using Kind = dom_entry_detail::Kind;
     std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
         provedStringVectorIndices;
-    std::vector<std::pair<ctjs::GetPropertyOp, mlir::Value>> provedDatasetValues;
+    llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
         provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
     std::vector<ctjs::CallOp> provedPrefixRegExps;
     std::vector<ctjs::InvokeOp> provedInvocations;
-    std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> provedMethods;
+    llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> provedMethods;
     std::vector<HostDOMCall> provedCalls;
     std::vector<ctjs::CreateObjectOp> provedJSONObjects;
     std::vector<ctjs::CopyPropsOp> provedJSONCopies;
@@ -456,10 +456,7 @@ bool DOMEntryAnalysis::isStringVectorIndex(ctjs::GetPropertyOp read) const {
 }
 
 mlir::Value DOMEntryAnalysis::datasetValueElement(ctjs::GetPropertyOp read) const {
-    for (const auto & [candidate, element] : datasetValues) {
-        if (candidate == read) { return element; }
-    }
-    return {};
+    return datasetValues.lookup(read);
 }
 
 bool DOMEntryAnalysis::isStringPrefixRegExp(ctjs::CallOp call) const {
@@ -481,10 +478,9 @@ bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {
 }
 
 std::optional<HostDOMMethod> DOMEntryAnalysis::method(ctjs::GetPropertyOp read) const {
-    for (const auto & [candidate, kind] : methods) {
-        if (candidate == read) { return kind; }
-    }
-    return {};
+    const auto found = methods.find(read);
+    if (found == methods.end()) { return {}; }
+    return found->second;
 }
 
 const HostDOMCall * DOMEntryAnalysis::call(ctjs::CallOp operation) const {

@@ -112,7 +112,7 @@ struct Body {
     std::vector<ctjs::GetPropertyOp> & provedDatasets;
     std::vector<ctjs::GetPropertyOp> & provedStringVectorLengths;
     std::vector<ctjs::GetPropertyOp> & provedStringVectorIndices;
-    std::vector<std::pair<ctjs::GetPropertyOp, mlir::Value>> & provedDatasetValues;
+    llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> & provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> & provedNumberIntrinsics;
     std::vector<ctjs::LoadGlobalOp> & provedURIIntrinsics;
     std::vector<ctjs::LoadGlobalOp> & provedJSONIntrinsics;
@@ -120,7 +120,7 @@ struct Body {
     std::vector<ctjs::LoadGlobalOp> & provedRegExpIntrinsics;
     std::vector<ctjs::CallOp> & provedPrefixRegExps;
     std::vector<ctjs::InvokeOp> & provedInvocations;
-    std::vector<std::pair<ctjs::GetPropertyOp, HostDOMMethod>> & provedMethods;
+    llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> & provedMethods;
     std::vector<HostDOMCall> & provedCalls;
     std::vector<ctjs::CreateObjectOp> & provedJSONObjects;
     std::vector<ctjs::CopyPropsOp> & provedJSONCopies;

@@ -5,6 +5,13 @@
 namespace ctcompile::ctnative::dom_entry_detail {
 
 namespace {
+const llvm::StringMap<std::pair<Kind, HostDOMMethod>> stringMethods{
+    {"startsWith", {Kind::startsWith, HostDOMMethod::startsWith}},
+    {"replace", {Kind::replacePrefix, HostDOMMethod::removeStringPrefix}},
+    {"charAt", {Kind::charAt, HostDOMMethod::stringCharAt}},
+    {"slice", {Kind::slice, HostDOMMethod::stringSlice}},
+    {"toLowerCase", {Kind::lowercaseUnit, HostDOMMethod::stringLowercaseUnit}},
+};
 const llvm::StringMap<std::pair<Kind, HostDOMMethod>> elementMethods{
     {"getAttribute", {Kind::getAttribute, HostDOMMethod::getAttribute}},
     {"setAttribute", {Kind::attribute, HostDOMMethod::setAttribute}},
@@ -100,32 +107,22 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (suppliedArray && hasKind(read.getObject(), Kind::stringVector) && key == "filter") {
             values[read.getResult()] = Kind::filterStrings;
-            provedMethods.emplace_back(read, HostDOMMethod::filterStrings);
+            provedMethods.try_emplace(read, HostDOMMethod::filterStrings);
             return true;
         }
-        if (suppliedString && hasKind(read.getObject(), Kind::string) && key == "startsWith") {
-            values[read.getResult()] = Kind::startsWith;
-            provedMethods.emplace_back(read, HostDOMMethod::startsWith);
-            return true;
-        }
-        if (suppliedString && suppliedRegExp && hasKind(read.getObject(), Kind::string) &&
-            key == "replace") {
-            values[read.getResult()] = Kind::replacePrefix;
-            provedMethods.emplace_back(read, HostDOMMethod::removeStringPrefix);
-            return true;
-        }
-        if (suppliedString && hasKind(read.getObject(), Kind::string) &&
-            (key == "charAt" || key == "slice")) {
-            values[read.getResult()] = key == "charAt" ? Kind::charAt : Kind::slice;
-            provedMethods.emplace_back(read, key == "charAt" ? HostDOMMethod::stringCharAt
-                                                             : HostDOMMethod::stringSlice);
-            return true;
-        }
-        if (suppliedString && hasKind(read.getObject(), Kind::string) && key == "toLowerCase" &&
-            firstUnits.contains(read.getObject())) {
-            values[read.getResult()] = Kind::lowercaseUnit;
-            provedMethods.emplace_back(read, HostDOMMethod::stringLowercaseUnit);
-            return true;
+        // Bound hashing by the longest supported String member.
+        if (suppliedString && hasKind(read.getObject(), Kind::string) && key.size() <= 11) {
+            if (auto method = stringMethods.find(key); method != stringMethods.end()) {
+                const auto [kind, hostMethod] = method->second;
+                const bool supported =
+                    (kind != Kind::replacePrefix || suppliedRegExp) &&
+                    (kind != Kind::lowercaseUnit || firstUnits.contains(read.getObject()));
+                if (supported) {
+                    values[read.getResult()] = kind;
+                    provedMethods.try_emplace(read, hostMethod);
+                    return true;
+                }
+            }
         }
         if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
             llvm::is_contained(provedDatasetElements, read.getObject())) {
@@ -148,24 +145,24 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                           "element";
                 return false;
             }
-            provedDatasetValues.emplace_back(read, dataset.getObject());
+            provedDatasetValues.try_emplace(read, dataset.getObject());
             values[read.getResult()] = Kind::string;
             provedStrings.push_back(read.getResult());
             return true;
         }
         if (hasKind(read.getObject(), Kind::objectIntrinsic) && key == "keys") {
             values[read.getResult()] = Kind::objectKeys;
-            provedMethods.emplace_back(read, HostDOMMethod::datasetKeys);
+            provedMethods.try_emplace(read, HostDOMMethod::datasetKeys);
             return true;
         }
         if (hasKind(read.getObject(), Kind::jsonIntrinsic) && key == "parse") {
             values[read.getResult()] = Kind::jsonParse;
-            provedMethods.emplace_back(read, HostDOMMethod::jsonParse);
+            provedMethods.try_emplace(read, HostDOMMethod::jsonParse);
             return true;
         }
         if (suppliedNumber && hasKind(read.getObject(), Kind::number) && key == "toString") {
             values[read.getResult()] = Kind::numberToString;
-            provedMethods.emplace_back(read, HostDOMMethod::numberToString);
+            provedMethods.try_emplace(read, HostDOMMethod::numberToString);
             return true;
         }
         if (hasKind(read.getObject(), Kind::element) && key == "classList") {
@@ -179,7 +176,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (auto method = elementMethods.find(key); method != elementMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
                 values[read.getResult()] = kind;
-                provedMethods.emplace_back(read, hostMethod);
+                provedMethods.try_emplace(read, hostMethod);
                 return true;
             }
         }
@@ -187,7 +184,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (auto method = tokenMethods.find(key); method != tokenMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
                 values[read.getResult()] = kind;
-                provedMethods.emplace_back(read, hostMethod);
+                provedMethods.try_emplace(read, hostMethod);
                 return true;
             }
         }
