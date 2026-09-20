@@ -1,4 +1,5 @@
 #include "Proof.hpp"
+#include "llvm/ADT/StringMap.h"
 
 #include <bit>
 #include <cmath>
@@ -169,10 +170,10 @@ bool classInitialization::proveMaps() {
             const auto key = ctjs::constantKey(read.getKey());
             mapOperations.insert(read);
             if (key == "size") { continue; }
-            const unsigned arity = key == "set"                                      ? 2U
-                                   : key == "get" || key == "has" || key == "delete" ? 1U
-                                   : key == "clear"                                  ? 0U
-                                                                                     : 99U;
+            static const llvm::StringMap<unsigned> arities{
+                {"set", 2}, {"get", 1}, {"has", 1}, {"delete", 1}, {"clear", 0}};
+            const auto method = key.size() <= 6 ? arities.find(key) : arities.end();
+            const unsigned arity = method != arities.end() ? method->second : 99U;
             if (arity == 99U) { return refuse("class captured Map has an unproved member"); }
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return false; }

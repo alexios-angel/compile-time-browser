@@ -1,6 +1,7 @@
 // ClosureLifting/Methods.cpp - native lowering implementation.
 #include "ClosureLifter.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -81,7 +82,9 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
         if (!method || mapUse.getOperandNumber() != 0) { return false; }
         auto key = ctjs::constantKey(method.getKey());
         if (key == "size") { continue; }
-        unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
+        static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}};
+        const auto foundArity = key.size() <= 5 ? arities.find(key) : arities.end();
+        const unsigned arity = foundArity != arities.end() ? foundArity->second : 1U;
         if (key != "set" && key != "get" && key != "has" && key != "delete" && key != "clear") {
             return false;
         }

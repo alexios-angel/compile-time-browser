@@ -5,6 +5,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::ctnative {
 void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContract & contract,
@@ -322,8 +323,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 return;
             }
             const auto action = ctjs::constantKey(read.getKey());
-            const unsigned arity =
-                action == "set" ? 2u : (action == "clear" || action == "keys" ? 0u : 1u);
+            static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}, {"keys", 0}};
+            const auto method = action.size() <= 5 ? arities.find(action) : arities.end();
+            const unsigned arity = method != arities.end() ? method->second : 1U;
             if ((action != "set" && action != "get" && action != "has" && action != "delete" &&
                  action != "clear" && action != "keys") ||
                 call.getArgs().size() != arity) {

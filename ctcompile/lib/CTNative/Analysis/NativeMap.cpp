@@ -12,6 +12,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <functional>
@@ -377,10 +378,11 @@ std::string collect(plan & out, closedValueFlow & graph,
                 out.sizes.push_back(get);
                 continue;
             }
-            const unsigned arity = key == "set"                                         ? 2U
-                                   : key == "get" || key == "has" || key == "delete"    ? 1U
-                                   : key == "clear" || key == "keys" || key == "values" ? 0U
-                                                                                        : 99U;
+            static const llvm::StringMap<unsigned> arities{{"set", 2},    {"get", 1},   {"has", 1},
+                                                           {"delete", 1}, {"clear", 0}, {"keys", 0},
+                                                           {"values", 0}};
+            const auto method = key.size() <= 6 ? arities.find(key) : arities.end();
+            const unsigned arity = method != arities.end() ? method->second : 99U;
             if (arity == 99U) {
                 return "native Map property is not a supported constant method or size";
             }
