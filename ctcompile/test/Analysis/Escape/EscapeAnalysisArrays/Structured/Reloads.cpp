@@ -144,6 +144,56 @@ void StructuredCases::reloads() {
                    "%divisor = ctjs.get_property %base[%one]"));
     reject("structured remainder wraps cannot use narrow quotient-band bounds",
            replace(remainderBand, "add %i, %four", "add %i, %two"));
+    const auto remainderWrapReload =
+        replace(replace(replace(replace(replace(remainder, "  %a =",
+                                                "  %four = ctjs.constant "
+                                                "#ctjs.number<4616189618054758400> "
+                                                "{storage_test_id = \"four\"}\n  %a ="),
+                                        "[%x]", "[%x, %four, %y, %zero, %zero]"),
+                                "  ctjs.append %y to %a\n", ""),
+                        "add %i, %one", "add %i, %two"),
+                "%position = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%one]\n"
+                "    %position = ctjs.binary mod %i, %divisor");
+    for (const auto & body :
+         {remainderWrapReload,
+          replace(remainderWrapReload, "%position = ctjs.binary mod %i, %divisor",
+                  "%negative = ctjs.unary neg %i\n"
+                  "    %part = ctjs.binary mod %negative, %divisor\n"
+                  "    %position = ctjs.unary neg %part")}) {
+        rows.push_back({.what = "structured remainder wraps retain invariant gap reloads",
+                        .body = body,
+                        .arrays = "a:[zero,four,zero,zero,zero]",
+                        .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; "
+                                 "a[1]=four; a[4]=zero",
+                        .exit = "a -> {a}"});
+    }
+    rows.push_back({.what = "structured wrap congruences preserve positive and negative remainders",
+                    .body = replace(replace(remainderWrapReload, "[%x, %four, %y, %zero, %zero]",
+                                            "[%x, %four, %y, %zero, %x, %zero, %zero]"),
+                                    "%position = ctjs.binary mod %i, %divisor",
+                                    "%signed = ctjs.binary sub %i, %two\n"
+                                    "    %part = ctjs.binary mod %signed, %divisor\n"
+                                    "    %position = ctjs.binary add %part, %two"),
+                    .arrays = "a:[zero,four,zero,zero,zero,zero,zero]",
+                    .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero; "
+                             "a[1]=four; a[6]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured remainder congruences retain unvisited gap identities",
+                    .body = replace(remainderWrapReload, "[%x, %four, %y, %zero, %zero]",
+                                    "[%x, %four, %y, %y, %zero]"),
+                    .arrays = "a:[zero,four,zero,y,zero]",
+                    .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; "
+                             "a[1]=four; a[4]=zero",
+                    .exit = "a -> {a,y}"});
+    reject("later structured stores invalidate a divisor in a remainder congruence gap",
+           replace(remainderWrapReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    reject("structured remainder congruences reject a visited divisor residue",
+           replace(replace(remainderWrapReload, "[%x, %four, %y, %zero, %zero]",
+                           "[%x, %zero, %four, %zero, %zero]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%two]"));
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i"}) {
         rows.push_back({.what = "structured masked writes release exactly visited children",

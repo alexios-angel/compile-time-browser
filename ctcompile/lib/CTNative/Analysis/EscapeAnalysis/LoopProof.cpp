@@ -1,5 +1,6 @@
 #include "LoopProof.hpp"
 #include <bit>
+#include <numeric>
 
 namespace ctcompile::ctnative::escape_detail {
 
@@ -338,17 +339,28 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // already bounded by 2^32-1, including across zero; no signed abs.
             const auto negative =
                 std::min(range->first.negativeIntegerNumber.value_or(0), *divisor - 1);
-            // ponytail: a dense enclosure across remainder wraps; sparse residue
-            // facts could admit more disjoint reloads. Replay keeps exact writes.
-            IndexRange result{{operand, ContentsKind::NonBigInt, 0},
-                              {operand, ContentsKind::NonBigInt,
-                               std::min(range->last.integerNumber.value_or(0), *divisor - 1)},
-                              1};
-            if (negative != 0) {
-                result.first.integerNumber.reset();
-                result.first.negativeIntegerNumber = negative;
-            }
-            return result;
+            const auto positive = std::min(range->last.integerNumber.value_or(0), *divisor - 1);
+            // Subtracting any multiple of the divisor preserves the dividend's
+            // congruence modulo gcd(stride, divisor), including across zero.
+            const auto period = static_cast<std::int64_t>(std::gcd(range->stride, *divisor));
+            const auto phase =
+                range->first.integerNumber
+                    ? static_cast<std::int64_t>(*range->first.integerNumber)
+                    : -static_cast<std::int64_t>(*range->first.negativeIntegerNumber);
+            auto first = -static_cast<std::int64_t>(negative);
+            auto last = static_cast<std::int64_t>(positive);
+            first += ((phase - first) % period + period) % period;
+            last -= ((last - phase) % period + period) % period;
+            const auto endpoint = [&](std::int64_t value) {
+                ContentsValue result{operand, ContentsKind::NonBigInt};
+                if (value < 0) {
+                    result.negativeIntegerNumber = static_cast<std::size_t>(-value);
+                } else {
+                    result.integerNumber = static_cast<std::size_t>(value);
+                }
+                return result;
+            };
+            return IndexRange{endpoint(first), endpoint(last), static_cast<std::size_t>(period)};
         }
         if (bitAnd || bitOr || bitXor) {
             if (!spend()) {

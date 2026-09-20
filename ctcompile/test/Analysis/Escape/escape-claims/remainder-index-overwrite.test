@@ -49,6 +49,20 @@
 // CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function wrapped() {
@@ -297,6 +311,79 @@ function centralCrossingBand() {
     for (var i = 0; i < a.length; i++) a[(i - 1) % 8 + 1] = 0;
     return a;
 }
+function wrapStrideReload() {
+    var child = {}, a = [child, 4, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i % a[1]] = 0;
+    return a;
+}
+function wrapOddReload() {
+    var child = {}, a = [4, child, 0, child, 0, 0];
+    for (var i = 1; i < a.length; i += 2) a[i % a[0]] = 0;
+    return a;
+}
+function negativeWrapReload() {
+    var child = {}, a = [child, 4, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[-((-i) % a[1])] = 0;
+    return a;
+}
+function negativeOddWrapReload() {
+    var child = {}, a = [-4, child, 0, child, 0, 0];
+    for (var i = 1; i < a.length; i += 2) a[-((-i) % a[0])] = 0;
+    return a;
+}
+function crossingWrapReload() {
+    var child = {}, a = [child, 4, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 2) % a[1] + 2] = 0;
+    return a;
+}
+function dividedWrap() {
+    var child = {}, a = [child, child, child, 6, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2) % a[3]) / 2] = 0;
+    return a;
+}
+function constantResidueReload() {
+    var child = {}, a = [child, 2, 0];
+    for (var i = 0; i < a.length; i += 2) a[i % a[1]] = 0;
+    return a;
+}
+function reducedStrideReload() {
+    var child = {}, a = [child, 4, child, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 6) a[i % a[1]] = 0;
+    return a;
+}
+function wrapSavedChild() {
+    var child = {}, a = [child, 4, child, 0, 0], saved = a[2];
+    for (var i = 0; i < a.length; i += 2) a[i % a[1]] = 0;
+    return saved;
+}
+function wrapRemainingGap() {
+    var child = {}, a = [child, 4, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i % a[1]] = 0;
+    return a;
+}
+function wrapOverlappingReload() {
+    var child = {}, a = [child, 0, 4, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i % a[2]] = 0;
+    return a;
+}
+function wrapLaterWrite() {
+    var child = {}, a = [child, 4, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i % a[1]] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function coprimeWrapReload() {
+    var child = {}, a = [child, 4, child, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i % a[1]] = 0;
+    return a;
+}
+function negativeWrapGap() {
+    var child = {}, a = [child, 4, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[-((-i) % a[1])] = 0;
+    return a;
+}
 wrapped(); noWrap(); composed(); offsetInput(); descendingInput(); reload(); savedDivisor();
 savedChild(); remainingGap(); zeroTrip(); zeroDivisor(); negativeDivisor(); fractionalDivisor();
 stringDivisor(); varyingDivisor(); negativeDividend(); overwrittenReload(); overlappingReload();
@@ -308,3 +395,7 @@ translatedBand(); negativeBand(); negativeDivisorBand(); centralBand(); descendi
 strideBandReload(); negativeStrideBandReload(); bandSavedChild(); bandRemainingGap();
 bandLaterWrite(); bandOverlappingReload(); bandWrapReload(); crossingQuotientBands();
 centralCrossingBand();
+wrapStrideReload(); wrapOddReload(); negativeWrapReload(); negativeOddWrapReload();
+crossingWrapReload(); dividedWrap(); constantResidueReload(); reducedStrideReload();
+wrapSavedChild(); wrapRemainingGap(); wrapOverlappingReload(); wrapLaterWrite();
+coprimeWrapReload(); negativeWrapGap();

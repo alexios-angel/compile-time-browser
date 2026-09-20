@@ -208,6 +208,69 @@ void InductionCases::overwritesAndTransport() {
                    "%divisor = ctjs.get_property %base[%one]"));
     reject("remainder wraps cannot borrow a nonzero band's narrow endpoint range",
            replace(remainderBand, "add %i, %four", "add %i, %two"));
+    const auto remainderWrapReload =
+        replace(replace(replace(replace(remainder, "  %a =",
+                                        "  %four = ctjs.constant #ctjs.number<4616189618054758400> "
+                                        "{storage_test_id = \"four\"}\n  %a ="),
+                                "[%one, %x]", "[%x, %four, %x, %zero, %zero]"),
+                        "add %i, %one", "add %i, %two"),
+                "%position = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%one]\n"
+                "  %position = ctjs.binary mod %i, %divisor");
+    for (const auto & body :
+         {remainderWrapReload,
+          replace(remainderWrapReload, "%position = ctjs.binary mod %i, %divisor",
+                  "%negative = ctjs.unary neg %i\n"
+                  "  %part = ctjs.binary mod %negative, %divisor\n"
+                  "  %position = ctjs.unary neg %part")}) {
+        run({.what = "remainder wraps preserve disjoint reloads in a congruence gap",
+             .body = body,
+             .arrays = "a:[zero,four,zero,zero,zero]",
+             .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto oddRemainderWrap = replace(
+        replace(replace(remainderWrapReload, "[%x, %four, %x, %zero, %zero]",
+                        "[%four, %x, %zero, %x, %zero, %zero]"),
+                "^header(%a, %zero", "^header(%a, %one"),
+        "%divisor = ctjs.get_property %base[%one]", "%divisor = ctjs.get_property %base[%zero]");
+    run({.what = "remainder wrap bounds align to a nonzero residue",
+         .body = oddRemainderWrap,
+         .arrays = "a:[four,zero,zero,zero,zero,zero]",
+         .reads = "a[0]=four; a[1]=zero; a[0]=four; a[3]=zero; a[0]=four; a[5]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "remainder congruences preserve both signs through zero",
+         .body = replace(replace(remainderWrapReload, "[%x, %four, %x, %zero, %zero]",
+                                 "[%x, %four, %x, %zero, %x, %zero, %zero]"),
+                         "%position = ctjs.binary mod %i, %divisor",
+                         "%signed = ctjs.binary sub %i, %two\n"
+                         "  %part = ctjs.binary mod %signed, %divisor\n"
+                         "  %position = ctjs.binary add %part, %two"),
+         .arrays = "a:[zero,four,zero,zero,zero,zero,zero]",
+         .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero; "
+                  "a[1]=four; a[6]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "remainder wrap replay retains an unvisited child in a congruence gap",
+         .body = replace(remainderWrapReload, "[%x, %four, %x, %zero, %zero]",
+                         "[%x, %four, %x, %x, %zero]"),
+         .arrays = "a:[zero,four,zero,x,zero]",
+         .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero",
+         .exit = "a -> {a,x}"});
+    reject("remainder congruence cannot hide a later divisor overwrite",
+           replace(remainderWrapReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("remainder congruence cannot reload at a possible visited residue",
+           replace(replace(remainderWrapReload, "[%x, %four, %x, %zero, %zero]",
+                           "[%x, %zero, %four, %zero, %zero]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%two]"));
+    reject("coprime strides cannot preserve the original sparse lattice after wrapping",
+           replace(replace(remainderWrapReload, "[%x, %four, %x, %zero, %zero]",
+                           "[%x, %four, %x, %zero, %zero, %zero, %zero]"),
+                   "add %i, %two", "add %i, %three"));
     run({.what = "a remainder band preserves children saved before its exact overwrites",
          .body = replace(replace(remainderBand, "  cf.br ^header(%a,",
                                  "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
