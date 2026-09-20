@@ -1,9 +1,13 @@
 # Native JavaScript types and prototype interfaces
 
-**Status: planned, 2026-09-20.** This is the user's revised direction for the
-native C++ interface. It supersedes raw-carrier prescriptions in master-plan
-part 24 where they conflict. Existing measurements describe the implementation
-that produced them; this document does not claim these new classes are shipped.
+**Status: in progress, 2026-09-20.** `Element.prototype` composition is implemented
+using the existing four selector method objects. Distinct `undefined_t` and
+`js_null_t` tokens construct the existing optional scalar carrier; its ABI is
+unchanged. The other primitive classes, Object/Array prototypes and document
+views remain planned. This is the user's revised direction for the native C++
+interface and supersedes conflicting
+raw-carrier prescriptions in master-plan part 24. Historical measurements retain
+their original scope.
 
 ## The request
 
@@ -123,8 +127,8 @@ auto own = ctnative::Object.prototype.hasOwnProperty.call(
     options, ctnative::js_string<char>{"enabled"});
 ```
 
-The first additive implementation can reuse today's four stateless selector
-method types as members of `Element.prototype`, retaining the current explicit
+The first implemented step reuses the four stateless selector method
+types as members of `Element.prototype`, retaining the explicit
 Style argument: `Element.prototype.querySelector.call(element, styles, selector)`.
 Once the typed element/document view carries a proved Style association, that
 argument is supplied by the receiver. Both spellings call the same public core.
@@ -171,7 +175,10 @@ nullability and session ownership still require the documented host proof.
 The current entry header is `include/ctcompile/CTNative/Runtime/ctnative.hpp`.
 It contains a global `using js_num = double`, finite nullable carriers, object/Map
 storage helpers, and `matches`, `closest`, `querySelector`, `querySelectorAll`
-method objects. It does not yet expose this type family or intrinsic prototypes.
+method objects. `Element.prototype` now owns those method objects, with the
+flat names retained as constant reference aliases. Distinct absence tokens now
+construct the existing nullable scalar; other primitive classes and Object/Array
+intrinsic prototypes are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
 behind Script and needs extraction before native use.
 
@@ -182,12 +189,19 @@ signatures and clients together; any temporary compatibility alias lives at the
 old global name and is explicitly retired after its callers migrate. No regex-only
 rename or sudden reinterpretation of existing `auto`/template deduction.
 
-1. **Prototype composition first.** Add `Element.prototype` using the existing
-   selector method types; update their proven EmitC callees and emitted-code
-   checks. Preserve current callable aliases during the migration. Establish the
-   same layout for Object/Array when their first already-proved methods migrate.
-2. **Primitive types.** Migrate undefined/null, Boolean, Number and String in
-   coherent batches. Update literal creation, conversion, optional/union joins,
+1. **Element prototype composition implemented.** `Element.prototype` reuses
+   the four selector method types; the proven EmitC callees and emitted-code
+   checks use its members. Current flat names alias the same objects. Establish
+   the same layout for Object/Array when their first already-proved methods migrate.
+2. **Primitive types in progress.** Distinct `undefined_t` and `js_null_t` tokens
+   now construct `nullable_scalar` for source literals and other absence values.
+   Default construction and `.null()` remain compatible. Calls, returns and
+   optional joins still use the tagged carrier: inference currently gives both
+   absence literals `Opt<Bottom>`, so this is not an exact-token ABI migration.
+   Next separate JavaScript Boolean values from C++ control-flow conditions for
+   `js_boolean_t`; literals, comparisons, signatures, optional conversions and
+   printing must migrate together. Follow with Number and String in coherent
+   batches. Update literal creation, conversion, optional/union joins,
    calls/returns, print helpers and deduced-type assertions with each batch.
    Keep MLIR's semantic types and proof authority; C++ classes do not replace
    inference. Extract type-specific headers only as their implementation grows,

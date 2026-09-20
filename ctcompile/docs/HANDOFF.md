@@ -22,6 +22,80 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed JavaScript interface implementation, 2026-09-20 UTC
+
+Resumed the first implementation milestone from **8ab0394c** and the design
+below; the starting tree was clean and no interrupted branch needed landing.
+**1576f18f** composes the existing four selector method objects under
+`ctnative::Element.prototype`. Generated calls now use, for example,
+`ctnative::Element.prototype.querySelector.call(element, styles, selector)`.
+The old flat names reference those same immutable objects. Public Style behavior,
+explicit borrowed inputs and all JavaScript identity/mutation proofs remain in
+place. No dynamic lookup, allocation or virtual dispatch was added.
+
+**bd727da7** introduces distinct `ctnative::undefined_t` and
+`ctnative::js_null_t` construction tokens. The shared `absentConstant` emitter
+constructs `nullable_scalar` from them for literals, initial scalar storage,
+Map.clear results and used void DOM results. Default construction and `.null()`
+remain compatible. Tags, payload, calls/returns and optional joins retain the
+existing carrier; both absence literals still infer `Opt<Bottom>`. This starts
+the primitive migration; exact standalone token signatures are not implemented.
+
+Selector validation passed: exact `ctcompile_native_runtime` **1/1** (0.02s
+CTest total), and closest/query/query-all/prototype-query/spread-length lit
+**5/5** (103.22s). All seven changed code/test hashes matched the devbox before
+**1576f18f**. The selector tests compile/run against public DOM/Core/Style and
+check generated source and linked symbols for Script/AOT dependencies; they
+are not VM/browser end-to-end differential measurements.
+
+Absence-type validation passed: explicit targets built, runtime CTest **1/1**
+(0.02s total), both optional-scalars/scalar-unions differential fixture lit
+cases, and native-dom action lit. The fixtures compare generated observations
+with the interpreter, compile both printing layouts under GCC/Clang, audit
+symbols and exercise negative mutation/type-pin controls. Two raw lowering
+checks initially failed because default precomputation erased their intended
+unions (**3 passes / 2 failures**, 245.62s for that selected run). Requesting
+`optimize=false` preserves every JavaScript body and refusal expectation;
+the corrected two-case raw rerun passed **2/2** (0.22s), with no rebuild needed.
+All **11** final changed code/test SHA-256 hashes match the devbox. Parallel
+review found no additional issue in the constructors, callers or refusal paths.
+
+Exact validation commands, local build then devbox test commands, all serialized
+under `/tmp/ctbrowser-devbox-build.lock`:
+
+```sh
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-runtime
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_native_runtime$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-(closest|query|query-all|prototype-query|spread-length)[.]test$'
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-runtime ctcompile-test-native-reference ctcompile-native-pipeline-optional_scalars ctcompile-native-pipeline-scalar_unions
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_native_runtime$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/((Lowering/Scalars/(optional-scalars|scalar-unions)[.]mlir)|(Fixtures/Scalars/(optional-scalars|scalar-unions)[.]test)|(Browser/native-dom[.]test))$'
+tools/remote-build.sh ctjs-opt ctjs-translate
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Lowering/Scalars/(optional-scalars|scalar-unions)[.]mlir$'
+```
+
+Changed C++ formatting, Python Black/syntax and whitespace checks pass.
+Required `tools/format.sh --check` reports the same **16** pre-existing errors
+in four untouched files: `ctdrive.cpp`, `ProviderPaths.h`, `Heap.h` and
+`Symbolic/Facts.cpp`. No full CTest/lit, broad corpus/matrix, WPT/test262 or
+sanitizer run was requested or performed. Browser code and the VM oracle are
+unchanged. Process checks found no Claude identity in 70 Linux / 354 Windows
+processes, but 57 Linux executable paths were unreadable; status was treated as
+uncertain and work stayed in ctcompile and the requested external plan.
+
+**Next type boundary:** introduce `js_boolean_t` while separating JavaScript
+Boolean values from C++ `bool` control-flow conditions. The current carrier,
+SCF i1, browser results and callable/shape spellings share `bool`; migrate
+Boolean literals, comparisons, signatures, optional conversions and printing
+together. Then migrate Number/String and collection/document views. The global
+`using js_num = double` still needs a deliberate qualified-template migration.
+
+**Next browser boundary:** reconcile native NodeList indexed slots above
+1,000,000 with Shell returning undefined before admitting indexed `R.find`
+consumers. Keep the separate 2^24 spread cap and current count-only integration.
+Default document roots, Object/Array prototypes, BigInt/Symbol, full Bootstrap
+and the application driver remain unfinished.
+
 ## Typed JavaScript interface plan, 2026-09-20 UTC
 
 The user requested purpose-built native C++ types with JavaScript methods,

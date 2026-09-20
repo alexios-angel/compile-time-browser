@@ -17,24 +17,29 @@ matches the page. Every element and engine atom-table association is checked
 before source effects. The engine, document and their atom table must remain
 alive throughout the synchronous call.
 
-The [typed JavaScript interface plan](plans/native-js-types.md) changes the
-target spelling to `Element.prototype.querySelector.call(...)` and eventually
-borrowed `js_document_t`/`js_element_t` methods. That migration is planned; the
-examples and implementation guarantees below describe the currently shipped
-interface. The new classes will retain the same public DOM/Style calls and proofs.
-
-Generated selector calls use stateless C++ method objects from `ctnative.hpp`:
+Generated selector calls use typed C++ prototype members from `ctnative.hpp`:
 
 ```cpp
-auto button = ctnative::querySelector.call(element, styles, "button");
-auto buttons = ctnative::querySelectorAll.call(element, styles, "button");
+auto button = ctnative::Element.prototype.querySelector.call(element, styles, "button");
+auto buttons = ctnative::Element.prototype.querySelectorAll.call(element, styles, "button");
 ```
 
-`matches` and `closest` have the same `.call` interface. Each object is
-`inline constexpr`; its `const` member calls the public Style implementation
-with explicit borrowed inputs. This C++ spelling introduces no callable table
-or virtual dispatch. Original JavaScript prototype selector calls use these same
-objects after the identity proof described below.
+`matches` and `closest` use the same `Element.prototype.<method>.call` form.
+`Element` is an `inline constexpr element_constructor` containing an
+`element_prototype` with the existing four stateless method objects. Their
+`const` members call public Style with explicit borrowed inputs. The flat
+`ctnative::querySelector`, `querySelectorAll`, `matches` and `closest` names remain
+constant references to those same members for existing C++ callers.
+
+Both direct and original JavaScript prototype selector calls emit this form.
+Source identity, receiver, mutation and lifetime proofs still apply; the C++
+`Element` spelling supplies no JavaScript proof on its own. This composition
+introduces no callable table, allocation or virtual dispatch.
+
+The [typed JavaScript interface plan](plans/native-js-types.md) separately tracks
+the remaining primitive classes, Object/Array prototype members and borrowed
+`js_document_t`/`js_element_t` views. Those migrations remain planned; current
+selector calls retain the explicit Style engine argument.
 
 This is an action entry, not native Bootstrap initialization. For example:
 
