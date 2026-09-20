@@ -16,6 +16,20 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-post-super-holder": (8, 8),
+    "inherited-post-super-holder-shared": (380, 380),
+    "inherited-post-super-holder-chain": (3083, 3083),
+    "inherited-post-super-holder-branches": (200204, 200204),
+    "inherited-post-super-holder-branch-values": (200204, 200204),
+    "inherited-post-super-holder-order": (23135646, 23135646),
+    "inherited-post-super-holder-dead-ambient": (8, 8),
+    "inherited-post-super-holder-unused-ambient": (8, 8),
+    "inherited-post-super-holder-replaced": (9, 9),
+    "inherited-post-super-holder-slot-replaced": (9, 9),
+    "inherited-post-super-holder-receiver": (8, 8),
+    "inherited-post-super-holder-surplus": (8, 8),
+    "inherited-post-super-holder-argument-receiver": (8, 8),
+    "inherited-post-super-holder-before": (None, None),
     "own-fields-branch-same-order": (21132117, 21132117),
     "own-fields-branch-overwrite": (21172121, 21172121),
     "own-fields-branch-nested": (212234256, 212234256),
@@ -313,6 +327,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-post-super-holder",
+    "inherited-post-super-holder-shared",
+    "inherited-post-super-holder-chain",
+    "inherited-post-super-holder-branch-values",
+    "inherited-post-super-holder-order",
     "own-fields-branch-same-order",
     "own-fields-branch-overwrite",
     "own-fields-branch-nested",

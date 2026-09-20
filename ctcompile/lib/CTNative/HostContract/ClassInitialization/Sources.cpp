@@ -498,7 +498,7 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     if (inherited) {
         auto baseFunction = target(base.getDefiningOp<ctjs::CreateClosureOp>());
         if (!constructors.contains(baseFunction) ||
-            !normalizeSuper(function, baseFunction, contract, methodKeys)) {
+            !normalizeSuper(function, baseFunction, contract)) {
             return false;
         }
     }

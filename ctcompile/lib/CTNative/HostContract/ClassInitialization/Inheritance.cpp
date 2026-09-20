@@ -60,8 +60,7 @@ bool classInitialization::heritageUse(mlir::OpOperand & use, mlir::Value constru
 }
 
 bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base,
-                                         const HostContract & contract,
-                                         const llvm::StringSet<> & methodKeys) {
+                                         const HostContract & contract) {
     auto & original = function.getBody().front();
     if (!llvm::hasSingleElement(base.getBody()) ||
         !original.getArgument(ctjs::arg_new_target).use_empty()) {
@@ -406,17 +405,10 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
                         continue;
                     }
                 }
-                if (phase == 4 && read && read.getResult().hasOneUse() &&
-                    mapping.lookupOrDefault(read.getObject()) == mapping.lookup(receiver) &&
-                    mapping.lookupOrDefault(call.getReceiver()) == mapping.lookup(receiver) &&
-                    methodKeys.contains(ctjs::constantKey(read.getKey()))) {
-                    // Preserve evaluation order and leaf receiver dispatch. The
-                    // complete fieldsOnly census records the cloned call after
-                    // takeBody; original operations would become stale there.
-                    if (!clone(op, mapping)) { return false; }
-                    continue;
-                }
-                if (helperCalls.contains(call) && (phase == 0 || phase == 4)) {
+                // After super, preserve ordinary calls for the complete receiver,
+                // callable-holder and source-effect census. It runs on the live
+                // normalized body, so no holder record borrows erased operations.
+                if (phase == 4 || (phase == 0 && helperCalls.contains(call))) {
                     if (phase == 0 && llvm::is_contained(call.getOperands(), receiver)) {
                         return refuse("derived receiver is used before super initialization");
                     }
@@ -818,9 +810,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         auto base =
             target(sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>());
-        if (!constructors.contains(base) ||
-            (!snapshotFields.contains(closure.getResult()) &&
-             !normalizeSuper(function, base, contract, methodKeys))) {
+        if (!constructors.contains(base) || (!snapshotFields.contains(closure.getResult()) &&
+                                             !normalizeSuper(function, base, contract))) {
             return false;
         }
         setup.insert(inherited);

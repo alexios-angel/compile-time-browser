@@ -24,6 +24,7 @@ OWN_FIELDS = {
     "own-fields-replacement-return": (7, 7),
 }
 OBSERVATIONS.update(OWN_FIELDS)
+OBSERVATIONS["bootstrap-base-data"] = (7, 7)
 POSITIVES.update(
     {
         "own-fields-length",
@@ -121,6 +122,23 @@ def main():
         + "\n    var instance = new B(null, null);\n"
         "    return instance._element === undefined ? 7 : 9;\n}\nvar a = bootstrapBase();\n"
     )
+    # Add the original shared Map and complete Data holder without changing the
+    # existing ambient-e control. Only the declaration separator becomes a ';'.
+    data = (
+        bootstrap[
+            bootstrap.index("    const t = new Map,") : bootstrap.index(
+                '        i = "transitionend",'
+            )
+        ]
+        .rstrip()
+        .removesuffix(",")
+        + ";\n"
+    )
+    (args.fixtures / "bootstrap-base-data.js").write_text(
+        (args.fixtures / "bootstrap-base.js")
+        .read_text()
+        .replace("function bootstrapBase() {\n", "function bootstrapBase() {\n" + data, 1)
+    )
     (args.fixtures / "bootstrap-config-r-defaults.js").write_text(
         declaration + (args.fixtures / "bootstrap-config-defaults.js").read_text()
     )
@@ -175,7 +193,7 @@ def main():
                 # Generic assembly preserves every operation and operand.
                 *(
                     ["--mlir-print-op-generic"]
-                    if name.startswith(("inherited-", "override-")) or name == "bootstrap-base"
+                    if name.startswith(("inherited-", "override-", "bootstrap-base"))
                     else []
                 ),
                 "-o",
@@ -205,10 +223,10 @@ def main():
             name in OWN_FIELDS
             or name.startswith("own-fields-branch-")
             or name.startswith("inherited-own-fields-")
-            or name == "bootstrap-base"
+            or name.startswith("bootstrap-base")
         ):
             manifest["initial_intrinsics"].append("Object")
-        if name.startswith(("inherited", "override-")) or name == "bootstrap-base":
+        if name.startswith(("inherited", "override-", "bootstrap-base")):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
             manifest["initial_intrinsics"] += [
@@ -219,6 +237,7 @@ def main():
             ]
         if name.startswith(("static-throw-", "static-error-")) or name in (
             "bootstrap-base",
+            "bootstrap-base-data",
             "bootstrap-config-defaults",
             "bootstrap-config-r-defaults",
             "bootstrap-config-r-h-defaults",
@@ -250,13 +269,14 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "inherited-post-super-holder-branches": "unknown call, binding or reflective effect",
             "own-fields-branch-order": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-branch-missing": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-branch-early": "super completion index is not proved",
             "own-fields-branch-observed": "class own-key snapshot requires fixed constructor fields",
             "own-fields-branch-loop": "class own-key snapshot requires fixed constructor fields",
             "inherited-own-fields-branch-before-super": "super condition is not a proved Boolean",
-            "inherited-own-fields-branch-unused-ambient": "super initialization contains an unproved call",
+            "inherited-own-fields-branch-unused-ambient": "class own-key snapshot requires fixed constructor fields",
             "inherited-own-fields-conditional": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-added": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-empty-added": "inherited own-key snapshot requires the same ordered fields",
@@ -307,7 +327,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "super initialization contains an unproved call",
+            "bootstrap-base": "class own-key snapshot requires fixed constructor fields",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -487,6 +507,8 @@ def main():
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         if name in (
+            "inherited-post-super-holder-chain",
+            "inherited-post-super-holder-order",
             "inherited-own-fields-shared",
             "inherited-own-fields-branch-arguments",
             "inherited-branch-helper",
