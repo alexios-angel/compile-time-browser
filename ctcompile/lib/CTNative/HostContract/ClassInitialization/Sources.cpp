@@ -1005,12 +1005,11 @@ bool classInitialization::retainedMapReads(
             if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(selected->getOwner())) {
                 key = set.getKey();
             }
-            if (key && (ctjs::constantKey(key) == "constructor" ||
-                        methodKeys.contains(ctjs::constantKey(key)))) {
+            if (key && ctjs::constantKey(key) == "constructor") {
                 return refuse("class retained Map alias requires data field reads");
             }
         }
-        if (!step() || !fieldsOnly(read, methodKeys, staticReads)) { return false; }
+        if (!step() || !fieldsOnly(read, methodKeys, staticReads, true)) { return false; }
     }
     return reason.empty();
 }

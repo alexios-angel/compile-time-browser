@@ -184,6 +184,19 @@ std::string proveRecords(plan & candidate) {
                     return "native record Map lifetime proof exceeded its work limit";
                 }
                 auto * user = use.getOwner();
+                if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                    direct && use.getOperandNumber() == 0 &&
+                    user->getParentOfType<ctjs::FuncOp>() == function &&
+                    direct->hasAttr("ctnative.receiver")) {
+                    auto target = direct.getTarget();
+                    if (target && target->hasAttr("ctnative.receiver") &&
+                        !target.getBody().empty() &&
+                        target.getBody().front().getNumArguments() == direct->getNumOperands()) {
+                        // Final target admission must recheck its closed
+                        // receiver uses; input annotations alone prove nothing.
+                        continue;
+                    }
+                }
                 if (use.getOperandNumber() != 0 ||
                     user->getParentOfType<ctjs::FuncOp>() != function ||
                     !llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) ||

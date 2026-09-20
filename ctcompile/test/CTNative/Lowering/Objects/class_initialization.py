@@ -134,6 +134,21 @@ def check_record_map_inputs(args, prepared):
         + put[0].replace(", " + payload + ")", ", " + put[3].split(", ")[1] + ")")
         + text[put.end() :],
     }
+    forged = (
+        text[: get.end()]
+        + "\n    %sink_undefined = ctjs.constant #ctjs.undefined"
+        + f"\n    %sink_result = ctjs.call_direct @record_alias_sink({get[1]}, "
+        "%sink_undefined, %sink_undefined) {ctnative.receiver}" + text[get.end() :]
+    )
+    end = forged.rfind("}")
+    variants["forged-receiver-publication"] = (
+        forged[:end] + "  ctjs.func private @record_alias_sink(%self: !ctjs.value, "
+        "%new_target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value "
+        "attributes {ctnative.receiver, upvalue_count = 0 : i32} {\n"
+        '    ctjs.store_global "saved", %self\n'
+        "    %undefined = ctjs.constant #ctjs.undefined\n"
+        "    ctjs.return %undefined\n  }\n" + forged[end:]
+    )
     for label, changed in variants.items():
         # Rejected live contents cannot inherit a previous record Map proof.
         changed = re.sub(
@@ -279,6 +294,7 @@ def main():
                     ["--mlir-print-op-generic"]
                     if name.startswith(("inherited-", "override-", "bootstrap-base"))
                     or name.startswith("class-map-inherited")
+                    or name == "class-map-record-alias-method-inherited"
                     else []
                 ),
                 "-o",
@@ -324,8 +340,9 @@ def main():
                 "__ctbrowser_iter_next",
                 "__ctbrowser_iter_close",
             ]
-        if name.startswith(("inherited", "override-", "bootstrap-base")) or name.startswith(
-            "class-map-inherited"
+        if (
+            name.startswith(("inherited", "override-", "bootstrap-base", "class-map-inherited"))
+            or name == "class-map-record-alias-method-inherited"
         ):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
@@ -375,8 +392,7 @@ def main():
             "class-map-record-mixed-constructors": "class retained Map requires one completed constructor family",
             "class-map-record-computed-key": "class retained Map requires literal string keys",
             "class-map-record-alias-constructor": "class retained Map alias requires data field reads",
-            "class-map-record-alias-method": "class retained Map alias requires data field reads",
-            "class-map-record-alias-shadow": "class retained Map alias requires data field reads",
+            "class-map-record-alias-shadow": "class method is observed or shadowed",
             "class-map-record-alias-constructor-write": "class retained Map alias requires data field reads",
             "class-map-record-alias-snapshot-write": "class retained Map aliases require an own-field snapshot proof",
             "inherited-own-fields-iterate-forward-missing": "class construction helper requires an existing own field",
@@ -483,7 +499,14 @@ def main():
         if name == "class-map-record-direct":
             check_record_map_inputs(args, prepared)
         if name.startswith("class-map-record-") and name in POSITIVES:
-            if text.count("ctjs.construct") != prepared.read_text().count("ctjs.construct"):
+            # Super normalization removes the imported ReferenceError guards;
+            # the inherited source still constructs its Map and leaf record.
+            constructions = (
+                2
+                if name == "class-map-record-alias-method-inherited"
+                else text.count("ctjs.construct")
+            )
+            if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
         if name.startswith("class-map-") and name in POSITIVES | PREPARED_ONLY:
             prepare(

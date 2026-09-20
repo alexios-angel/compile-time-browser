@@ -151,19 +151,36 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
     }
     for (const auto & [alias, origin] : aliases) {
         (void)origin;
-        for (mlir::OpOperand & aliasUse : alias.getUses()) {
-            if (work-- == 0 || aliasUse.getOperandNumber() != 0 ||
-                aliasUse.getOwner()->getBlock() != map->getBlock()) {
-                return false;
+        const auto methodCall = [&](ctjs::GetPropertyOp get) {
+            if (!get || get.getObject() != alias || !get.getResult().hasOneUse()) {
+                return ctjs::CallOp{};
             }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(*get.getResult().getUsers().begin());
+            return call && call.getCallee() == get.getResult() && call.getReceiver() == alias &&
+                           call->getBlock() == map->getBlock()
+                       ? call
+                       : ctjs::CallOp{};
+        };
+        for (mlir::OpOperand & aliasUse : alias.getUses()) {
+            if (work-- == 0 || aliasUse.getOwner()->getBlock() != map->getBlock()) { return false; }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(aliasUse.getOwner());
+                call && aliasUse.getOperandNumber() == 1 &&
+                methodCall(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()) == call) {
+                continue;
+            }
+            if (aliasUse.getOperandNumber() != 0) { return false; }
             mlir::Value key;
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(aliasUse.getOwner())) {
                 key = get.getKey();
             } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(aliasUse.getOwner())) {
                 key = set.getKey();
             }
-            if (!key || ctjs::constantKey(key).empty() ||
-                selectors.contains(ctjs::constantKey(key))) {
+            if (!key || !ctjs::ordinaryKey(ctjs::constantKey(key))) { return false; }
+            // Exact origins feed the existing immutable method census below.
+            // A method selector may only be called on this alias, never stored
+            // or detached. That census still proves its target and receiver uses.
+            if (selectors.contains(ctjs::constantKey(key)) &&
+                !methodCall(llvm::dyn_cast<ctjs::GetPropertyOp>(aliasUse.getOwner()))) {
                 return false;
             }
         }
