@@ -111,6 +111,10 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         return refuse("native DOM element guard: " + llvm::toString(std::move(error)));
     }
     transformed.moduleSha256 = hostContractFingerprint(*composed);
+    if (auto error = normalizeDOMSnapshotLengths(*composed, transformed, maxSteps)) {
+        return refuse("native DOM snapshot: " + llvm::toString(std::move(error)));
+    }
+    transformed.moduleSha256 = hostContractFingerprint(*composed);
     if (auto error = normalizeDOMIteration(*composed, transformed, maxSteps)) {
         return refuse("native DOM iteration: " + llvm::toString(std::move(error)));
     }
