@@ -25,8 +25,10 @@ concatenation, truthiness and `typeof`. These operations reuse public Core conve
 formatting. Generic primitive addition now returns a proved closed String/Number
 carrier, retaining its tags through calls, joins, loops and global stores. Its
 optional form now preserves undefined, null, Number and String through source
-global reads, calls and coercions. Object/Array prototypes and document views
-remain planned. This is the user's revised direction for the
+global reads, calls and coercions. Strict/loose equality now covers these proved
+String-containing unions while retaining type, absence, NaN and zero semantics.
+Object/Array prototypes and document views remain planned.
+This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
 
@@ -365,11 +367,21 @@ existing `auto`/template deduction.
    Map storage retains its existing raw String variant and exact per-operation
    proof requirements; a proved String extraction unwraps the typed scalar at
    that boundary. No whole-union Map adapter is introduced.
-   Next implement strict and loose equality for the admitted String-containing
-   primitive unions, starting with the preserved `equality.js` controls in
-   `boolean-string-transport.test` and `optional-number-string.test`. Strict
-   equality must retain type identity; loose equality must preserve JavaScript
-   conversion, including null/undefined, Boolean/Number, NaN and signed zero.
+   Strict and loose equality now cover the admitted String-containing primitive
+   unions. `primitive_strict_equal` preserves JavaScript kinds;
+   `primitive_equal` compares two Strings before numeric coercion and keeps
+   null/undefined distinct from empty text, false and zero. Both return
+   `js_boolean_t`; `!=` and `!==` negate those typed results. The helpers visit
+   existing finite variants, borrow String payloads and reuse scalar equality
+   and public Core parsing. No combined boxed carrier or comparison copy is used.
+   The three original equality refusal programs execute unchanged in
+   `primitive-equality.test`: 48 main observations in eight native modes, six
+   further witness observations on GCC/Clang, five refusals and two mutations.
+   Exact String pairs retain their direct C++ comparison.
+   Next carry finite String-containing unions through shared cells and captures,
+   starting with `shared-mixed.js` in `Scalars/strings.mlir`. Its before/call/after
+   comparison remains refused at the String and Number cell assignments; add
+   proved widening there and preserve owning copies and absence across writes.
    Broader unions and mixed container payloads remain separate; never stringify
    both sides unconditionally.
    Keep numeric relational conversion separate from String lexicographic ordering

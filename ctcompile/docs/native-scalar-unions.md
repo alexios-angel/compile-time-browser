@@ -77,8 +77,21 @@ and the two original return observations on GCC/Clang. Existing Map storage
 remains raw String storage with exact per-operation proofs; typed String values
 unwrap only after that proof. See [the Boolean/String handoff](handoff/2026-09-20-native-boolean-string.md).
 
-Next implement strict/loose equality for these closed String-containing unions,
-starting with the two optional transport fixtures' preserved equality refusals.
-Equality/ordering, broader unions and mixed scalar Map keys/payloads or array
-storage retain their existing refusal boundaries. This does not implement
-arbitrary `std::variant` lowering.
+Strict/loose equality now supports all nine admitted primitive carriers through
+`primitive_strict_equal` and `primitive_equal`, returning `js_boolean_t`.
+Strict equality retains the JavaScript kind; loose equality compares two Strings
+textually, rejects nullish/String matches and reuses scalar equality and Core
+numeric parsing. NaN never equals itself; signed zeros compare equal. Existing
+variants are visited directly and String payloads are borrowed for the comparison.
+No new universal carrier is introduced. Exact String pairs keep direct C++ `==`.
+
+The equality fixture checks 48 main observations in eight native modes, plus
+six observations from the unchanged optional Number/String and Boolean/String
+witnesses on GCC/Clang. Five refusal controls and two mutations pass.
+See [the equality handoff](handoff/2026-09-20-native-primitive-equality.md).
+
+Next support finite-union shared cells/captures, beginning with the unchanged
+`shared-mixed.js` case in `Scalars/strings.mlir`. Its String and Number assignments
+still need a proved widening rule. Ordering, broader unions and mixed scalar
+Map keys/payloads or array storage keep their separate proof requirements.
+This does not implement arbitrary `std::variant` lowering.

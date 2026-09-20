@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed primitive equality, 2026-09-20 UTC
+
+Continued clean **92c0628e**, resuming the three preserved equality refusals.
+**0111e8e3** adds strict/loose equality over the nine typed primitive carriers;
+**12f34e16** admits and emits it for String-containing pairs. The helpers visit
+existing variants, borrow String storage and reuse scalar equality/public Core
+parsing. Strict equality retains JavaScript kinds; loose equality compares two
+Strings before coercion and keeps absence distinct from false, zero and empty
+text. NaN and signed-zero behavior are preserved. Exact String pairs retain
+C++ comparison; object hooks and wider unions remain refused.
+
+Focused checks pass: runtime CTest **1/1** and **seven distinct selected lit
+cases** across corrected runs. The new fixture checks **48 main observations
+in eight native modes**, six further original-witness observations on GCC/Clang,
+five refusals and two mutations. Existing compiled String-snapshot checks pass.
+All **10 final code/test hashes** match the devbox; four scoped C++ format
+checks and whitespace pass. Required repository formatting retains 16 existing
+diagnostics. Full suites and separate sanitizer runs were skipped.
+[Exact checks and corrected historical pins](handoff/2026-09-20-native-primitive-equality.md).
+
+**Next:** finite String-containing unions in shared cells/captures, beginning
+with unchanged `shared-mixed.js` in `Lowering/Scalars/strings.mlir`. Its equality
+is representable; String/Number cell assignments still need proved widening.
+Preserve owning snapshots, captured writes and absence on initial reads.
+Ordering, broader unions, mixed containers, object hooks, Core parser gaps and
+UTF-16 alignment remain separate. Collections/document views, `Symbol.hasInstance`,
+indexed Bootstrap `R.find` and the application driver remain unfinished.
+No browser or VM implementation changed in this slice.
+
 ## Boolean/String transport, 2026-09-20 UTC
 
 Continued clean **435aa9b8**, resuming the preserved parameter/return refusals.
