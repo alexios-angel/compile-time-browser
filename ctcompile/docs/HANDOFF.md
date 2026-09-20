@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited Map captures and signed OR/XOR bands, 2026-09-20 UTC
+
+**d4c4a82b** preserves exact Map capture cells through inherited constructor
+copies. Base and leaf slot numbers are remapped by Map identity; shared Maps,
+distinct Maps, repeated ancestry, sibling leaves, ordinary inherited methods and
+mixed helper captures add **48 native executions**. Original numeric-key
+`class-map-inherited` now prepares and retains its optional-key carrier refusal.
+**adac2c92** proves OR/XOR index enclosures within one signed conversion band and
+converted sign half, preserving complete reload checks and exact write replay.
+
+Focused class selection: **42 observations / 136 main native executions / 84
+unprepared and 66 preparation refusals**, plus **six native boundary controls**.
+Exact host **1/1**, arrays **1/1**, lowering lit **3/3** and escape lit **4/4** pass.
+OR/XOR oracle: **84 sites / 18 sound / 18 of 24 confined precision**, with zero
+violations, partial, pending or unclaimed sites. All ten tested file hashes match.
+Required formatting retains 20 diagnostics in six unchanged files; changed files
+pass. Full suites, whole class lit, DOM replay and broad matrices were skipped.
+
+**Next:** preserve Map environments through the original local Data holder/helper
+calls. Those rewrites currently discard their callee capture identity; merely
+allowing the capture is insufficient. Inherited direct captures now work, while
+captured lexical super-method targets remain refused. Typed stored-class ownership
+across set/get/remove, saved aliases, overwrite/delete and failure remains unproved.
+Keep original `e.set`, `e.remove`, `P.off` and configuration bodies. Output retains
+stack class records and existing scalar Map owners, with no Script/VM/GC or new
+stored-class graph. Full Bootstrap and the application driver remain unfinished.
+No browser/runtime changes or push.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-inherited-map-captures.md).
+
 ## Direct class Map captures and OR/XOR indices, 2026-09-20 UTC
 
 **cfc7a229** preserves immutable Map capture cells and selected slots for direct
