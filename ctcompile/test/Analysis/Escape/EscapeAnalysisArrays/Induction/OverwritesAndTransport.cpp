@@ -91,14 +91,67 @@ void InductionCases::overwritesAndTransport() {
         "later stores invalidate earlier remainder divisor reloads",
         replace(remainderReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
     for (const auto & operands : {"%i, %zero", "%i, %i", "%two, %i"}) {
-        reject("remainder requires a positive invariant divisor in its original operand order",
+        reject("remainder requires a nonzero invariant divisor in its original operand order",
                replace(remainder, "mod %i, %two", "mod " + std::string(operands)));
     }
-    reject("a remainder enclosure cannot hide a negative dividend",
-           replace(remainder, "%position = ctjs.binary mod %i, %two",
-                   "%negative = ctjs.unary neg %i\n"
-                   "  %part = ctjs.binary mod %negative, %two\n"
-                   "  %position = ctjs.binary add %part, %one"));
+    const auto signedRemainder = replace(remainder, "%position = ctjs.binary mod %i, %two",
+                                         "%negative = ctjs.unary neg %i\n"
+                                         "  %part = ctjs.binary mod %negative, %two\n"
+                                         "  %position = ctjs.binary add %part, %one");
+    for (const auto & divisor : {"%two", "%three"}) {
+        run({.what = "signed remainder bounds retain negative dividend magnitudes",
+             .body = replace(signedRemainder, "mod %negative, %two",
+                             "mod %negative, " + std::string(divisor)),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=one; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "negative divisors preserve dividend sign and exact visits",
+         .body = replace(signedRemainder, "%part = ctjs.binary mod %negative, %two",
+                         "%divisor = ctjs.unary neg %two\n"
+                         "  %part = ctjs.binary mod %negative, %divisor"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negating a signed remainder restores ascending own positions",
+         .body = replace(signedRemainder, "ctjs.binary add %part, %one", "ctjs.unary neg %part"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto crossingRemainder =
+        replace(replace(signedRemainder, "[%one, %x]", "[%x, %x, %x, %zero]"), "ctjs.unary neg %i",
+                "ctjs.binary sub %i, %one");
+    run({.what = "a remainder enclosure covers both signs across zero",
+         .body = crossingRemainder,
+         .arrays = "a:[zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto signedRemainderReload =
+        replace(remainderReload, "%position = ctjs.binary mod %i, %divisor",
+                "%negative = ctjs.unary neg %i\n"
+                "  %part = ctjs.binary mod %negative, %divisor\n"
+                "  %position = ctjs.binary add %part, %one");
+    run({.what = "signed remainder writes preserve only disjoint divisor reloads",
+         .body = signedRemainderReload,
+         .arrays = "a:[zero,zero,two,zero]",
+         .reads = "a[2]=two; a[0]=x; a[2]=two; a[1]=zero; a[2]=two; a[2]=two; "
+                  "a[2]=two; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("later writes invalidate signed remainder reloads",
+           replace(signedRemainderReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("signed remainder extrema cannot omit an interior divisor reload",
+           replace(replace(crossingRemainder, "[%x, %x, %x, %zero]", "[%x, %two, %x, %zero]"),
+                   "%part = ctjs.binary mod %negative, %two",
+                   "%divisor = ctjs.get_property %base[%one]\n"
+                   "  %part = ctjs.binary mod %negative, %divisor"));
+    reject("a negative final remainder is not an own array index",
+           replace(signedRemainder, "ctjs.binary add %part, %one", "ctjs.unary plus %part"));
     reject("a remainder divisor cannot hide an unproved large dividend",
            replace(remainder, "%position = ctjs.binary mod %i, %two",
                    "%maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
@@ -110,11 +163,22 @@ void InductionCases::overwritesAndTransport() {
                    "  %position = ctjs.binary add %part, %one"));
     for (const auto & value :
          {"#ctjs.number<13835058055282163712>", "#ctjs.number<4609434218613702656>",
-          "#ctjs.string<\"2\">", "#ctjs.boolean<true>", "#ctjs.bigint<\"2\">"}) {
-        reject("remainder index divisors require positive integer Numbers",
-               replace(replace(remainder, "  %a =",
-                               "  %divisor = ctjs.constant " + std::string(value) + "\n  %a ="),
-                       "mod %i, %two", "mod %i, %divisor"));
+          "#ctjs.string<\"2\">", "#ctjs.boolean<true>", "#ctjs.bigint<\"2\">",
+          "#ctjs.number<9223372036854775808>"}) {
+        const auto body = replace(
+            replace(remainder,
+                    "  %a =", "  %divisor = ctjs.constant " + std::string(value) + "\n  %a ="),
+            "mod %i, %two", "mod %i, %divisor");
+        if (std::string(value) == "#ctjs.number<13835058055282163712>") {
+            run({.what = "negative literal divisors preserve positive remainder indices",
+                 .body = body,
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("remainder index divisors require nonzero integer Numbers", body);
+        }
     }
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i",

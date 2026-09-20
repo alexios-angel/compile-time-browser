@@ -13,16 +13,28 @@
 // CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function wrapped() {
@@ -134,7 +146,74 @@ function negativeZero() {
     for (var i = -0; i < a.length; i++) a[i % 2] = 0;
     return a;
 }
+function negatedRemainder() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-((-i) % 2)] = 0;
+    return a;
+}
+function bothNegative() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-i) % -2 + 1] = 0;
+    return a;
+}
+function crossingZero() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) % 2 + 1] = 0;
+    return a;
+}
+function signedReload() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) a[(-i) % a[2] + 1] = 0;
+    return a;
+}
+function savedNegativeDivisor() {
+    var child = {}, a = [child, child, -2, 0], divisor = a[2];
+    a[2] = 0;
+    for (var i = 0; i < a.length; i++) a[(-i) % divisor + 1] = 0;
+    return a;
+}
+function offsetNegative() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(-i - 3) % 2 + 1] = 0;
+    return a;
+}
+function signedSavedChild() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(-i) % -2 + 1] = 0;
+    return saved;
+}
+function negativeFinalIndex() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-i) % 2] = 0;
+    return a;
+}
+function signedInteriorReload() {
+    var child = {}, a = [child, 2, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) % a[1] + 1] = 0;
+    return a;
+}
+function signedLaterWrite() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[(-i) % a[2] + 1] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function negativeZeroDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-i) % -0 + 1] = 0;
+    return a;
+}
+function negativeStringDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-i) % "-2" + 1] = 0;
+    return a;
+}
 wrapped(); noWrap(); composed(); offsetInput(); descendingInput(); reload(); savedDivisor();
 savedChild(); remainingGap(); zeroTrip(); zeroDivisor(); negativeDivisor(); fractionalDivisor();
 stringDivisor(); varyingDivisor(); negativeDividend(); overwrittenReload(); overlappingReload();
 interiorReload(); unprovedDividend(); negativeZero();
+negatedRemainder(); bothNegative(); crossingZero(); signedReload(); savedNegativeDivisor();
+offsetNegative(); signedSavedChild(); negativeFinalIndex(); signedInteriorReload();
+signedLaterWrite(); negativeZeroDivisor(); negativeStringDivisor();

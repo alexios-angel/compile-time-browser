@@ -309,17 +309,24 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            const auto divisor = boundedConvertedNumber(*offset);
-            if (!divisor || *divisor == 0 || !range->first.integerNumber ||
-                !range->last.integerNumber) {
-                return std::nullopt;
-            }
+            auto divisor = boundedConvertedNumber(*offset);
+            if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
+            if (!divisor || *divisor == 0) { return std::nullopt; }
+            // Remainder takes the dividend's sign. Its separate magnitudes are
+            // already bounded by 2^32-1, including across zero; no signed abs.
+            const auto negative =
+                std::min(range->first.negativeIntegerNumber.value_or(0), *divisor - 1);
             // ponytail: a dense enclosure across remainder wraps; sparse residue
             // facts could admit more disjoint reloads. Replay keeps exact writes.
-            return IndexRange{{operand, ContentsKind::NonBigInt, 0},
+            IndexRange result{{operand, ContentsKind::NonBigInt, 0},
                               {operand, ContentsKind::NonBigInt,
-                               std::min(*range->last.integerNumber, *divisor - 1)},
+                               std::min(range->last.integerNumber.value_or(0), *divisor - 1)},
                               1};
+            if (negative != 0) {
+                result.first.integerNumber.reset();
+                result.first.negativeIntegerNumber = negative;
+            }
+            return result;
         }
         if (bitAnd || bitOr || bitXor) {
             if (!spend()) {

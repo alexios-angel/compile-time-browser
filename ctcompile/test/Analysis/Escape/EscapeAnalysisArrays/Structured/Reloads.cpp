@@ -43,14 +43,60 @@ void StructuredCases::reloads() {
            replace(remainderReload,
                    "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
     for (const auto & operands : {"%i, %zero", "%i, %i", "%two, %i"}) {
-        reject("structured remainder requires a positive invariant divisor without commutation",
+        reject("structured remainder requires a nonzero invariant divisor without commutation",
                replace(remainder, "mod %i, %two", "mod " + std::string(operands)));
     }
-    reject("structured remainder refuses negative input even when the result is shifted",
-           replace(remainder, "%position = ctjs.binary mod %i, %two",
-                   "%negative = ctjs.unary neg %i\n"
-                   "    %part = ctjs.binary mod %negative, %two\n"
-                   "    %position = ctjs.binary add %part, %one"));
+    const auto signedRemainder = replace(remainder, "%position = ctjs.binary mod %i, %two",
+                                         "%negative = ctjs.unary neg %i\n"
+                                         "    %part = ctjs.binary mod %negative, %two\n"
+                                         "    %position = ctjs.binary add %part, %one");
+    rows.push_back({.what = "structured signed remainders keep exact descending visits",
+                    .body = signedRemainder,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured negative divisors preserve the dividend sign",
+                    .body = replace(signedRemainder, "%part = ctjs.binary mod %negative, %two",
+                                    "%divisor = ctjs.unary neg %two\n"
+                                    "    %part = ctjs.binary mod %negative, %divisor"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured signed zero remainders preserve unvisited children",
+                    .body = replace(signedRemainder, "mod %negative, %two", "mod %negative, %one"),
+                    .arrays = "a:[x,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a,x}"});
+    const auto crossingRemainder =
+        replace(replace(replace(signedRemainder, "[%x]", "[%x, %y, %x, %zero]"),
+                        "  ctjs.append %y to %a\n", ""),
+                "ctjs.unary neg %i", "ctjs.binary sub %i, %one");
+    rows.push_back({.what = "structured remainder bounds cross zero without losing extrema",
+                    .body = crossingRemainder,
+                    .arrays = "a:[zero,zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero; a[3]=zero",
+                    .exit = "a -> {a}"});
+    const auto signedRemainderReload =
+        replace(remainderReload, "%position = ctjs.binary mod %i, %divisor",
+                "%negative = ctjs.unary neg %i\n"
+                "    %part = ctjs.binary mod %negative, %divisor\n"
+                "    %position = ctjs.binary add %part, %one");
+    rows.push_back({.what = "structured signed remainders preserve disjoint reloads",
+                    .body = signedRemainderReload,
+                    .arrays = "a:[zero,zero,two,zero]",
+                    .reads = "a[2]=two; a[0]=x; a[2]=two; a[1]=zero; a[2]=two; a[2]=two; "
+                             "a[2]=two; a[3]=zero",
+                    .exit = "a -> {a}"});
+    reject("later structured writes invalidate signed remainder reloads",
+           replace(signedRemainderReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured signed remainders reject interior divisor reloads",
+           replace(replace(crossingRemainder, "[%x, %y, %x, %zero]", "[%x, %two, %y, %zero]"),
+                   "%part = ctjs.binary mod %negative, %two",
+                   "%divisor = ctjs.get_property %base[%one]\n"
+                   "    %part = ctjs.binary mod %negative, %divisor"));
+    reject("structured signed remainders still require nonnegative final keys",
+           replace(signedRemainder, "ctjs.binary add %part, %one", "ctjs.unary plus %part"));
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i"}) {
         rows.push_back({.what = "structured masked writes release exactly visited children",
