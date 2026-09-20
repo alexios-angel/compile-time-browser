@@ -22,6 +22,31 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Post-super holder calls and left-shift indices, 2026-09-20 UTC
+
+**e055e73e** preserves post-super calls for the existing complete receiver,
+holder and source-body proofs. Five new sources add **40 native executions**;
+shared/multilevel inheritance, conditional values and argument order are covered.
+**4015d707** proves bounded nonwrapping left-shift array indices.
+
+Focused constructor probe: **25 observations / 72 main native executions / 50
+unprepared and 20 preparation refusals**. Exact host **1/1**, arrays **1/1** and
+escape lit **3/3** passed. DOM lit **1/1 (290.83s)** retains **632 observations /
+eight executions / 4,922 refusals**. Left shift: **66 sites / ten sound / 10 of 16
+confined precision**, with zero violations, partial, pending or unclaimed sites.
+Changed formatting passes; the required formatter retains 20 diagnostics in six
+unchanged files. Full suites, whole class lit and broad matrices were skipped.
+
+**Next:** the new original Data+B witness refuses the captured local Data holder
+(`class method capture is not its constructor or an inert sibling helper`). Prove
+its shared Map ownership and stored receiver using the existing seams. The unchanged
+W/B-only control remains refused at fixed constructor fields. Keep the nested
+callable/receiver SCF-transport control, variable fields and original own-key for-of clearing effects. Full Data/config,
+inherited DOM, static construction, selectors/events/Popper, broader ownership
+and the application driver remain. No browser/runtime changes or push.
+
+[Exact changes, focused checks and boundary](handoff/2026-09-20-post-super-holders.md).
+
 ## Conditional field branches and right-shift indices, 2026-09-20 UTC
 
 **e38407aa** preserves conditional constructor branches after super and
