@@ -18,12 +18,20 @@
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} arr escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function quotientShift() {
@@ -141,7 +149,52 @@ function cycle() {
     for (var i = 0; i < a.length; i += 2) a[(i / 2) << 1] = 0;
     return a;
 }
+function signedZeroCrossing() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) << 1) / 2 + 1] = 0;
+    return a;
+}
+function signedMinimum() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 1073741824) << 1) + 2147483648] = 0;
+    return a;
+}
+function signedMinimumZeroCount() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2147483648) << 32) + 2147483648] = 0;
+    return a;
+}
+function signedReloadGap() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 1) << a[1]) + 2] = 0;
+    return a;
+}
+function signedRemaining() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) << 1) / 2 + 1] = 0;
+    return a;
+}
+function signedOutputUnderflow() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-2147483648 - ((-1073741824 - i) << 1)] = 0;
+    return a;
+}
+function signedInputWrap() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2147483649) << 0) - 2147483647] = 0;
+    return a;
+}
+function signedLaterOverlap() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i / 2 - 1) << a[1]) + 2] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
 quotientShift(); shiftQuotient(); modulo32(); negativeCount(); reloadGap(); signedBoundary();
 highbitZero(); savedCount(); reversedShift(); saved(); remaining(); zeroTrip(); overlappingCount();
 laterOverlap(); outputDiscontinuity(); inputWrap(); negativeInput(); stringCount(); varyingCount();
 strideOverflow(); fractionalInput(); cycle();
+signedZeroCrossing(); signedMinimum(); signedMinimumZeroCount(); signedReloadGap();
+signedRemaining(); signedOutputUnderflow(); signedInputWrap(); signedLaterOverlap();

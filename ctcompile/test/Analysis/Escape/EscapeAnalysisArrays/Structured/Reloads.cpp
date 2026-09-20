@@ -244,6 +244,38 @@ void StructuredCases::reloads() {
                     .exit = "a -> {a}"});
     reject("structured left shifts refuse the signed-output discontinuity",
            replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"));
+    const auto negativeLeftShift = replace(
+        leftShiftIndex,
+        "%part = ctjs.binary div %i, %two\n    %position = ctjs.binary_static shl %part, %one",
+        "%input = ctjs.binary sub %i, %one\n"
+        "    %shifted = ctjs.binary_static shl %input, %one\n"
+        "    %part = ctjs.binary div %shifted, %two\n"
+        "    %position = ctjs.binary add %part, %one");
+    const auto minimumLeftShift =
+        replace(replace(replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"),
+                        "sub %half, %part", "sub %part, %half"),
+                "sub %maximum, %shifted", "add %shifted, %maximum");
+    for (const auto & body : {negativeLeftShift, minimumLeftShift}) {
+        rows.push_back({.what = "structured signed left shifts include zero crossing and INT32_MIN",
+                        .body = body,
+                        .arrays = "a:[zero,one,zero,one]",
+                        .reads = "a[0]=zero; a[2]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto negativeLeftReload =
+        replace(negativeLeftShift, "%shifted = ctjs.binary_static shl %input, %one",
+                "%count = ctjs.get_property %base[%one]\n"
+                "    %shifted = ctjs.binary_static shl %input, %count");
+    rows.push_back({.what = "structured signed left shifts retain disjoint count reloads",
+                    .body = negativeLeftReload,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured signed left shifts refuse output underflow below INT32_MIN",
+           replace(minimumLeftShift, "4742290407621132288", "4742290407625326592"));
+    reject("structured signed left shifts retain the complete reload census",
+           replace(negativeLeftReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
     reject("structured left-shift counts cannot overlap a later store",
            replace(leftShiftReload,
                    "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));

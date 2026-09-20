@@ -375,6 +375,48 @@ void InductionCases::overwritesAndTransport() {
         "x");
     reject("left shifts refuse the signed-output discontinuity",
            replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"));
+    const auto negativeLeftShift = replace(
+        leftShiftIndex,
+        "%part = ctjs.binary div %i, %two\n  %position = ctjs.binary_static shl %part, %one",
+        "%input = ctjs.binary sub %i, %two\n"
+        "  %shifted = ctjs.binary_static shl %input, %one\n"
+        "  %part = ctjs.binary div %shifted, %two\n"
+        "  %position = ctjs.binary add %part, %two");
+    const auto minimumLeftShift =
+        replace(replace(replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"),
+                        "sub %half, %part", "sub %part, %half"),
+                "sub %maximum, %shifted", "add %shifted, %maximum");
+    for (const auto & body : {negativeLeftShift, minimumLeftShift,
+                              replace(replace(negativeLeftShift, "sub %i, %two", "sub %i, %one"),
+                                      "add %part, %two", "add %part, %one"),
+                              replace(replace(negativeLeftShift, "sub %i, %two", "sub %zero, %i"),
+                                      "add %part, %two", "sub %zero, %part")}) {
+        run({.what = "signed left-shift intermediates retain bounds, zero crossing and reversal",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto negativeLeftReload =
+        replace(negativeLeftShift, "%shifted = ctjs.binary_static shl %input, %one",
+                "%count = ctjs.get_property %base[%one]\n"
+                "  %shifted = ctjs.binary_static shl %input, %count");
+    run({.what = "signed left shifts retain exact reload gaps after quotient composition",
+         .body = negativeLeftReload,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("signed left shifts refuse output underflow below INT32_MIN",
+           replace(minimumLeftShift, "4742290407621132288", "4742290407625326592"));
+    reject("signed left shifts refuse wrapping input bands even with count zero",
+           replace(replace(replace(minimumLeftShift, "4742290407621132288", "4746794007250599936"),
+                           "ctjs.binary mul %half, %two", "ctjs.unary plus %half"),
+                   "shl %input, %one", "shl %input, %zero"));
+    reject("signed left shifts retain the complete later-store reload census",
+           replace(negativeLeftReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
     for (const auto & body :
          {replace(leftShiftReload, "%count = ctjs.get_property %base[%one]",
                   "%count = ctjs.get_property %base[%two]"),

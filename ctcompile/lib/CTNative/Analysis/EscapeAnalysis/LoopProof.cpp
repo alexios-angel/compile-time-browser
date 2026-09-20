@@ -308,20 +308,21 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const bool negativeBand = unsignedShift && range->first.negativeIntegerNumber &&
                                       range->last.negativeIntegerNumber;
             if ((!positive && !negative) ||
-                (signedShift ? signedBand(range->first) != signedBand(range->last)
-                             : !negativeBand &&
-                                   (!range->first.integerNumber || !range->last.integerNumber ||
-                                    *range->last.integerNumber >
-                                        (unsignedShift ? 4294967295ULL : 2147483647ULL)))) {
+                (signedShift && signedBand(range->first) != signedBand(range->last)) ||
+                (unsignedShift && !negativeBand &&
+                 (!range->first.integerNumber || !range->last.integerNumber ||
+                  *range->last.integerNumber > 4294967295ULL))) {
                 return std::nullopt;
             }
             const auto count = positive ? static_cast<std::uint32_t>(*positive)
                                         : 0U - static_cast<std::uint32_t>(*negative);
             const auto factor = std::size_t{1} << (count & 31U);
             if (leftShift) {
-                // ponytail: nonnegative signed-i32 results exclude every wrap.
-                // Other conversion bands need their own affine range proof.
-                if (*range->last.integerNumber > 2147483647ULL / factor ||
+                // Multiplication is monotone across zero while both results
+                // stay signed-i32. The asymmetric bounds include INT32_MIN.
+                // ponytail: wrapping conversion bands need a separate range proof.
+                if (range->first.negativeIntegerNumber.value_or(0) > 2147483648ULL / factor ||
+                    range->last.integerNumber.value_or(0) > 2147483647ULL / factor ||
                     range->stride > 4294967295ULL / factor) {
                     return std::nullopt;
                 }
