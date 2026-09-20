@@ -152,6 +152,69 @@ void InductionCases::overwritesAndTransport() {
                    "  %part = ctjs.binary mod %negative, %divisor"));
     reject("a negative final remainder is not an own array index",
            replace(signedRemainder, "ctjs.binary add %part, %one", "ctjs.unary plus %part"));
+    const auto remainderBand = replace(remainder, "%position = ctjs.binary mod %i, %two",
+                                       "%four = ctjs.binary add %two, %two\n"
+                                       "  %offset = ctjs.binary add %i, %four\n"
+                                       "  %part = ctjs.binary mod %offset, %three\n"
+                                       "  %position = ctjs.binary sub %part, %one");
+    run({.what = "a single remainder quotient band preserves translated endpoints",
+         .body = remainderBand,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto negativeRemainderBand =
+        replace(replace(remainderBand, "%offset = ctjs.binary add %i, %four",
+                        "%negative = ctjs.unary neg %i\n"
+                        "  %offset = ctjs.binary sub %negative, %four"),
+                "ctjs.binary sub %part, %one", "ctjs.binary add %part, %two");
+    for (const auto & body :
+         {negativeRemainderBand,
+          replace(negativeRemainderBand, "%part = ctjs.binary mod %offset, %three",
+                  "%divisor = ctjs.unary neg %three\n"
+                  "  %part = ctjs.binary mod %offset, %divisor")}) {
+        run({.what = "negative remainder bands retain descending visits for either divisor sign",
+             .body = body,
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=one; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto remainderBandReload =
+        replace(replace(replace(replace(replace(remainder, "  %a =",
+                                                "  %eight = ctjs.constant "
+                                                "#ctjs.number<4620693217682128896> "
+                                                "{storage_test_id = \"eight\"}\n  %a ="),
+                                        "[%one, %x]", "[%one, %x, %eight, %x, %one]"),
+                                "^header(%a, %zero", "^header(%a, %one"),
+                        "add %i, %one", "add %i, %two"),
+                "%position = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "  %offset = ctjs.binary add %i, %eight\n"
+                "  %position = ctjs.binary mod %offset, %divisor");
+    run({.what = "one remainder band preserves divisor reloads inside stride gaps",
+         .body = remainderBandReload,
+         .arrays = "a:[one,zero,eight,zero,one]",
+         .reads = "a[2]=eight; a[1]=zero; a[2]=eight; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("a later write still invalidates a divisor inside a remainder stride gap",
+           replace(remainderBandReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("one remainder band cannot reload a divisor at a visited lattice point",
+           replace(replace(remainderBandReload, "[%one, %x, %eight, %x, %one]",
+                           "[%one, %eight, %one, %x, %one]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%one]"));
+    reject("remainder wraps cannot borrow a nonzero band's narrow endpoint range",
+           replace(remainderBand, "add %i, %four", "add %i, %two"));
+    run({.what = "a remainder band preserves children saved before its exact overwrites",
+         .body = replace(replace(remainderBand, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[1]=x; a[0]=zero; a[1]=zero",
+         .exit = "x -> {x}"});
     reject("a remainder divisor cannot hide an unproved large dividend",
            replace(remainder, "%position = ctjs.binary mod %i, %two",
                    "%maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"

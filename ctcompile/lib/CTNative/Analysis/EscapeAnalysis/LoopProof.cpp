@@ -312,6 +312,28 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             auto divisor = boundedConvertedNumber(*offset);
             if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
             if (!divisor || *divisor == 0) { return std::nullopt; }
+            const auto quotient = [&](const ContentsValue & endpoint) {
+                return endpoint.integerNumber
+                           ? static_cast<std::int64_t>(*endpoint.integerNumber / *divisor)
+                           : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber / *divisor);
+            };
+            // Between consecutive multiples, remainder is affine, including
+            // the central band across zero. Preserve the enclosing lattice.
+            if (quotient(range->first) == quotient(range->last)) {
+                for (ContentsValue * endpoint : {&range->first, &range->last}) {
+                    if (!spend()) {
+                        invariantFailure = ArrayContentsFailure::WorkLimit;
+                        return std::nullopt;
+                    }
+                    ContentsValue result{operand, ContentsKind::NonBigInt};
+                    boundedNumberDivision(*endpoint, *offset, true, result);
+                    if (!result.integerNumber && !result.negativeIntegerNumber) {
+                        return std::nullopt;
+                    }
+                    *endpoint = result;
+                }
+                return range;
+            }
             // Remainder takes the dividend's sign. Its separate magnitudes are
             // already bounded by 2^32-1, including across zero; no signed abs.
             const auto negative =

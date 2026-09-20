@@ -97,6 +97,53 @@ void StructuredCases::reloads() {
                    "    %part = ctjs.binary mod %negative, %divisor"));
     reject("structured signed remainders still require nonnegative final keys",
            replace(signedRemainder, "ctjs.binary add %part, %one", "ctjs.unary plus %part"));
+    const auto remainderBand = replace(remainder, "%position = ctjs.binary mod %i, %two",
+                                       "%three = ctjs.binary add %two, %one\n"
+                                       "    %four = ctjs.binary add %two, %two\n"
+                                       "    %offset = ctjs.binary add %i, %four\n"
+                                       "    %part = ctjs.binary mod %offset, %three\n"
+                                       "    %position = ctjs.binary sub %part, %one");
+    rows.push_back({.what = "structured remainder bands preserve translated endpoints",
+                    .body = remainderBand,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured negative remainder bands preserve descending visits",
+                    .body = replace(replace(remainderBand, "%offset = ctjs.binary add %i, %four",
+                                            "%negative = ctjs.unary neg %i\n"
+                                            "    %offset = ctjs.binary sub %negative, %four"),
+                                    "ctjs.binary sub %part, %one", "ctjs.binary add %part, %two"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    const auto remainderBandReload =
+        replace(replace(replace(replace(replace(replace(remainder, "  %a =",
+                                                        "  %eight = ctjs.constant "
+                                                        "#ctjs.number<4620693217682128896> "
+                                                        "{storage_test_id = \"eight\"}\n  %a ="),
+                                                "[%x]", "[%one, %x, %eight, %y, %one]"),
+                                        "  ctjs.append %y to %a\n", ""),
+                                "%index = %zero", "%index = %one"),
+                        "add %i, %one", "add %i, %two"),
+                "%position = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "    %offset = ctjs.binary add %i, %eight\n"
+                "    %position = ctjs.binary mod %offset, %divisor");
+    rows.push_back({.what = "structured remainder bands retain divisor reloads in stride gaps",
+                    .body = remainderBandReload,
+                    .arrays = "a:[one,zero,eight,zero,one]",
+                    .reads = "a[2]=eight; a[1]=zero; a[2]=eight; a[3]=zero",
+                    .exit = "a -> {a}"});
+    reject("later structured writes invalidate divisors in remainder stride gaps",
+           replace(remainderBandReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured remainder bands exclude divisor reloads at visited lattice points",
+           replace(replace(remainderBandReload, "[%one, %x, %eight, %y, %one]",
+                           "[%one, %eight, %one, %y, %one]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%one]"));
+    reject("structured remainder wraps cannot use narrow quotient-band bounds",
+           replace(remainderBand, "add %i, %four", "add %i, %two"));
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i"}) {
         rows.push_back({.what = "structured masked writes release exactly visited children",
