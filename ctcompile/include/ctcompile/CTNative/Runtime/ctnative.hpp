@@ -201,6 +201,17 @@ inline bool boolean_string_truthy(const std::variant<js_boolean_t, std::string> 
         },
         value);
 }
+inline js_string boolean_string_text(const std::variant<js_boolean_t, std::string> & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_boolean_t>) {
+                return js_string{} + alternative;
+            } else {
+                return js_string{alternative};
+            }
+        },
+        value);
+}
 
 // --- owning strings ----------------------------------------------------------
 
@@ -215,6 +226,14 @@ struct nullable_string {
     std::string value;
     nullable_string() = default;
     nullable_string(const std::string & text) : tag(kind::string), value(text) {}
+    js_num to_number() const {
+        switch (tag) {
+        case kind::undefined: return js_num{js_nan_t{}};
+        case kind::null_value: return js_num{};
+        case kind::string: return js_num{ctbrowser::string_to_number(value)};
+        }
+        std::terminate();
+    }
 };
 inline nullable_string to_nullable_string(const std::string & value) {
     return value;

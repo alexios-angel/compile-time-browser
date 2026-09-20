@@ -100,6 +100,15 @@ int main() {
     CHECK(!boolean_string_truthy(std::variant<js_boolean_t, std::string>{disabled}));
     CHECK(!boolean_string_truthy(std::variant<js_boolean_t, std::string>{std::string{}}));
     CHECK(boolean_string_truthy(std::variant<js_boolean_t, std::string>{std::string{"false"}}));
+    CHECK(boolean_string_text(std::variant<js_boolean_t, std::string>{enabled}) ==
+          js_string{"true"});
+    CHECK(boolean_string_text(std::variant<js_boolean_t, std::string>{disabled}) ==
+          js_string{"false"});
+    CHECK(boolean_string_text(std::variant<js_boolean_t, std::string>{std::string{}}) ==
+          js_string{});
+    const std::variant<js_boolean_t, std::string> binaryText{std::string{"a\0b", 3}};
+    CHECK(boolean_string_text(binaryText) == js_string{"a\0b"});
+    CHECK(std::holds_alternative<std::string>(binaryText));
 
     const std::string high = "\xED\xA0\xBD", low = "\xED\xB8\x80";
     static_assert(std::is_same_v<js_string, js_basic_string<char>>);
@@ -292,5 +301,18 @@ int main() {
     CHECK(scalar_typeof(nan) == "number");
     CHECK(string_equal(nullable_scalar::null(), nullable_string{}));
     CHECK(!string_truthy(nullable_string{std::string()}));
+    static_assert(std::is_same_v<decltype(nullable_string{}.to_number()), ctnative::js_num>);
+    const auto absentText = to_nullable_string(undefined), nullText = to_nullable_string(null);
+    CHECK(std::isnan(absentText.to_number().value()));
+    CHECK(nullText.to_number() == zero && !std::signbit(nullText.to_number().value()));
+    CHECK(absentText.tag == nullable_string::kind::undefined);
+    CHECK(nullText.tag == nullable_string::kind::null_value);
+    const nullable_string minusZeroText{std::string{"-0"}};
+    CHECK(std::signbit(minusZeroText.to_number().value()));
+    CHECK(minusZeroText.tag == nullable_string::kind::string && minusZeroText.value == "-0");
+    CHECK(nullable_string{std::string{}}.to_number() == zero);
+    CHECK(nullable_string{std::string{" 0x10\n"}}.to_number() == ctnative::js_num{16.0});
+    CHECK(std::isnan(nullable_string{std::string{"1\0", 2}}.to_number().value()));
+    CHECK(std::isnan(nullable_string{high}.to_number().value()));
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
