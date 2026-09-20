@@ -3,7 +3,9 @@
 **Status: in progress, 2026-09-20.** `Element.prototype` composition is implemented
 using the existing four selector method objects. Distinct `undefined_t` and
 `js_null_t` tokens construct the existing optional scalar carrier; its ABI is
-unchanged. The other primitive classes, Object/Array prototypes and document
+unchanged. `js_boolean_t` now carries JavaScript Boolean values through literals,
+comparisons, calls, fields, closures and Maps, with explicit conversion to C++
+conditions and numbers. Number/String classes, Object/Array prototypes and document
 views remain planned. This is the user's revised direction for the native C++
 interface and supersedes conflicting
 raw-carrier prescriptions in master-plan part 24. Historical measurements retain
@@ -78,6 +80,16 @@ two algorithms for one operation.
 - Keep `typeof` as a named operation. Null and objects, primitive wrappers and
   boxed primitive objects must retain their JavaScript distinctions. A
   `js_boolean_t` primitive is not `new Boolean(false)`.
+- Route admitted `instanceof` through a typed native wrapper. Invoke a proved
+  `Symbol.hasInstance` hook with the constructor as receiver and the tested value
+  as argument when present, then apply JavaScript Boolean conversion to its
+  result. For the default path, use `std::holds_alternative<T>(value)` only when
+  constructor identity and the prototype chain prove equivalence. Exact
+  alternatives do not automatically match base classes, and a primitive is not
+  an instance of its boxed constructor. Preserve hook lookup, evaluation order,
+  effects and exceptions, including invalid right-hand operands. Unknown hooks
+  or prototype behavior remain compile-time diagnostics; the wrapper adds no
+  VM dispatch or universal value carrier.
 - Do not overload `&&` or `||` to implement JavaScript short-circuit expressions.
   Overloaded C++ operators evaluate both operands, and JS returns an operand's
   value. Preserve explicit structured control flow for `&&`, `||`, `??`, optional
@@ -177,7 +189,8 @@ It contains a global `using js_num = double`, finite nullable carriers, object/M
 storage helpers, and `matches`, `closest`, `querySelector`, `querySelectorAll`
 method objects. `Element.prototype` now owns those method objects, with the
 flat names retained as constant reference aliases. Distinct absence tokens now
-construct the existing nullable scalar; other primitive classes and Object/Array
+construct the existing nullable scalar, and `js_boolean_t` carries Boolean
+values; other primitive classes and Object/Array
 intrinsic prototypes are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
 behind Script and needs extraction before native use.
@@ -198,9 +211,13 @@ rename or sudden reinterpretation of existing `auto`/template deduction.
    Default construction and `.null()` remain compatible. Calls, returns and
    optional joins still use the tagged carrier: inference currently gives both
    absence literals `Opt<Bottom>`, so this is not an exact-token ABI migration.
-   Next separate JavaScript Boolean values from C++ control-flow conditions for
-   `js_boolean_t`; literals, comparisons, signatures, optional conversions and
-   printing must migrate together. Follow with Number and String in coherent
+   `js_boolean_t` now separates JavaScript Boolean values from C++ control-flow
+   conditions. Literals, comparisons, signatures, optional conversions, Map
+   keys/payloads, captured fields and printing use the class. Its exact-bool
+   constructor and contextual conversion are explicit; `.to_number()` reuses
+   the numeric conversion boundary. Public JSON storage and internal predicates
+   retain raw `bool`, with explicit adapters at generated boundaries.
+   Follow with Number and String in coherent
    batches. Update literal creation, conversion, optional/union joins,
    calls/returns, print helpers and deduced-type assertions with each batch.
    Keep MLIR's semantic types and proof authority; C++ classes do not replace
@@ -208,7 +225,12 @@ rename or sudden reinterpretation of existing `auto`/template deduction.
    retaining `ctnative.hpp` as the generated-code include.
 3. **Collections and objects.** Migrate dense snapshots to `js_vector<T>` and
    admitted Arrays to `js_array_t<T>`. Preserve alias ownership and generated
-   concrete object shapes. Reconcile Shell's current NodeList indices above
+   concrete object shapes. Implement the typed `instanceof` wrapper alongside
+   class/prototype work once constructor identity and `Symbol.hasInstance`
+   lookup/call proofs exist. Test a custom hook (including a non-Boolean return
+   and thrown exception), default matching, inheritance and primitive rejection
+   against the VM before emitting that operation.
+   Reconcile Shell's current NodeList indices above
    1,000,000 returning undefined before broadening indexed `R.find` consumers;
    retain the separate 2^24 proxy-spread cap. A NodeList is not a JavaScript Array.
 4. **Document/element views.** Adapt existing borrowed and owned entries to typed

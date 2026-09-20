@@ -22,6 +22,23 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## JavaScript Boolean carrier migration, 2026-09-20 UTC
+
+**92024490** continued **30a74866** with `ctnative::js_boolean_t` across native values,
+signatures, comparisons, Maps, captures and browser result adapters. C++ control
+conditions and public JSON storage retain `bool`. No VM or source-proof change.
+Focused validation: runtime CTest **1/1**, **17 distinct lit cases** and **11
+selected ownership cases** passed across corrected runs, including their existing
+sanitizer checks. All 35 code/test hashes matched the devbox. Global formatting
+retains 16 pre-existing diagnostics; scoped checks pass. Full suites were skipped.
+[Implementation, exact focused validation and remaining boundaries](handoff/2026-09-20-native-boolean.md).
+
+Next migrate Number/String carriers, then collections and document views. The
+user's typed `instanceof` wrapper is scheduled with class/prototype proofs:
+invoke a proved `Symbol.hasInstance` hook, otherwise use `std::holds_alternative`
+where equivalent. Preserve receiver, inheritance, effects and exceptions.
+NodeList slots above 1,000,000 remain the next indexed Bootstrap boundary.
+
 ## Typed JavaScript interface implementation, 2026-09-20 UTC
 
 Resumed the first implementation milestone from **8ab0394c** and the design
