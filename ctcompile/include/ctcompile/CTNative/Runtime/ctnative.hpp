@@ -331,12 +331,19 @@ inline bool operator<(const nullable_string & a, const nullable_string & b) {
     return a.tag == nullable_string::kind::string && a.value < b.value;
 }
 
-// A proved Number/String union owns exactly those two alternatives. Global
-// storage wraps it in optional so a missing store cannot imitate Number zero.
+// A proved Number/String union owns exactly those two alternatives.
 using number_string = std::variant<js_num, js_string>;
 
 inline constexpr js_num to_number(js_num value) {
     return value;
+}
+inline js_num to_number(const js_string & value) {
+    return value.to_number();
+}
+template <class T>
+requires(std::is_same_v<T, undefined_t> || std::is_same_v<T, js_null_t>)
+inline js_num to_number(T value) {
+    return to_number(nullable_scalar{value});
 }
 inline js_num to_number(const number_string & value) {
     return std::visit(
@@ -367,6 +374,7 @@ inline bool number_string_truthy(const number_string & value) {
 inline std::string number_string_typeof(const number_string & value) {
     return std::holds_alternative<js_num>(value) ? "number" : "string";
 }
+// Compatibility for callers of the earlier optional global storage.
 inline number_string global_number_string(const std::optional<number_string> & value) {
     if (!value) { std::terminate(); }
     return *value;
@@ -383,12 +391,108 @@ inline void print_number_string(const char * name, const number_string & value) 
         value);
 }
 
+// Source optional unions preserve absence as values, including reads before
+// a global store. Neither absence alternative uses NaN or an empty String.
+using nullable_number_string = std::variant<undefined_t, js_null_t, js_num, js_string>;
+
+inline nullable_number_string to_nullable_number_string(const number_string & value) {
+    return std::visit(
+        [](const auto & alternative) -> nullable_number_string { return alternative; }, value);
+}
+inline nullable_number_string to_nullable_number_string(nullable_scalar value) {
+    switch (value.tag) {
+    case nullable_scalar::kind::undefined: return undefined_t{};
+    case nullable_scalar::kind::null: return js_null_t{};
+    case nullable_scalar::kind::number: return js_num{value.value};
+    case nullable_scalar::kind::boolean: std::terminate();
+    }
+    std::terminate();
+}
+inline nullable_number_string to_nullable_number_string(const nullable_string & value) {
+    switch (value.tag) {
+    case nullable_string::kind::undefined: return undefined_t{};
+    case nullable_string::kind::null_value: return js_null_t{};
+    case nullable_string::kind::string: return js_string{value.value};
+    }
+    std::terminate();
+}
+inline js_num to_number(const nullable_number_string & value) {
+    return std::visit([](const auto & alternative) { return to_number(alternative); }, value);
+}
+
+inline js_string nullable_number_string_text(const nullable_number_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                return alternative;
+            } else {
+                return nullable_scalar{alternative}.to_string();
+            }
+        },
+        value);
+}
+inline bool nullable_number_string_truthy(const nullable_number_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            using T = std::decay_t<decltype(alternative)>;
+            if constexpr (std::is_same_v<T, js_num> || std::is_same_v<T, js_string>) {
+                return static_cast<bool>(alternative);
+            } else {
+                return false;
+            }
+        },
+        value);
+}
+inline std::string nullable_number_string_typeof(const nullable_number_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                return std::string{"string"};
+            } else {
+                return scalar_typeof(nullable_scalar{alternative});
+            }
+        },
+        value);
+}
+inline void print_nullable_number_string(const char * name, const nullable_number_string & value) {
+    std::visit(
+        [name](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                print_string(name, alternative.value());
+            } else {
+                print_scalar(name, nullable_scalar{alternative});
+            }
+        },
+        value);
+}
+inline number_string global_number_string(const nullable_number_string & value) {
+    return std::visit(
+        [](const auto & alternative) -> number_string {
+            using T = std::decay_t<decltype(alternative)>;
+            if constexpr (std::is_same_v<T, js_num> || std::is_same_v<T, js_string>) {
+                return alternative;
+            } else {
+                std::terminate();
+            }
+        },
+        value);
+}
+inline js_num global_number(const nullable_number_string & value) {
+    if (const auto * number = std::get_if<js_num>(&value)) { return *number; }
+    std::terminate();
+}
+inline std::string global_string(const nullable_number_string & value) {
+    if (const auto * text = std::get_if<js_string>(&value)) { return text->value(); }
+    std::terminate();
+}
+
 template <class T>
 concept primitive_add_operand =
     std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t> ||
     std::is_same_v<T, nullable_scalar> || std::is_same_v<T, js_string> ||
     std::is_same_v<T, nullable_string> ||
-    std::is_same_v<T, std::variant<js_boolean_t, std::string>> || std::is_same_v<T, number_string>;
+    std::is_same_v<T, std::variant<js_boolean_t, std::string>> ||
+    std::is_same_v<T, number_string> || std::is_same_v<T, nullable_number_string>;
 
 template <primitive_add_operand L, primitive_add_operand R>
 number_string add(const L & left, const R & right) {
@@ -399,7 +503,8 @@ number_string add(const L & left, const R & right) {
             return value.tag == nullable_string::kind::string;
         } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
             return std::holds_alternative<std::string>(value);
-        } else if constexpr (std::is_same_v<T, number_string>) {
+        } else if constexpr (std::is_same_v<T, number_string> ||
+                             std::is_same_v<T, nullable_number_string>) {
             return std::holds_alternative<js_string>(value);
         } else {
             return false;
@@ -416,6 +521,8 @@ number_string add(const L & left, const R & right) {
             return boolean_string_text(value);
         } else if constexpr (std::is_same_v<T, number_string>) {
             return number_string_text(value);
+        } else if constexpr (std::is_same_v<T, nullable_number_string>) {
+            return nullable_number_string_text(value);
         } else {
             return js_string{} + value;
         }

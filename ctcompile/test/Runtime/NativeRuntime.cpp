@@ -341,13 +341,18 @@ int main() {
     static_assert(!primitive_addable<std::optional<number_string>>);
     // Every supported carrier participates in both positions. Boolean true
     // adds like one numerically but retains its spelling in concatenation.
-    const auto numericOnes =
-        std::tuple{one, enabled, nullable_scalar{one},
-                   std::variant<js_boolean_t, std::string>{enabled}, number_string{one}};
-    const auto stringTwos = std::tuple{js_string{"2"}, nullable_string{std::string{"2"}},
-                                       std::variant<js_boolean_t, std::string>{std::string{"2"}},
-                                       number_string{js_string{"2"}}};
-    const auto exactOnes = std::tuple{one, nullable_scalar{one}, number_string{one}};
+    const auto numericOnes = std::tuple{one,
+                                        enabled,
+                                        nullable_scalar{one},
+                                        std::variant<js_boolean_t, std::string>{enabled},
+                                        number_string{one},
+                                        nullable_number_string{one}};
+    const auto stringTwos =
+        std::tuple{js_string{"2"}, nullable_string{std::string{"2"}},
+                   std::variant<js_boolean_t, std::string>{std::string{"2"}},
+                   number_string{js_string{"2"}}, nullable_number_string{js_string{"2"}}};
+    const auto exactOnes =
+        std::tuple{one, nullable_scalar{one}, number_string{one}, nullable_number_string{one}};
     const auto trueValues = std::tuple{enabled, nullable_scalar{enabled},
                                        std::variant<js_boolean_t, std::string>{enabled}};
     const auto checkAdditions = [](const auto & leftValues, const auto & rightValues,
@@ -412,5 +417,77 @@ int main() {
     storedAddition = one;
     CHECK(savedAddition == number_string{js_string{"saved\0text"}});
     CHECK(global_number_string(storedAddition) == number_string{one});
+
+    static_assert(
+        std::is_same_v<nullable_number_string,
+                       std::variant<undefined_t, js_null_t, ctnative::js_num, js_string>>);
+    static_assert(primitive_addable<nullable_number_string>);
+    static_assert(!std::is_constructible_v<nullable_number_string, bool>);
+    static_assert(!std::is_constructible_v<nullable_number_string, js_boolean_t>);
+    static_assert(!std::is_constructible_v<nullable_number_string, double>);
+    static_assert(!std::is_constructible_v<nullable_number_string, const char *>);
+    static_assert(!std::is_constructible_v<nullable_number_string, object_value>);
+    static_assert(!std::is_convertible_v<nullable_number_string, number_string>);
+    static_assert(std::is_same_v<decltype(to_number(js_string{})), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(to_number(undefined_t{})), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(to_number(js_null_t{})), ctnative::js_num>);
+    const nullable_number_string optionalUndefined{}, optionalNull{js_null_t{}},
+        optionalZero{negativeZero}, optionalNaN{notANumber}, optionalText{js_string{"a\0b"}};
+    CHECK(std::holds_alternative<undefined_t>(optionalUndefined));
+    CHECK(std::holds_alternative<js_null_t>(optionalNull));
+    CHECK(std::holds_alternative<ctnative::js_num>(optionalZero));
+    CHECK(std::holds_alternative<js_string>(optionalText));
+    CHECK(std::isnan(to_number(optionalUndefined).value()));
+    CHECK(to_number(optionalNull) == zero && !std::signbit(to_number(optionalNull).value()));
+    CHECK(std::signbit(to_number(optionalZero).value()));
+    CHECK(std::isnan(to_number(optionalNaN).value()));
+    CHECK(std::isnan(to_number(optionalText).value()));
+    CHECK(to_number(nullable_number_string{js_string{" 0x10\n"}}) == ctnative::js_num{16.0});
+    CHECK(to_number(nullable_number_string{js_string{}}) == zero);
+    CHECK(nullable_number_string_text(optionalUndefined) == js_string{"undefined"});
+    CHECK(nullable_number_string_text(optionalNull) == js_string{"null"});
+    CHECK(nullable_number_string_text(optionalZero) == js_string{"0"});
+    CHECK(nullable_number_string_text(optionalNaN) == js_string{"NaN"});
+    CHECK(nullable_number_string_text(optionalText) == js_string{"a\0b"});
+    CHECK(!nullable_number_string_truthy(optionalUndefined));
+    CHECK(!nullable_number_string_truthy(optionalNull));
+    CHECK(!nullable_number_string_truthy(optionalZero));
+    CHECK(!nullable_number_string_truthy(optionalNaN));
+    CHECK(!nullable_number_string_truthy(nullable_number_string{js_string{}}));
+    CHECK(nullable_number_string_truthy(optionalText));
+    CHECK(nullable_number_string_truthy(nullable_number_string{one}));
+    CHECK(nullable_number_string_typeof(optionalUndefined) == "undefined");
+    CHECK(nullable_number_string_typeof(optionalNull) == "object");
+    CHECK(nullable_number_string_typeof(optionalNaN) == "number");
+    CHECK(nullable_number_string_typeof(optionalText) == "string");
+    CHECK(std::holds_alternative<undefined_t>(to_nullable_number_string(undefined)));
+    CHECK(std::holds_alternative<undefined_t>(to_nullable_number_string(absentText)));
+    CHECK(std::holds_alternative<js_null_t>(to_nullable_number_string(null)));
+    CHECK(std::holds_alternative<js_null_t>(to_nullable_number_string(nullText)));
+    CHECK(std::signbit(
+        global_number(to_nullable_number_string(nullable_scalar{negativeZero})).value()));
+    CHECK(std::signbit(
+        global_number(to_nullable_number_string(number_string{negativeZero})).value()));
+    CHECK(global_string(to_nullable_number_string(number_string{js_string{"a\0b"}})) ==
+          std::string("a\0b", 3));
+    CHECK(global_string(to_nullable_number_string(nullable_string{high + low})) == high + low);
+    CHECK(global_number_string(optionalText) == number_string{js_string{"a\0b"}});
+    CHECK(std::signbit(global_number(optionalZero).value()));
+    CHECK(std::isnan(global_number(optionalNaN).value()));
+    CHECK(std::isnan(to_number(add(optionalUndefined, one)).value()));
+    CHECK(add(optionalNull, one) == number_string{one});
+    CHECK(add(js_string{"x"}, optionalUndefined) == number_string{js_string{"xundefined"}});
+    CHECK(add(optionalNull, js_string{"x"}) == number_string{js_string{"nullx"}});
+    CHECK(add(optionalText, optionalNull) == number_string{js_string{"a\0bnull"}});
+    CHECK(std::signbit(to_number(add(optionalZero, optionalZero)).value()));
+    CHECK(add(nullable_number_string{highUnit}, nullable_number_string{lowUnit}) ==
+          number_string{js_string{"\xF0\x9F\x98\x80"}});
+    nullable_number_string changingOptional = optionalText;
+    const auto copiedOptional = changingOptional;
+    changingOptional = undefined_t{};
+    CHECK(std::holds_alternative<undefined_t>(changingOptional));
+    CHECK(global_string(copiedOptional) == std::string("a\0b", 3));
+    changingOptional = negativeZero;
+    CHECK(std::signbit(global_number(changingOptional).value()));
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
