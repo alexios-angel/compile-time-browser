@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Receiver forwarding and masked indices, 2026-09-20 UTC
+
+**52cc51db** composes read-only constructor-receiver borrows through exact helper
+chains. Global, captured and holder chains, reordered parameters and inherited
+argument effects add **40 native executions**. Every leaf read must name a field
+already present at the original call. Storage, returned aliases, writes, dynamic
+keys, recursive proofs and unused ambient effects remain refused.
+**db4d6384** bounds Number BitAnd indices with a nonnegative signed-i32 mask.
+Its conservative range protects bounds/reload checks; replay updates only actual
+visited elements, preserving saved children and gaps.
+
+Focused class probe: **55 observations / 160 main native executions / 110
+unprepared and 70 preparation refusals**, plus **12 native boundary controls**.
+Exact host **1/1**, arrays **1/1**, lowering lit **3/3**, escape lit **3/3** pass.
+Mask oracle: **48 sites / eight sound / eight of 12 confined precision**, zero
+violations, partial, pending or unclaimed sites. All nine tested hashes match.
+Required formatting retains 20 diagnostics in six unchanged files; changed files
+pass. Full suites, whole class lit, DOM replay and broad matrices were skipped.
+
+**Next:** unchanged B still refuses receiver observation; Data+B still refuses
+its shared Map capture. Preserve selected Map captures/cells through class
+preparation and reuse the existing closure lifter's capture transport, with a
+complete Map identity/body/invocation proof. The local Data holder does not match
+the published owned-global factory seam. Typed class-receiver storage still needs
+ownership across constructor/dispose, saved aliases, overwrite/delete and failure.
+Keep original `e.set`, `e.remove`, `P.off` and configuration bodies. Variable fields,
+inherited getter targets, full Bootstrap and the application driver remain.
+No browser/runtime changes or push.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-forwarded-receivers.md).
+
 ## Constructor receiver borrows and signed output bands, 2026-09-20 UTC
 
 **622f1ca8** proves read-only helper arguments against fields already present at
