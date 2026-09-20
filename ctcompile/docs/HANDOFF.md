@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Optional scalar Map keys and remainder indices, 2026-09-20 UTC
+
+**7b456d79** preserves optional Number/Boolean/Null/Undefined Map keys with the
+existing finite scalar carrier, SameValueZero and canonical numeric zero.
+Five unchanged numeric-key sources and six new cases add **88 native executions**;
+ordered numeric value snapshots add **eight**. Optional-key snapshots and mixed
+String/Number or object/absent class keys remain refused. **4a0e7910** proves
+bounded nonnegative Number remainder indices with exact replay and complete
+reload checks. **f428fd97** retains conditional branches in three existing Map
+refusal RUN lines; source bodies and expected diagnostics are unchanged.
+
+Focused class selection: **27 observations / 128 main native executions / 54
+unprepared and 37 preparation refusals**, plus **four native boundary controls**.
+Exact runtime, host and arrays CTests each pass **1/1**; escape lit **3/3**, new
+Map lit **1/1** and adjacent Map lit **2/2** pass. Remainder oracle: **63 sites /
+nine sound / nine of 15 confined precision**, zero violations, partial, pending
+or unclaimed sites. All 13 tested native/escape hashes match. Required formatting
+retains 20 diagnostics in six unchanged files; changed files pass.
+
+**Next:** original B/Data+B still refuse receiver observation at registration.
+Prove typed class payloads and enclosing owner lifetime across complete
+constructor/helper/Map calls, saved aliases, overwrite/delete, constructor
+failure and disposal. Preserve nested Maps, conflict checks, `e.set`, `e.remove`,
+`P.off` and configuration bodies. Scalar identity storage cannot substitute for
+a concrete class record. Full Bootstrap and the application driver remain
+unfinished. No browser/runtime-oracle edits or push. Full suites, whole class
+lit, DOM replay and broad matrices were skipped.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-scalar-map-keys.md).
+
 ## Helper Map environments and signed AND masks, 2026-09-20 UTC
 
 **a95574e6** passes exact Map environments through local captured helpers and
