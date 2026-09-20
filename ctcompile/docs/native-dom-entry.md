@@ -225,10 +225,26 @@ document identity before calling `read_txn::is_ancestor_of`. Selector calls use
 `engine::element_matches` and `engine::closest`, the same cores as the bindings.
 
 A `closest` result is a local borrowed identity, with a canonical empty
-`element_ref{}` for no match. Its only supported observation is strict equality
-with another result or an element parameter, so misses compare equal even across
-documents. Dereferencing, retaining or returning that result, passing it to
-`contains`, and comparing it with an explicit source `null` still refuse.
+`element_ref{}` for no match. Strict equality compares it with another result or
+an element parameter, so misses compare equal even across documents. A truthiness
+or `!`/`!!` guard permits existing DOM operations on that exact result inside the
+present branch:
+
+```javascript
+const button = element.closest('[data-bs-toggle="button"]');
+if (button) {
+  const active = button.classList.toggle('active');
+  button.setAttribute('aria-pressed', active);
+}
+```
+
+Guarded results may also be passed to `contains` or call `matches` and `closest`.
+Selector chains retain the original input's live Style engine; each new `closest`
+result requires its own guard. The absent branch, another result and uses after
+the guard acquire no dereference permission. Borrowed returns, property storage,
+branch/loop transport, dataset access on derived elements and explicit source
+`null` comparisons still refuse. The caller's document remains the sole owner;
+the admitted synchronous operations neither destroy nodes nor reenter script.
 Unsupported coercions and observed set/remove results refuse.
 
 A `getAttribute` result is an owning `std::optional<std::string>`: absent is

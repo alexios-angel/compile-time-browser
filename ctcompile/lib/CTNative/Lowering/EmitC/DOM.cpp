@@ -354,6 +354,13 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                : unary && unary.getKind() == ctjs::UnaryKind::Not
                                    ? unary.getOperand()
                                    : mlir::Value{};
+    if (tested && tested.getType() == carrierType(context, carrier::domElement)) {
+        auto empty = ec::ConstantOp::create(
+            at, where, tested.getType(), ec::OpaqueAttr::get(context, "ctbrowser::element_ref{}"));
+        swap(ec::CmpOp::create(at, where, at.getI1Type(),
+                               truth ? ec::CmpPredicate::ne : ec::CmpPredicate::eq, tested, empty));
+        return true;
+    }
     if (tested && tested.getType() == optionalString) {
         // Presence alone is not JavaScript truthiness: an empty attribute is false.
         auto present =
@@ -478,8 +485,16 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     } else if (edge.kind == HostDOMMethod::numberToString) {
         arguments.push_back(call.getReceiver());
     } else {
-        arguments.push_back(edge.element);
-        if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(edge.element)); }
+        // Earlier closest replacements update operands and erase the original
+        // producer. Read the live receiver instead of its cached source value.
+        mlir::Value element = call.getReceiver();
+        if (edge.kind == HostDOMMethod::toggleClass) {
+            element = element.getDefiningOp<ctjs::GetPropertyOp>().getObject();
+        } else if (edge.kind == HostDOMMethod::datasetKeys) {
+            element = call.getArgs().front().getDefiningOp<ctjs::GetPropertyOp>().getObject();
+        }
+        arguments.push_back(element);
+        if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(element)); }
         if (edge.kind != HostDOMMethod::datasetKeys) {
             llvm::append_range(arguments, call.getArgs());
         }
@@ -525,6 +540,11 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                          : at.getI1Type();
         auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
                                                 at.getStringAttr(callee), arguments);
+        if (edge.returnsElement()) {
+            // Every chain begins with a parameter's closest call, which already
+            // requires that parameter's engine in the native signature.
+            domStyles[value.getResult(0)] = domStyles.lookup(arguments.front());
+        }
         call.getResult().replaceAllUsesWith(value.getResult(0));
     } else {
         callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{}, at.getStringAttr(callee),

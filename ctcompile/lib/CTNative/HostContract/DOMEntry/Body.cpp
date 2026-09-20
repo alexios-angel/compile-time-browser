@@ -354,6 +354,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             (hasKind(truth.getValue(), Kind::boolean) || hasKind(truth.getValue(), Kind::number) ||
              hasKind(truth.getValue(), Kind::string) ||
              hasKind(truth.getValue(), Kind::optionalString) ||
+             hasKind(truth.getValue(), Kind::nullableElement) ||
              hasKind(truth.getValue(), Kind::null))) {
             values[truth.getResult()] = Kind::boolean;
             if (!spend()) { return false; }
@@ -366,6 +367,10 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             if (auto found = predicates.find(truth.getValue()); found != predicates.end()) {
                 const Predicate predicate = found->second;
                 predicates[truth.getResult()] = predicate;
+            }
+            if (hasKind(truth.getValue(), Kind::nullableElement)) {
+                if (!spend()) { return false; }
+                predicates[truth.getResult()] = {truth.getValue(), true};
             }
             if (callbackBody) {
                 if (!spend()) { return false; }
@@ -381,12 +386,17 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
              hasKind(unary.getOperand(), Kind::number) ||
              hasKind(unary.getOperand(), Kind::optionalString) ||
              hasKind(unary.getOperand(), Kind::string) ||
+             hasKind(unary.getOperand(), Kind::nullableElement) ||
              hasKind(unary.getOperand(), Kind::null))) {
             values[unary.getResult()] = Kind::boolean;
             if (!spend()) { return false; }
             if (auto found = predicates.find(unary.getOperand()); found != predicates.end()) {
                 const Predicate predicate = found->second;
                 predicates[unary.getResult()] = {predicate.optional, !predicate.stringOnTrue};
+            }
+            if (hasKind(unary.getOperand(), Kind::nullableElement)) {
+                if (!spend()) { return false; }
+                predicates[unary.getResult()] = {unary.getOperand(), false};
             }
             continue;
         }
