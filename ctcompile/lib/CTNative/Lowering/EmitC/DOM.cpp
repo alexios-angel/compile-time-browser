@@ -265,6 +265,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true; // The enclosing invocation consumes these after its children.
     }
     const auto swap = [&](mlir::Value value) {
+        if (isBooleanCarrier(operation->getResult(0).getType()) && value.getType().isInteger(1)) {
+            value = convertScalar(at, where, value, carrierType(context, carrier::boolean));
+        }
         operation->getResult(0).replaceAllUsesWith(value);
         eraseIfUnused(operation);
     };
@@ -546,7 +549,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             : edge.returnsElement()       ? carrierType(context, carrier::domElement)
             : edge.returnsNumber()        ? at.getF64Type()
             : edge.returnsString()        ? carrierType(context, carrier::string)
-                                          : at.getI1Type();
+                                          : carrierType(context, carrier::boolean);
         auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
                                                 at.getStringAttr(callee), arguments);
         if (edge.returnsElement() || edge.returnsElementVector()) {

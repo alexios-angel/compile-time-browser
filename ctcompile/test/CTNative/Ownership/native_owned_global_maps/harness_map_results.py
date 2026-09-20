@@ -337,6 +337,9 @@ def nullable_identity_cpp(cpp, name):
         raise RuntimeError("nullable identity observer needs exactly one entry")
     changed += "\nint main() {\n    if (ctnative_test_entry() != 0) { return 90; }\n"
     for index, (arguments, tag, value) in enumerate(NULLABLE_OBSERVATIONS[name]):
+        arguments = ", ".join(
+            f"ctnative::js_boolean_t{{{argument}}}" for argument in arguments.split(", ")
+        )
         changed += (
             f"    const auto observed_{index} = g_host->slot->m_get({arguments});\n"
             f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"

@@ -146,7 +146,7 @@ int main() {
 
 ACTION_CHECKS = r"""
         for (const bool active : {true, false}) {
-            assert(@ENTRY@(alias) == active);
+            assert(static_cast<bool>(@ENTRY@(alias)) == active);
             assert(doc.read().attribute_value(button, classes) == (active ? "btn active" : "btn"));
             assert(doc.read().attribute_value(button, pressed) == (active ? "true" : "false"));
             const auto writes = doc.take_writes();

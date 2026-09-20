@@ -29,10 +29,32 @@ void check(bool value, const char * message) {
 } // namespace
 
 // The build is -DNDEBUG, so assert() would check nothing: every line is a check().
-#define CHECK(expression) check((expression), #expression)
+#define CHECK(expression) check(static_cast<bool>(expression), #expression)
 
 int main() {
     using namespace ctnative;
+    static_assert(std::is_constructible_v<js_boolean_t, bool>);
+    static_assert(!std::is_convertible_v<bool, js_boolean_t>);
+    static_assert(!std::is_convertible_v<js_boolean_t, bool>);
+    static_assert(!std::is_constructible_v<double, js_boolean_t>);
+    static_assert(!std::is_constructible_v<js_boolean_t, int>);
+    static_assert(!std::is_constructible_v<js_boolean_t, double>);
+    static_assert(!std::is_constructible_v<js_boolean_t, const char *>);
+    static_assert(std::is_same_v<decltype(js_boolean_t{} == js_boolean_t{}), bool>);
+    constexpr js_boolean_t enabled{true}, disabled{false};
+    static_assert(enabled.to_number() == 1.0 && to_number(disabled) == 0.0);
+    CHECK(enabled && !disabled && enabled != disabled);
+    CHECK(!std::signbit(to_number(disabled)));
+    CHECK(global_boolean(to_nullable(enabled)) == enabled);
+    CHECK(to_nullable(disabled).tag == nullable_scalar::kind::boolean);
+    CHECK(scalar_equal(enabled, 1.0) && !scalar_strict_equal(enabled, 1.0));
+    CHECK(object_strict_equal(object_value{enabled}, object_value{true}));
+    CHECK(!object_strict_equal(object_value{enabled}, object_value{1.0}));
+    CHECK(boolean_string_truthy(std::variant<js_boolean_t, std::string>{enabled}));
+    CHECK(!boolean_string_truthy(std::variant<js_boolean_t, std::string>{disabled}));
+    CHECK(!boolean_string_truthy(std::variant<js_boolean_t, std::string>{std::string{}}));
+    CHECK(boolean_string_truthy(std::variant<js_boolean_t, std::string>{std::string{"false"}}));
+
     const std::string high = "\xED\xA0\xBD", low = "\xED\xB8\x80";
     CHECK(string_concat(high, low) == "\xF0\x9F\x98\x80");
     CHECK(string_concat(high, "x") == high + "x");
@@ -63,6 +85,24 @@ int main() {
     CHECK(global_string(map_get(strings, std::string("a"))) == "x");
     CHECK(map_values(strings) == (std::vector<std::string>{"x"}));
     CHECK(map_keys(strings) == (std::vector<std::string>{"a"}));
+
+    auto booleans = make_map<js_boolean_t, js_boolean_t>();
+    map_set(booleans, enabled, disabled);
+    CHECK(global_boolean(map_get(booleans, enabled)) == disabled);
+    CHECK(map_get(booleans, disabled).tag == nullable_scalar::kind::undefined);
+    CHECK(map_values(booleans) == std::vector<js_boolean_t>{disabled});
+    CHECK(map_snapshot_at<false>(booleans, nullable_scalar{0.0}).tag ==
+          nullable_scalar::kind::boolean);
+    const auto booleanMap = [&](const auto & map) {
+        map_set(map, enabled, disabled);
+        map_set(map, disabled, enabled);
+        CHECK(map_size(map) == 2 && map_has(map, enabled));
+        CHECK(map_get_present(map, disabled) == enabled);
+        CHECK(map_delete(map, enabled) && !map_has(map, enabled));
+    };
+    booleanMap(booleans);
+    booleanMap(
+        std::make_shared<std::map<js_boolean_t, js_boolean_t, map_key_less<js_boolean_t>>>());
 
     // The associative layout's comparator: every NaN is one key, before all.
     map_key_less<js_num> less;

@@ -20,7 +20,11 @@ def standalone(args, output, name, value, compilers, nm):
         size_signature = (
             "std::function<js_num(ctnative::nullable_string)>"
             if name in nullable_host_result_sources()
-            else "std::function<bool()>" if name == "boolean_result" else "std::function<js_num()>"
+            else (
+                "std::function<ctnative::js_boolean_t()>"
+                if name == "boolean_result"
+                else "std::function<js_num()>"
+            )
         )
         map_action = (
             "ctnative::map_has("
@@ -57,7 +61,7 @@ def standalone(args, output, name, value, compilers, nm):
         if name in parameter_sources():
             params = {
                 "shared_parameter_number": "js_num",
-                "shared_parameter_bool": "bool",
+                "shared_parameter_bool": "ctnative::js_boolean_t",
                 "shared_two_parameters": "std::string, js_num",
             }.get(name, "std::string")
             if f"std::function<js_num({params})>" not in cpp:
@@ -103,9 +107,9 @@ def standalone(args, output, name, value, compilers, nm):
                 **nullable_host_result_sources(),
                 **nullable_nested_result_sources(),
             }:
-                getter_params = "bool"
+                getter_params = "ctnative::js_boolean_t"
             if name == "nullable_threeway":
-                getter_params = "bool, bool"
+                getter_params = "ctnative::js_boolean_t, ctnative::js_boolean_t"
             setter_result = (
                 "ctnative::nullable_string" if name in NULLABLE_PAYLOAD_READBACKS else "js_num"
             )
@@ -118,7 +122,7 @@ def standalone(args, output, name, value, compilers, nm):
                 )
             check_result_calls(cpp, name, mode)
         if name in payload_result_sources():
-            payload = "std::string" if "string" in name else "bool"
+            payload = "std::string" if "string" in name else "ctnative::js_boolean_t"
             if f"std::shared_ptr<ctnative::map_storage<{payload}, {payload}>>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: missing homogeneous owning Map carrier\n{cpp}")
         if name in primitive_absence_sources() and (
@@ -130,11 +134,11 @@ def standalone(args, output, name, value, compilers, nm):
             )
         if name in MIXED_RESULT_TYPES:
             _, alternative = MIXED_RESULT_TYPES[name]
-            variant = f"std::variant<bool, {alternative}>"
+            variant = f"std::variant<ctnative::js_boolean_t, {alternative}>"
             key = {
                 "result_seeded_mixed_contents": "double",
                 "result_seeded_join_reseed": "double",
-                "result_seeded_bool_string_contents": "bool",
+                "result_seeded_bool_string_contents": "ctnative::js_boolean_t",
             }.get(name, variant)
             spellings = {key, key.replace("double", "js_num")}
             if not any(
@@ -256,7 +260,7 @@ def standalone(args, output, name, value, compilers, nm):
             key = (
                 "std::string"
                 if name == "nullable_homogeneous_key"
-                else "std::variant<bool, std::string>"
+                else "std::variant<ctnative::js_boolean_t, std::string>"
             )
             if name in nullable_key_sources():
                 key = "ctnative::nullable_string"
@@ -267,21 +271,23 @@ def standalone(args, output, name, value, compilers, nm):
                     "nullable_second_key_use",
                     "nullable_key_mixed",
                 }:
-                    key = "std::variant<bool, ctnative::nullable_string>"
-            payload = "std::variant<bool, std::string>"
+                    key = "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
+            payload = "std::variant<ctnative::js_boolean_t, std::string>"
             if name in nullable_payload_sources():
                 key = payload = "ctnative::nullable_string"
                 if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"}:
-                    key = payload = "std::variant<bool, ctnative::nullable_string>"
+                    key = payload = (
+                        "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
+                    )
                 elif name in {
                     "nullable_payload_mixed_readback",
                     "nullable_payload_mixed_identity",
                     "nullable_payload_mixed_saved",
                 }:
-                    payload = "std::variant<bool, ctnative::nullable_string>"
+                    payload = "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
             if name in {**nullable_host_result_sources(), **nullable_nested_result_sources()}:
                 key = "ctnative::nullable_string"
-                payload = "std::variant<bool, ctnative::nullable_string>"
+                payload = "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>"
             if f"std::shared_ptr<ctnative::map_storage<{key}, {payload}>>" not in cpp:
                 raise RuntimeError(
                     f"{name}/{mode}: nullable signature changed the exact Map schema"

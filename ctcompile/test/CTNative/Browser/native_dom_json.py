@@ -91,6 +91,11 @@ ATTRIBUTE_CASES = {
     + BODY,
     "json_bootstrap_m": BOOTSTRAP_M + f"\nreturn M({GET});",
     "json_bootstrap_attribute": ATTRIBUTE_HELPERS + 'return H.getDataAttribute(element, "config");',
+    # Replacement callbacks have been admitted since 84b3357a; preserve the
+    # former refusal body and its earlier DOM observation.
+    "json_matching_key": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
+    + ATTRIBUTE_HELPERS
+    + 'return H.getDataAttribute(element, "Config");',
     "json_attribute_typeof": ATTRIBUTE_HELPERS
     + 'return typeof H.getDataAttribute(element, "config");',
     "json_config_typeof_direct": ATTRIBUTE_HELPERS
@@ -168,11 +173,14 @@ def check_oracles(args):
     for name in SOURCES:
         inputs = inputs_for(name)
         trace = "get:data-bs-config" if name in ATTRIBUTE_CASES else "has:good"
+        if name == "json_matching_key":
+            trace = "get:data-bs--config"
         if name == "json_config_spread_chain":
             trace += "|get:data-bs-later"
         if name in (
             "json_nullable_join",
             "json_config_typeof",
+            "json_matching_key",
             "json_spread_target_write",
             "json_spread_target_alias_write",
         ):
@@ -312,9 +320,12 @@ def client(name, entry, owned):
     earlier_read = ""
     if name == "json_nullable_join":
         attribute = "x"
+    if name == "json_matching_key":
+        attribute = "data-bs--config"
     if name in (
         "json_nullable_join",
         "json_config_typeof",
+        "json_matching_key",
         "json_spread_target_write",
         "json_spread_target_alias_write",
     ):
@@ -331,13 +342,18 @@ def client(name, entry, owned):
         )
         later_change = 'assert(doc.set_attribute(node, later, "later"));'
     result_type = {
-        "json_number_not": "bool",
-        "json_not_element": "bool",
+        "json_number_not": "ctnative::js_boolean_t",
+        "json_not_element": "ctnative::js_boolean_t",
         "json_attribute_typeof": "std::string",
-        "json_config_typeof_direct": "bool",
-        "json_config_typeof": "bool",
+        "json_config_typeof_direct": "ctnative::js_boolean_t",
+        "json_config_typeof": "ctnative::js_boolean_t",
         "json_spread_typeof": "std::string",
     }.get(name, "json_value")
+    stored = (
+        "static_cast<bool>(result)"
+        if result_type == "ctnative::js_boolean_t"
+        else "std::move(result)"
+    )
     return f"""
     {{
         std::vector<json_value> survivors;
@@ -359,7 +375,7 @@ def client(name, entry, owned):
                 assert(doc.version() == version && doc.take_writes().empty());
                 assert(doc.set_attribute(node, state, "later"));
                 {later_change}
-                survivors.emplace_back(std::move(result));
+                survivors.emplace_back({stored});
             }}
         }}
         for (const auto & result : survivors) {{ observe(result); }}
@@ -399,7 +415,6 @@ REFUSALS = {
     + 'if ("object" == typeof parsed) return parsed.saved; return null;',
     "json_typeof_replaced": ATTRIBUTE_HELPERS
     + 'JSON.parse = element; return typeof H.getDataAttribute(element, "config");',
-    "json_matching_key": ATTRIBUTE_HELPERS + 'return H.getDataAttribute(element, "Config");',
     "json_live_key": ATTRIBUTE_HELPERS
     + 'return H.getDataAttribute(element, element.getAttribute("key"));',
     "json_nullable_sibling": NULLABLE_JOIN.replace(
@@ -457,6 +472,7 @@ def main():
         "json_not_element": intrinsics,
         "json_bootstrap_m": intrinsics,
         "json_bootstrap_attribute": intrinsics,
+        "json_matching_key": intrinsics,
         "json_attribute_typeof": intrinsics,
         "json_config_typeof_direct": intrinsics,
         "json_config_typeof": intrinsics,

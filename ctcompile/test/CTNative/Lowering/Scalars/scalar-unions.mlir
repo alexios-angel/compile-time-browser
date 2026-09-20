@@ -11,8 +11,8 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/map-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MAP-VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/array.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=ARRAY
 
-// NATIVE-DAG: emitc.func @choose_{{[0-9]+}}({{.*}}i1{{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
-// NATIVE-DAG: emitc.func @chooseReturn_{{[0-9]+}}({{.*}}i1{{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
+// NATIVE-DAG: emitc.func @choose_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::js_boolean_t">{{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
+// NATIVE-DAG: emitc.func @chooseReturn_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::js_boolean_t">{{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
 // NATIVE-DAG: emitc.func @optional_{{[0-9]+}}({{.*}}f64{{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
 // NATIVE-DAG: emitc.func @forward_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::nullable_scalar">{{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
 // NATIVE-DAG: emitc.func @arithmetic_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::nullable_scalar">{{.*}}) -> f64
@@ -22,7 +22,9 @@
 // GLOBAL-NOT: ctnative.not_native
 // GLOBAL: emitc.func @main
 // GLOBAL: call_opaque "ctnative::print_scalar"
-// GLOBAL: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
+// GLOBAL: emitc.func @choose_1([[FLAG:%[^:]+]]: !emitc.opaque<"ctnative::js_boolean_t">) -> !emitc.opaque<"ctnative::nullable_scalar">
+// GLOBAL: [[COND:%[^ ]+]] = cast [[FLAG]] : !emitc.opaque<"ctnative::js_boolean_t"> to i1
+// GLOBAL: scf.if [[COND]]
 // GLOBAL-NOT: ctnative.not_native
 // STRING: ctnative.not_native = "a Bool/String temporary needs a single proved return type"
 // MAP-KEY: ctnative.not_native = "mixed native Map key needs one proved scalar alternative"

@@ -21,14 +21,27 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         value = ec::LoadOp::create(b, where, lvalue.getValueType(), value);
     }
     if (value.getType() == target) { return value; }
+    if ((isBooleanCarrier(value.getType()) && target.isInteger(1)) ||
+        (value.getType().isInteger(1) && isBooleanCarrier(target))) {
+        return ec::CastOp::create(b, where, target, value);
+    }
+    if (isBooleanCarrier(target)) {
+        // Optional carriers retain their existing truthiness conversion; the
+        // resulting C++ condition becomes a JavaScript Boolean value explicitly.
+        return ec::CastOp::create(b, where, target, truthy(b, where, value));
+    }
     llvm::StringRef helper;
     if (target == ec::OpaqueType::get(context, kDOMOptionalStringType) &&
         value.getType() == carrierType(context, carrier::string)) {
         helper = kDOMOptionalStringType;
     } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
                (value.getType() == carrierType(context, carrier::string) ||
-                llvm::isa<mlir::Float64Type>(value.getType()) || value.getType().isInteger(1))) {
+                llvm::isa<mlir::Float64Type>(value.getType()) || value.getType().isInteger(1) ||
+                isBooleanCarrier(value.getType()))) {
         // Primitive arms keep their exact alternatives in the owning tree.
+        if (isBooleanCarrier(value.getType())) {
+            value = ec::CastOp::create(b, where, b.getI1Type(), value);
+        }
         helper = kDOMJSONType;
     } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
                value.getType() == ec::OpaqueType::get(context, kDOMOptionalStringType)) {
@@ -78,6 +91,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else if (isNullableCarrier(value.getType())) {
         helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
                                                       : "ctnative::to_number";
+    } else if (isBooleanCarrier(value.getType()) && llvm::isa<mlir::Float64Type>(target)) {
+        helper = "ctnative::to_number";
     } else if (llvm::isa<mlir::Float64Type>(target) &&
                llvm::isa<mlir::IntegerType>(value.getType())) {
         helper = "static_cast<double>";

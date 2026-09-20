@@ -228,7 +228,7 @@ def standalone(args, output, name, expected, compilers, nm, *, result_type="js_n
             raise RuntimeError(
                 f"{name}/{mode}: missing standalone owning table/callable carriers\n{cpp}"
             )
-        if result_type == "bool" and (
+        if result_type == "ctnative::js_boolean_t" and (
             "ctnative::global_boolean(" not in cpp or "ctnative::invoke_callable(" not in cpp
         ):
             raise RuntimeError(f"{name}/{mode}: missing live Boolean call/observation\n{cpp}")
@@ -410,7 +410,11 @@ def main():
             expected,
             compilers,
             nm,
-            result_type="std::string" if string_result else "bool" if boolean_result else "js_num",
+            result_type=(
+                "std::string"
+                if string_result
+                else "ctnative::js_boolean_t" if boolean_result else "js_num"
+            ),
         )
         if boolean_result or string_result:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")

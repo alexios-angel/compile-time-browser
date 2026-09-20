@@ -213,7 +213,7 @@ def nullable_foreign_lifetime_cpp(cpp):
 int main() {
     using Key = ctnative::nullable_string;
     using Result = ctnative::nullable_scalar;
-    using Map = ctnative::map_storage<Key, std::variant<bool, Key>>;
+    using Map = ctnative::map_storage<Key, std::variant<ctnative::js_boolean_t, Key>>;
     const auto undefined = [](Result result) { return result.tag == Result::kind::undefined; };
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 4) { return 285; }
     auto owner = g_host;
@@ -221,7 +221,7 @@ int main() {
     auto get = table->m_get;
     auto set = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(get), std::function<Key(bool)>>);
+    static_assert(std::is_same_v<decltype(get), std::function<Key(ctnative::js_boolean_t)>>);
     static_assert(std::is_same_v<decltype(set), std::function<Result(Key)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
@@ -248,7 +248,7 @@ int main() {
         key.value.assign(text.size(), 'x');
         if (!undefined(saved) || !undefined(set(ctnative::to_nullable_string(saved))) ||
             size() != before + 1 || std::get<Key>(state->at(Key{text})).value != text ||
-            get(false).value != "future" || get(true).tag != Key::kind::null_value ||
+            get(ctnative::js_boolean_t{false}).value != "future" || get(ctnative::js_boolean_t{true}).tag != Key::kind::null_value ||
             ctn_test_maps.size() != allocations + 2 || !ctn_test_maps.back().expired()) {
             return 291;
         }

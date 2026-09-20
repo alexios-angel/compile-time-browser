@@ -66,7 +66,8 @@ bool lowering::replaceMap(mlir::Operation * o) {
                                                 : carrier::number;
             const auto type = carrierType(context, scalar);
             if (isBooleanStringCarrier(value.getType())) {
-                const auto helper = tag == "string" ? "std::get<std::string>" : "std::get<bool>";
+                const auto helper =
+                    tag == "string" ? "std::get<std::string>" : "std::get<ctnative::js_boolean_t>";
                 return callWithConstValueOperands(b, where, mlir::TypeRange{type},
                                                   b.getStringAttr(helper), mlir::ValueRange{value})
                     .getResult(0);
@@ -86,7 +87,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 if (auto lvalue = llvm::dyn_cast<ec::LValueType>(argumentType)) {
                     argumentType = lvalue.getValueType();
                 }
-                if (!mixed || !llvm::isa<mlir::IntegerType>(argumentType)) {
+                if (!mixed || !isBooleanCarrier(argumentType)) {
                     // Preserve Null/Undefined tags and own every String in
                     // both key and payload storage, including saved reads.
                     value = convertScalar(b, where, value,

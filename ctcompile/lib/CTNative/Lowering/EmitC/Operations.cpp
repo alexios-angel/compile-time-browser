@@ -78,7 +78,11 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     const mlir::Location where = o->getLoc();
     const auto f64 = mlir::Float64Type::get(context);
     const auto i1 = mlir::IntegerType::get(context, 1);
+    const auto boolean = carrierType(context, carrier::boolean);
     const auto swap = [&](mlir::Value with) {
+        if (isBooleanCarrier(o->getResult(0).getType()) && with.getType().isInteger(1)) {
+            with = convertScalar(b, where, with, boolean);
+        }
         o->getResult(0).replaceAllUsesWith(with);
         eraseIfUnused(o);
     };
@@ -173,9 +177,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             } else if (isNullableCarrier(expected)) {
                 if (!emptyNullable) { emptyNullable = absentConstant(b, where); }
                 use.set(emptyNullable);
-            } else if (expected == i1) {
+            } else if (expected == i1 || isBooleanCarrier(expected)) {
                 if (!emptyBoolean) { emptyBoolean = boolConstant(b, where, false); }
-                use.set(emptyBoolean);
+                use.set(convertScalar(b, where, emptyBoolean, expected));
             }
         }
         swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
@@ -422,9 +426,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                          .getResult(0));
             } else {
                 swap(stringConstant(b, where,
-                                    u.getOperand().getType() == f64  ? "number"
-                                    : u.getOperand().getType() == i1 ? "boolean"
-                                                                     : "string"));
+                                    u.getOperand().getType() == f64              ? "number"
+                                    : isBooleanCarrier(u.getOperand().getType()) ? "boolean"
+                                                                                 : "string"));
             }
             return;
         case UnaryKind::Not: {
@@ -444,8 +448,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             needsObjectValue = true;
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::object_equal"
                                                                  : "ctnative::object_strict_equal";
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr(helper),
-                                            mlir::ValueRange{left, right})
+            swap(callWithConstValueOperands(b, where, mlir::TypeRange{boolean},
+                                            b.getStringAttr(helper), mlir::ValueRange{left, right})
                      .getResult(0));
             return;
         }
@@ -453,8 +457,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                          left.getType() != right.getType())) {
             const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::scalar_equal"
                                                                  : "ctnative::scalar_strict_equal";
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr(helper),
-                                            mlir::ValueRange{left, right})
+            swap(callWithConstValueOperands(b, where, mlir::TypeRange{boolean},
+                                            b.getStringAttr(helper), mlir::ValueRange{left, right})
                      .getResult(0));
             return;
         }
@@ -593,7 +597,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                                    carrierType(context, carrier::nullable));
                 mlir::Value current =
                     callWithConstValueOperands(
-                        b, where, mlir::TypeRange{isBoolean ? mlir::Type(i1) : mlir::Type(f64)},
+                        b, where, mlir::TypeRange{isBoolean ? boolean : mlir::Type(f64)},
                         b.getStringAttr(isBoolean ? "ctnative::global_boolean"
                                                   : "ctnative::global_number"),
                         mlir::ValueRange{loaded})
@@ -602,8 +606,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     const auto literal = [&](llvm::StringRef spelling) -> mlir::Value {
                         return ec::LiteralOp::create(b, where, textType, b.getStringAttr(spelling));
                     };
-                    current = ec::ConditionalOp::create(b, where, textType, current,
-                                                        literal("\"true\""), literal("\"false\""));
+                    current =
+                        ec::ConditionalOp::create(b, where, textType, truthy(b, where, current),
+                                                  literal("\"true\""), literal("\"false\""));
                 }
                 mlir::Value format = ec::LiteralOp::create(
                     b, where, textType,

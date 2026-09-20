@@ -25,7 +25,7 @@
 // NATIVE: emitc.func @main() -> i32
 // NATIVE-DAG: call_opaque "ctnative::make_number_map<double>"
 // NATIVE-DAG: call_opaque "ctnative::make_string_to_number_map"
-// NATIVE-DAG: call_opaque "ctnative::make_number_map<bool>"
+// NATIVE-DAG: call_opaque "ctnative::make_number_map<ctnative::js_boolean_t>"
 // NATIVE-DAG: call_opaque "ctnative::map_set"
 // NATIVE-DAG: call_opaque "ctnative::map_get"
 // NATIVE-DAG: call_opaque "ctnative::map_has"
@@ -66,7 +66,7 @@
 // STRING: return [[STRING_SIZE]] : f64
 // OPTIONAL: ctjs.func private @probe$1
 // OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
-// EQUALITY: emitc.func @probe_1() -> i1
+// EQUALITY: emitc.func @probe_1() -> !emitc.opaque<"ctnative::js_boolean_t">
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native
 // KEYS: emitc.func @probe_1

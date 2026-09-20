@@ -66,7 +66,7 @@
 // VARYING-NEXT: emitc.field @at : f64
 // VARYING-NEXT: emitc.field @hit : !emitc.opaque<"T0">
 // VARYING-NOT:  emitc.class
-// VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<bool>">>
+// VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<ctnative::js_boolean_t>">>
 // VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<double>">>
 
 // --- AND THE ORDER THE PROGRAM WROTE THE KEYS IN IS NOT PART OF THE KEY -----
@@ -148,7 +148,7 @@
 // CPP-NEXT: js_num at;
 // CPP-NEXT: T0 hit;
 // CPP-NEXT: };
-// CPP-DAG: ctn_at_hit<bool> v
+// CPP-DAG: ctn_at_hit<ctnative::js_boolean_t> v
 // CPP-DAG: ctn_at_hit<double> v
 
 //--- same.js

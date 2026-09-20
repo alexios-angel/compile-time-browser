@@ -65,7 +65,9 @@ enum class carrier {
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
-inline constexpr llvm::StringLiteral kBooleanStringType = "std::variant<bool, std::string>";
+inline constexpr llvm::StringLiteral kBooleanType = "ctnative::js_boolean_t";
+inline constexpr llvm::StringLiteral kBooleanStringType =
+    "std::variant<ctnative::js_boolean_t, std::string>";
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
@@ -76,6 +78,7 @@ inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
 bool isScalarCarrier(carrier value);
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
 bool isNullableCarrier(mlir::Type type);
+bool isBooleanCarrier(mlir::Type type);
 bool isNullableStringCarrier(mlir::Type type);
 bool isBooleanStringCarrier(mlir::Type type);
 bool isStringCarrier(carrier value);

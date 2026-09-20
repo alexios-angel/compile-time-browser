@@ -114,8 +114,8 @@ int main() {
 """
     return (
         changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
-        .replace("CTN_PARAMS", "std::string" if reseeded else "std::string, bool")
-        .replace("CTN_FLAG", "" if reseeded else ", call % 2 != 0")
+        .replace("CTN_PARAMS", "std::string" if reseeded else "std::string, ctnative::js_boolean_t")
+        .replace("CTN_FLAG", "" if reseeded else ", ctnative::js_boolean_t{call % 2 != 0}")
     )
 
 
@@ -159,7 +159,7 @@ def leaf_absence_lifetime(args, cpp, name, mode, compiler):
 def check_leaf_absence_calls(cpp, name, mode):
     source = {**leaf_absence_sources(), **leaf_clear_sources()}[name][0]
     params = (
-        "std::string, bool"
+        "std::string, ctnative::js_boolean_t"
         if "set(key, flag)" in source
         else "std::string, std::string" if "set(key, other)" in source else "std::string"
     )
@@ -363,8 +363,8 @@ int main() {
 """
     return (
         changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
-        .replace("CTN_PARAMS", "std::string, bool" if branch else "std::string")
-        .replace("CTN_FLAG", ", call % 2 != 0" if branch else "")
+        .replace("CTN_PARAMS", "std::string, ctnative::js_boolean_t" if branch else "std::string")
+        .replace("CTN_FLAG", ", ctnative::js_boolean_t{call % 2 != 0}" if branch else "")
     )
 
 
@@ -387,7 +387,7 @@ def check_numeric_entry_calls(cpp, name, mode):
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
     params = (
-        "std::string, js_num, bool"
+        "std::string, js_num, ctnative::js_boolean_t"
         if "set(key, value, flag)" in source
         else (
             "std::string, js_num"
@@ -407,7 +407,7 @@ def check_numeric_entry_calls(cpp, name, mode):
             )
         )
     )
-    result = "bool" if name == "constant_boolean_saved_result" else "js_num"
+    result = "ctnative::js_boolean_t" if name == "constant_boolean_saved_result" else "js_num"
     if f"std::function<{result}({params})>" not in cpp:
         raise RuntimeError(
             f"{name}/{mode}: arithmetic changed the independently typed callable ABI"
@@ -708,7 +708,7 @@ int main() {
     const auto enabled_snapshot = ctnative::global_boolean(g_enabled);
     const auto copy_flag_snapshot = ctnative::global_boolean(g_copy_flag);
     const auto active_snapshot = ctnative::global_boolean(g_active);
-    static_assert(std::is_same_v<decltype(copy_flag_snapshot), const bool>);
+    static_assert(std::is_same_v<decltype(copy_flag_snapshot), const ctnative::js_boolean_t>);
     if (fixed_flag_snapshot || !enabled_snapshot || copy_flag_snapshot || !active_snapshot) {
         return 202;
     }
@@ -769,8 +769,9 @@ int main() {
         assert changed.count(released) == 1
         changed = changed.replace(released, released + checks)
     return changed.replace(
-        "CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num"
-    ).replace("CTN_FLAG", ", call % 2 != 0" if branch else "")
+        "CTN_PARAMS",
+        "std::string, js_num, ctnative::js_boolean_t" if branch else "std::string, js_num",
+    ).replace("CTN_FLAG", ", ctnative::js_boolean_t{call % 2 != 0}" if branch else "")
 
 
 def numeric_entry_lifetime(args, cpp, name, mode, compiler):

@@ -116,7 +116,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
             "mixedNullableRead",
             "traceMixedNullableRead",
             17182024,
-            "map_storage<std::string, std::variant<bool, ctnative::nullable_string>>",
+            "map_storage<std::string, std::variant<ctnative::js_boolean_t, ctnative::nullable_string>>",
             "mixedNullableRead(true, false) * 1000000 + mixedNullableRead(true, true) * 10000"
             " + mixedNullableRead(false, false) * 100 + mixedNullableRead(false, true)",
         ),
@@ -235,13 +235,19 @@ def main():
         for label, module in [("plain", ir), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
             assert "ctbrowser::script" not in cpp
-            assert "std::variant<bool," in cpp and "map_get_present_as<" in cpp
+            assert "std::variant<ctnative::js_boolean_t," in cpp and "map_get_present_as<" in cpp
             assert "ctnative::number_map<ctnative::nullable_string>" in cpp
-            assert "map_storage<ctnative::nullable_string, std::variant<bool, std::string>>" in cpp
-            assert "std::variant<bool, ctnative::nullable_string>" in cpp
+            assert (
+                "map_storage<ctnative::nullable_string, std::variant<ctnative::js_boolean_t, std::string>>"
+                in cpp
+            )
+            assert "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>" in cpp
             assert "map_storage<double, ctnative::nullable_string>" in cpp
             assert "map_storage<ctnative::nullable_string, ctnative::nullable_string>" in cpp
-            assert "map_storage<std::string, std::variant<bool, ctnative::nullable_string>>" in cpp
+            assert (
+                "map_storage<std::string, std::variant<ctnative::js_boolean_t, ctnative::nullable_string>>"
+                in cpp
+            )
             assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
             key_carrier = "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
             assert f"ctnative::number_map<{key_carrier}>" in cpp
@@ -322,6 +328,15 @@ def main():
                     ]
                 )
                 result = output.read_text()
+                if name in {"nullable-number-key-refused", "nullable-boolean-key-refused"}:
+                    # These historical names predate optional scalar key support
+                    # (7b456d79). Keep both source bodies and forged-fact controls.
+                    assert not boundary.FUNCTION.search(result), name
+                    assert len(boundary.NATIVE.findall(result)) == count, name
+                    assert "ctnative.not_native" not in result, name
+                    assert "ctnative::make_number_map<ctnative::nullable_scalar>" in result, name
+                    current = output
+                    continue
                 assert not re.search(r"\bemitc.func @main\(", result), name
                 assert (
                     len(boundary.FUNCTION.findall(result)) + len(boundary.NATIVE.findall(result))
@@ -342,8 +357,6 @@ def main():
                         "mixed native Map write needs one proved scalar alternative" in result
                     ), name
                 elif name in {
-                    "nullable-number-key-refused",
-                    "nullable-boolean-key-refused",
                     "nullable-number-payload-refused",
                     "nullable-boolean-payload-refused",
                 }:
@@ -384,7 +397,8 @@ def main():
         "Node/interpreter, GCC/Clang, plain/deduced and ASan/UBSan; "
         "isolated nullable-key, nullable-payload and mixed nullable-read helpers; "
         "fresh/stale finite nullable read proofs; "
-        "40 storage/read/write-proof refusals with forged key/nullable facts and reruns"
+        "38 storage/read/write-proof refusals and two admitted scalar-key controls, "
+        "with forged key/nullable facts and reruns"
     )
 
 

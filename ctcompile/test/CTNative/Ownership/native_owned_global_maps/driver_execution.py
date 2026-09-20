@@ -354,7 +354,7 @@ def report(positives, shared_refusals, rollback):
         "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
         f"{len(refusal_sources()) - 1} source refusals and contract/rerun/budget controls pass; "
         f"one exact native Undefined observation and {len(shared_refusals)} shared-method refusals; "
-        "the historical five-call Boolean result retains its bool() callable and exact Boolean output; "
+        "the historical five-call Boolean result retains its ctnative::js_boolean_t() callable and exact Boolean output; "
         f"{len(parameter_refusals())} argument refusals preserve current call operands; "
         "typed parameterized setters 5/5 with changing source and saved-callable keys; "
         f"{len(result_sources())} live result programs preserve call order and operands; "

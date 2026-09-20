@@ -15,8 +15,10 @@ mlir::Value lowering::f64Constant(mlir::OpBuilder & b, mlir::Location where, dou
 }
 
 mlir::Value lowering::boolConstant(mlir::OpBuilder & b, mlir::Location where, bool v) {
-    return ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 1),
-                                  b.getIntegerAttr(mlir::IntegerType::get(context, 1), v ? 1 : 0));
+    return ec::ConstantOp::create(
+        b, where, carrierType(context, carrier::boolean),
+        ec::OpaqueAttr::get(context,
+                            v ? "ctnative::js_boolean_t{true}" : "ctnative::js_boolean_t{false}"));
 }
 
 mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location where,
@@ -58,6 +60,9 @@ mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, ml
 }
 
 mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
+    if (isBooleanCarrier(value.getType())) {
+        return convertScalar(builder, where, value, builder.getI1Type());
+    }
     if (isBooleanStringCarrier(value.getType())) {
         return callWithConstValueOperands(builder, where,
                                           mlir::TypeRange{mlir::IntegerType::get(context, 1)},

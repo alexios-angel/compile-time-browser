@@ -734,7 +734,8 @@ def check_regexp_matching(args):
                 )
                 call = "session.invoke(element)" if owned else f"{label}::{symbol}(element)"
                 check = f'{{ {setup} auto & atoms = doc.atoms(); auto node = doc.create_element(atoms.intern("div")); ctbrowser::element_ref element{{&doc, node}}; '
-                check += f"assert({call} == {'std::nullopt' if result[0] is None else 'true'});"
+                expected = "std::nullopt" if result[0] is None else "ctnative::js_boolean_t{true}"
+                check += f"assert({call} == {expected});"
                 for key, value in zip(keys, result[1:]):
                     if value is None:
                         check += f'assert(!doc.read().has_attribute(node, atoms.intern("{key}")));'

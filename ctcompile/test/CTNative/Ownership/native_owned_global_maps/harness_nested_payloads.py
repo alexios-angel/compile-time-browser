@@ -267,7 +267,7 @@ int main() {
     auto get = table->m_get;
     POISON_BINDING
     static_assert(std::is_same_v<decltype(set), std::function<js_num(Value)>>);
-    static_assert(std::is_same_v<decltype(get), std::function<bool(GET_SIGNATURE)>>);
+    static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_boolean_t(GET_SIGNATURE)>>);
     auto read = [&get](Value value) { (void)value; return GET; };
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
@@ -348,7 +348,9 @@ int main() {
 """
     if kind == "returned":
         changed = (
-            changed.replace("std::function<bool(GET_SIGNATURE)>", "std::function<Value()>")
+            changed.replace(
+                "std::function<ctnative::js_boolean_t(GET_SIGNATURE)>", "std::function<Value()>"
+            )
             .replace(
                 'auto saved = ctnative::map_get(child, std::string{"value"});',
                 "auto saved = get();",

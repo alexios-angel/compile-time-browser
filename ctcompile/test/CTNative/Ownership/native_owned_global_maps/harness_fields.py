@@ -31,7 +31,11 @@ def check_string_field_calls(cpp, name, mode):
     row = string_field_cases()[name]
     source, value = row["source"], row["expected_trace"]
     result = "std::string" if isinstance(value, StringValue) else "js_num"
-    params = "std::string, std::string, bool" if name == "field_string_lifetime" else "std::string"
+    params = (
+        "std::string, std::string, ctnative::js_boolean_t"
+        if name == "field_string_lifetime"
+        else "std::string"
+    )
     if (
         f"std::function<{result}({params})>" not in cpp
         or "nullable_string field_76616c7565;" not in cpp
@@ -211,7 +215,7 @@ int main() {
     auto size = table->m_size;
     auto setter = table->m_set;
     static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<std::string(std::string, std::string, bool)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<std::string(std::string, std::string, ctnative::js_boolean_t)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset(); g_trace = {};
@@ -227,15 +231,15 @@ int main() {
         if (snapshots.back() != expected.back() || size() != 0 || ctn_test_objects.size() != count + 1 ||
             !ctn_test_objects.back().expired()) { return 133; }
     }
-    if (!setter("empty", "", false).empty()) { return 134; }
-    auto byte_result = setter("bytes", bytes, true);
+    if (!setter("empty", "", ctnative::js_boolean_t{false}).empty()) { return 134; }
+    auto byte_result = setter("bytes", bytes, ctnative::js_boolean_t{true});
     const auto saved_bytes = byte_result;
     byte_result.assign(byte_result.size(), 'z');
     if (saved_bytes != bytes || startup != original || snapshots != expected) { return 135; }
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 136; }
     ctn_test_capture_next = true;
-    const auto kept_result = setter("retained", original + bytes, true);
+    const auto kept_result = setter("retained", original + bytes, ctnative::js_boolean_t{true});
     if (!ctn_test_retained || kept_result != original + bytes || size() != 0 ||
         g_host->slot->m_size() != 0) { return 137; }
     setter = {};
@@ -311,7 +315,7 @@ def check_one_size_calls(cpp, name, mode):
 
 def check_exact_size_calls(cpp, name, mode, row):
     source = row["source"]
-    params = "js_num, bool" if "set(key, flag)" in source else "js_num"
+    params = "js_num, ctnative::js_boolean_t" if "set(key, flag)" in source else "js_num"
     result = (
         "ctnative::nullable_scalar" if name == "size_one_present_field_entry_repair" else "js_num"
     )
@@ -400,7 +404,7 @@ int main() {
     auto setter = table->m_set;
     auto size = table->m_size;
     static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(js_num, bool)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<js_num(js_num, ctnative::js_boolean_t)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -412,7 +416,7 @@ int main() {
     for (int call = 0; call < 128; ++call) {
         const bool flag = call % 2 != 0;
         const auto before = ctn_test_objects.size();
-        results.push_back(setter(static_cast<js_num>(call % 3 == 0 ? 0 : 100 + call), flag));
+        results.push_back(setter(static_cast<js_num>(call % 3 == 0 ? 0 : 100 + call), ctnative::js_boolean_t{flag}));
         if (results.back() != (flag ? 2 : 1) || size() != 1 ||
             ctn_test_objects.size() != before + 1) { return 182; }
         for (std::size_t index = 0; index < before; ++index) {

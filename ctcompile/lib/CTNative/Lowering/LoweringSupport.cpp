@@ -99,8 +99,8 @@ carrier carrierOf(mlir::Type type) {
             (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
-    // Generic mutable arrays remain numeric: vector<bool> would introduce
-    // proxy references. Proved String and borrowed Element snapshots have
+    // Generic mutable arrays retain their numeric content proof. Proved
+    // String and borrowed Element snapshots have
     // distinct carriers and their own access/ownership admission.
     if (auto elements = llvm::dyn_cast<VecType>(type)) {
         auto element = elements.getElementType();
@@ -121,6 +121,14 @@ bool isNullableCarrier(mlir::Type type) {
     if (auto value = llvm::dyn_cast<ec::LValueType>(type)) { type = value.getValueType(); }
     auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
     return opaque && opaque.getValue() == kNullableType;
+}
+
+bool isBooleanCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kBooleanType;
 }
 
 bool isBooleanStringCarrier(mlir::Type type) {
@@ -149,8 +157,8 @@ llvm::StringRef mixedMapSpelling(mlir::Type type) {
         number |= llvm::isa<NumType>(alternative);
         string |= carrierOf(alternative) == carrier::string;
     }
-    if (boolean && number) { return "std::variant<bool, double>"; }
-    if (boolean && string) { return "std::variant<bool, std::string>"; }
+    if (boolean && number) { return "std::variant<ctnative::js_boolean_t, double>"; }
+    if (boolean && string) { return kBooleanStringType; }
     return {};
 }
 
@@ -175,7 +183,7 @@ llvm::StringRef nullableMapSpelling(mlir::Type type) {
     if (!optional) { return {}; }
     if (carrierOf(optional.getElementType()) == carrier::string) { return kNullableStringType; }
     if (mixedMapSpelling(optional.getElementType()) == kBooleanStringType) {
-        return "std::variant<bool, ctnative::nullable_string>";
+        return "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>";
     }
     return {};
 }
@@ -185,7 +193,7 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
     if (auto nullable = nullableMapSpelling(type); !nullable.empty()) { return nullable; }
     if (auto mixed = mixedMapKeySpelling(type); !mixed.empty()) { return mixed; }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
-    if (llvm::isa<BoolType>(type)) { return "bool"; }
+    if (llvm::isa<BoolType>(type)) { return kBooleanType; }
     if (llvm::isa<StrType>(type)) { return "std::string"; }
     if (llvm::isa<ObjectIdentityType>(type)) { return kObjectIdentityType; }
     if (llvm::isa<DOMElementType>(type)) { return kDOMElementType; }
@@ -197,7 +205,7 @@ std::string mapValueSpelling(mlir::Type type) {
     if (auto mixed = mixedMapSpelling(type); !mixed.empty()) { return mixed.str(); }
     if (isObjectValueType(type)) { return kObjectValueType.str(); }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
-    if (llvm::isa<BoolType>(type)) { return "bool"; }
+    if (llvm::isa<BoolType>(type)) { return kBooleanType.str(); }
     if (carrierOf(type) == carrier::string) { return "std::string"; }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
@@ -266,7 +274,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);
     case carrier::methodTable:
         llvm::report_fatal_error("method table carrier needs its proved schema");
-    case carrier::boolean: return mlir::IntegerType::get(c, 1);
+    case carrier::boolean: return ec::OpaqueType::get(c, kBooleanType);
     case carrier::number: return mlir::Float64Type::get(c);
     case carrier::string:
         return ec::OpaqueType::get(c, StrType::get(c, StrEncoding::UTF8).cppCarrier());

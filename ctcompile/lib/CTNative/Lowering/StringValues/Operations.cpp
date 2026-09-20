@@ -54,7 +54,7 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::string_equal"
                                                             : "ctnative::string_strict_equal";
         operands = {compare.getLhs(), compare.getRhs()};
-        result = mlir::IntegerType::get(context, 1);
+        result = carrierType(context, carrier::boolean);
     } else {
         return false;
     }

@@ -82,6 +82,23 @@ template <class T> struct js_exception {
 struct undefined_t {};
 struct js_null_t {};
 
+// JavaScript Boolean values cross into C++ conditions and numbers explicitly.
+class js_boolean_t {
+    bool value = false;
+
+public:
+    constexpr js_boolean_t() = default;
+    template <class T>
+    requires std::is_same_v<T, bool>
+    explicit constexpr js_boolean_t(T boolean) : value(boolean) {}
+    explicit constexpr operator bool() const { return value; }
+    constexpr double to_number() const { return value ? 1.0 : 0.0; }
+    friend constexpr bool operator==(js_boolean_t, js_boolean_t) = default;
+};
+inline constexpr double to_number(js_boolean_t value) {
+    return value.to_number();
+}
+
 // ctcompile: optional scalar values preserve null, undefined and present NaN
 struct nullable_scalar {
     enum class kind {
@@ -95,7 +112,8 @@ struct nullable_scalar {
     nullable_scalar(undefined_t) {}
     nullable_scalar(js_null_t) : tag(kind::null) {}
     nullable_scalar(double number) : tag(kind::number), value(number) {}
-    nullable_scalar(bool boolean) : tag(kind::boolean), value(boolean ? 1.0 : 0.0) {}
+    nullable_scalar(js_boolean_t boolean) : tag(kind::boolean), value(boolean.to_number()) {}
+    nullable_scalar(bool boolean) : nullable_scalar(js_boolean_t{boolean}) {}
     static nullable_scalar null() { return js_null_t{}; }
 };
 inline nullable_scalar to_nullable(nullable_scalar value) {
@@ -112,9 +130,9 @@ inline double global_number(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::number) { std::terminate(); }
     return value.value;
 }
-inline bool global_boolean(nullable_scalar value) {
+inline js_boolean_t global_boolean(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::boolean) { std::terminate(); }
-    return value.value != 0.0;
+    return js_boolean_t{value.value != 0.0};
 }
 inline void print_scalar(const char * name, nullable_scalar value) {
     switch (value.tag) {
@@ -132,20 +150,20 @@ inline bool scalar_truthy(nullable_scalar value) {
             value.tag == nullable_scalar::kind::boolean) &&
            value.value != 0.0 && !std::isnan(value.value);
 }
-inline bool scalar_strict_equal(nullable_scalar left, nullable_scalar right) {
-    if (left.tag != right.tag) { return false; }
+inline js_boolean_t scalar_strict_equal(nullable_scalar left, nullable_scalar right) {
+    if (left.tag != right.tag) { return js_boolean_t{false}; }
     if (left.tag == nullable_scalar::kind::undefined || left.tag == nullable_scalar::kind::null) {
-        return true;
+        return js_boolean_t{true};
     }
-    return left.value == right.value;
+    return js_boolean_t{left.value == right.value};
 }
-inline bool scalar_equal(nullable_scalar left, nullable_scalar right) {
+inline js_boolean_t scalar_equal(nullable_scalar left, nullable_scalar right) {
     const bool lnull =
         left.tag == nullable_scalar::kind::undefined || left.tag == nullable_scalar::kind::null;
     const bool rnull =
         right.tag == nullable_scalar::kind::undefined || right.tag == nullable_scalar::kind::null;
-    if (lnull || rnull) { return lnull && rnull; }
-    return left.value == right.value;
+    if (lnull || rnull) { return js_boolean_t{lnull && rnull}; }
+    return js_boolean_t{left.value == right.value};
 }
 inline std::string scalar_typeof(nullable_scalar value) {
     switch (value.tag) {
@@ -157,11 +175,11 @@ inline std::string scalar_typeof(nullable_scalar value) {
     std::terminate();
 }
 
-inline bool boolean_string_truthy(const std::variant<bool, std::string> & value) {
+inline bool boolean_string_truthy(const std::variant<js_boolean_t, std::string> & value) {
     return std::visit(
         [](const auto & alternative) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, bool>) {
-                return alternative;
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_boolean_t>) {
+                return static_cast<bool>(alternative);
             } else {
                 return !alternative.empty();
             }
@@ -242,14 +260,15 @@ inline void print_scalar(const char * name, const nullable_string & value) {
     }
     std::terminate();
 }
-template <class L, class R> bool string_strict_equal(const L & left, const R & right) {
+template <class L, class R> js_boolean_t string_strict_equal(const L & left, const R & right) {
     const auto a = to_nullable_string(left), b = to_nullable_string(right);
-    return a.tag == b.tag && (a.tag != nullable_string::kind::string || a.value == b.value);
+    return js_boolean_t{a.tag == b.tag &&
+                        (a.tag != nullable_string::kind::string || a.value == b.value)};
 }
-template <class L, class R> bool string_equal(const L & left, const R & right) {
+template <class L, class R> js_boolean_t string_equal(const L & left, const R & right) {
     const auto a = to_nullable_string(left), b = to_nullable_string(right);
     if (a.tag != nullable_string::kind::string && b.tag != nullable_string::kind::string) {
-        return true;
+        return js_boolean_t{true};
     }
     return string_strict_equal(a, b);
 }
@@ -310,7 +329,8 @@ struct object_value {
     object_value() = default;
     object_value(nullable_scalar value) : scalar(value) {}
     object_value(double value) : scalar(value) {}
-    object_value(bool value) : scalar(value) {}
+    object_value(js_boolean_t value) : scalar(value) {}
+    object_value(bool value) : object_value(js_boolean_t{value}) {}
     object_value(std::shared_ptr<identity_object> value) : object(std::move(value)) {}
 };
 inline nullable_scalar global_scalar(const object_value & value) {
@@ -326,13 +346,13 @@ inline object_value to_object_value(object_value value) {
 inline bool object_truthy(const object_value & value) {
     return value.object || scalar_truthy(value.scalar);
 }
-inline bool object_strict_equal(const object_value & left, const object_value & right) {
-    if (left.object || right.object) { return left.object == right.object; }
+inline js_boolean_t object_strict_equal(const object_value & left, const object_value & right) {
+    if (left.object || right.object) { return js_boolean_t{left.object == right.object}; }
     return scalar_strict_equal(left.scalar, right.scalar);
 }
-inline bool object_equal(const object_value & left, const object_value & right) {
+inline js_boolean_t object_equal(const object_value & left, const object_value & right) {
     // Admission excludes any pair that could invoke object-to-primitive conversion.
-    if (left.object || right.object) { return left.object == right.object; }
+    if (left.object || right.object) { return js_boolean_t{left.object == right.object}; }
     return scalar_equal(left.scalar, right.scalar);
 }
 inline std::string object_typeof(const object_value & value) {
@@ -403,6 +423,9 @@ template <class K, class V> struct ordered_map_storage {
 template <class K> struct map_key_less {
     bool operator()(const K & a, const K & b) const { return std::less<K>{}(a, b); }
 };
+template <> struct map_key_less<js_boolean_t> {
+    bool operator()(js_boolean_t a, js_boolean_t b) const { return !a && b; }
+};
 template <> struct map_key_less<js_num> {
     bool operator()(js_num a, js_num b) const {
         if (std::isnan(a)) { return !std::isnan(b); }
@@ -452,15 +475,15 @@ template <class K> std::shared_ptr<number_map<K>> make_number_map() {
 inline std::shared_ptr<string_to_number_map> make_string_to_number_map() {
     return make_number_map<std::string>();
 }
-template <class Map, class K> bool map_has(const Map & map, const K & key) {
-    return map->find(key) != map->end();
+template <class Map, class K> js_boolean_t map_has(const Map & map, const K & key) {
+    return js_boolean_t{map->find(key) != map->end()};
 }
 template <class K> nullable_scalar map_get(number_map<K> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
 }
-template <class K> nullable_scalar map_get(map_storage<K, bool> * map, const K & key) {
+template <class K> nullable_scalar map_get(map_storage<K, js_boolean_t> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
@@ -470,7 +493,7 @@ nullable_scalar map_get(const std::shared_ptr<number_map<K>> & map, const K & ke
     return map_get(map.get(), key);
 }
 template <class K>
-nullable_scalar map_get(const std::shared_ptr<map_storage<K, bool>> & map, const K & key) {
+nullable_scalar map_get(const std::shared_ptr<map_storage<K, js_boolean_t>> & map, const K & key) {
     return map_get(map.get(), key);
 }
 template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
@@ -520,8 +543,8 @@ Map map_set(const Map & map, const K & key, const V & value) {
     map->insert_or_assign(map_normalize_key(key), value);
     return map;
 }
-template <class Map, class K> bool map_delete(const Map & map, const K & key) {
-    return map->erase(key) != 0;
+template <class Map, class K> js_boolean_t map_delete(const Map & map, const K & key) {
+    return js_boolean_t{map->erase(key) != 0};
 }
 template <class Map> void map_clear(const Map & map) {
     map->clear();
@@ -794,18 +817,22 @@ inline std::vector<std::string> dataset_keys(ctbrowser::element_ref element) {
 inline std::string dataset_value(ctbrowser::element_ref element, std::string_view key) {
     return ctbrowser::dataset_value(*element.owner, element.id, key).value();
 }
-inline bool toggle_class(ctbrowser::element_ref element, std::string_view token,
-                         std::optional<bool> force = std::nullopt) {
+inline js_boolean_t toggle_class(ctbrowser::element_ref element, std::string_view token,
+                                 std::optional<bool> force = std::nullopt) {
     auto result = ctbrowser::toggle_token(*element.owner, element.id,
                                           element.owner->atoms().intern("class"), token, force)
                       .value();
     result.update.value();
-    return result.present;
+    return js_boolean_t{result.present};
 }
-inline bool contains_class(ctbrowser::element_ref element, std::string_view token) {
-    return ctbrowser::contains_token(
+inline js_boolean_t toggle_class(ctbrowser::element_ref element, std::string_view token,
+                                 js_boolean_t force) {
+    return toggle_class(element, token, static_cast<bool>(force));
+}
+inline js_boolean_t contains_class(ctbrowser::element_ref element, std::string_view token) {
+    return js_boolean_t{ctbrowser::contains_token(
         element.owner->read().attribute_value(element.id, element.owner->atoms().intern("class")),
-        token);
+        token)};
 }
 template <class... Tokens>
 void add_class(ctbrowser::element_ref element, const Tokens &... tokens) {
@@ -830,7 +857,8 @@ inline void set_attribute(ctbrowser::element_ref element, std::string_view name,
                           std::string_view text) {
     ctbrowser::set_element_attribute(*element.owner, element.id, name, text).value();
 }
-inline void set_attribute(ctbrowser::element_ref element, std::string_view name, bool value) {
+inline void set_attribute(ctbrowser::element_ref element, std::string_view name,
+                          js_boolean_t value) {
     set_attribute(element, name, value ? std::string_view("true") : std::string_view("false"));
 }
 inline void set_optional_attribute(ctbrowser::element_ref element, std::string_view name,
@@ -840,25 +868,29 @@ inline void set_optional_attribute(ctbrowser::element_ref element, std::string_v
 inline double dom_number(const std::optional<std::string> & text) {
     return text ? ctbrowser::string_to_number(*text) : 0.0;
 }
-inline bool toggle_attribute(ctbrowser::element_ref element, std::string_view name,
-                             std::optional<bool> force = std::nullopt) {
+inline js_boolean_t toggle_attribute(ctbrowser::element_ref element, std::string_view name,
+                                     std::optional<bool> force = std::nullopt) {
     auto result =
         ctbrowser::toggle_element_attribute(*element.owner, element.id, name, force).value();
     result.update.value();
-    return result.present;
+    return js_boolean_t{result.present};
 }
-inline bool has_attribute(ctbrowser::element_ref element, std::string_view name) {
-    return element.owner->read().has_attribute(
-        element.id, ctbrowser::attribute_key(*element.owner, element.id, name));
+inline js_boolean_t toggle_attribute(ctbrowser::element_ref element, std::string_view name,
+                                     js_boolean_t force) {
+    return toggle_attribute(element, name, static_cast<bool>(force));
+}
+inline js_boolean_t has_attribute(ctbrowser::element_ref element, std::string_view name) {
+    return js_boolean_t{element.owner->read().has_attribute(
+        element.id, ctbrowser::attribute_key(*element.owner, element.id, name))};
 }
 inline void remove_attribute(ctbrowser::element_ref element, std::string_view name) {
     element.owner
         ->remove_attribute(element.id, ctbrowser::attribute_key(*element.owner, element.id, name))
         .value();
 }
-inline bool contains(ctbrowser::element_ref element, ctbrowser::element_ref other) {
-    return element.owner == other.owner &&
-           element.owner->read().is_ancestor_of(element.id, other.id);
+inline js_boolean_t contains(ctbrowser::element_ref element, ctbrowser::element_ref other) {
+    return js_boolean_t{element.owner == other.owner &&
+                        element.owner->read().is_ancestor_of(element.id, other.id)};
 }
 // THE SELECTOR ENGINE IS NOT INCLUDED HERE. ctbrowser/style/engine.hpp costs
 // about as much to parse as the rest of a DOM program put together, so a
@@ -880,9 +912,11 @@ inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::element_ref e
 // They hold no state: each call borrows its explicit element and Style engine.
 struct matches_method {
     template <class Style>
-    bool call(ctbrowser::element_ref element, Style & style, std::string_view selector) const {
+    js_boolean_t call(ctbrowser::element_ref element, Style & style,
+                      std::string_view selector) const {
         const auto parsed = parse_selector(element, selector);
-        return style.element_matches(element.owner->read(), element.id, parsed.selectors);
+        return js_boolean_t{
+            style.element_matches(element.owner->read(), element.id, parsed.selectors)};
     }
 };
 

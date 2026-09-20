@@ -371,6 +371,10 @@ def check_scalar_global_emission(args, ir, name):
                 values[result] = ("string", literal)
             elif expression in {"true", "false"}:
                 values[result] = ("boolean", expression)
+            elif match := re.fullmatch(r"ctnative::js_boolean_t\{(true|false)\}", expression):
+                values[result] = ("boolean", match[1])
+            elif match := re.fullmatch(r"\((?:ctnative::js_boolean_t|bool)\) (\w+)", expression):
+                values[result] = values.get(match[1], "unknown")
             elif re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", expression):
                 values[result] = float(expression)
             elif match := re.fullmatch(r"(\w+) ([+*/-]) (\w+)", expression):
