@@ -723,8 +723,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         } else if (use.getOperandNumber() == 2 && key == "__home") {
             getterHomes.push_back(write); // Rechecked against exact getters below.
         } else if (use.getOperandNumber() == 0 && ctjs::ordinaryKey(write.getKey())) {
-            if (key == "name" || key == "length" || key == "__home" || key == "caller" ||
-                key == "arguments" || !staticMethods.try_emplace(key, write).second) {
+            if (closureMetadataKey(key) || !staticMethods.try_emplace(key, write).second) {
                 return refuse("static method shadows closure metadata or repeats a slot");
             }
         } else {

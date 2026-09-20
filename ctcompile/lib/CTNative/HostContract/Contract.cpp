@@ -427,11 +427,12 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                 key = write.getKey();
             }
             const auto name = key ? ctjs::constantKey(key) : llvm::StringRef{};
+            static const llvm::StringSet<> descriptorMutations{
+                "__proto__",      "prototype",        "defineProperty",  "defineProperties",
+                "setPrototypeOf", "__defineGetter__", "__defineSetter__"};
             if (llvm::isa<ctjs::DefineAccessorOp, ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(
                     operation) ||
-                name == "__proto__" || name == "prototype" || name == "defineProperty" ||
-                name == "defineProperties" || name == "setPrototypeOf" ||
-                name == "__defineGetter__" || name == "__defineSetter__") {
+                (name.size() <= 16 && descriptorMutations.contains(name))) {
                 reason = "source can change contracted realm property descriptors or prototype";
                 return;
             }

@@ -18,6 +18,11 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+inline bool closureMetadataKey(llvm::StringRef key) {
+    static const llvm::StringSet<> names{"name", "length", "__home", "caller", "arguments"};
+    return key.size() <= 9 && names.contains(key);
+}
+
 struct classInitialization {
     mlir::ModuleOp module;
     unsigned remaining;

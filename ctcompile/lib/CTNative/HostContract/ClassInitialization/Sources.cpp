@@ -1248,10 +1248,7 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
         // in the interpreter. Keep their source reads until that boundary
         // has one semantics across the interpreter and native output.
         const auto key = item.first();
-        if (key == "name" || key == "length" || key == "__home" || key == "caller" ||
-            key == "arguments") {
-            return refuse("static getter shadows closure metadata");
-        }
+        if (closureMetadataKey(key)) { return refuse("static getter shadows closure metadata"); }
         auto definition = item.second;
         auto closure = definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(closure);

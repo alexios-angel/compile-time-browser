@@ -19,6 +19,11 @@ inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_
 inline constexpr unsigned maxDOMIntrinsicNameLength = 23; // __ctbrowser_for_of_open
 const llvm::StringSet<> & domInitialIntrinsics();
 
+inline bool reservedCallbackBinding(llvm::StringRef name) {
+    static const llvm::StringSet<> names{"globalThis", "undefined", "NaN", "Infinity"};
+    return name.size() <= 10 && names.contains(name);
+}
+
 // Invocation shape only: identity does not prove heritage, receiver rebinding,
 // field initialization or super lookup, and never authorizes erasing a call.
 inline unsigned classIntrinsicArity(llvm::StringRef name) {

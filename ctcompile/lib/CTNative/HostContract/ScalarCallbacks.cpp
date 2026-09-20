@@ -28,10 +28,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
         if (walked.wasInterrupted()) { return false; }
     }
     const auto ordinaryBinding = [&](llvm::StringRef name) {
-        if (!step() || !ctjs::ordinaryKey(name) || name == "globalThis" || name == "undefined" ||
-            name == "NaN" || name == "Infinity") {
-            return false;
-        }
+        if (!step() || !ctjs::ordinaryKey(name) || reservedCallbackBinding(name)) { return false; }
         for (const auto * names : {&contract.initialIntrinsics, &contract.absentBindings,
                                    &contract.undefinedBindings, &contract.realmOwnDataProperties}) {
             for (const auto & reserved : *names) {
