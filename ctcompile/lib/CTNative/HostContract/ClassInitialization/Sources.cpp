@@ -1,5 +1,8 @@
 #include "Proof.hpp"
 
+#include <bit>
+#include <cmath>
+
 namespace ctcompile::ctnative::class_detail {
 
 bool classInitialization::step() {
@@ -444,6 +447,168 @@ bool classInitialization::unusedReceiver(ctjs::FuncOp fn) {
         // Saving lexical this is inert when the exact helper never reads it.
         if (!closure || use.getOperandNumber() != 1 || !helpers.contains(target(closure))) {
             return false;
+        }
+    }
+    return true;
+}
+
+bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
+                                            llvm::ArrayRef<ctjs::ConstructOp> instances,
+                                            llvm::ArrayRef<ctjs::SetPropertyOp> definitions,
+                                            const llvm::StringSet<> & methodKeys,
+                                            const HostContract & contract) {
+    auto function = target(constructor);
+    llvm::SmallVector<mlir::Value> receivers;
+    for (ctjs::ConstructOp made : instances) { receivers.push_back(made.getResult()); }
+    for (ctjs::SetPropertyOp definition : definitions) {
+        if (!step()) { return false; }
+        auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+        if (fn) { receivers.push_back(fn.getBody().front().getArgument(ctjs::arg_receiver)); }
+    }
+    llvm::SetVector<mlir::Operation *> snapshots;
+    for (mlir::Value receiver : receivers) {
+        for (mlir::OpOperand * use : sourceUses(receiver)) {
+            if (!step()) { return false; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use->getOwner());
+            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                             : ctjs::GetPropertyOp{};
+            auto load =
+                read ? read.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+            if (call && use->getOperandNumber() == 2 && call.getArgs().size() == 1 && load &&
+                load.getName() == "Object" && read.getObject() == call.getReceiver() &&
+                ctjs::constantKey(read.getKey()) == "getOwnPropertyNames") {
+                snapshots.insert(call);
+            }
+        }
+    }
+    if (!reason.empty() || snapshots.empty()) { return reason.empty(); }
+    if (!llvm::is_contained(contract.initialIntrinsics, "Object")) {
+        return refuse("class own-key snapshot needs declared Object identity");
+    }
+    // ponytail: fixed named fields on a non-inherited class. Conditional
+    // presence, indexed-name ordering and iterator consumers need separate proofs.
+    if (contract.provider != HostContract::Provider::closedSource ||
+        heritage.contains(constructor.getResult()) ||
+        baseClasses.contains(constructor.getResult()) || !function.getBody().hasOneBlock()) {
+        return refuse("class own-key snapshot requires fixed constructor fields");
+    }
+    llvm::SmallVector<llvm::StringRef> fields;
+    llvm::StringSet<> fieldSet;
+    const auto self = function.getBody().front().getArgument(ctjs::arg_receiver);
+    for (mlir::Operation & op : function.getBody().front()) {
+        if (!step()) { return false; }
+        if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op);
+            returned && !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+            return refuse("class own-key snapshot requires a primitive constructor return");
+        }
+        if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                      ctjs::ReturnOp>(op)) {
+            continue;
+        }
+        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+        auto key = write ? ctjs::constantKey(write.getKey()) : llvm::StringRef{};
+        if (!write || write.getObject() != self || !ctjs::ordinaryKey(key) ||
+            methodKeys.contains(key) ||
+            llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; })) {
+            return refuse("class own-key snapshot requires fixed constructor fields");
+        }
+        if (fieldSet.insert(key).second) { fields.push_back(key); }
+    }
+    llvm::MapVector<mlir::Value, mlir::Attribute> replacements;
+    for (mlir::Operation * operation : snapshots) {
+        auto call = llvm::cast<ctjs::CallOp>(operation);
+        for (mlir::OpOperand & use : call.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+            if (!read || use.getOperandNumber() != 0) {
+                return refuse("class own-key snapshot requires fixed length or index reads");
+            }
+            mlir::Attribute value;
+            if (ctjs::constantKey(read.getKey()) == "length") {
+                value = ctjs::NumberAttr::get(
+                    module.getContext(),
+                    std::bit_cast<uint64_t>(static_cast<double>(fields.size())));
+            } else {
+                auto key = read.getKey().getDefiningOp<ctjs::ConstantOp>();
+                auto number =
+                    key ? llvm::dyn_cast<ctjs::NumberAttr>(key.getValue()) : ctjs::NumberAttr{};
+                const auto index = number ? number.getDouble() : -1.0;
+                if (!std::isfinite(index) || index < 0 || std::floor(index) != index ||
+                    index >= static_cast<double>(fields.size())) {
+                    return refuse("class own-key snapshot requires fixed length or index reads");
+                }
+                value =
+                    ctjs::StringAttr::get(module.getContext(), fields[static_cast<size_t>(index)]);
+            }
+            replacements[read.getResult()] = value;
+        }
+    }
+    // Every receiver still passes fieldsOnly after these exact key reads fold.
+    // In addition, no method or external instance use may create a new field.
+    // The constructor never calls a method before all fields exist.
+    for (mlir::Value receiver : receivers) {
+        for (mlir::OpOperand * use : sourceUses(receiver)) {
+            if (!step()) { return false; }
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use->getOwner());
+            if (!write || use->getOperandNumber() != 0) { continue; }
+            auto key = replacements.lookup(write.getKey());
+            if (!key) {
+                auto constant = write.getKey().getDefiningOp<ctjs::ConstantOp>();
+                if (constant) { key = constant.getValue(); }
+            }
+            auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(key);
+            if (!text || !fieldSet.contains(text.getValue())) {
+                return refuse("class own-key snapshot field set changes");
+            }
+        }
+    }
+    // Check the original Object binding, member and all aliases before erasing
+    // any snapshot. Other calls/effects remain for the complete module census.
+    const auto counted = module.walk([&](mlir::Operation * op) {
+        const uint64_t cost = uint64_t(2) + 2 * uint64_t(op->getNumOperands());
+        if (cost > remaining) {
+            refuse("class initialization work budget exhausted");
+            return mlir::WalkResult::interrupt();
+        }
+        remaining -= static_cast<unsigned>(cost);
+        return mlir::WalkResult::advance();
+    });
+    if (counted.wasInterrupted()) { return false; }
+    if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
+        return refuse(problem);
+    }
+    for (auto [result, value] : replacements) {
+        auto * read = result.getDefiningOp();
+        mlir::OpBuilder at(read);
+        auto constant = ctjs::ConstantOp::create(at, read->getLoc(), value);
+        // Entry locals can already have fixed-cell proofs. Preserve their
+        // cached producers as well as SSA uses before removing a snapshot read.
+        for (auto & cell : cells) {
+            if (!step()) { return false; }
+            if (cell.second == result) { cell.second = constant; }
+        }
+        result.replaceAllUsesWith(constant);
+        read->erase();
+    }
+    llvm::SetVector<mlir::Operation *> selections, loads;
+    for (mlir::Operation * operation : snapshots) {
+        auto call = llvm::cast<ctjs::CallOp>(operation);
+        auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        selections.insert(read);
+        loads.insert(read.getObject().getDefiningOp());
+        eraseRooted(call);
+    }
+    for (mlir::Operation * operation : selections) {
+        if (llvm::all_of(operation->getUsers(),
+                         [](mlir::Operation * op) { return llvm::isa<ctjs::RootOp>(op); })) {
+            eraseRooted(operation);
+        }
+    }
+    for (mlir::Operation * operation : loads) {
+        if (llvm::all_of(operation->getUsers(),
+                         [](mlir::Operation * op) { return llvm::isa<ctjs::RootOp>(op); })) {
+            eraseRooted(operation);
         }
     }
     return true;

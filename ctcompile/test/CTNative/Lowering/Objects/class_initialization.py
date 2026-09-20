@@ -3,6 +3,37 @@
 
 from CTNative.Lowering.Objects.class_initialization_inputs import *
 
+OWN_FIELDS = {
+    "own-fields-length": (2, 2),
+    "own-fields-order": (113, 113),
+    "own-fields-clear": (11, 11),
+    "own-fields-effects": (246, 246),
+    "own-fields-boxed-key": (11, 11),
+    "own-fields-loop": (11, 11),
+    "own-fields-conditional": (1, 1),
+    "own-fields-dynamic": (1, 1),
+    "own-fields-new-field": (2, 2),
+    "own-fields-numeric-key": (7, 7),
+    "own-fields-receiver-escape": (1, 1),
+    "own-fields-snapshot-escape": (7, 7),
+    "own-fields-callback": (7, 7),
+    "own-fields-object-replaced": (1, 1),
+    "own-fields-helper-replaced": (1, 1),
+    "inherited-own-fields-collision": (7, 7),
+    "own-fields-unused-ambient": (7, 7),
+    "own-fields-replacement-return": (7, 7),
+}
+OBSERVATIONS.update(OWN_FIELDS)
+POSITIVES.update(
+    {
+        "own-fields-length",
+        "own-fields-order",
+        "own-fields-clear",
+        "own-fields-effects",
+        "own-fields-boxed-key",
+    }
+)
+
 
 def check_nested_helper_root(args, source, manifest, name="nested-helper-root"):
     # Ordinary helpers retain their frames across direct-call conversion.
@@ -155,6 +186,23 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
+        if name == "own-fields-boxed-key":
+            lifted = structured.read_text()
+            calls = set(re.findall(r"(%\w+) = ctjs.call ", lifted))
+            scalar_reads = [
+                result
+                for result, owner in re.findall(
+                    r"(%\w+) = ctjs.get_property (%\w+)\[%\w+\]", lifted
+                )
+                if owner in calls
+            ]
+            if not any(
+                re.search(r"ctjs.cell_set %\w+, " + re.escape(value) + r"\b", lifted)
+                for value in scalar_reads
+            ):
+                raise RuntimeError("own-field scalar snapshot lost its boxed local producer")
+        if name in OWN_FIELDS or name == "bootstrap-base":
+            manifest["initial_intrinsics"].append("Object")
         if name.startswith(("inherited", "override-")) or name == "bootstrap-base":
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
@@ -197,6 +245,14 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "own-fields-loop": "class own-key snapshot requires fixed length or index reads",
+            "own-fields-conditional": "class own-key snapshot requires fixed constructor fields",
+            "own-fields-dynamic": "class own-key snapshot requires fixed constructor fields",
+            "own-fields-new-field": "class own-key snapshot field set changes",
+            "own-fields-numeric-key": "class own-key snapshot requires fixed constructor fields",
+            "own-fields-snapshot-escape": "class own-key snapshot requires fixed length or index reads",
+            "own-fields-unused-ambient": "unknown call, binding or reflective effect",
+            "own-fields-replacement-return": "class own-key snapshot requires a primitive constructor return",
             "nested-helper-changing": "class local cell has changing writes",
             "nested-helper-identity": "captured helper escapes its ordinary local call",
             "nested-helper-excess": "captured helper escapes its ordinary local call",
@@ -229,7 +285,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class receiver escapes or observes a prototype/descriptor",
+            "bootstrap-base": "class own-key snapshot requires fixed constructor fields",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -257,6 +313,16 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "own-fields-order":
+            prepare(
+                args,
+                "own-fields-no-object",
+                structured,
+                dict(manifest, initial_intrinsics=["__ctbrowser_class_defined"]),
+                success=False,
+                diagnostic="class own-key snapshot needs declared Object identity",
+            )
+            preparation_refusals += 1
         if name == "static-call-capture":
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
@@ -374,6 +440,7 @@ def main():
                 prepare(args, label, structured, control, success=False, options=options)
                 preparation_refusals += 1
         if name in (
+            "own-fields-order",
             "nested-helper-chain",
             "captured-helper-constructor",
             "empty",

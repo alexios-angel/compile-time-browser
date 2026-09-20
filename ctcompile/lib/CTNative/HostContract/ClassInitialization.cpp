@@ -46,12 +46,13 @@ struct CTNativeSpecializeClassInitializationPass
             !llvm::is_contained(contract->initialIntrinsics, host_detail::classDefinedIntrinsic) ||
             llvm::any_of(contract->initialIntrinsics,
                          [](const auto & name) {
-                             return !host_detail::classIntrinsicArity(name) && name != "Error";
+                             return !host_detail::classIntrinsicArity(name) && name != "Error" &&
+                                    name != "Object";
                          }) ||
             contract->realmGlobalThis || contract->classicScriptRealm ||
             !contract->absentBindings.empty() || !contract->undefinedBindings.empty()) {
             module.emitError("class initialization requires standard class helper identities and "
-                             "optional Error identity");
+                             "optional Error/Object identities");
             return signalPassFailure();
         }
         // Super normalization is speculative; refusal publishes no partial body.

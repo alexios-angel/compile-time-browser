@@ -82,6 +82,10 @@ struct classInitialization {
                         unsigned depth = 0);
     ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool domEntry = false);
     bool unusedReceiver(ctjs::FuncOp fn);
+    bool ownFieldSnapshots(ctjs::CreateClosureOp constructor,
+                           llvm::ArrayRef<ctjs::ConstructOp> instances,
+                           llvm::ArrayRef<ctjs::SetPropertyOp> definitions,
+                           const llvm::StringSet<> & methodKeys, const HostContract & contract);
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                     bool methodsAvailable = false);

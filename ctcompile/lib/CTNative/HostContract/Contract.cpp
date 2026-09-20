@@ -175,7 +175,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return std::move(failure);
         }
         for (const auto & name : result.initialIntrinsics) {
-            if (name != "Map" && name != "Array" && name != "Error" &&
+            if (name != "Map" && name != "Array" && name != "Error" && name != "Object" &&
                 !host_detail::classIntrinsicArity(name)) {
                 return error("unsupported initial intrinsic identity");
             }
@@ -390,7 +390,8 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
         return "invalid initial realm globalThis declaration";
     }
     for (const auto & name : contract.initialIntrinsics) {
-        if ((name != "Map" && name != "Array" && name != "Error" && !classIntrinsicArity(name)) ||
+        if ((name != "Map" && name != "Array" && name != "Error" && name != "Object" &&
+             !classIntrinsicArity(name)) ||
             llvm::is_contained(contract.absentBindings, name) ||
             llvm::is_contained(contract.undefinedBindings, name)) {
             return "invalid standard initial intrinsic declaration";
@@ -459,10 +460,11 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                      call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>())) {
                     continue;
                 }
-            } else if (load.getName() == "Array") {
+            } else if (load.getName() == "Array" || load.getName() == "Object") {
+                const auto member = load.getName() == "Array" ? "from" : "getOwnPropertyNames";
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
                     read && use.getOperandNumber() == 0 &&
-                    ctjs::constantKey(read.getKey()) == "from") {
+                    ctjs::constantKey(read.getKey()) == member) {
                     bool closed = true;
                     for (mlir::OpOperand & methodUse : read.getResult().getUses()) {
                         if (llvm::isa<ctjs::RootOp>(methodUse.getOwner())) { continue; }
@@ -477,7 +479,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     call && use.getOperandNumber() == 1 && call.getArgs().size() == 1) {
                     auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                     if (read && read.getObject() == load.getResult() &&
-                        ctjs::constantKey(read.getKey()) == "from") {
+                        ctjs::constantKey(read.getKey()) == member) {
                         continue;
                     }
                 }
