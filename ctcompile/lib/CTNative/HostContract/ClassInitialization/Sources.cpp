@@ -260,12 +260,11 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         auto value = sourceValue(cells.lookup(capture));
         if (value == constructorValue) { continue; }
         if (maps.contains(value)) {
-            // ponytail: direct local class captures only. Holder expansion and
-            // super cloning need separate capture transport before widening.
-            if (!constructor || domEntry || !heritage.empty() ||
+            // Holder/helper calls still need their own capture transport.
+            if (!constructor || domEntry ||
                 value.getDefiningOp()->getBlock() != method->getBlock() ||
                 !value.getDefiningOp()->isBeforeInBlock(method)) {
-                return refuse("class Map capture requires a direct local class without heritage");
+                return refuse("class Map capture requires a direct local class");
             }
             mapCells.insert(capture);
             mapClosures.insert(method);
@@ -622,9 +621,10 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
         return refuse("class own-key snapshot requires fixed constructor fields");
     }
     if (inherited) {
-        auto baseFunction = target(base.getDefiningOp<ctjs::CreateClosureOp>());
+        auto baseClosure = base.getDefiningOp<ctjs::CreateClosureOp>();
+        auto baseFunction = target(baseClosure);
         if (!constructors.contains(baseFunction) ||
-            !normalizeSuper(function, baseFunction, contract)) {
+            !normalizeSuper(constructor, baseClosure, contract)) {
             return false;
         }
     }

@@ -221,7 +221,7 @@ def main():
                 *(
                     ["--mlir-print-op-generic"]
                     if name.startswith(("inherited-", "override-", "bootstrap-base"))
-                    or name == "class-map-inherited"
+                    or name.startswith("class-map-inherited")
                     else []
                 ),
                 "-o",
@@ -251,6 +251,7 @@ def main():
                 raise RuntimeError("own-field scalar snapshot lost its boxed local producer")
         if (
             name in OWN_FIELDS
+            or name == "class-map-inherited-early-snapshot"
             or name.startswith("own-fields-branch-")
             or name.startswith("inherited-own-fields-")
             or name.startswith("bootstrap-base")
@@ -265,9 +266,8 @@ def main():
                 "__ctbrowser_iter_next",
                 "__ctbrowser_iter_close",
             ]
-        if (
-            name.startswith(("inherited", "override-", "bootstrap-base"))
-            or name == "class-map-inherited"
+        if name.startswith(("inherited", "override-", "bootstrap-base")) or name.startswith(
+            "class-map-inherited"
         ):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
@@ -386,7 +386,8 @@ def main():
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
             "bootstrap-base": "class own-key snapshot constructor observes its receiver",
-            "bootstrap-base-data": "class Map capture requires a direct local class without heritage",
+            "bootstrap-base-data": "class Map capture requires a direct local class",
+            "class-map-inherited-early-snapshot": "class construction method observes an own-key snapshot",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -419,7 +420,12 @@ def main():
                 args,
                 name + "-no-map-identity",
                 structured,
-                dict(manifest, initial_intrinsics=["__ctbrowser_class_defined"]),
+                dict(
+                    manifest,
+                    initial_intrinsics=[
+                        identity for identity in manifest["initial_intrinsics"] if identity != "Map"
+                    ],
+                ),
                 success=False,
             )
             preparation_refusals += 1
@@ -532,6 +538,9 @@ def main():
                 "captured-holder-unused",
             ):
                 operations = ()
+            elif name == "class-map-inherited":
+                # Super guard Error constructions disappear during normalization.
+                operations = ("ctjs.load_upvalue",)
             elif name.startswith("class-map-"):
                 operations = ("ctjs.construct", "ctjs.load_upvalue")
             elif name in GLOBAL_HOLDERS:
@@ -649,6 +658,9 @@ def main():
             cutoffs[name] = check_proof_budget(args, structured, manifest, prepared, name)
             preparation_refusals += 1
         if name in (
+            "class-map-inherited-distinct",
+            "class-map-inherited-chain",
+            "class-map-inherited-mixed-captures",
             "inherited-own-fields-iterate-forward-inherited",
             "inherited-own-fields-iterate-borrow-inherited",
             "inherited-own-fields-iterate-method-nearest",

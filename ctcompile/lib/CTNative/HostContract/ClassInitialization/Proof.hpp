@@ -113,7 +113,8 @@ struct classInitialization {
 
     // ponytail: explicit super statements over local bases. Fields, replacement
     // returns and default rest/apply need their own proof.
-    bool normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base, const HostContract & contract);
+    bool normalizeSuper(ctjs::CreateClosureOp constructor, ctjs::CreateClosureOp baseClosure,
+                        const HostContract & contract);
 
     bool normalizeSuperMethods(ctjs::FuncOp function,
                                llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions);

@@ -59,8 +59,11 @@ bool classInitialization::heritageUse(mlir::OpOperand & use, mlir::Value constru
            sourceValue(use.get()) == constructor;
 }
 
-bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base,
+bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
+                                         ctjs::CreateClosureOp baseClosure,
                                          const HostContract & contract) {
+    auto function = target(constructor);
+    auto base = target(baseClosure);
     auto & original = function.getBody().front();
     if (!llvm::hasSingleElement(base.getBody()) ||
         !original.getArgument(ctjs::arg_new_target).use_empty()) {
@@ -69,9 +72,9 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
     for (auto & use : original.getArgument(ctjs::arg_callee).getUses()) {
         if (!step()) { return false; }
         auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
-        if (use.getOperandNumber() != 0 ||
-            (!callableCaptures.contains(use.getOwner()) &&
-             (!read || !holderCaptures.contains(read.getResult())))) {
+        if (use.getOperandNumber() != 0 || (!callableCaptures.contains(use.getOwner()) &&
+                                            (!read || (!holderCaptures.contains(read.getResult()) &&
+                                                       !mapCaptures.contains(read.getResult()))))) {
             return refuse("derived class requires receiver-preserving super normalization");
         }
     }
@@ -139,6 +142,8 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
                                            ctjs::UndefinedAttr::get(module.getContext()));
     llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, ctjs::FuncOp>> copiedCaptures;
     llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, mlir::Value>> copiedHolders;
+    llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, mlir::Value>> copiedMaps;
+    llvm::SmallVector<mlir::Value> captures(constructor.getUpvalues());
     llvm::SmallVector<mlir::Operation *> copiedHelperCalls;
     const auto clone = [&](mlir::Operation & op, mlir::IRMapping & values) {
         const auto counted = op.walk([&](mlir::Operation * source) {
@@ -154,7 +159,8 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
         at.clone(op, values);
         // A base's slot number belongs to its original closure, never the
         // leaf's environment. Carry the proved helper/holder identity with each copy.
-        op.walk([&](mlir::Operation * source) {
+        auto recorded = op.walk([&](mlir::Operation * source) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
             auto * copied = values.lookupOrNull(source);
             if (auto helper = callableCaptures.lookup(source)) {
                 copiedCaptures.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), helper);
@@ -163,10 +169,47 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
                 if (auto object = holderCaptures.lookup(read.getResult())) {
                     copiedHolders.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), object);
                 }
+                if (auto map = mapCaptures.lookup(read.getResult())) {
+                    // Slot numbers belong to the declaring closure. Reuse a
+                    // leaf slot by Map identity, or carry the base's exact cell.
+                    size_t index = 0;
+                    while (index < captures.size() &&
+                           sourceValue(cells.lookup(captures[index])) != map) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        ++index;
+                    }
+                    if (index == captures.size()) {
+                        if (baseClosure->getBlock() != constructor->getBlock() ||
+                            !baseClosure->isBeforeInBlock(constructor)) {
+                            refuse("inherited Map capture requires initialization before the leaf "
+                                   "closure");
+                            return mlir::WalkResult::interrupt();
+                        }
+                        mlir::Value cell;
+                        for (auto candidate : baseClosure.getUpvalues()) {
+                            if (!step()) { return mlir::WalkResult::interrupt(); }
+                            if (mapCells.contains(candidate) &&
+                                sourceValue(cells.lookup(candidate)) == map) {
+                                cell = candidate;
+                                break;
+                            }
+                        }
+                        if (!cell) {
+                            refuse("inherited Map read lacks its original capture cell");
+                            return mlir::WalkResult::interrupt();
+                        }
+                        captures.push_back(cell);
+                    }
+                    auto load = llvm::cast<ctjs::LoadUpvalueOp>(copied);
+                    load->setOperand(0, output->getArgument(ctjs::arg_callee));
+                    load.setIndex(static_cast<uint32_t>(index));
+                    copiedMaps.emplace_back(load, map);
+                }
             }
             if (helperCalls.contains(source)) { copiedHelperCalls.push_back(copied); }
+            return mlir::WalkResult::advance();
         });
-        return true;
+        return !recorded.wasInterrupted();
     };
     const auto receiver = original.getArgument(ctjs::arg_receiver);
     const auto integer = [&](mlir::Value value) -> std::optional<int64_t> {
@@ -471,6 +514,10 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
     auto removed = function.walk([&](mlir::Operation * op) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         helperCalls.erase(op);
+        mapOperations.erase(op);
+        if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+            mapCaptures.erase(read.getResult());
+        }
         return mlir::WalkResult::advance();
     });
     if (!reason.empty() || removed.wasInterrupted()) { return false; }
@@ -485,6 +532,20 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
         holderCaptures[read.getResult()] = object;
     }
     helperCalls.insert(copiedHelperCalls.begin(), copiedHelperCalls.end());
+    for (auto [read, map] : copiedMaps) {
+        if (!step()) { return false; }
+        mapCaptures[read.getResult()] = map;
+        mapOperations.insert(read);
+    }
+    if (!copiedMaps.empty()) {
+        constructor.getUpvaluesMutable().assign(captures);
+        constructor.removeEnclosingIndicesAttr();
+        function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+        mapClosures.insert(constructor);
+        if (!llvm::is_contained(capturedClosures, constructor)) {
+            capturedClosures.push_back(constructor);
+        }
+    }
     function.getBody().takeBody(copy->getBody());
     return true;
 }
@@ -828,10 +889,11 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                 return refuse("inherited receiver getters require per-leaf target proof");
             }
         }
-        auto base =
-            target(sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>());
+        auto baseClosure =
+            sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>();
+        auto base = target(baseClosure);
         if (!constructors.contains(base) || (!snapshotFields.contains(closure.getResult()) &&
-                                             !normalizeSuper(function, base, contract))) {
+                                             !normalizeSuper(closure, baseClosure, contract))) {
             return false;
         }
         setup.insert(inherited);
