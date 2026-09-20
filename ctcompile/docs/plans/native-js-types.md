@@ -5,9 +5,10 @@ using the existing four selector method objects. Distinct `undefined_t` and
 `js_null_t` tokens construct the existing optional scalar carrier; its ABI is
 unchanged. `js_boolean_t` now carries JavaScript Boolean values through literals,
 comparisons, calls, fields, closures and Maps, with explicit conversion to C++
-conditions and numbers. Number/String classes, Object/Array prototypes and document
-views remain planned. This is the user's revised direction for the native C++
-interface and supersedes conflicting
+conditions and numbers. `js_basic_num<double>` now supplies the `js_num` class
+for numeric global observations. Full Number adoption, String classes,
+Object/Array prototypes and document views remain planned. This is the user's
+revised direction for the native C++ interface and supersedes conflicting
 raw-carrier prescriptions in master-plan part 24. Historical measurements retain
 their original scope.
 
@@ -55,6 +56,7 @@ implement every prototype up front.
 | `js_basic_string<char16_t>` | The same String domain with UTF-16 storage where the encoding and conversion proof permits it. Storage choice must not silently change observable answers. |
 | `undefined_t` | The distinct undefined value. No numeric, null, empty-string or invalid-handle sentinel substitution. |
 | `js_null_t` | The distinct null value. Keep it separate from undefined at unions, calls, returns, fields and comparisons. |
+| `js_nan_t` | Explicit NaN construction token for `js_num`. NaN remains a JavaScript Number, never an undefined/null or missing-value sentinel. |
 | `js_num` (`js_basic_num<double>`) | JavaScript Number backed by binary64, including NaN, infinities and signed zero. Arithmetic and conversions use the existing semantic helpers where C++ differs. |
 | `js_basic_num<T>` | Narrowed Number representation only when range and operation proofs establish equivalence; an integer storage parameter does not authorize C++ integer division or overflow. |
 | `js_boolean_t` | The Boolean value with explicit contextual conversion to C++ `bool`. Numeric conversion is an admitted JavaScript operation, not an accidental implicit C++ promotion. |
@@ -92,6 +94,12 @@ two algorithms for one operation.
   pair. Keep named `strict_equal`, coercive `equal`, SameValue and SameValueZero
   operations distinct. A C++ operator cannot spell `===`; container key equality
   must continue to use its required relation rather than inheriting `operator==`.
+- Plan `js_num{js_nan_t{}}` as explicit construction of a Number NaN. The token
+  adds no JavaScript type or union alternative: `typeof` remains `"number"`,
+  truthiness is false, strict equality with itself is false, and SameValue and
+  SameValueZero still match NaNs. Keep a present NaN distinct from null,
+  undefined and a missing Map entry. Do not use the token's C++ type identity
+  as a runtime NaN test; computed NaNs remain ordinary `js_num` values.
 - Keep `typeof` as a named operation. Null and objects, primitive wrappers and
   boxed primitive objects must retain their JavaScript distinctions. A
   `js_boolean_t` primitive is not `new Boolean(false)`.
@@ -205,8 +213,9 @@ storage helpers, and `matches`, `closest`, `querySelector`, `querySelectorAll`
 method objects. `Element.prototype` now owns those method objects, with the
 flat names retained as constant reference aliases. Distinct absence tokens now
 construct the existing nullable scalar, and `js_boolean_t` carries Boolean
-values; other primitive classes and Object/Array
-intrinsic prototypes are not implemented yet.
+values. `Number.hpp` supplies `js_basic_num<double>` and its `js_num` alias;
+numeric global observations use this class. String and Object/Array intrinsic
+prototype classes are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
 behind Script and needs extraction before native use.
 
@@ -233,8 +242,20 @@ existing `auto`/template deduction.
    constructor and contextual conversion are explicit; `.to_number()` reuses
    the numeric conversion boundary. Public JSON storage and internal predicates
    retain raw `bool`, with explicit adapters at generated boundaries.
-   Follow with Number and String in coherent
-   batches. Update literal creation, conversion, optional/union joins,
+   `js_basic_num<double>` now provides explicit binary64 construction/extraction,
+   contextual truthiness, same-type arithmetic and partial ordering. Its
+   `js_num` alias is the numeric global-read result; emitted observations extract
+   `.value()` before C varargs. Nullable/object scalar adapters preserve the tag,
+   NaN and signed zero. Only `double` is currently supported by the template.
+   Add the planned `js_nan_t` construction token with the next numeric
+   literal/conversion batch; it is not implemented in this first Number batch.
+   Existing arithmetic, Map storage and capture signatures still use raw
+   binary64; generated declarations inside `ctnative` spell the compatibility
+   alias `::js_num` explicitly to avoid changing those representations.
+   Next migrate numeric literals, arithmetic and conversion boundaries together,
+   then calls/captures and collections; introduce `js_basic_string<char>` and
+   `js_string` with their first admitted String operation group. Update
+   literal creation, conversion, optional/union joins,
    calls/returns, print helpers and deduced-type assertions with each batch.
    Keep MLIR's semantic types and proof authority; C++ classes do not replace
    inference. Extract type-specific headers only as their implementation grows,

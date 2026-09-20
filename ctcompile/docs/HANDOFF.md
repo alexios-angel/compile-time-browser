@@ -22,6 +22,28 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Basic Number class and default type aliases, 2026-09-20 UTC
+
+**21b2dee2** names the planned templates `ctnative::js_basic_num<T>` and
+`ctnative::js_basic_string<T>`, with default aliases `js_num` for `double` and
+`js_string` for `char`. **bb265540** implements the Number class and uses it for
+numeric global observations, extracting `.value()` before C formatting.
+Existing arithmetic, Maps and capture signatures remain binary64; generated
+declarations inside `ctnative` qualify their compatibility alias as `::js_num`.
+
+Focused validation passed: runtime CTest **1/1**, **9 selected lit cases** and
+**8 selected ownership cases**, including existing differential, mutation and
+sanitizer checks. All **20** code/test hashes matched the devbox. Scoped formatting
+passes; global formatting retains the same 16 pre-existing diagnostics. Full
+suites were skipped. [Implementation and exact checks](handoff/2026-09-20-native-number.md).
+
+**Next:** Number literals, conversions, arithmetic and signature adoption, then
+String and collections/document views. Add the user's planned `js_nan_t` explicit
+Number-NaN construction token with numeric literals/conversions; it is not yet
+implemented and must preserve Number semantics and distinguish absence. Keep the
+typed `instanceof`/`Symbol.hasInstance` schedule with class/prototype proofs.
+NodeList slots above 1,000,000 remain the next indexed Bootstrap boundary.
+
 ## JavaScript Boolean carrier migration, 2026-09-20 UTC
 
 **92024490** continued **30a74866** with `ctnative::js_boolean_t` across native values,
