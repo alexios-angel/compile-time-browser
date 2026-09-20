@@ -16,6 +16,12 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-shared-owner": (8881, 8881),
+    "class-map-record-owner-method-write": (998, 998),
+    "class-map-record-reinsert-aliases": (4741, 4741),
+    "class-map-record-read-after-clear": (107, 107),
+    "class-map-record-returned-alias": (9, 9),
+    "class-map-record-captured-alias": (7, 7),
     "class-map-record-direct": (707, 707),
     "class-map-record-overwrite": (997, 997),
     "class-map-record-delete": (552, 552),
@@ -532,6 +538,15 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-alias-write",
+    "class-map-record-clear",
+    "class-map-record-delete",
+    "class-map-record-direct",
+    "class-map-record-overwrite",
+    "class-map-record-owner-method-write",
+    "class-map-record-payloads",
+    "class-map-record-reinsert-aliases",
+    "class-map-record-shared-owner",
     "inherited-getter-constant",
     "inherited-getter-dependencies",
     "inherited-getter-three-levels",
@@ -723,12 +738,6 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
-    "class-map-record-direct",
-    "class-map-record-overwrite",
-    "class-map-record-delete",
-    "class-map-record-clear",
-    "class-map-record-payloads",
-    "class-map-record-alias-write",
     "class-map-optional-key-mixed-string",
     "class-map-optional-key-object",
     "inherited-own-fields-iterate-borrow-mixed-literal",
@@ -1268,6 +1277,13 @@ def check_executable(args, name, native, expected):
         cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
         if any(token in cpp for token in ("ctbrowser::", '"prototype"', '"__home"')):
             raise RuntimeError(f"{name}: native class retained runtime or prototype storage")
+        if name.startswith("class-map-record-") and (
+            not re.search(r"map_storage<std::string, ctn_\w+(?:<[^>]+>)? \*>", cpp)
+            or "ctnative::map_get_present(" not in cpp
+            or "std::make_shared<ctnative::identity_object>" in cpp
+            or re.search(r"std::shared_ptr<ctn_", cpp)
+        ):
+            raise RuntimeError(f"{name}: retained Map did not borrow concrete stack records")
         file = args.work / f"{name}.{layout}.cpp"
         file.write_text(cpp)
         for index, compiler in enumerate(find_compilers()):

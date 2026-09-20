@@ -40,6 +40,138 @@ bool closureLifter::makesAnInstance(mlir::Value object) {
     return !whyNotLiftableConstructor(closure);
 }
 
+// This establishes record shape/lifetime conditional on standard Map identity.
+// All Map operations survive the lift; prepareNativeMaps must independently
+// establish that identity before native admission, after local constructors
+// have become direct calls. Source or prior native annotations prove nothing.
+bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
+                                       llvm::DenseMap<mlir::Value, mlir::Value> * reads) {
+    auto selected = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    auto owner = use.get().getDefiningOp<ctjs::ConstructOp>();
+    if (!selected || use.getOperandNumber() != 3 || !owner) { return false; }
+    auto map = selected.getReceiver().getDefiningOp<ctjs::ConstructOp>();
+    auto builtin = map ? map.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+    auto closure = owner.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+    auto function = owner->getParentOfType<ctjs::FuncOp>();
+    if (!map || !builtin || builtin.getName() != "Map" || !map.getArgs().empty() ||
+        map.getNewTarget() != map.getCallee() || !closure ||
+        !constructorClosures.contains(closure) || !function ||
+        owner->getBlock() != &function.getBody().front() || map->getBlock() != owner->getBlock() ||
+        selected->getBlock() != owner->getBlock()) {
+        return false;
+    }
+    llvm::DenseSet<mlir::Operation *> calls;
+    // ponytail: direct entry-block operations only; branch/capture transport
+    // needs a broader owner proof. Bound repeated censuses independently.
+    unsigned work = 8192;
+    for (mlir::OpOperand & mapUse : map.getResult().getUses()) {
+        if (work-- == 0) { return false; }
+        auto * operation = mapUse.getOwner();
+        if (operation->getBlock() != map->getBlock()) { return false; }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (mapUse.getOperandNumber() != 1 || !method ||
+                method.getObject() != map.getResult() ||
+                ctjs::constantKey(method.getKey()) == "size") {
+                return false;
+            }
+            continue;
+        }
+        auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+        if (!method || mapUse.getOperandNumber() != 0) { return false; }
+        auto key = ctjs::constantKey(method.getKey());
+        if (key == "size") { continue; }
+        unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
+        if (key != "set" && key != "get" && key != "has" && key != "delete" && key != "clear") {
+            return false;
+        }
+        for (mlir::OpOperand & methodUse : method.getResult().getUses()) {
+            if (work-- == 0) { return false; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(methodUse.getOwner());
+            if (!call || methodUse.getOperandNumber() != 0 ||
+                call.getReceiver() != map.getResult() || call->getBlock() != map->getBlock() ||
+                call.getArgs().size() != arity || (key == "set" && !call.getResult().use_empty())) {
+                return false;
+            }
+            calls.insert(call);
+        }
+    }
+    if (!calls.contains(selected)) { return false; }
+    auto method = selected.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+    if (ctjs::constantKey(method.getKey()) != "set") { return false; }
+    llvm::StringSet<> selectors;
+    selectors.insert("__proto__");
+    selectors.insert("constructor");
+    selectors.insert("prototype");
+    if (auto prototype = immutablePrototype(closure)) {
+        for (ctjs::SetPropertyOp field : prototype->fields) {
+            if (field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+                selectors.insert(ctjs::constantKey(field.getKey()));
+            }
+        }
+    }
+    llvm::StringMap<mlir::Value> entries;
+    llvm::DenseMap<mlir::Value, mlir::Value> aliases;
+    for (mlir::Operation & operation : *map->getBlock()) {
+        if (work-- == 0) { return false; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+        if (!call || !calls.contains(call)) { continue; }
+        auto action =
+            ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+        if (action == "clear") {
+            entries.clear();
+            continue;
+        }
+        auto key = call.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
+        auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+        if (!text) { return false; }
+        if (action == "set") {
+            auto record = call.getArgs()[1].getDefiningOp<ctjs::ConstructOp>();
+            if (!record || record->getBlock() != map->getBlock() ||
+                !record->isBeforeInBlock(call) || record.getCallee() != owner.getCallee() ||
+                record.getNewTarget() != owner.getCallee()) {
+                return false;
+            }
+            for (auto * user : record.getResult().getUsers()) {
+                if (work-- == 0) { return false; }
+                auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (field && field.getObject() == record.getResult() &&
+                    field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+                    selectors.insert(ctjs::constantKey(field.getKey()));
+                }
+            }
+            entries[text.getValue()] = record.getResult();
+        } else if (action == "delete") {
+            entries.erase(text.getValue());
+        } else if (action == "get") {
+            auto stored = entries.lookup(text.getValue());
+            if (!stored) { return false; }
+            aliases[call.getResult()] = stored;
+        }
+    }
+    for (const auto & [alias, origin] : aliases) {
+        (void)origin;
+        for (mlir::OpOperand & aliasUse : alias.getUses()) {
+            if (work-- == 0 || aliasUse.getOperandNumber() != 0 ||
+                aliasUse.getOwner()->getBlock() != map->getBlock()) {
+                return false;
+            }
+            mlir::Value key;
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(aliasUse.getOwner())) {
+                key = get.getKey();
+            } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(aliasUse.getOwner())) {
+                key = set.getKey();
+            }
+            if (!key || ctjs::constantKey(key).empty() ||
+                selectors.contains(ctjs::constantKey(key))) {
+                return false;
+            }
+        }
+    }
+    if (reads) { reads->insert(aliases.begin(), aliases.end()); }
+    return true;
+}
+
 // THE USE-LIST HALF OF CONDITION 1, ASKED WITHOUT THE QUESTION OF WHAT MADE
 // THE VALUE. `closedAfterLift` asks it of a literal. The constructor lift
 // asks the identical question of a `ctjs.construct` result, because the
@@ -61,6 +193,7 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
             continue;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+            if (retainedByLocalMap(use)) { continue; }
             // The object as the RECEIVER of a call whose callee is a
             // constant-key read of that same object: a method call.
             if (use.getOperandNumber() == 1) {
@@ -597,6 +730,16 @@ void closureLifter::methodCensus() {
         behind[built.getResult()] = {built.getResult()};
         auto receiver = targetOf(closure).getBody().front().getArgument(ctjs::arg_receiver);
         if (!llvm::is_contained(behind[receiver], origin)) { behind[receiver].push_back(origin); }
+    }
+    // A saved get keeps the exact record selected before overwrite/delete/clear.
+    // The enclosing entry frame owns it, independently of the Map entry.
+    for (ctjs::ConstructOp built : allConstructs) {
+        if (behind.lookup(built.getResult()).empty()) { continue; }
+        llvm::DenseMap<mlir::Value, mlir::Value> reads;
+        for (mlir::OpOperand & use : built.getResult().getUses()) {
+            (void)retainedByLocalMap(use, &reads);
+        }
+        for (const auto & [read, owner] : reads) { behind[read] = {owner}; }
     }
     // THE FIXPOINT OVER THE RECEIVER CHAIN. `this.other()` inside a method
     // has `%arg0` for a receiver, and `%arg0` names whatever the call sites

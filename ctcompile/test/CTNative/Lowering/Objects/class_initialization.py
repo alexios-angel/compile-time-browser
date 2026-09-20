@@ -107,6 +107,56 @@ def check_borrowed_helper_inputs(args, prepared):
     return len(variants)
 
 
+def check_record_map_inputs(args, prepared):
+    text = prepared.read_text()
+    keys = dict(re.findall(r'(%\w+) = ctjs.constant #ctjs.string<"([^"]*)">', text))
+    methods = {
+        result: (owner, keys.get(key))
+        for result, owner, key in re.findall(r"(%\w+) = ctjs.get_property (%\w+)\[(%\w+)\]", text)
+    }
+    calls = list(re.finditer(r"(?m)^\s*(%\w+) = ctjs.call (%\w+)\(([^\n]+)\)$", text))
+    get = next(call for call in calls if methods.get(call[2], (None, None))[1] == "get")
+    put = next(call for call in calls if methods.get(call[2], (None, None))[1] == "set")
+    payload = put[3].split(", ")[-1]
+    variants = {
+        "binding-replaced": text[: get.end()]
+        + f'\n    ctjs.store_global "Map", {payload}'
+        + text[get.end() :],
+        "alias-published": text[: get.end()]
+        + f'\n    ctjs.store_global "saved", {get[1]}'
+        + text[get.end() :],
+        "missing-read": text[: get.start()]
+        + '\n    %missing_key = ctjs.constant #ctjs.string<"missing">'
+        + get[0].replace(get[3].split(", ")[-1], "%missing_key")
+        + text[get.end() :],
+        "mixed-payload": text[: put.start()]
+        + put[0].replace(", " + payload + ")", ", " + put[3].split(", ")[1] + ")")
+        + text[put.end() :],
+    }
+    for label, changed in variants.items():
+        # Rejected live contents cannot inherit a previous record Map proof.
+        changed = re.sub(
+            r"(?m)^(\s*%\w+ = ctjs.construct %\w+\(%\w+\))$",
+            r"\1 {ctnative.map_records, ctnative.map_site}",
+            changed,
+            count=1,
+        )
+        source = args.work / f"record-map-{label}.mlir"
+        source.write_text(changed)
+        for optimize in (False, True):
+            output = args.work / f"record-map-{label}.{optimize}.native.mlir"
+            run(
+                [
+                    args.opt,
+                    str(source),
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    "-o",
+                    str(output),
+                ]
+            )
+            check_refusal(label, output.read_text(), len(FUNCTION.findall(changed)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "node", "reference"):
@@ -423,6 +473,11 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "class-map-record-direct":
+            check_record_map_inputs(args, prepared)
+        if name.startswith("class-map-record-") and name in POSITIVES:
+            if text.count("ctjs.construct") != prepared.read_text().count("ctjs.construct"):
+                raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
         if name.startswith("class-map-") and name in POSITIVES | PREPARED_ONLY:
             prepare(
                 args,
@@ -767,10 +822,6 @@ def main():
                         and f"!ctnative.map<{key_type}" not in native_text
                     ):
                         raise RuntimeError("class Map lost its key representation refusal")
-                    if name.startswith("class-map-record-") and (
-                        "the instance `new` makes does not have a closed shape" not in native_text
-                    ):
-                        raise RuntimeError("record Map lost its retained receiver proof boundary")
                     if name == "inherited-helper-order" and (
                         "an object literal passed to a direct call as an argument"
                         not in native_text

@@ -159,6 +159,7 @@ struct lowering {
     llvm::DenseSet<mlir::Value> receiverArgs;
     llvm::DenseMap<mlir::Value, mlir::Value> receiverLocal;
     llvm::DenseMap<mlir::Operation *, MapType> mapSchemas;
+    llvm::DenseMap<mlir::Operation *, std::string> recordMapPointers;
     // THE RUNTIME IS ONE HEADER (Runtime/ctnative.hpp), so the only things a
     // program still decides are its two defines - ordered Map storage and
     // the DOM section - and whether it spells an identity_object at all.

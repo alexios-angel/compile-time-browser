@@ -27,6 +27,13 @@ inline constexpr llvm::StringLiteral kNativeMapWriteType = "ctnative.map_write_t
 inline constexpr llvm::StringLiteral kNativeMapKeyType = "ctnative.map_key_type";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotCopy = "ctnative.map_snapshot_copy";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotBuiltin = "ctnative.map_snapshot_builtin";
+inline constexpr llvm::StringLiteral kNativeMapRecords = "ctnative.map_records";
+
+/// Confined entry-frame record storage, rederived with the standard Map proof.
+/// The payload names a schema representative; an origin names the exact saved object.
+mlir::Value nativeMapRecordPayload(mlir::Value map);
+mlir::Value nativeMapRecordOrigin(mlir::Value read);
+bool isNativeMapRecordStore(mlir::OpOperand & use);
 
 /// Annotate only after proving both the standard constructor/method identity
 /// and every instance use. No runtime assumption or boxed fallback is added.

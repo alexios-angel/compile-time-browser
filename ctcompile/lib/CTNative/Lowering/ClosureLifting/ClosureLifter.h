@@ -578,6 +578,9 @@ struct closureLifter {
 
     bool usesCloseTheShape(mlir::Value object);
 
+    bool retainedByLocalMap(mlir::OpOperand & use,
+                            llvm::DenseMap<mlir::Value, mlir::Value> * reads = nullptr);
+
     ctjs::FuncOp resolveMethod(ctjs::CallOp call, mlir::Value & receiverOut,
                                ctjs::GetPropertyOp & loadOut);
 

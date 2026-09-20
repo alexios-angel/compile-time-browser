@@ -50,6 +50,48 @@ bool isNativeMapSnapshot(mlir::Operation * op) {
            (action == "keys" || action == "values" || op->hasAttr(kNativeMapSnapshotCopy));
 }
 
+mlir::Value nativeMapRecordPayload(mlir::Value map) {
+    if (auto call = map.getDefiningOp<ctjs::CallOp>(); nativeMapAction(call) == "set") {
+        map = call.getReceiver();
+    }
+    auto made = map.getDefiningOp<ctjs::ConstructOp>();
+    if (!made || !made->hasAttr(kNativeMapSite) || !made->hasAttr(kNativeMapRecords)) { return {}; }
+    for (mlir::Operation * user : map.getUsers()) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+        if (call && call.getReceiver() == map && nativeMapAction(call) == "set") {
+            return call.getArgs()[1];
+        }
+    }
+    return {};
+}
+
+mlir::Value nativeMapRecordOrigin(mlir::Value read) {
+    auto get = read.getDefiningOp<ctjs::CallOp>();
+    if (!get || nativeMapAction(get) != "get" || !nativeMapRecordPayload(get.getReceiver())) {
+        return {};
+    }
+    mlir::Value origin;
+    const auto key = ctjs::constantKey(get.getArgs()[0]);
+    for (mlir::Operation & op : *get->getBlock()) {
+        if (&op == get.getOperation()) { return origin; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        if (!call || call.getReceiver() != get.getReceiver()) { continue; }
+        const auto action = nativeMapAction(call);
+        if (action == "clear") { origin = {}; }
+        if ((action == "set" || action == "delete") &&
+            ctjs::constantKey(call.getArgs()[0]) == key) {
+            origin = action == "set" ? call.getArgs()[1] : mlir::Value{};
+        }
+    }
+    return {};
+}
+
+bool isNativeMapRecordStore(mlir::OpOperand & use) {
+    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    return call && use.getOperandNumber() == 3 && nativeMapAction(call) == "set" &&
+           nativeMapRecordPayload(call.getReceiver());
+}
+
 namespace {
 
 struct plan {
@@ -58,7 +100,102 @@ struct plan {
     llvm::SmallVector<ctjs::GetPropertyOp> methods;
     llvm::SmallVector<ctjs::GetPropertyOp> sizes;
     llvm::SmallVector<ctjs::CallOp> calls;
+    bool records = false;
 };
+
+// Record owners remain stack objects. The Map borrows their addresses and
+// saved reads keep that address across overwrite/delete; neither owns a record.
+// ponytail: one entry-block Map and literal keys; transport needs a wider lifetime proof.
+std::string proveRecords(plan & candidate) {
+    if (!llvm::any_of(candidate.calls, [](ctjs::CallOp call) {
+            auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (ctjs::constantKey(get.getKey()) != "set" ||
+                !call.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>()) {
+                return false;
+            }
+            // Existing plain-object identity Maps keep their independent
+            // owning representation. A lifted receiver needs its real record.
+            return llvm::any_of(call.getArgs()[1].getUses(), [](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
+                       use.getOperandNumber() == 0 && use.getOwner()->hasAttr("ctnative.receiver");
+            });
+        })) {
+        return {};
+    }
+    if (candidate.made.size() != 1) { return "native record Map requires a direct local owner"; }
+    auto map = candidate.made.front();
+    for (mlir::Value member : candidate.members) {
+        if (member == map.getResult()) { continue; }
+        auto set = member.getDefiningOp<ctjs::CallOp>();
+        if (!set || set.getReceiver() != map.getResult() || !member.use_empty()) {
+            return "native record Map requires a direct local owner";
+        }
+    }
+    auto function = map->getParentOfType<ctjs::FuncOp>();
+    if (!function || map->getBlock() != &function.getBody().front()) {
+        return "native record Map requires entry-frame ownership";
+    }
+    for (mlir::OpOperand & use : map.getResult().getUses()) {
+        auto * user = use.getOwner();
+        if (user->getBlock() != map->getBlock() ||
+            !((llvm::isa<ctjs::GetPropertyOp>(user) && use.getOperandNumber() == 0) ||
+              (llvm::isa<ctjs::CallOp>(user) && use.getOperandNumber() == 1))) {
+            return "native record Map cannot escape its owning frame";
+        }
+    }
+    for (ctjs::CallOp call : candidate.calls) {
+        const auto action =
+            ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+        if (call->getBlock() != map->getBlock() || action == "keys" || action == "values") {
+            return "native record Map requires direct entry-block operations";
+        }
+    }
+    llvm::StringMap<mlir::Value> entries;
+    unsigned work = 0;
+    for (mlir::Operation & op : *map->getBlock()) {
+        if (++work > 65536) { return "native record Map lifetime proof exceeded its work limit"; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        if (!call || call.getReceiver() != map.getResult()) { continue; }
+        const auto action =
+            ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+        if (action == "clear") {
+            entries.clear();
+            continue;
+        }
+        auto key = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+        auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+        if (!text) { return "native record Map requires literal String keys"; }
+        if (action == "set") {
+            auto record = call.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>();
+            if (!record || record->getBlock() != map->getBlock() ||
+                !record->isBeforeInBlock(call)) {
+                return "native record Map requires enclosing record owners";
+            }
+            entries[text.getValue()] = record.getResult();
+        } else if (action == "delete") {
+            entries.erase(text.getValue());
+        } else if (action == "get") {
+            if (!entries.count(text.getValue())) {
+                return "native record Map requires present reads";
+            }
+            // Saved aliases cannot outlive the enclosing owner or be published.
+            for (mlir::OpOperand & use : call.getResult().getUses()) {
+                if (++work > 65536) {
+                    return "native record Map lifetime proof exceeded its work limit";
+                }
+                auto * user = use.getOwner();
+                if (use.getOperandNumber() != 0 ||
+                    user->getParentOfType<ctjs::FuncOp>() != function ||
+                    !llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) ||
+                    !ctjs::ordinaryKey(user->getOperand(1))) {
+                    return "native record Map alias requires confined data-field uses";
+                }
+            }
+        }
+    }
+    candidate.records = true;
+    return {};
+}
 
 // The value flow unifies C++ SCHEMAS, never runtime identities. Two fresh Maps
 // passed to the same parameter need one key/value carrier but remain distinct
@@ -395,7 +532,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
              {kNativeMapSite, kNativeMapAction, kNativeMapMethod, kNativeMapConstructor,
               kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups, kNativeMapPresent,
               kNativeMapReadType, kNativeMapWriteType, kNativeMapKeyType, kNativeMapSnapshotCopy,
-              kNativeMapSnapshotBuiltin}) {
+              kNativeMapSnapshotBuiltin, kNativeMapRecords}) {
             op->removeAttr(name);
         }
     });
@@ -497,6 +634,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
     if (reason.empty()) {
         reason = provePayloads(module, plans, graph, families, copies.calls, globals);
     }
+    for (plan & candidate : plans) {
+        if (reason.empty()) { reason = proveRecords(candidate); }
+    }
     auto * context = module.getContext();
     if (!reason.empty()) {
         for (ctjs::LoadGlobalOp load : constructors) {
@@ -520,6 +660,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
     for (const plan & candidate : plans) {
         for (ctjs::ConstructOp made : candidate.made) {
             made->setAttr(kNativeMapSite, mlir::UnitAttr::get(context));
+            if (candidate.records) {
+                made->setAttr(kNativeMapRecords, mlir::UnitAttr::get(context));
+            }
         }
         for (mlir::Value member : candidate.members) {
             if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(member)) {
@@ -547,6 +690,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             call->setAttr(kNativeMapAction,
                           mlir::StringAttr::get(context, ctjs::constantKey(get.getKey())));
+            if (candidate.records && ctjs::constantKey(get.getKey()) == "get") {
+                call->setAttr(kNativeMapPresent, mlir::UnitAttr::get(context));
+            }
         }
     }
 }

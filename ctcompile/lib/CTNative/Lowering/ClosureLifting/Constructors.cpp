@@ -184,8 +184,10 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
                 if (!prototypeObserved && !llvm::isa<mlir::BlockArgument>(object) &&
                     object != prototype->attachment.getValue() &&
                     llvm::none_of(
-                        constructsOfTarget.lookup(targetOf(c)),
-                        [&](ctjs::ConstructOp made) { return made.getResult() == object; })) {
+                        constructsOfTarget.lookup(targetOf(c)), [&](ctjs::ConstructOp made) {
+                            return made.getResult() == object ||
+                                   llvm::is_contained(behind.lookup(object), made.getResult());
+                        })) {
                     return;
                 }
                 const auto key = ctjs::constantKey(field.getKey());

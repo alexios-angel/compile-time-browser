@@ -128,7 +128,8 @@ bool admission::op(mlir::Operation * o) {
     if (isNativeMapBookkeeping(o)) { return true; }
     if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
         if (o->hasAttr(kNativeMapSite)) {
-            return carrierOf(typeOf(made.getResult())) == carrier::map ||
+            return nativeMapRecordPayload(made.getResult()) ||
+                   carrierOf(typeOf(made.getResult())) == carrier::map ||
                    refuse("native Map needs supported keys and numeric, boolean, closed mixed, "
                           "owning-string, object-identity union or acyclic Map values; inferred " +
                           printed(typeOf(made.getResult())));
@@ -143,6 +144,13 @@ bool admission::op(mlir::Operation * o) {
     if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
         if (action == "size") { return true; }
         auto call = llvm::cast<CallOp>(o);
+        if (nativeMapRecordPayload(call.getReceiver())) {
+            // Record schema and exact read identity live in the same side
+            // proof as ordinary closed objects, never in a boxed carrier.
+            return ((action != "set" || isClosedObject(call.getArgs()[1])) &&
+                    (action != "get" || isClosedObject(call.getResult()))) ||
+                   refuse("native record Map requires closed record payloads and aliases");
+        }
         if (carrierOf(typeOf(call.getReceiver())) != carrier::map) {
             return refuse("native Map receiver has no supported key/value carrier");
         }

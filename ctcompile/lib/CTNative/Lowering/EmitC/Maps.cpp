@@ -28,11 +28,14 @@ bool lowering::replaceMap(mlir::Operation * o) {
     }
     if (auto made = llvm::dyn_cast<ConstructOp>(o); made && o->hasAttr(kNativeMapSite)) {
         auto map = llvm::cast<MapType>(typeOf(made.getResult()));
+        const auto record = recordMapPointers.find(o);
         const std::string callee =
-            (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
-             isObjectValueType(map.getValueType()) ||
-             !mixedMapSpelling(map.getValueType()).empty() ||
-             !nullableMapSpelling(map.getValueType()).empty())
+            record != recordMapPointers.end()
+                ? "ctnative::make_map<std::string, " + record->second + ">"
+            : (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
+               isObjectValueType(map.getValueType()) ||
+               !mixedMapSpelling(map.getValueType()).empty() ||
+               !nullableMapSpelling(map.getValueType()).empty())
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()
@@ -113,11 +116,16 @@ bool lowering::replaceMap(mlir::Operation * o) {
             // The result retains its solver fact after the receiver becomes
             // replacement EmitC SSA, which has no analysis entry.
             const auto storedMap = llvm::cast<MapType>(typeOf(call.getResult()));
-            args[2] = convertAlternative(extractProvedScalar(args[2], kNativeMapWriteType),
-                                         storedMap.getValueType());
-            if (isObjectValueType(storedMap.getValueType())) {
-                args[2] =
-                    convertScalar(b, where, args[2], carrierType(context, carrier::objectValue));
+            if (recordMapPointers.contains(o)) {
+                auto type = llvm::cast<ec::LValueType>(args[2].getType()).getValueType();
+                args[2] = ec::AddressOfOp::create(b, where, ec::PointerType::get(type), args[2]);
+            } else {
+                args[2] = convertAlternative(extractProvedScalar(args[2], kNativeMapWriteType),
+                                             storedMap.getValueType());
+                if (isObjectValueType(storedMap.getValueType())) {
+                    args[2] = convertScalar(b, where, args[2],
+                                            carrierType(context, carrier::objectValue));
+                }
             }
         }
         const auto helper = o->hasAttr(kNativeMapPresent) ? "get_present" : action;

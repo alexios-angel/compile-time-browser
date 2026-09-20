@@ -37,7 +37,7 @@ mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir:
 
 mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, mlir::Value object,
                                    llvm::StringRef member, mlir::Type type) {
-    if (!receiverArgs.contains(object)) {
+    if (!receiverArgs.contains(object) && !llvm::isa<ec::PointerType>(object.getType())) {
         return ec::MemberOp::create(b, where, ec::LValueType::get(type), member, object);
     }
     // AT THE FIRST FIELD, NOT AT THE FUNCTION'S FIRST LINE - AND THIS IS A
@@ -54,8 +54,12 @@ mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, ml
     // Block start still dominates every use, so building it here is free.
     mlir::Value & local = receiverLocal[object];
     if (!local) {
-        mlir::OpBuilder at =
-            mlir::OpBuilder::atBlockBegin(llvm::cast<mlir::BlockArgument>(object).getOwner());
+        mlir::OpBuilder at(context);
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(object)) {
+            at.setInsertionPointToStart(argument.getOwner());
+        } else {
+            at.setInsertionPointAfter(object.getDefiningOp());
+        }
         local = ec::VariableOp::create(at, where, ec::LValueType::get(object.getType()),
                                        ec::OpaqueAttr::get(context, ""));
         ec::AssignOp::create(at, where, local, object);

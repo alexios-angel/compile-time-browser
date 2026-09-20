@@ -8,6 +8,10 @@ namespace ctcompile::ctnative::lowering_detail {
 bool admission::function(ctjs::FuncOp fn) {
     mlir::Block & entry = fn.getBody().front();
     const auto unsupported = [&](mlir::Value value) {
+        if (nativeMapRecordPayload(value) ||
+            (nativeMapRecordOrigin(value) && isClosedObject(value))) {
+            return false;
+        }
         const auto storage = carrierOf(typeOf(value));
         // JsonType also describes widened lattice facts. Only the complete DOM
         // proof establishes a parsed tree with owning, identity-free contents.

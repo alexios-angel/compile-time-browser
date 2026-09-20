@@ -293,6 +293,7 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
         // ponytail: at most 64 forwarding frames and 65536 queries; larger or
         // recursive borrows need a cached interprocedural presence proof.
         if (++work > 65536 || active.size() >= 64) { return false; }
+        if (auto origin = nativeMapRecordOrigin(value)) { return self(self, origin, before); }
         const auto sites = fieldStoreSites_.find({value, key});
         auto * owner = before->getParentOfType<ctjs::FuncOp>().getOperation();
         if (sites != fieldStoreSites_.end()) {
