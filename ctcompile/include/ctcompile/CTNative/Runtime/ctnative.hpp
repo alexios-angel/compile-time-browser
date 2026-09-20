@@ -486,13 +486,140 @@ inline std::string global_string(const nullable_number_string & value) {
     std::terminate();
 }
 
+using boolean_string = std::variant<js_boolean_t, js_string>;
+using nullable_boolean_string = std::variant<undefined_t, js_null_t, js_boolean_t, js_string>;
+
+inline js_num to_number(const boolean_string & value) {
+    return std::visit([](const auto & alternative) { return alternative.to_number(); }, value);
+}
+inline js_string boolean_string_text(const boolean_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                return alternative;
+            } else {
+                return js_string{} + alternative;
+            }
+        },
+        value);
+}
+inline bool boolean_string_truthy(const boolean_string & value) {
+    return std::visit([](const auto & alternative) { return static_cast<bool>(alternative); },
+                      value);
+}
+inline std::string boolean_string_typeof(const boolean_string & value) {
+    return std::holds_alternative<js_boolean_t>(value) ? "boolean" : "string";
+}
+inline void print_boolean_string(const char * name, const boolean_string & value) {
+    std::visit(
+        [name](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                print_string(name, alternative.value());
+            } else {
+                print_scalar(name, nullable_scalar{alternative});
+            }
+        },
+        value);
+}
+inline nullable_boolean_string to_nullable_boolean_string(const boolean_string & value) {
+    return std::visit(
+        [](const auto & alternative) -> nullable_boolean_string { return alternative; }, value);
+}
+inline nullable_boolean_string to_nullable_boolean_string(nullable_scalar value) {
+    switch (value.tag) {
+    case nullable_scalar::kind::undefined: return undefined_t{};
+    case nullable_scalar::kind::null: return js_null_t{};
+    case nullable_scalar::kind::boolean: return js_boolean_t{value.value != 0.0};
+    case nullable_scalar::kind::number: std::terminate();
+    }
+    std::terminate();
+}
+inline nullable_boolean_string to_nullable_boolean_string(const nullable_string & value) {
+    switch (value.tag) {
+    case nullable_string::kind::undefined: return undefined_t{};
+    case nullable_string::kind::null_value: return js_null_t{};
+    case nullable_string::kind::string: return js_string{value.value};
+    }
+    std::terminate();
+}
+inline js_num to_number(const nullable_boolean_string & value) {
+    return std::visit([](const auto & alternative) { return to_number(alternative); }, value);
+}
+inline js_string nullable_boolean_string_text(const nullable_boolean_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                return alternative;
+            } else {
+                return nullable_scalar{alternative}.to_string();
+            }
+        },
+        value);
+}
+inline bool nullable_boolean_string_truthy(const nullable_boolean_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            using T = std::decay_t<decltype(alternative)>;
+            if constexpr (std::is_same_v<T, js_boolean_t> || std::is_same_v<T, js_string>) {
+                return static_cast<bool>(alternative);
+            } else {
+                return false;
+            }
+        },
+        value);
+}
+inline std::string nullable_boolean_string_typeof(const nullable_boolean_string & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                return std::string{"string"};
+            } else {
+                return scalar_typeof(nullable_scalar{alternative});
+            }
+        },
+        value);
+}
+inline void print_nullable_boolean_string(const char * name,
+                                          const nullable_boolean_string & value) {
+    std::visit(
+        [name](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_string>) {
+                print_string(name, alternative.value());
+            } else {
+                print_scalar(name, nullable_scalar{alternative});
+            }
+        },
+        value);
+}
+inline boolean_string global_boolean_string(const nullable_boolean_string & value) {
+    return std::visit(
+        [](const auto & alternative) -> boolean_string {
+            using T = std::decay_t<decltype(alternative)>;
+            if constexpr (std::is_same_v<T, js_boolean_t> || std::is_same_v<T, js_string>) {
+                return alternative;
+            } else {
+                std::terminate();
+            }
+        },
+        value);
+}
+inline js_boolean_t global_boolean(const nullable_boolean_string & value) {
+    if (const auto * boolean = std::get_if<js_boolean_t>(&value)) { return *boolean; }
+    std::terminate();
+}
+inline std::string global_string(const nullable_boolean_string & value) {
+    if (const auto * text = std::get_if<js_string>(&value)) { return text->value(); }
+    std::terminate();
+}
+
 template <class T>
 concept primitive_add_operand =
     std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t> ||
     std::is_same_v<T, nullable_scalar> || std::is_same_v<T, js_string> ||
     std::is_same_v<T, nullable_string> ||
     std::is_same_v<T, std::variant<js_boolean_t, std::string>> ||
-    std::is_same_v<T, number_string> || std::is_same_v<T, nullable_number_string>;
+    std::is_same_v<T, number_string> || std::is_same_v<T, nullable_number_string> ||
+    std::is_same_v<T, boolean_string> || std::is_same_v<T, nullable_boolean_string>;
 
 template <primitive_add_operand L, primitive_add_operand R>
 number_string add(const L & left, const R & right) {
@@ -504,7 +631,9 @@ number_string add(const L & left, const R & right) {
         } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
             return std::holds_alternative<std::string>(value);
         } else if constexpr (std::is_same_v<T, number_string> ||
-                             std::is_same_v<T, nullable_number_string>) {
+                             std::is_same_v<T, nullable_number_string> ||
+                             std::is_same_v<T, boolean_string> ||
+                             std::is_same_v<T, nullable_boolean_string>) {
             return std::holds_alternative<js_string>(value);
         } else {
             return false;
@@ -517,12 +646,15 @@ number_string add(const L & left, const R & right) {
             return value.to_string();
         } else if constexpr (std::is_same_v<T, nullable_string>) {
             return js_string{string_text(value)};
-        } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
+        } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>> ||
+                             std::is_same_v<T, boolean_string>) {
             return boolean_string_text(value);
         } else if constexpr (std::is_same_v<T, number_string>) {
             return number_string_text(value);
         } else if constexpr (std::is_same_v<T, nullable_number_string>) {
             return nullable_number_string_text(value);
+        } else if constexpr (std::is_same_v<T, nullable_boolean_string>) {
+            return nullable_boolean_string_text(value);
         } else {
             return js_string{} + value;
         }

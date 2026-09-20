@@ -346,15 +346,21 @@ int main() {
                                         nullable_scalar{one},
                                         std::variant<js_boolean_t, std::string>{enabled},
                                         number_string{one},
-                                        nullable_number_string{one}};
-    const auto stringTwos =
-        std::tuple{js_string{"2"}, nullable_string{std::string{"2"}},
-                   std::variant<js_boolean_t, std::string>{std::string{"2"}},
-                   number_string{js_string{"2"}}, nullable_number_string{js_string{"2"}}};
+                                        nullable_number_string{one},
+                                        boolean_string{enabled},
+                                        nullable_boolean_string{enabled}};
+    const auto stringTwos = std::tuple{js_string{"2"},
+                                       nullable_string{std::string{"2"}},
+                                       std::variant<js_boolean_t, std::string>{std::string{"2"}},
+                                       number_string{js_string{"2"}},
+                                       nullable_number_string{js_string{"2"}},
+                                       boolean_string{js_string{"2"}},
+                                       nullable_boolean_string{js_string{"2"}}};
     const auto exactOnes =
         std::tuple{one, nullable_scalar{one}, number_string{one}, nullable_number_string{one}};
     const auto trueValues = std::tuple{enabled, nullable_scalar{enabled},
-                                       std::variant<js_boolean_t, std::string>{enabled}};
+                                       std::variant<js_boolean_t, std::string>{enabled},
+                                       boolean_string{enabled}, nullable_boolean_string{enabled}};
     const auto checkAdditions = [](const auto & leftValues, const auto & rightValues,
                                    const auto & expected) {
         std::apply(
@@ -489,5 +495,87 @@ int main() {
     CHECK(global_string(copiedOptional) == std::string("a\0b", 3));
     changingOptional = negativeZero;
     CHECK(std::signbit(global_number(changingOptional).value()));
+
+    static_assert(std::is_same_v<boolean_string, std::variant<js_boolean_t, js_string>>);
+    static_assert(std::is_same_v<nullable_boolean_string,
+                                 std::variant<undefined_t, js_null_t, js_boolean_t, js_string>>);
+    static_assert(primitive_addable<boolean_string> && primitive_addable<nullable_boolean_string>);
+    static_assert(!std::is_constructible_v<boolean_string, bool>);
+    static_assert(!std::is_constructible_v<boolean_string, ctnative::js_num>);
+    static_assert(!std::is_constructible_v<boolean_string, std::string>);
+    static_assert(!std::is_constructible_v<nullable_boolean_string, bool>);
+    static_assert(!std::is_constructible_v<nullable_boolean_string, ctnative::js_num>);
+    static_assert(!std::is_constructible_v<nullable_boolean_string, std::string>);
+    static_assert(!std::is_constructible_v<nullable_boolean_string, object_value>);
+    static_assert(!std::is_convertible_v<nullable_boolean_string, boolean_string>);
+    static_assert(std::is_same_v<decltype(to_number(boolean_string{})), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(boolean_string_text(boolean_string{})), js_string>);
+    const boolean_string unionTrue{enabled}, unionFalse{disabled},
+        unionFalseText{js_string{"false"}}, unionEmptyText{js_string{}};
+    CHECK(std::holds_alternative<js_boolean_t>(boolean_string{}));
+    CHECK(to_number(unionTrue) == one && to_number(unionFalse) == zero);
+    CHECK(!std::signbit(to_number(unionFalse).value()));
+    CHECK(std::isnan(to_number(unionFalseText).value()));
+    CHECK(to_number(unionEmptyText) == zero);
+    CHECK(std::signbit(to_number(boolean_string{js_string{"-0"}}).value()));
+    CHECK(boolean_string_text(unionTrue) == js_string{"true"});
+    CHECK(boolean_string_text(unionFalse) == js_string{"false"});
+    CHECK(boolean_string_text(unionFalseText) == js_string{"false"});
+    CHECK(boolean_string_text(boolean_string{js_string{high + low}}).value() == high + low);
+    CHECK(boolean_string_truthy(unionTrue) && boolean_string_truthy(unionFalseText));
+    CHECK(!boolean_string_truthy(unionFalse) && !boolean_string_truthy(unionEmptyText));
+    CHECK(boolean_string_typeof(unionFalse) == "boolean");
+    CHECK(boolean_string_typeof(unionFalseText) == "string");
+    CHECK(add(unionFalse, one) == number_string{one});
+    CHECK(add(unionFalseText, one) == number_string{js_string{"false1"}});
+    CHECK(add(unionFalse, js_string{"x"}) == number_string{js_string{"falsex"}});
+    CHECK(add(js_string{"x"}, unionTrue) == number_string{js_string{"xtrue"}});
+    const nullable_boolean_string optionalBooleanUndefined{}, optionalBooleanNull{js_null_t{}},
+        optionalBooleanFalse{disabled}, optionalBooleanText{js_string{"a\0b"}};
+    CHECK(std::holds_alternative<undefined_t>(optionalBooleanUndefined));
+    CHECK(std::isnan(to_number(optionalBooleanUndefined).value()));
+    CHECK(to_number(optionalBooleanNull) == zero &&
+          !std::signbit(to_number(optionalBooleanNull).value()));
+    CHECK(to_number(optionalBooleanFalse) == zero &&
+          !std::signbit(to_number(optionalBooleanFalse).value()));
+    CHECK(std::isnan(to_number(optionalBooleanText).value()));
+    CHECK(nullable_boolean_string_text(optionalBooleanUndefined) == js_string{"undefined"});
+    CHECK(nullable_boolean_string_text(optionalBooleanNull) == js_string{"null"});
+    CHECK(nullable_boolean_string_text(optionalBooleanFalse) == js_string{"false"});
+    CHECK(nullable_boolean_string_text(optionalBooleanText) == js_string{"a\0b"});
+    CHECK(!nullable_boolean_string_truthy(optionalBooleanUndefined));
+    CHECK(!nullable_boolean_string_truthy(optionalBooleanNull));
+    CHECK(!nullable_boolean_string_truthy(optionalBooleanFalse));
+    CHECK(nullable_boolean_string_truthy(optionalBooleanText));
+    CHECK(nullable_boolean_string_typeof(optionalBooleanUndefined) == "undefined");
+    CHECK(nullable_boolean_string_typeof(optionalBooleanNull) == "object");
+    CHECK(nullable_boolean_string_typeof(optionalBooleanFalse) == "boolean");
+    CHECK(nullable_boolean_string_typeof(optionalBooleanText) == "string");
+    CHECK(std::holds_alternative<undefined_t>(to_nullable_boolean_string(undefined)));
+    CHECK(std::holds_alternative<undefined_t>(to_nullable_boolean_string(absentText)));
+    CHECK(std::holds_alternative<js_null_t>(to_nullable_boolean_string(null)));
+    CHECK(std::holds_alternative<js_null_t>(to_nullable_boolean_string(nullText)));
+    CHECK(global_boolean(to_nullable_boolean_string(nullable_scalar{enabled})) == enabled);
+    CHECK(global_boolean(to_nullable_boolean_string(nullable_scalar{disabled})) == disabled);
+    CHECK(global_boolean_string(to_nullable_boolean_string(unionTrue)) == unionTrue);
+    CHECK(global_boolean_string(to_nullable_boolean_string(unionFalseText)) == unionFalseText);
+    CHECK(global_string(to_nullable_boolean_string(nullable_string{high + low})) == high + low);
+    CHECK(add(optionalBooleanText, optionalBooleanFalse) == number_string{js_string{"a\0bfalse"}});
+    CHECK(add(optionalBooleanNull, unionFalse) == number_string{zero});
+    CHECK(add(unionTrue, optionalBooleanNull) == number_string{one});
+    CHECK(std::isnan(to_number(add(optionalBooleanUndefined, unionFalse)).value()));
+    CHECK(add(js_string{"x"}, optionalBooleanUndefined) == number_string{js_string{"xundefined"}});
+    CHECK(add(optionalBooleanNull, js_string{"x"}) == number_string{js_string{"nullx"}});
+    CHECK(add(boolean_string{highUnit}, nullable_boolean_string{lowUnit}) ==
+          number_string{js_string{"\xF0\x9F\x98\x80"}});
+    nullable_boolean_string changingBoolean = optionalBooleanText;
+    const auto savedBoolean = global_boolean_string(changingBoolean);
+    const auto copiedBoolean = changingBoolean;
+    changingBoolean = disabled;
+    CHECK(global_boolean(changingBoolean) == disabled);
+    CHECK(savedBoolean == boolean_string{js_string{"a\0b"}});
+    CHECK(global_string(copiedBoolean) == std::string("a\0b", 3));
+    changingBoolean = undefined_t{};
+    CHECK(std::holds_alternative<undefined_t>(changingBoolean));
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
