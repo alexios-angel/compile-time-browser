@@ -266,8 +266,12 @@ void StructuredCases::reloads() {
                         .arrays = "a:[zero,zero,one,one]",
                         .reads = "a[1]=y; a[3]=one",
                         .exit = "a -> {a}"});
-        reject("structured right shifts require divisible strides",
-               replace(body, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"));
+        rows.push_back(
+            {.what = "structured right shifts replay repeated own positions",
+             .body = replace(body, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"),
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[1]=y; a[2]=one; a[3]=one",
+             .exit = "a -> {a}"});
     }
     const auto shiftReload =
         replace(replace(rightShiftIndex, "  %a =", "  %three = ctjs.binary add %two, %one\n  %a ="),
@@ -329,12 +333,10 @@ void StructuredCases::reloads() {
     for (const auto & body :
          {replace(negativeShiftForward, "sub %i, %maximum", "sub %i, %two"),
           replace(negativeShiftBoundary, "4751297606873776128", "4751297606875873280"),
-          replace(negativeShiftForward, "add %i, %two\n    scf.yield",
-                  "add %i, %one\n    scf.yield"),
           replace(negativeShiftReload, "%base[%three]", "%base[%one]"),
           replace(negativeShiftReload,
                   "    %step =", "    ctjs.set_property %base[%three], %two\n    %step =")}) {
-        reject("structured negative unsigned shifts retain band, stride and reload guards", body);
+        reject("structured negative unsigned shifts retain band and reload guards", body);
     }
     const auto signedNegative =
         replace(replace(negativeShiftForward, "binary_static ushr", "binary_static shr"),
@@ -364,15 +366,47 @@ void StructuredCases::reloads() {
                     .arrays = "a:[zero,zero,one,one]",
                     .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
                     .exit = "a -> {a}"});
-    for (const auto & body :
-         {replace(signedMinimum, "4746794007248502784", "4746794007250599936"),
-          replace(signedNegative, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"),
-          replace(signedNegativeReload, "%base[%three]", "%base[%one]"),
-          replace(signedNegativeReload,
-                  "    %step =", "    ctjs.set_property %base[%three], %two\n    %step =")}) {
-        reject("structured signed shift bands retain discontinuity, stride and reload guards",
-               body);
+    for (const auto & body : {replace(signedMinimum, "4746794007248502784", "4746794007250599936"),
+                              replace(signedNegativeReload, "%base[%three]", "%base[%one]"),
+                              replace(signedNegativeReload, "    %step =",
+                                      "    ctjs.set_property %base[%three], %two\n    %step =")}) {
+        reject("structured signed shift bands retain discontinuity and reload guards", body);
     }
+    for (const auto & body : {negativeShiftForward, signedNegative}) {
+        rows.push_back(
+            {.what = "structured dense shifts retain negative conversion bands",
+             .body = replace(body, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"),
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[1]=y; a[2]=one; a[3]=one",
+             .exit = "a -> {a}"});
+    }
+    const auto unevenShift =
+        replace(replace(replace(rightShiftIndex, "[%y, %y, %one, %one]",
+                                "[%y, %y, %y, %y, %one, %one, %one]"),
+                        "  %a =", "  %three = ctjs.binary add %two, %one\n  %a ="),
+                "add %i, %two\n    scf.yield", "add %i, %three\n    scf.yield");
+    rows.push_back({.what = "structured dense footprints preserve unwritten gap children",
+                    .body = unevenShift,
+                    .arrays = "a:[zero,zero,y,zero,one,one,one]",
+                    .reads = "a[0]=zero; a[3]=y; a[6]=one",
+                    .exit = "a -> {a,y}"});
+    rows.push_back({.what = "structured dense right shifts retain reversed footprints",
+                    .body = replace(unevenShift, "%position = ctjs.binary_static shr %i, %one",
+                                    "%part = ctjs.binary_static shr %i, %one\n"
+                                    "    %position = ctjs.binary sub %three, %part"),
+                    .arrays = "a:[zero,y,zero,zero,one,one,one]",
+                    .reads = "a[0]=y; a[3]=zero; a[6]=one",
+                    .exit = "a -> {a,y}"});
+    reject("structured dense shift footprints refuse reloads in unproved sparse gaps",
+           replace(replace(unevenShift, "[%y, %y, %y, %y, %one, %one, %one]",
+                           "[%y, %y, %one, %y, %one, %one, %one]"),
+                   "%position = ctjs.binary_static shr %i, %one",
+                   "%count = ctjs.get_property %base[%two]\n"
+                   "    %position = ctjs.binary_static shr %i, %count"));
+    reject("structured dense shift endpoints cannot prove integral quotients",
+           replace(unevenShift, "%position = ctjs.binary_static shr %i, %one",
+                   "%part = ctjs.binary_static shr %i, %one\n"
+                   "    %position = ctjs.binary div %part, %two"));
     rows.push_back({.what = "structured exact quotients overwrite their bounded prefix",
                     .body = quotientIndex,
                     .arrays = "a:[zero,zero,one,one]",

@@ -14,7 +14,7 @@
 // CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
@@ -32,7 +32,7 @@
 // CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
@@ -44,10 +44,19 @@
 // CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function signedShift() {
@@ -303,3 +312,46 @@ signedNegative(); signedMinimum(); signedPositiveWrapped(); signedNegativeWrappe
 signedZeroCrossing(); signedNegativeUnaligned(); signedNegativeReloadGap();
 signedNegativeSaved(); signedLowerCrossing(); signedNegativeNondivisible();
 signedNegativeReloadOverlap(); signedNegativeLaterOverlap(); signedPositiveUpper();
+
+function unevenCleared() {
+    var child = {}, a = [child, child, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i >> 1] = 0;
+    return a;
+}
+function unevenRetained() {
+    var child = {}, a = [child, child, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i >> 1] = 0;
+    return a;
+}
+function unevenReloadGap() {
+    var child = {}, a = [child, child, 1, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i >> a[2]] = 0;
+    return a;
+}
+function scaledReloadGap() {
+    var child = {}, a = [child, 1, child, 1, 0, 1, child];
+    for (var i = 0; i < a.length; i += 3) a[((i >> a[1]) << 2) / 2] = 0;
+    return a;
+}
+function fractionalIntermediate() {
+    var child = {}, a = [child, child, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[(i >> 1) / 2] = 0;
+    return a;
+}
+function repeatedComposition() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) >> 1] = 0;
+    return a;
+}
+function unevenReversed() {
+    var child = {}, a = [child, 0, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[3 - (i >> 1)] = 0;
+    return a;
+}
+function scaledRetained() {
+    var child = {}, a = [child, 1, child, 1, child, 1, child];
+    for (var i = 0; i < a.length; i += 3) a[((i >> a[1]) << 2) / 2] = 0;
+    return a;
+}
+unevenCleared(); unevenRetained(); unevenReloadGap(); scaledReloadGap();
+fractionalIntermediate(); repeatedComposition(); unevenReversed(); scaledRetained();

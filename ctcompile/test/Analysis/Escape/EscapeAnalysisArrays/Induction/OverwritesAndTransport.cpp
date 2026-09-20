@@ -418,9 +418,18 @@ void InductionCases::overwritesAndTransport() {
              .reads = "a[1]=x; a[3]=one",
              .exit = "a -> {a}"},
             "x");
-        reject("right shifts cannot assume an affine range from a nondivisible stride",
-               replace(body, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"));
+        run({.what = "right shifts replay repeated own positions with nondivisible strides",
+             .body = replace(body, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[1]=x; a[2]=one; a[3]=one",
+             .exit = "a -> {a}"},
+            "x");
     }
+    run({.what = "a dense shift footprint does not erase children at unwritten positions",
+         .body = replace(rightShiftIndex, "shr %i, %one", "shr %i, %two"),
+         .arrays = "a:[zero,x,one,one]",
+         .reads = "a[0]=zero; a[2]=one",
+         .exit = "a -> {a,x}"});
     run({.what = "a masked zero shift preserves each original own index",
          .body =
              replace(replace(complementIndex, "  %a =",
@@ -448,6 +457,12 @@ void InductionCases::overwritesAndTransport() {
          .body = shiftReload,
          .arrays = "a:[zero,zero,one,one]",
          .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "dense right-shift footprints preserve disjoint count reloads",
+         .body = replace(shiftReload, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[3]=one; a[0]=zero; a[3]=one; a[1]=x; a[3]=one; a[2]=one; a[3]=one; a[3]=one",
          .exit = "a -> {a}"},
         "x");
     const auto signedShiftBoundary =
@@ -526,12 +541,11 @@ void InductionCases::overwritesAndTransport() {
     for (const auto & body :
          {replace(negativeShift, "sub %i, %maximum", "sub %i, %two"),
           replace(negativeShiftBoundary, "4751297606873776128", "4751297606875873280"),
-          replace(negativeShift, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
           replace(negativeSignBoundary, "binary_static ushr", "binary_static shr"),
           replace(negativeShiftReload, "%base[%three]", "%base[%one]"),
           replace(negativeShiftReload,
                   "  %step =", "  ctjs.set_property %base[%three], %two\n  %step =")}) {
-        reject("negative unsigned shifts retain band, bounds, stride and reload guards", body);
+        reject("negative unsigned shifts retain band, bounds and reload guards", body);
     }
     const auto signedNegative =
         replace(replace(negativeShift, "binary_static ushr", "binary_static shr"),
@@ -570,20 +584,68 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
          .exit = "a -> {a}"},
         "x");
-    for (const auto & body :
-         {replace(signedMinimum, "4746794007248502784", "4746794007250599936"),
-          replace(signedNegative, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
-          replace(signedNegativeReload, "%base[%three]", "%base[%one]"),
-          replace(signedNegativeReload,
-                  "  %step =", "  ctjs.set_property %base[%three], %two\n  %step =")}) {
-        reject("signed shift bands retain discontinuity, stride and full reload guards", body);
+    for (const auto & body : {replace(signedMinimum, "4746794007248502784", "4746794007250599936"),
+                              replace(signedNegativeReload, "%base[%three]", "%base[%one]"),
+                              replace(signedNegativeReload, "  %step =",
+                                      "  ctjs.set_property %base[%three], %two\n  %step =")}) {
+        reject("signed shift bands retain discontinuity and full reload guards", body);
     }
+    for (const auto & body :
+         {negativeShift, signedNegative, signedMinimum, signedPositiveWrapped}) {
+        run({.what = "dense right shifts preserve negative and wrapping conversion bands",
+             .body = replace(body, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[1]=x; a[2]=one; a[3]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto unevenShift = replace(
+        replace(rightShiftIndex, "[%x, %x, %one, %one]", "[%x, %x, %x, %x, %one, %one, %one]"),
+        "add %i, %two\n  cf.br", "add %i, %three\n  cf.br");
+    run({.what = "uneven right-shift footprints preserve unwritten gap children",
+         .body = unevenShift,
+         .arrays = "a:[zero,zero,x,zero,one,one,one]",
+         .reads = "a[0]=zero; a[3]=x; a[6]=one",
+         .exit = "a -> {a,x}"});
+    run({.what = "dense right-shift footprints compose with reversed negative scaling",
+         .body = replace(unevenShift, "%position = ctjs.binary_static shr %i, %one",
+                         "%part = ctjs.binary_static shr %i, %one\n"
+                         "  %position = ctjs.binary sub %three, %part"),
+         .arrays = "a:[zero,x,zero,zero,one,one,one]",
+         .reads = "a[0]=x; a[3]=zero; a[6]=one",
+         .exit = "a -> {a,x}"});
+    const auto scaledShift = replace(replace(unevenShift, "[%x, %x, %x, %x, %one, %one, %one]",
+                                             "[%x, %one, %x, %one, %x, %one, %x]"),
+                                     "%position = ctjs.binary_static shr %i, %one",
+                                     "%count = ctjs.get_property %base[%one]\n"
+                                     "  %part = ctjs.binary_static shr %i, %count\n"
+                                     "  %scaled = ctjs.binary_static shl %part, %two\n"
+                                     "  %position = ctjs.binary div %scaled, %two");
+    run({.what = "dense shift enclosures retain proved scaling gaps and exact division",
+         .body = scaledShift,
+         .arrays = "a:[zero,one,zero,one,x,one,zero]",
+         .reads = "a[1]=one; a[0]=zero; a[1]=one; a[3]=one; a[1]=one; a[6]=zero",
+         .exit = "a -> {a,x}"});
+    const auto unevenReload = replace(replace(unevenShift, "[%x, %x, %x, %x, %one, %one, %one]",
+                                              "[%x, %x, %one, %x, %one, %one, %one]"),
+                                      "%position = ctjs.binary_static shr %i, %one",
+                                      "%count = ctjs.get_property %base[%two]\n"
+                                      "  %position = ctjs.binary_static shr %i, %count");
+    reject("an uneven shift footprint cannot claim its unproved sparse gap for a reload",
+           unevenReload);
+    reject("dense shift enclosures reject overlapping scaled reloads",
+           replace(replace(scaledShift, "[%x, %one, %x, %one, %x, %one, %x]",
+                           "[%x, %one, %one, %one, %x, %one, %x]"),
+                   "%base[%one]", "%base[%two]"));
+    reject("dense shift endpoints cannot imply integral intermediate quotients",
+           replace(unevenShift, "%position = ctjs.binary_static shr %i, %one",
+                   "%part = ctjs.binary_static shr %i, %one\n"
+                   "  %position = ctjs.binary div %part, %two"));
     for (const auto & body :
          {replace(shiftReload, "%base[%three]", "%base[%one]"),
           replace(shiftReload, "  %step =", "  ctjs.set_property %base[%three], %two\n  %step ="),
           replace(rightShiftIndex, "shr %i, %one", "shr %one, %i"),
           replace(rightShiftIndex, "shr %i, %one", "shr %i, %s"),
-          replace(rightShiftIndex, "shr %i, %one", "shr %i, %two"),
           replace(rightShiftIndex, "%position = ctjs.binary_static shr %i, %one",
                   "%part = ctjs.unary neg %i\n  %position = ctjs.binary_static ushr %part, %one"),
           replace(rightShiftIndex, "%position = ctjs.binary_static shr %i, %one",

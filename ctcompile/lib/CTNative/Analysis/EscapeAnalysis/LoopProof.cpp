@@ -195,8 +195,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const std::size_t size = found->second.size();
     const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
     // ponytail: one header/body pair, with writes only to its current,
-    // invariant or composed affine own element. Other mutations need a
-    // termination proof; each affine operation must have one varying operand.
+    // invariant or bounded monotone own element. Other mutations need a
+    // termination proof; each index operation must have one varying operand.
     // Primitive kinds and every element still pass the ordinary operation transfers.
     llvm::SmallDenseSet<std::size_t, 4> guardStores;
     struct StoreRange {
@@ -205,6 +205,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     llvm::SmallVector<StoreRange, 4> guardStoreRanges;
     struct IndexRange {
         ContentsValue first, last;
+        // A positive lattice enclosing all visits; replay proves actual writes.
         std::size_t stride;
     };
     const auto signedBand = [](const ContentsValue & endpoint) {
@@ -326,11 +327,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 }
                 range->stride *= factor;
             } else {
-                // ponytail: one conversion band and a divisible stride keep
-                // floor division affine. Crossing conversion bands and repeated keys
-                // need a separate proof; an unaligned first endpoint is safe.
-                if (range->stride % factor != 0) { return std::nullopt; }
-                range->stride /= factor;
+                // Within one conversion band, floor division is monotone.
+                // ponytail: enclose uneven strides densely; proving their sparse
+                // gaps would admit more disjoint reloads. Replay keeps exact visits.
+                range->stride = range->stride % factor == 0 ? range->stride / factor : 1;
             }
         } else if (divide) {
             if (!spend()) {
@@ -435,8 +435,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
     }
     // Check after every key and receiver was resolved: a later store can
-    // reveal a reload overlapping an earlier write. Each range carries the
-    // actual stride between its proved first/last own positions.
+    // reveal a reload overlapping an earlier write. Each range carries
+    // a lattice enclosing all writes between its proved first/last own positions.
     for (const auto position : guardReloads) {
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
         if (guardStores.contains(position)) { return unsupported; }
