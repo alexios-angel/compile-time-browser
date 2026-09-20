@@ -13,9 +13,12 @@ literals. `js_basic_string<char>` now supplies `js_string` for String literals,
 concatenation, calls, fields, captures and exceptions, with explicit raw storage
 and browser adapters. Its first instance method is the already-proved ASCII-prefix
 `startsWith`. Exact String unary `+`/`-` now uses `.to_number()`, and mixed
-String/Number addition uses typed `operator+` overloads. Both reuse public Core
-conversion/formatting. Broader primitive coercions, Object/Array prototypes and
-document views remain planned. This is the user's
+String numeric `-`, `*`, `/`, `%` and `**` reuse Number operations after that
+conversion. String addition accepts Number, Boolean and finite nullable scalar
+values with their proper text. C++ callers can concatenate built-in arithmetic
+types and `js_boolean_t` in either order; Boolean words remain distinct from
+numbers. These operations reuse public Core conversion/formatting. Optional String
+numeric conversion, Object/Array prototypes and document views remain planned. This is the user's
 revised direction for the native C++ interface and supersedes conflicting
 raw-carrier prescriptions in master-plan part 24. Historical measurements retain
 their original scope.
@@ -304,11 +307,23 @@ existing `auto`/template deduction.
    Node/VM/native observations across eight native modes, six refusal controls
    and a distinguishing `baNaNa` mutation. Core
    `number_to_string` now checks range before its integer fast-path cast.
-   Next extend proved String numeric arithmetic (`-`, `*`, `/`, `%`, `**`),
-   then the remaining Boolean/absence-to-String pairs. Keep numeric relational
-   conversion separate from String lexicographic ordering and loose equality.
-   Object conversion hooks and optional/union String numeric conversion remain
-   refused; a class method does not establish their proof.
+   String numeric arithmetic (`-`, `*`, `/`, `%`, `**`) now uses that conversion
+   and the existing Number operators/remainder/exponentiation guards. Addition
+   with an exact String admits Boolean and finite nullable scalar alternatives;
+   `nullable_scalar.to_string()` preserves null/undefined, Boolean words, NaN
+   and Number zero spelling. The `string-arithmetic.test` source gate passes
+   26 observations across eight native modes, four refusals and one mutation.
+   Raw C++ arithmetic types and `js_boolean_t` also have constrained String
+   addition overloads in both orders. Raw numerics enter the binary64 Number
+   domain: for example, `9007199254740993LL` spells `9007199254740992`; extended
+   floating-point overflow is checked before narrowing and spells Infinity.
+   Boolean operands spell `true`/`false`. Pointers, enums and merely convertible
+   classes are excluded; the explicit String constructors remain unchanged.
+   Next implement optional String numeric conversion and closed Boolean/String
+   union concatenation with their own finite-alternative proofs. Keep numeric
+   relational conversion separate from String lexicographic ordering and loose
+   equality. Object conversion hooks remain refused; an overload or class
+   method does not establish their source proof.
    Resolve general UTF-16 length/index/comparison/casing alignment as a separate
    runtime/compiler change. Update literal creation, joins, calls/returns,
    print helpers and deduced-type assertions with each admitted operation.

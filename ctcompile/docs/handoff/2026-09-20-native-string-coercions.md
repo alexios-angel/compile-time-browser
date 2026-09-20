@@ -111,3 +111,77 @@ Raw Number alias retirement, collections/document views and the planned
 `Symbol.hasInstance` wrapper remain. Indexed Bootstrap `R.find` still needs the
 NodeList >1,000,000 undefined-slot boundary reconciled with the separate 2^24
 spread cap preserved. Full Bootstrap and the application driver are unfinished.
+
+## Extended arithmetic and primitive operands, 2026-09-20 UTC
+
+Continued clean **48c93641** for the user's arithmetic/Boolean overload request,
+then the follow-up request to continue String numeric arithmetic and primitive
+coercions. Process checks found no Claude executable/CLI/loop among 67 Linux and
+359 Windows processes, with no unreadable candidate CLI. No browser code changed.
+
+**9c23d2e6** adds two constrained friend templates in `js_basic_string` for
+built-in arithmetic and `js_boolean_t`. Boolean values retain `true`/`false` text;
+numeric values use public Core formatting after binary64 conversion. Integer
+precision follows Number semantics (`9007199254740993LL` becomes
+`9007199254740992`); extended floating-point overflow is checked before narrowing.
+The existing explicit constructors and typed Number overloads remain. Pointer,
+null-pointer, enum and merely convertible class arguments are rejected.
+Runtime checks cover 18 inputs in both operand orders, including signed zero,
+NaN, both Boolean types and extended-range numbers. Extended-range checks run
+only where `long double` has a wider range than `double`.
+
+`nullable_scalar.to_string()` selects the existing four primitive alternatives
+and returns `js_string`, preserving null/undefined, Boolean words, NaN and zero
+formatting. **dd5021d5** enables exact String numeric subtraction, multiplication,
+division, remainder and exponentiation through `.to_number()` and the existing
+Number operations/guards. String addition also accepts Boolean and finite scalar
+unions; tagged values use `.to_string()`, with an exact const-method signature.
+Numeric comparison/equality admission is unchanged.
+
+Focused devbox commands (all under the build lock):
+
+```sh
+tools/remote-build.sh ctcompile-test-native-runtime
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-runtime
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_native_runtime$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: (CTNative/Lowering/Scalars/(string-arithmetic[.]test|string-coercions[.]test|strings[.]mlir|optional-scalars[.]mlir|scalar-unions[.]mlir)|Target/Cpp/native-string[.]mlir)$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Lowering/(Scalars/string-arithmetic[.]test|Admission/(refusal-operands|divergence-refusals)[.]mlir)$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Lowering/Admission/refusal-operands[.]mlir$'
+```
+
+Runtime CTest passes **1/1 (0.02s)**. The six-case lit selection initially passed
+five and failed the new fixture at an unproved global `undefined` binding
+(**6.52s**). Uninitialized local values now supply the same undefined primitive;
+no global identity proof was added. The next selection passed the arithmetic and
+divergence cases but stopped in an old array-refusal control (**7.11s**).
+Default precomputation had erased its branch before admission. Runtime-only
+settings now preserve the array, bitwise and frame-slot refusal controls; the
+single-case rerun passes **1/1 (0.13s)**. That is **eight distinct selected lit
+cases passing across the corrected runs**, not a full suite.
+
+The new `string-arithmetic.test` checks **26 Node value/type/NaN/zero-sign
+observations**, then VM/native agreement in **eight executions** (GCC/Clang ×
+explicit/deduced output × optimized/runtime lowering). It retains four refusal
+controls and one numeric mutation. Six observations exercise a single parameter
+with Number, Boolean, null and undefined tags, including NaN and negative zero.
+The existing 18-observation String coercion test also passes its eight modes,
+six refusals and mutation; its former exact Boolean refusal now uses an
+unsupported String/Number parameter union. Admission fixtures now pin admitted
+Number/String addition and refused optional String subtraction.
+
+GCC additionally compiles the same Runtime/NativeRuntime.cpp and a standalone
+String.hpp concatenation probe with C++23, -O2, -pedantic, -Wall, -Wextra, -Werror
+and -Wconversion. These two checks compile only; runtime execution is the named
+CTest and source fixtures. The source fixtures retain their Script/AOT symbol
+audits. All **11** final code/test hashes match the devbox. Seven changed C++
+files pass pinned formatting; whitespace and document checks pass. Required
+`tools/format.sh --check` still reports the same 16 pre-existing diagnostics in
+four untouched files. No full CTest/lit, broad corpus/matrix, WPT/test262,
+sanitizer replay or full wtfjs replay ran; no push occurred.
+
+The next coercion boundary is optional String numeric conversion and closed
+Boolean/String union concatenation. Keep missing/null tags and the original
+finite-alternative proof. Mixed String/Number joins, object hooks, String
+ordering and loose equality do not gain support from these overloads. Shared
+Core parser gaps, UTF-16 alignment, raw Number alias retirement, collections,
+document views, `Symbol.hasInstance` and indexed Bootstrap remain separate work.

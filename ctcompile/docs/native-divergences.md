@@ -655,14 +655,17 @@ bitwise operator is not native yet"*. `BytecodeImport.cpp`'s `binary_rows`
 marks all six bitwise opcodes non-re-entering, so `&`, `|`, `^`, `<<`, `>>`
 and `>>>` all import as `ctjs.binary_static`.
 
-Owning UTF-8 strings now have a native carrier. Concatenating two proved
-strings is admitted; implicit conversion between strings and numbers remains
-refused. That string support does not change the bitwise refusal.
+Owning UTF-8 strings have a native carrier. Exact String numeric arithmetic
+uses the typed Number conversion; addition with Number, Boolean and finite
+nullable scalars preserves their JavaScript text through public Core and native
+classes. Optional String numeric conversion and object conversion hooks remain
+refused. This support does not change the bitwise refusal.
 
 ### The test
 
-`divergence-refusals.mlir`, the BITWISE case (and the CONCAT case beside it,
-which pins the refusal of mixed string/number addition). The wrap is emittable
+`divergence-refusals.mlir`, the BITWISE case. The CONCAT case beside it now
+pins admitted typed Number/String addition; `string-coercions.test` and
+`string-arithmetic.test` check the executable primitive results. The wrap is emittable
 — `(int32_t)(uint32_t)fmod(trunc(x), 4294967296.0)` and its NaN guard — and
 would be the same shape ND-4's guard has; until it is written, the operator is
 diagnosed rather than approximated.

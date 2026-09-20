@@ -22,6 +22,30 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## String arithmetic and C++ primitive operands, 2026-09-20 UTC
+
+**9c23d2e6** adds constrained `js_string` concatenation with built-in arithmetic
+and `js_boolean_t` operands in either order. Boolean operands spell `true`/`false`;
+raw numbers enter the binary64 Number domain, with extended floating-point
+overflow checked before narrowing. Pointers, enums and merely convertible
+classes are excluded. `nullable_scalar.to_string()` preserves all four tags.
+**dd5021d5** enables exact String numeric `-`, `*`, `/`, `%`, `**` and concatenation
+with Boolean/finite nullable scalars through the existing Number/Core operations.
+
+Focused validation passes: runtime CTest **1/1**, **eight distinct lit cases**,
+GCC compilation of the runtime checks and a standalone String header probe.
+The new source fixture checks **26 observations**, eight native modes, four
+refusals and one mutation; the existing 18-observation coercion fixture also
+passes. All **11** code/test hashes match the devbox. Global formatting retains
+16 pre-existing diagnostics; scoped formatting and whitespace pass. Full suites
+were skipped. [Exact checks and fixture corrections](handoff/2026-09-20-native-string-coercions.md#extended-arithmetic-and-primitive-operands-2026-09-20-utc).
+
+**Next:** optional String numeric conversion and closed Boolean/String union
+concatenation, preserving absence tags and finite-alternative proofs. String
+ordering, loose equality, object conversion hooks, shared Core parser gaps and
+UTF-16 alignment remain separate. Collections/document views, the planned
+`Symbol.hasInstance` wrapper and indexed Bootstrap `R.find` remain unfinished.
+
 ## Primitive String coercions, 2026-09-20 UTC
 
 Continued clean **2fe9a029**. **d1f98f2a** fixes public Core Number formatting's
