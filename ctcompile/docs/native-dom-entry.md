@@ -27,8 +27,8 @@ auto buttons = ctnative::querySelectorAll.call(element, styles, "button");
 `matches` and `closest` have the same `.call` interface. Each object is
 `inline constexpr`; its `const` member calls the public Style implementation
 with explicit borrowed inputs. This C++ spelling introduces no callable table
-or virtual dispatch. JavaScript `Element.prototype.querySelector.call(...)`
-still needs a separate source identity proof.
+or virtual dispatch. Original JavaScript prototype selector calls use these same
+objects after the identity proof described below.
 
 This is an action entry, not native Bootstrap initialization. For example:
 
@@ -251,6 +251,33 @@ as the bindings. Element `querySelector` returns the first descendant in current
 tree order, excludes the receiver itself, binds `:scope` to that receiver and
 preserves the platform's shadow boundaries. It also works in detached subtrees.
 Document receivers remain outside this contract.
+
+Bootstrap's original prototype selector spelling is supported for an explicit
+element and a proved String:
+
+```javascript
+const select = Element.prototype.querySelector;
+const button = select.call(element, 'button');
+const buttons = Element.prototype.querySelectorAll.call(element, '.selected');
+```
+
+The manifest must supply `"initial_intrinsics": ["Element", "Function"]`.
+Element promises its original global binding, own `prototype` and original
+`querySelector`/`querySelectorAll` methods. Function promises those methods'
+original prototype chains and `Function.prototype.call`, without own `call`
+shadows or accessors. These are embedding guarantees, not runtime checks.
+The complete source proof rejects replacement, mutation, callable/prototype
+escape and reentry, and requires `.call` to retain the exact selector function
+as its receiver. Its two arguments must be a proved nonnull element and String;
+guarded query results and checked snapshot members can supply that element.
+Saved constructor, prototype and method aliases preserve the same identities.
+
+The compiler erases the proved global/prototype/method reads and emits the
+existing typed selector call, using argument zero's document and live Style
+engine. Missing guarantees, detached `.call`, `.apply`/`.bind`, coercible
+selectors and unguarded nullable receivers refuse. Default
+`document.documentElement` roots and NodeList spread/concat remain separate
+boundaries.
 
 `querySelectorAll(String)` calls public `engine::select` with `first_only=false`
 and returns a local `std::vector<ctbrowser::element_ref>`. The vector owns its

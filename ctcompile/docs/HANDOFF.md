@@ -22,6 +22,98 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original prototype selector calls, 2026-09-20 UTC
+
+**3d701f64** proves Bootstrap's original
+`Element.prototype.querySelector.call(element, selector)` and
+`querySelectorAll.call(element, selector)` for explicit nonnull element and
+String inputs. DOM manifests supply `"initial_intrinsics": ["Element", "Function"]`.
+These guarantee original global/prototype/selector identities and the original
+Function.prototype.call chain without shadows or accessors. Saved constructor/prototype/method
+aliases retain those identities; mutation, escape, reentry, detached calls,
+wrong arity, coercion and unguarded nullable receivers refuse.
+
+The compiler erases the proved lookup chain and reuses the existing C++ selector
+method objects. Argument zero supplies the receiver's document and live Style
+engine, including guarded selector results and checked snapshot members. Raw-IR
+checks cover exact evidence, source fingerprints and every insufficient work
+budget; incomplete proofs publish no global/prototype/method/call evidence.
+No browser code, runtime semantics or ownership changed.
+
+Measured on the devbox: host-contract CTest **1/1** (0.51s total), existing direct
+query/query-all lit cases passed, final prototype lit **1/1** (77.12s). The new
+case executed **32 native clients / 62 refusals**, with both providers, policies,
+printing layouts and GCC/Clang. Existing direct cases add 32 executions/58
+refusals. All **12** code/test hashes matched before commit. These are standalone
+DOM/Core/Style clients and Script/AOT symbol audits; this new driver does not run
+VM/browser differential observations.
+
+Exact commands under `/tmp/ctbrowser-devbox-build.lock`, with helper/SSH stdin
+from `/dev/null`:
+
+```sh
+# Local helper:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+# On devbox, from projects/compile-time-browser:
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_host_contract$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-(prototype-query|query|query-all)[.]test$'
+# After the test-only correction, local helper then devbox:
+tools/remote-build.sh ctjs-opt ctjs-translate
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-prototype-query[.]test$'
+```
+
+The first prototype fixture used unsupported Number strict equality in its
+zero-length witness. Replacing `children.length === 0` with `!children.length`
+retained the receiver-sensitive observable check using existing Number negation;
+no production proof was widened. Required formatting retains **20** pre-existing
+diagnostics in six untouched files; all changed C++/Python, syntax and whitespace
+checks pass. Full CTest/compiler lit, broad corpus/matrix, WPT/test262 and
+sanitizers were skipped. No push.
+
+**b8b5c3e2** replaces the requested enum-to-callee switch in `EmitC/DOM.cpp`
+with an LLVM DenseMap of 17 names. Optional-String attribute/Number overloads
+remain explicit type checks; specialized methods still require their own lowering.
+This table is compiler-only; generated calls and argument order are unchanged.
+
+**3b0336d1** fixes two stale String-test refusals after the earlier `c5bcd3de`
+loop proof. Entry/helper attribute-mutation loops now have positive source/native
+checks, including actual attribute absence, and unsafe-call loop variants still
+refuse. Eight Node/VM observations were added; binary and refusal counts did not
+change. A focused devbox lowering of the original helper fixture confirmed its
+existing admission before the test update. No production loop proof changed.
+
+The map's first build caught a local iterator name collision, fixed by naming
+its lookup `calleeName`. The next gate passed class-list/prototype lit but stopped
+at the stale String control after its positive comparisons. Final String lit
+passed **1/1** (150.19s): **809 Node/VM observations**, **8 GCC/Clang binaries**,
+**1,000 source refusal checks** and **463** additional provenance/depth/budget
+checks. Its replacement subcheck also reported **11** source observations and
+**4** native executions. All **14** final session code/test hashes match the
+devbox. Final required formatting retains the same 20 baseline diagnostics;
+changed formatting, Python syntax and whitespace checks pass.
+
+Exact map/test followup commands, under the same build lock and stdin rules:
+
+```sh
+# Local helper, used for both map attempts and the test-only rerun:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference
+# On devbox, from projects/compile-time-browser, after the name correction:
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-(strings|class-list|prototype-query)[.]test$'
+# After correcting the two stale loop controls:
+~/.lit-venv/bin/lit -av build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-strings[.]test$'
+```
+
+**Next exact boundary:** Bootstrap `R.find` at `bootstrap.bundle.js:341` still
+wraps the proved call in `[].concat(...nodes)`. Start with an explicit element
+and confined local length/indexed consumption. Reuse the element vector only
+after proving original Array concat/species and absent element
+`@@isConcatSpreadable` hooks. The current VM materializes proxy iterables with
+a **2^24-member cap** (`Script/vm/call/invoke.cpp`); preserve it in spread
+conversion without changing direct query-all length. Default
+`document.documentElement` needs a separate document/session identity, nullable
+root and Style contract. Constructor publication/nested Map lifetimes, retained
+events, full Bootstrap initialization and the application driver remain unfinished.
+
 ## C++ selector method objects, 2026-09-20 UTC
 
 **63b9c4d2** implements the requested object-oriented selector interface in
