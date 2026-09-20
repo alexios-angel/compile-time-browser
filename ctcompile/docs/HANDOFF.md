@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Own-key clearing loops and signed-shift bands, 2026-09-20 UTC
+
+**9f367dc5** proves original own-key for-of null clearing for fixed class
+fields, including inherited, conditional, empty and repeated cases. A proved
+break preserves exactly one store. Six new positives and two unchanged loop
+promotions add **64 native executions**. **03fcd7dd** proves signed right-shift
+indices within one ToInt32 conversion band.
+
+Focused class probe: **60 observations / 200 main native executions / 120
+unprepared and 53 preparation refusals**; exact host **1/1**, arrays **1/1** and
+escape lit **3/3** pass. Right shift: **138 sites / 27 sound / 27 of 35 confined
+precision**, zero violations, partial, pending or unclaimed sites. All fourteen
+tested hashes match. Changed formatting passes; the required formatter retains
+20 diagnostics in six unchanged files. Full suites, whole class lit, DOM replay
+and broad matrices were skipped.
+
+The Array iterator replacement control records **Node 0 / VM 11**, with native
+preparation refused and runtime/source unchanged. Inspected C++ uses stack
+records, borrowed pointers and direct field assignments, with no iterator
+container or Script/VM symbol.
+
+**Next:** authentic Data+B still refuses fixed constructor fields. Its
+helper/config/registration operations fail the census before variable presence
+is isolated. Prove their complete effects and per-instance field presence, then
+connect the clearing loop while retaining `e.remove`/`P.off`. Shared Map/stored
+receiver ownership, inherited DOM/getters, static construction, full Bootstrap
+and the application driver remain. No browser/runtime change or push.
+
+[Exact changes, focused checks and boundary](handoff/2026-09-20-own-field-loops.md).
+
 ## Captured local holders and unsigned-shift bands, 2026-09-20 UTC
 
 **4d909704** proves fixed local callable-holder captures in ordinary classes,
