@@ -212,6 +212,17 @@ inline js_string boolean_string_text(const std::variant<js_boolean_t, std::strin
         },
         value);
 }
+inline js_num to_number(const std::variant<js_boolean_t, std::string> & value) {
+    return std::visit(
+        [](const auto & alternative) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, js_boolean_t>) {
+                return alternative.to_number();
+            } else {
+                return js_num{ctbrowser::string_to_number(alternative)};
+            }
+        },
+        value);
+}
 
 // --- owning strings ----------------------------------------------------------
 

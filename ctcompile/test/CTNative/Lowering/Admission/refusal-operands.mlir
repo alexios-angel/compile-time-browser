@@ -26,6 +26,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/binary.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=BINARY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union-binary.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=UNION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-binary.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=OPTIONAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
@@ -59,12 +62,13 @@
 
 // --- numeric(), where = "binary" --------------------------------------------
 //
-// Exact and optional String subtraction are native. A Boolean/String union
-// still has no numeric conversion, preserving the diagnostic's operation and
-// offending operand type. Keep the original optional String source as a positive.
+// String and Boolean/String union subtraction are native. Generic addition of
+// that union to Number needs a String/Number result carrier; retain its binary
+// operand diagnostic and preserve both former subtraction sources as positives.
 // BINARY: ctjs.func {{.*}}@badd$1
 // BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.variant<{{.*}}>, not a number"
 
+// UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"std::variant<ctnative::js_boolean_t, std::string>">{{.*}} -> !emitc.opaque<"ctnative::js_num">
 // OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 
 // --- a formerly refused Boolean global ------------------------------------
@@ -148,6 +152,10 @@
 // FRAMESLOT-SAME: ctnative.not_native = "an array literal created inside a branch or a loop - its storage has to be one frame slot (obligation O-4)"
 
 //--- binary.js
+function badd(n) { var u; if (n > 0) { u = "text"; } else { u = false; } return u + n; }
+var r = badd(1);
+
+//--- union-binary.js
 function badd(n) { var u; if (n > 0) { u = "text"; } else { u = false; } return u - n; }
 var r = badd(1);
 

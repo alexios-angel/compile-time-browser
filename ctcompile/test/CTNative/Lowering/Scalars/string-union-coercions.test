@@ -1,5 +1,5 @@
 # Optional String conversion preserves all three tags before arithmetic. Closed
-# Boolean/String temporaries concatenate through the existing String operations;
+# Boolean/String temporaries use numeric and String operations;
 # their function parameters and returns stay single-type. Node's Object.is checks
 # distinguish null's zero, undefined's NaN and the sign of a numeric String zero.
 # RUN: split-file %s %t
@@ -20,9 +20,10 @@
 # RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name union_optimized_deduced_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name union_optimized_deduced_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name union_mutation --mutate product --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name union_numeric_mutation --mutate unionTextProduct --core-build %build 2>&1 | FileCheck %s --check-prefix=UNION-MUTATION
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-pair.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=UNION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 
@@ -30,12 +31,15 @@
 # RUNTIME-DAG: sub {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: mul {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: div {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+# RUNTIME-DAG: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"std::variant<ctnative::js_boolean_t, std::string>">{{.*}} -> !emitc.opaque<"ctnative::js_num">
 # RUNTIME-DAG: call_opaque "std::fmod"
 # RUNTIME-DAG: call_opaque "std::pow"
 # RUNTIME-DAG: call_opaque "ctnative::boolean_string_text"{{.*}}!emitc.opaque<"std::variant<ctnative::js_boolean_t, std::string>">{{.*}} -> !emitc.opaque<"ctnative::js_string">
 # RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
 # CPP-DAG: .to_number()
 # CPP-DAG: ctnative::boolean_string_text(
+# UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"std::variant<ctnative::js_boolean_t, std::string>">{{.*}} -> !emitc.opaque<"ctnative::js_num">
+# UNION-MUTATION: global 'unionTextProduct' differs
 # MUTATION: global 'product' differs
 # REFUSED: ctjs.func private @convert$1
 # REFUSED-SAME: ctnative.not_native =
@@ -62,6 +66,17 @@ function append(flag, boolean, text) {
 function prepend(flag, boolean, text) {
     const value = flag ? boolean : text;
     return value + "<";
+}
+
+function unionNumber(flag, boolean, text) { return +(flag ? boolean : text); }
+function unionNegate(flag, boolean, text) { return -(flag ? boolean : text); }
+function unionSubtract(flag, boolean, text, number) { return (flag ? boolean : text) - number; }
+function unionMultiply(flag, boolean, text, number) { return number * (flag ? boolean : text); }
+function unionDivide(flag, boolean, text, number) { return number / (flag ? boolean : text); }
+function unionRemainder(flag, boolean, text, number) { return (flag ? boolean : text) % number; }
+function unionPower(flag, boolean, text) {
+    const value = flag ? boolean : text;
+    return value ** value;
 }
 
 var missing = toNumber(optional(0, "3"));
@@ -98,6 +113,25 @@ var prependedFalse = prepend(true, false, "text");
 var prependedString = prepend(false, false, "true");
 var prependedNul = prepend(false, true, "a\u0000b");
 
+var unionTrue = unionNumber(true, true, "3");
+var unionFalse = unionNumber(true, false, "3");
+var unionText = unionNumber(false, true, "3");
+var unionEmpty = unionNumber(false, true, "");
+var unionNegativeZero = unionNumber(false, true, "-0");
+var unionInvalid = unionNumber(false, true, "false");
+var unionNegFalse = unionNegate(true, false, "3");
+var unionNegText = unionNegate(false, true, "3");
+var unionBoolDifference = unionSubtract(true, true, "7", 5);
+var unionTextDifference = unionSubtract(false, true, "7", 2);
+var unionBoolProduct = unionMultiply(true, false, "3", -1);
+var unionTextProduct = unionMultiply(false, true, "3", 4);
+var unionBoolQuotient = unionDivide(true, true, "2", 7);
+var unionTextQuotient = unionDivide(false, true, "2", 7);
+var unionBoolRemainder = unionRemainder(true, false, "-7", 2);
+var unionTextRemainder = unionRemainder(false, true, "-7", 2);
+var unionBoolPower = unionPower(true, false, "3");
+var unionTextPower = unionPower(false, false, "3");
+
 #--- expected.cjs
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -105,6 +139,24 @@ const vm = require("node:vm");
 const scope = {};
 vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
 const expected = {
+    unionTrue: 1,
+    unionFalse: 0,
+    unionText: 3,
+    unionEmpty: 0,
+    unionNegativeZero: -0,
+    unionInvalid: NaN,
+    unionNegFalse: -0,
+    unionNegText: -3,
+    unionBoolDifference: -4,
+    unionTextDifference: 5,
+    unionBoolProduct: -0,
+    unionTextProduct: 12,
+    unionBoolQuotient: 7,
+    unionTextQuotient: 3.5,
+    unionBoolRemainder: 0,
+    unionTextRemainder: -1,
+    unionBoolPower: 1,
+    unionTextPower: 27,
     missing: NaN,
     nullZero: 0,
     empty: 0,
@@ -139,12 +191,12 @@ const expected = {
     prependedString: "true<",
     prependedNul: "a\u0000b<"
 };
-assert.equal(Object.keys(expected).length, 33);
+assert.equal(Object.keys(expected).length, 51);
 for (const [name, value] of Object.entries(expected)) {
     assert.equal(typeof scope[name], typeof value, `${name} type`);
     assert.ok(Object.is(scope[name], value), `${name} value`);
 }
-console.log("33 optional String and Boolean/String coercion observations agree with JavaScript");
+console.log("51 optional String and Boolean/String coercion observations agree with JavaScript");
 
 #--- optional-add.js
 function convert(mode) {

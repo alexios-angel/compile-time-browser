@@ -146,7 +146,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else if (isNullableCarrier(value.getType())) {
         helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
                                                       : "ctnative::to_number";
-    } else if (isBooleanCarrier(value.getType()) && isNumberCarrier(target)) {
+    } else if ((isBooleanCarrier(value.getType()) || isBooleanStringCarrier(value.getType())) &&
+               isNumberCarrier(target)) {
         helper = "ctnative::to_number";
     } else if (llvm::isa<mlir::Float64Type>(target) &&
                llvm::isa<mlir::IntegerType>(value.getType())) {

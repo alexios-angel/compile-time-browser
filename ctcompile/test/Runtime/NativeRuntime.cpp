@@ -109,6 +109,14 @@ int main() {
     const std::variant<js_boolean_t, std::string> binaryText{std::string{"a\0b", 3}};
     CHECK(boolean_string_text(binaryText) == js_string{"a\0b"});
     CHECK(std::holds_alternative<std::string>(binaryText));
+    static_assert(std::is_same_v<decltype(to_number(binaryText)), ctnative::js_num>);
+    CHECK(to_number(std::variant<js_boolean_t, std::string>{enabled}) == one);
+    const auto unionZero = to_number(std::variant<js_boolean_t, std::string>{disabled});
+    CHECK(unionZero == zero && !std::signbit(unionZero.value()));
+    CHECK(to_number(std::variant<js_boolean_t, std::string>{std::string{}}) == zero);
+    CHECK(std::signbit(
+        to_number(std::variant<js_boolean_t, std::string>{std::string{"-0"}}).value()));
+    CHECK(std::isnan(to_number(binaryText).value()));
 
     const std::string high = "\xED\xA0\xBD", low = "\xED\xB8\x80";
     static_assert(std::is_same_v<js_string, js_basic_string<char>>);

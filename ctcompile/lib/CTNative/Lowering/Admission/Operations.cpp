@@ -580,6 +580,10 @@ bool admission::op(mlir::Operation * o) {
         }
         return refuse("a constant that is not a number, a boolean or undefined");
     }
+    const auto numericOperand = [&](mlir::Value value, llvm::StringRef where) {
+        const auto c = carrierOf(typeOf(value));
+        return isStringCarrier(c) || c == carrier::booleanString || numeric(value, where);
+    };
     if (auto b = llvm::dyn_cast<BinaryOp>(o)) {
         switch (b.getKind()) {
         case BinaryKind::Add: {
@@ -603,10 +607,7 @@ bool admission::op(mlir::Operation * o) {
         case BinaryKind::Div:
         case BinaryKind::Mod:
         case BinaryKind::Pow:
-            return (isStringCarrier(carrierOf(typeOf(b.getLhs()))) ||
-                    numeric(b.getLhs(), "binary")) &&
-                   (isStringCarrier(carrierOf(typeOf(b.getRhs()))) ||
-                    numeric(b.getRhs(), "binary"));
+            return numericOperand(b.getLhs(), "binary") && numericOperand(b.getRhs(), "binary");
         // (`**` is not std::pow; exponentiate() below is why.)
         default: return refuse("a bitwise or string operator is not native yet");
         }
@@ -620,9 +621,7 @@ bool admission::op(mlir::Operation * o) {
     if (auto u = llvm::dyn_cast<UnaryOp>(o)) {
         switch (u.getKind()) {
         case UnaryKind::Neg:
-        case UnaryKind::Plus:
-            return isStringCarrier(carrierOf(typeOf(u.getOperand()))) ||
-                   numeric(u.getOperand(), "unary");
+        case UnaryKind::Plus: return numericOperand(u.getOperand(), "unary");
         case UnaryKind::TypeOf:
             return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    isObjectCarrier(carrierOf(typeOf(u.getOperand()))) ||
