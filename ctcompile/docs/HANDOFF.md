@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native class-list integration, 2026-09-20 UTC
+
+**6ea177bc** lifts `classList.contains/add/remove` into the public DOM token-list
+API; Shell now converts arguments and delegates to that core. **7743e77a** binds
+the methods in native output, including variadic/zero-argument mutations, saved
+local aliases, guarded selector receivers and undefined-to-void results. Element
+and class-list names use enum maps, with bounded key lengths before hashing.
+Generated clients retain ordinary document ownership and link no Script/AOT.
+
+Measured: **32 native executions / 30 refusal controls**, plus two successful
+read-only dataset lowerings. Browser/host CTests passed **4/4** (0.62s); the final
+host repeat passed **1/1** (0.49s) and class-list lit **1/1** (57.07s). Existing
+DOM/closest/query lit cases also passed. The initial class-list run caught an
+unsupported comparison in its new test control; the corrected control returns
+the supported length directly. All **12** final code/test hashes match devbox.
+Required formatting still reports 20 baseline diagnostics in six unchanged
+files; changed files pass. Full suites, WPT/test262, broad corpus/matrix replays
+and sanitizer runs were skipped. Historical measurements remain historical.
+
+**Next browser boundary:** `Element.querySelectorAll(String)` needs a typed
+snapshot of document-owned node handles and proved iteration. Reuse public
+`style::engine::select(..., first_only=false)`; document-root queries need an
+explicit document receiver contract. Retained callbacks, Shell/rendering,
+original B/Data+B constructor publication through helpers/inheritance and nested
+Map lifetimes remain. Full Bootstrap initialization and the application driver
+are unfinished. No push.
+
+[Exact changes, commands and next boundary](handoff/2026-09-20-class-list.md).
+
 ## Native browser queries and guarded handles, 2026-09-20 UTC
 
 **fbb510e2** permits existing DOM/Style calls on a `closest()` result inside
