@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Completed record Map preparation and remainder bands, 2026-09-20 UTC
+
+**77e02a65** prepares completed same-constructor records stored in direct local
+Maps. Six new sources preserve registration, saved reads, overwrite/delete,
+clear and alias writes. **They remain preparation-only: zero new native
+executions.** The constructor lifter still refuses retained record shapes.
+Source proofs require complete standard Map identity, entry-block owners,
+literal String keys and present reads; saved constructor/method selectors and
+own-key snapshots without Map alias evidence remain refused.
+**5e69b712** preserves exact remainder endpoints and stride within one quotient
+band, retaining wrap fallback, complete reload checks and exact replay.
+
+Focused selection: **31 observations / 40 existing native executions / 62
+unprepared refusals / 41 preparation refusals / 12 prepared native refusals**.
+Exact host and arrays CTests each pass **1/1**; lowering lit **3/3** and escape
+lit **3/3** pass. Remainder oracle: **141 sites / 27 sound / 27 of 32 confined
+precision**, zero violations, partial, pending or unclaimed sites. All nine
+tested hashes match. Required formatting retains 20 diagnostics in six unchanged
+files; changed files pass. Original class sources 01–25 remain unchanged.
+
+**Next:** connect the retained-record proof to closure lifting, Map payload
+family/origin evidence, shape inference and typed pointer emission. Preserve
+saved record identities across overwrite/delete and prove enclosing owner
+lifetimes. Own-key snapshots need those alias edges before folding. Original
+B/Data+B still refuse constructor registration; partial publication requires
+exception/reentry proof before nested Data storage. Preserve conflict checks,
+`e.set`, `e.remove`, `P.off` and configuration/disposal bodies. Full Bootstrap
+and the application driver remain unfinished. No browser/runtime-oracle edits
+or push; full suites, whole class lit and broad replays were skipped.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-record-map-preparation.md).
+
 ## Inherited getters and signed remainder bounds, 2026-09-20 UTC
 
 **ddf01d98** preserves exact inherited static getter environments, including
