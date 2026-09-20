@@ -282,7 +282,7 @@ inline nullable_scalar vec_at(const std::vector<double> & v, nullable_scalar key
 }
 // ctcompile: `a.length`, which is `size()` exactly - the site proof is what
 // rules out a hole
-inline double vec_length(const std::vector<double> & v) {
+template <class T> double vec_length(const std::vector<T> & v) {
     return static_cast<double>(v.size());
 }
 // ctcompile: one element of an array literal, in source order
@@ -295,9 +295,6 @@ inline nullable_string vec_at(const std::vector<std::string> & values, nullable_
     const double index = std::trunc(key.value);
     if (!(index >= 0.0) || index >= static_cast<double>(values.size())) { return {}; }
     return values[static_cast<std::vector<std::string>::size_type>(index)];
-}
-inline double vec_length(const std::vector<std::string> & values) {
-    return static_cast<double>(values.size());
 }
 
 // --- object values -----------------------------------------------------------
@@ -897,6 +894,16 @@ ctbrowser::element_ref query_selector(ctbrowser::element_ref element, Style & st
     const auto found = style.select(element.owner->read(), element.id, parsed.selectors, true);
     return found.empty() ? ctbrowser::element_ref{}
                          : ctbrowser::element_ref{element.owner, found.front()};
+}
+template <class Style>
+std::vector<ctbrowser::element_ref> query_selector_all(ctbrowser::element_ref element,
+                                                       Style & style, std::string_view selector) {
+    const auto parsed = parse_selector(element, selector);
+    const auto found = style.select(element.owner->read(), element.id, parsed.selectors, false);
+    std::vector<ctbrowser::element_ref> snapshot;
+    snapshot.reserve(found.size());
+    for (const auto id : found) { snapshot.push_back({element.owner, id}); }
+    return snapshot;
 }
 // Comparison never resolves either borrowed owner; both slot and generation
 // belong to identity.

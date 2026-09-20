@@ -73,6 +73,7 @@ module {
         input.walk([&](ctjs::GetPropertyOp read) {
             empty &= !proof.method(read) && !proof.isDataset(read.getResult()) &&
                      !proof.isStringVectorLength(read) && !proof.isStringVectorIndex(read) &&
+                     !proof.isElementVectorLength(read) && !proof.isElementVectorIndex(read) &&
                      !proof.datasetValueElement(read);
         });
         return empty;
@@ -123,6 +124,128 @@ module {
         DOMEntryAnalysis refused(*input, request);
         check(noEvidence(*input, refused),
               "nonzero starts, wrong latches, wrong indices and inexact bounds withhold evidence");
+    }
+
+    const std::string queryPrefix = R"MLIR(
+module {
+  ctjs.func @iterate$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %queryName = ctjs.constant #ctjs.string<"querySelectorAll">
+    %query = ctjs.get_property %element[%queryName]
+    %selector = ctjs.constant #ctjs.string<".selected">
+    %keys = ctjs.call %query(%element, %selector)
+    %lengthName = ctjs.constant #ctjs.string<"length">
+    %length = ctjs.get_property %keys[%lengthName]
+    %zero = ctjs.constant #ctjs.number<0>
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+)MLIR";
+    const auto queried = replaced(source, prefix, queryPrefix);
+    const auto ordinary = queryPrefix + R"MLIR(
+    %loop:2 = scf.while (%count = %zero, %index = %zero) : (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {
+      %less = ctjs.compare lt %index, %length
+      %test = ctjs.truthy %less
+      scf.condition(%test) %index, %count : !ctjs.value, !ctjs.value
+    } do {
+    ^bb0(%index: !ctjs.value, %count: !ctjs.value):
+        %key = ctjs.get_property %keys[%index]
+        %nextCount = ctjs.binary add %count, %one
+        %nextIndex = ctjs.binary_static add %index, %one
+        scf.yield %nextCount, %nextIndex : !ctjs.value, !ctjs.value
+    }
+    ctjs.return %loop#1
+  }
+}
+)MLIR";
+    const auto withMutation = [](const std::string & input) {
+        return replaced(input, "        %nextCount =", R"MLIR(
+        %setterName = ctjs.constant #ctjs.string<"setAttribute">
+        %setter = ctjs.get_property %key[%setterName]
+        %attribute = ctjs.constant #ctjs.string<"class">
+        %text = ctjs.constant #ctjs.string<"visited">
+        %written = ctjs.call %setter(%key, %attribute, %text)
+        %nextCount =)MLIR");
+    };
+    const auto mutated = withMutation(queried);
+    const auto ordinaryMutated = withMutation(ordinary);
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto request = contract;
+        request.provider = provider;
+        request.initialIntrinsics.clear();
+        request.datasetParameters.clear();
+        for (const auto & candidate : {queried, mutated, ordinary, ordinaryMutated}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(candidate, &context);
+            check(static_cast<bool>(input), "independent element snapshot loop parses");
+            if (!input) { continue; }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(),
+                  "guarded element snapshots support read and attribute-write loops");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            unsigned lengths = 0, indices = 0, queries = 0;
+            input->walk([&](ctjs::GetPropertyOp read) {
+                lengths += proof.isElementVectorLength(read);
+                indices += proof.isElementVectorIndex(read);
+                if (proof.isElementVectorIndex(read)) {
+                    check(proof.isElement(read.getResult()) &&
+                              proof.isElementIdentity(read.getResult()),
+                          "guarded snapshot member is a nonnull borrowed element");
+                }
+            });
+            input->walk([&](ctjs::CallOp call) {
+                const auto * edge = proof.call(call);
+                if (edge && edge->kind == HostDOMMethod::querySelectorAll) {
+                    ++queries;
+                    check(edge->returnsElementVector() && !edge->returnsBoolean() &&
+                              edge->usesStyle(),
+                          "query collection has a distinct typed result and Style requirement");
+                }
+            });
+            check(lengths == 1 && indices == 1 && queries == 1,
+                  "snapshot evidence names only the proved length, index and selector call");
+            check(DOMEntryAnalysis(*input, request, proof.steps()).proved(),
+                  "element snapshot proof reproduces its exact work budget");
+            for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+                DOMEntryAnalysis limited(*input, request, budget);
+                check(limited.exhausted() && noEvidence(*input, limited),
+                      "incomplete element snapshots publish no borrowed handle evidence");
+            }
+            if (candidate == mutated || candidate == ordinaryMutated) {
+                auto datasetRequest = request;
+                datasetRequest.datasetParameters = {0};
+                DOMEntryAnalysis refused(*input, datasetRequest);
+                check(noEvidence(*input, refused) &&
+                          refused.reason().contains("backedge dataset-alias proof"),
+                      "dataset-enabled loops still require a backedge alias proof");
+            }
+        }
+        for (const auto & invalid :
+             {replaced(queried, "ctjs.compare lt %index, %length", "ctjs.compare lt %index, %one"),
+              replaced(queried, "%key = ctjs.get_property %keys[%index]",
+                       "%key = ctjs.get_property %keys[%one]"),
+              replaced(queried, "ctjs.return %loop#2", "ctjs.return %keys"),
+              replaced(queried, "ctjs.return %loop#2",
+                       "ctjs.set_property %keys[%lengthName], %zero\n    ctjs.return %loop#2"),
+              replaced(ordinary, "%index = %zero", "%index = %one"),
+              replaced(ordinary, "ctjs.binary_static add %index, %one",
+                       "ctjs.binary_static add %index, %zero"),
+              replaced(ordinary, "scf.condition(%test) %index, %count",
+                       "scf.condition(%test) %count, %index"),
+              replaced(ordinary, "ctjs.compare lt %index, %length",
+                       "ctjs.compare le %index, %length"),
+              replaced(replaced(ordinary, "        %key = ctjs.get_property %keys[%index]\n", ""),
+                       "      %less =",
+                       "      %key = ctjs.get_property %keys[%index]\n      %less =")}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(input), "invalid element snapshot witness parses");
+            if (!input) { continue; }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            DOMEntryAnalysis refused(*input, request);
+            check(noEvidence(*input, refused),
+                  "unsafe indices, snapshot escape and writes remain refused");
+        }
     }
 
     const std::string memberRead = "%value = ctjs.get_property %dataset[%key]";

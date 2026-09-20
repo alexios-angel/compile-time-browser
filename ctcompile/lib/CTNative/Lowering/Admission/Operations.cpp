@@ -26,7 +26,8 @@ bool admission::op(mlir::Operation * o) {
     if (domEntry) {
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
             read && (domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read) ||
-                     domEntry->datasetValueElement(read))) {
+                     domEntry->isElementVectorLength(read) ||
+                     domEntry->isElementVectorIndex(read) || domEntry->datasetValueElement(read))) {
             return true;
         }
         if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);

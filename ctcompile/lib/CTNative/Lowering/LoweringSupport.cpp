@@ -99,15 +99,12 @@ carrier carrierOf(mlir::Type type) {
             (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
-    // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` AND NOTHING ELSE
-    // YET. The element carrier decides: `vector<bool>` is a bit-packed
-    // specialisation whose `operator[]` returns a proxy that aliases the
-    // container and converts differently from `bool` (part 24 Stage 57A says
-    // so by name), and a vector of anything with no carrier has none either.
-    // So only a numeric element has a representation here, and the refusal
-    // for the rest is named at the literal.
+    // Generic mutable arrays remain numeric: vector<bool> would introduce
+    // proxy references. Proved String and borrowed Element snapshots have
+    // distinct carriers and their own access/ownership admission.
     if (auto elements = llvm::dyn_cast<VecType>(type)) {
         auto element = elements.getElementType();
+        if (llvm::isa<DOMElementType>(element)) { return carrier::domElementVector; }
         if (carrierOf(element) == carrier::string) { return carrier::stringVector; }
         if (auto opt = llvm::dyn_cast<OptType>(element)) { element = opt.getElementType(); }
         return llvm::isa<BottomType, NumType>(element) ? carrier::vector : carrier::none;
@@ -260,6 +257,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // that is worth far more than a double that happens to verify.
     switch (which) {
     case carrier::domElement: return ec::OpaqueType::get(c, kDOMElementType);
+    case carrier::domElementVector: return ec::OpaqueType::get(c, kDOMElementVectorType);
     case carrier::json: return ec::OpaqueType::get(c, kDOMJSONType);
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
     case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);

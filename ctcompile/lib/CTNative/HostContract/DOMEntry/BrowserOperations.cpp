@@ -19,6 +19,7 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> elementMethods{
     {"matches", {Kind::matches, HostDOMMethod::matches}},
     {"closest", {Kind::closest, HostDOMMethod::closest}},
     {"querySelector", {Kind::querySelector, HostDOMMethod::querySelector}},
+    {"querySelectorAll", {Kind::querySelectorAll, HostDOMMethod::querySelectorAll}},
     {"toggleAttribute", {Kind::toggleAttribute, HostDOMMethod::toggleAttribute}},
     {"hasAttribute", {Kind::hasAttribute, HostDOMMethod::hasAttribute}},
     {"removeAttribute", {Kind::removeAttribute, HostDOMMethod::removeAttribute}},
@@ -67,30 +68,45 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
         const auto key = ctjs::constantKey(read.getKey());
-        if (hasKind(read.getObject(), Kind::stringVector) && key == "length") {
+        const bool elements = hasKind(read.getObject(), Kind::elementVector);
+        if ((elements || hasKind(read.getObject(), Kind::stringVector)) && key == "length") {
             values[read.getResult()] = Kind::number;
-            provedStringVectorLengths.push_back(read);
+            if (elements) {
+                provedElementVectorLengths.insert(read);
+            } else {
+                provedStringVectorLengths.push_back(read);
+            }
             return true;
         }
-        if (hasKind(read.getObject(), Kind::stringVector) &&
+        if ((elements || hasKind(read.getObject(), Kind::stringVector)) &&
             increasingIndices.contains(read.getKey())) {
             bool guarded = false;
             for (mlir::Operation * parent = read->getParentOp(); parent != function;
                  parent = parent->getParentOp()) {
                 if (!spend()) { return false; }
-                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
-                if (!branch || !branch.getThenRegion().isAncestor(read->getParentRegion())) {
-                    continue;
+                mlir::Value flag, index = read.getKey();
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
+                    branch && branch.getThenRegion().isAncestor(read->getParentRegion())) {
+                    flag = branch.getCondition();
+                } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
+                           loop && loop.getAfter().isAncestor(read->getParentRegion())) {
+                    auto argument = llvm::dyn_cast<mlir::BlockArgument>(index);
+                    if (!argument || argument.getOwner() != &loop.getAfter().front()) { continue; }
+                    auto condition =
+                        llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
+                    flag = condition.getCondition();
+                    index = condition.getArgs()[argument.getArgNumber()];
                 }
-                auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                auto truth = flag ? flag.getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
                 auto compare =
                     truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
                 auto length = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>()
                                       : ctjs::GetPropertyOp{};
                 guarded |= compare && compare.getKind() == ctjs::CompareKind::Lt &&
-                           compare.getLhs() == read.getKey() && length &&
+                           compare.getLhs() == index && length &&
                            length.getObject() == read.getObject() &&
-                           llvm::is_contained(provedStringVectorLengths, length);
+                           (elements ? provedElementVectorLengths.contains(length)
+                                     : llvm::is_contained(provedStringVectorLengths, length));
             }
             if (guarded) {
                 if (!spend()) { return false; }
@@ -99,9 +115,14 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     if (!spend()) { return false; }
                     keyOrigins.try_emplace(read.getResult(), origin->second);
                 }
-                values[read.getResult()] = Kind::string;
-                provedStringVectorIndices.push_back(read);
-                provedStrings.push_back(read.getResult());
+                if (elements) {
+                    values[read.getResult()] = Kind::element;
+                    provedElementVectorIndices.insert(read);
+                } else {
+                    values[read.getResult()] = Kind::string;
+                    provedStringVectorIndices.push_back(read);
+                    provedStrings.push_back(read.getResult());
+                }
                 return true;
             }
         }
@@ -172,7 +193,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         // Bound hashing by the longest supported member, as literal comparisons
         // did before the name tables. Unknown long keys must not bypass the work budget.
-        if (hasKind(read.getObject(), Kind::element) && key.size() <= 15) {
+        if (hasKind(read.getObject(), Kind::element) && key.size() <= 16) {
             if (auto method = elementMethods.find(key); method != elementMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
                 values[read.getResult()] = kind;
@@ -397,13 +418,19 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         const bool matches = hasKind(invoke.getCallee(), Kind::matches);
         const bool closest = hasKind(invoke.getCallee(), Kind::closest);
         const bool query = hasKind(invoke.getCallee(), Kind::querySelector);
+        const bool queryAll = hasKind(invoke.getCallee(), Kind::querySelectorAll);
         if (arguments.size() == 1 &&
             ((contains && hasKind(arguments[0], Kind::element)) ||
-             ((matches || closest || query) && hasKind(arguments[0], Kind::string)))) {
+             ((matches || closest || query || queryAll) && hasKind(arguments[0], Kind::string)))) {
             const auto hostMethod =
                 elementMethods.find(ctjs::constantKey(method.getKey()))->second.second;
             provedCalls.push_back({invoke, hostMethod, invoke.getReceiver()});
-            values[invoke.getResult()] = closest || query ? Kind::nullableElement : Kind::boolean;
+            if (queryAll) {
+                values[invoke.getResult()] = Kind::elementVector;
+            } else {
+                values[invoke.getResult()] =
+                    closest || query ? Kind::nullableElement : Kind::boolean;
+            }
             return true;
         }
         const bool containsClass = hasKind(invoke.getCallee(), Kind::containsClass);

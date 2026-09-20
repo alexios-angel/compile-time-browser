@@ -148,6 +148,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     using Kind = dom_entry_detail::Kind;
     std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
         provedStringVectorIndices;
+    llvm::DenseSet<ctjs::GetPropertyOp> provedElementVectorLengths, provedElementVectorIndices;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
         provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
@@ -279,6 +280,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        provedDatasets,
                                        provedStringVectorLengths,
                                        provedStringVectorIndices,
+                                       provedElementVectorLengths,
+                                       provedElementVectorIndices,
                                        provedDatasetValues,
                                        provedNumberIntrinsics,
                                        provedURIIntrinsics,
@@ -393,6 +396,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     datasets = std::move(provedDatasets);
     stringVectorLengths = std::move(provedStringVectorLengths);
     stringVectorIndices = std::move(provedStringVectorIndices);
+    elementVectorLengths = std::move(provedElementVectorLengths);
+    elementVectorIndices = std::move(provedElementVectorIndices);
     datasetValues = std::move(provedDatasetValues);
     stringPrefixRegExps = std::move(provedPrefixRegExps);
     datasetElements = std::move(provedDatasetElements);
@@ -424,7 +429,9 @@ bool DOMEntryAnalysis::isCallbackParameter(mlir::Value value) const {
 }
 
 bool DOMEntryAnalysis::isElement(mlir::Value value) const {
-    return llvm::is_contained(elements, value);
+    if (!value) { return false; }
+    auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
+    return llvm::is_contained(elements, value) || (read && isElementVectorIndex(read));
 }
 
 bool DOMEntryAnalysis::isElementIdentity(mlir::Value value) const {
@@ -453,6 +460,14 @@ bool DOMEntryAnalysis::isStringVectorLength(ctjs::GetPropertyOp read) const {
 
 bool DOMEntryAnalysis::isStringVectorIndex(ctjs::GetPropertyOp read) const {
     return llvm::is_contained(stringVectorIndices, read);
+}
+
+bool DOMEntryAnalysis::isElementVectorLength(ctjs::GetPropertyOp read) const {
+    return elementVectorLengths.contains(read);
+}
+
+bool DOMEntryAnalysis::isElementVectorIndex(ctjs::GetPropertyOp read) const {
+    return elementVectorIndices.contains(read);
 }
 
 mlir::Value DOMEntryAnalysis::datasetValueElement(ctjs::GetPropertyOp read) const {

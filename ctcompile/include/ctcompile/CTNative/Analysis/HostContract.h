@@ -6,6 +6,7 @@
 #include "mlir/Support/TypeID.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
 
 #include <optional>
@@ -114,6 +115,7 @@ enum class HostDOMMethod {
     matches,
     closest,
     querySelector,
+    querySelectorAll,
     number,
     numberToString,
     decodeURIComponent,
@@ -141,6 +143,9 @@ struct HostDOMCall {
     [[nodiscard]] bool returnsStringVector() const {
         return kind == HostDOMMethod::datasetKeys || kind == HostDOMMethod::filterStrings;
     }
+    [[nodiscard]] bool returnsElementVector() const {
+        return kind == HostDOMMethod::querySelectorAll;
+    }
     [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
     // An owning ctbrowser::json_value tree, from the shared public Core parser.
     [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
@@ -153,11 +158,12 @@ struct HostDOMCall {
     [[nodiscard]] bool returnsBoolean() const {
         return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
                !returnsString() && !returnsJSON() && !returnsStringVector() &&
-               kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute &&
-               kind != HostDOMMethod::addClass && kind != HostDOMMethod::removeClass;
+               !returnsElementVector() && kind != HostDOMMethod::setAttribute &&
+               kind != HostDOMMethod::removeAttribute && kind != HostDOMMethod::addClass &&
+               kind != HostDOMMethod::removeClass;
     }
     [[nodiscard]] bool usesStyle() const {
-        return kind == HostDOMMethod::matches || returnsElement();
+        return kind == HostDOMMethod::matches || returnsElement() || returnsElementVector();
     }
 };
 
@@ -201,6 +207,8 @@ public:
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] bool isElementVectorLength(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] bool isElementVectorIndex(ctjs::GetPropertyOp read) const;
     // Present own member from this element's immutable, uninvalidated key snapshot.
     [[nodiscard]] mlir::Value datasetValueElement(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringPrefixRegExp(ctjs::CallOp call) const;
@@ -244,6 +252,7 @@ private:
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;
+    llvm::DenseSet<ctjs::GetPropertyOp> elementVectorLengths, elementVectorIndices;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> datasetValues;
     std::vector<ctjs::CallOp> stringPrefixRegExps;
     std::vector<mlir::BlockArgument> datasetElements;

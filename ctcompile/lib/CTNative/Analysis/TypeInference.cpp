@@ -409,6 +409,12 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     mlir::MLIRContext * c = op->getContext();
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && domEntry_ && domEntry_->isElementVectorIndex(read)) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{DOMElementType::get(c)}));
+        return mlir::success();
+    }
+
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ &&
         (domEntry_->isStringVectorIndex(read) || domEntry_->datasetValueElement(read))) {
         propagateIfChanged(results[0],
@@ -417,7 +423,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && domEntry_->isStringVectorLength(read)) {
+        read && domEntry_ &&
+        (domEntry_->isStringVectorLength(read) || domEntry_->isElementVectorLength(read))) {
         propagateIfChanged(results[0], results[0]->join(TypeValue{doubleType(c)}));
         return mlir::success();
     }
@@ -438,9 +445,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 : edge->returnsElement() ? mlir::Type(DOMElementType::get(c))
                 : edge->returnsStringVector()
                     ? mlir::Type(VecType::get(c, StrType::get(c, StrEncoding::UTF8)))
-                : edge->returnsJSON()    ? mlir::Type(JsonType::get(c))
-                : edge->returnsBoolean() ? boolType(c)
-                                         : absentType(c);
+                : edge->returnsElementVector() ? mlir::Type(VecType::get(c, DOMElementType::get(c)))
+                : edge->returnsJSON()          ? mlir::Type(JsonType::get(c))
+                : edge->returnsBoolean()       ? boolType(c)
+                                               : absentType(c);
             propagateIfChanged(results[0], results[0]->join(TypeValue{type}));
             return mlir::success();
         }

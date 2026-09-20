@@ -58,7 +58,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             call != domCalls.end() && !call->second.returnsBoolean() &&
             !call->second.returnsElement() && !call->second.returnsNumber() &&
             !call->second.returnsString() && !call->second.returnsJSON() &&
-            !call->second.returnsStringVector()) {
+            !call->second.returnsStringVector() && !call->second.returnsElementVector()) {
             // The effect is emitted as a void call. Any live JavaScript
             // undefined consumer is replaced separately during emission.
             v.setType(mlir::Float64Type::get(context));

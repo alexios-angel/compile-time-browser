@@ -13,8 +13,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         auto & after = loop.getAfter().front();
         auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(before.getTerminator());
         auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(after.getTerminator());
-        if (!condition || !yield || !llvm::hasSingleElement(after) ||
-            before.getNumArguments() != loop.getInits().size() ||
+        if (!condition || !yield || before.getNumArguments() != loop.getInits().size() ||
             after.getNumArguments() != loop.getNumResults() ||
             yield.getNumOperands() != loop.getInits().size() ||
             condition.getArgs().size() != loop.getNumResults()) {
@@ -32,11 +31,30 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             auto constant = initial.getDefiningOp<ctjs::ConstantOp>();
             auto zero = constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue())
                                  : ctjs::NumberAttr{};
-            auto forwarded =
-                llvm::dyn_cast<mlir::BlockArgument>(yield.getOperand(argument.getArgNumber()));
-            if (!zero || zero.getDouble() != 0 || !forwarded || forwarded.getOwner() != &after) {
-                continue;
+            if (!zero || zero.getDouble() != 0) { continue; }
+            const auto increments = [](mlir::Value next, mlir::Value previous) {
+                auto add = next.getDefiningOp<ctjs::BinaryStaticOp>();
+                auto rhs =
+                    add ? add.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+                auto one =
+                    rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+                return add && add.getKind() == ctjs::BinaryKind::Add && add.getLhs() == previous &&
+                       one && one.getDouble() == 1;
+            };
+            const auto next = yield.getOperand(argument.getArgNumber());
+            // Ordinary for loops forward the tested index into the after body.
+            // Require its exact identity on both the condition and backedge.
+            if (auto add = next.getDefiningOp<ctjs::BinaryStaticOp>()) {
+                if (!spend()) { return false; }
+                auto index = llvm::dyn_cast<mlir::BlockArgument>(add.getLhs());
+                if (index && index.getOwner() == &after &&
+                    condition.getArgs()[index.getArgNumber()] == argument &&
+                    increments(next, index)) {
+                    increasingIndices.insert(index);
+                }
             }
+            auto forwarded = llvm::dyn_cast<mlir::BlockArgument>(next);
+            if (!forwarded || forwarded.getOwner() != &after) { continue; }
             const unsigned slot = forwarded.getArgNumber();
             // The normalizer returns the condition and its entire
             // continuation tuple together from each selected arm.
@@ -66,13 +84,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                                     : mlir::IntegerAttr{};
                 if (!bit || !bit.getType().isInteger(1)) { return false; }
                 if (!bit.getInt()) { return true; }
-                auto add = next.getDefiningOp<ctjs::BinaryStaticOp>();
-                auto rhs =
-                    add ? add.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-                auto one =
-                    rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
-                return add && add.getKind() == ctjs::BinaryKind::Add && add.getLhs() == argument &&
-                       one && one.getDouble() == 1;
+                return increments(next, argument);
             };
             if (advances(advances, condition.getCondition(), condition.getArgs()[slot], 0)) {
                 increasingIndices.insert(argument);
@@ -81,10 +93,6 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         }
         const unsigned loopEpoch = mutationEpoch;
         if (!visit(before, depth + 1, frame)) { return false; }
-        if (mutationEpoch != loopEpoch) {
-            refusal = "DOM loop mutation needs a backedge dataset-alias proof";
-            return false;
-        }
         for (auto [argument, result, value] :
              llvm::zip(after.getArguments(), loop.getResults(), condition.getArgs())) {
             if (!spend()) { return false; }
@@ -100,6 +108,12 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
         }
         if (!visit(after, depth + 1, frame)) { return false; }
+        // Supported attribute/class writes cannot reclaim nodes or change a
+        // querySelectorAll snapshot. Dataset aliases still need a backedge proof.
+        if (mutationEpoch != loopEpoch && !provedDatasetElements.empty()) {
+            refusal = "DOM loop mutation needs a backedge dataset-alias proof";
+            return false;
+        }
         for (auto [value, initial] : llvm::zip(yield.getOperands(), loop.getInits())) {
             if (!spend()) { return false; }
             if (values[value] != values[initial]) {

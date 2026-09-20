@@ -28,6 +28,7 @@ enum class Kind {
     objectIntrinsic,
     objectKeys,
     stringVector,
+    elementVector,
     filterStrings,
     callback,
     replacementCallback,
@@ -53,6 +54,7 @@ enum class Kind {
     matches,
     closest,
     querySelector,
+    querySelectorAll,
     numberIntrinsic,
     uriIntrinsic,
     jsonIntrinsic,
@@ -112,6 +114,8 @@ struct Body {
     std::vector<ctjs::GetPropertyOp> & provedDatasets;
     std::vector<ctjs::GetPropertyOp> & provedStringVectorLengths;
     std::vector<ctjs::GetPropertyOp> & provedStringVectorIndices;
+    llvm::DenseSet<ctjs::GetPropertyOp> & provedElementVectorLengths;
+    llvm::DenseSet<ctjs::GetPropertyOp> & provedElementVectorIndices;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> & provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> & provedNumberIntrinsics;
     std::vector<ctjs::LoadGlobalOp> & provedURIIntrinsics;

@@ -50,8 +50,11 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
         });
         function.walk([&](ctjs::GetPropertyOp read) {
-            if (entry.isStringVectorLength(read)) { vectorLengthReads.insert(read); }
+            if (entry.isStringVectorLength(read) || entry.isElementVectorLength(read)) {
+                vectorLengthReads.insert(read);
+            }
             if (entry.isStringVectorIndex(read)) { domStringVectorIndices.insert(read); }
+            if (entry.isElementVectorIndex(read)) { domElementVectorIndices.insert(read); }
             if (auto element = entry.datasetValueElement(read)) {
                 domDatasetValues.try_emplace(read, element);
             }
@@ -184,14 +187,17 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         read.erase();
         return true;
     }
-    if (domStringVectorIndices.contains(operation)) {
+    if (domStringVectorIndices.contains(operation) || domElementVectorIndices.contains(operation)) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
         auto index = ec::CastOp::create(at, where, ec::OpaqueType::get(context, "std::size_t"),
                                         read.getKey());
         auto value = ec::MemberCallOpaqueOp::create(
-            at, where, mlir::TypeRange{carrierType(context, carrier::string)}, read.getObject(),
+            at, where, mlir::TypeRange{read.getResult().getType()}, read.getObject(),
             at.getStringAttr("at"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
             mlir::ValueRange{index.getResult()});
+        if (domElementVectorIndices.contains(operation)) {
+            domStyles[value.getResult(0)] = domStyles.lookup(read.getObject());
+        }
         read.getResult().replaceAllUsesWith(value.getResult(0));
         read.erase();
         return true;
@@ -519,6 +525,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::matches: callee = "ctnative::matches"; break;
     case HostDOMMethod::closest: callee = "ctnative::closest"; break;
     case HostDOMMethod::querySelector: callee = "ctnative::query_selector"; break;
+    case HostDOMMethod::querySelectorAll: callee = "ctnative::query_selector_all"; break;
     case HostDOMMethod::number:
         callee = arguments.front().getType() == optionalString ? "ctnative::dom_number"
                                                                : "ctbrowser::string_to_number";
@@ -535,17 +542,19 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");
     }
     if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString() ||
-        edge.returnsNumber() || edge.returnsString() || edge.returnsStringVector()) {
+        edge.returnsNumber() || edge.returnsString() || edge.returnsStringVector() ||
+        edge.returnsElementVector()) {
         const mlir::Type type =
-            edge.returnsOptionalString() ? ec::OpaqueType::get(context, kDOMOptionalStringType)
-            : edge.returnsStringVector() ? ec::OpaqueType::get(context, kStringVectorType)
-            : edge.returnsElement()      ? carrierType(context, carrier::domElement)
-            : edge.returnsNumber()       ? at.getF64Type()
-            : edge.returnsString()       ? carrierType(context, carrier::string)
-                                         : at.getI1Type();
+            edge.returnsOptionalString()  ? ec::OpaqueType::get(context, kDOMOptionalStringType)
+            : edge.returnsStringVector()  ? ec::OpaqueType::get(context, kStringVectorType)
+            : edge.returnsElementVector() ? ec::OpaqueType::get(context, kDOMElementVectorType)
+            : edge.returnsElement()       ? carrierType(context, carrier::domElement)
+            : edge.returnsNumber()        ? at.getF64Type()
+            : edge.returnsString()        ? carrierType(context, carrier::string)
+                                          : at.getI1Type();
         auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
                                                 at.getStringAttr(callee), arguments);
-        if (edge.returnsElement()) {
+        if (edge.returnsElement() || edge.returnsElementVector()) {
             // Every chain begins with a parameter's selector call, which already
             // requires that parameter's engine in the native signature.
             domStyles[value.getResult(0)] = domStyles.lookup(arguments.front());

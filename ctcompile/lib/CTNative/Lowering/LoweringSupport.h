@@ -57,6 +57,7 @@ enum class carrier {
     objectIdentity,
     objectValue,
     domElement,
+    domElementVector,
     json,
     structure,
     vector,
@@ -69,6 +70,7 @@ inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_s
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 inline constexpr llvm::StringLiteral kDOMElementType = "ctbrowser::element_ref";
+inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrowser::element_ref>";
 // The lattice's json rung, carried by the shared Core parser's owning tree.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
 bool isScalarCarrier(carrier value);
