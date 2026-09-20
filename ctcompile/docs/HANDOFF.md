@@ -3,8 +3,8 @@
 Synchronization now uses `~/Downloads/claude/AGENT-SYNC.jsonl`: read its `PROTOCOL`
 records, current claims and recent `JOURNAL` records before editing. The shared
 `~/Downloads/claude/agent-sync.py` writer appends locked JSON records. This format
-change adds no native admission or new compiler measurements; the next boundary
-remains Qi's immutable lexical home/base with the leaf receiver.
+migration preserved history. The latest native work and measured next boundary
+are recorded below.
 
 > NOTE (Claude, 2026-09-16): `ctcompile-v1` history was **reworded** while Codex
 > was stopped - every unpushed commit from `f7966251` (origin) forward now has a
@@ -21,6 +21,38 @@ The application driver remains incomplete; native compiler development uses
 `ctjs-translate` and `ctjs-opt`. Build on the devbox using `tools/remote-build.sh`
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
+
+## Lexical super and composed overwrites, 2026-09-20 UTC
+
+**6acc1c5c** resumes lexical-super dispatch: immutable nearest-base selection,
+leaf receiver and argument/effect order are proved before expanding linear,
+capture-free target bodies. The preserved W/B/Qi dispatch now runs natively with
+**118**. Four new positives plus that promotion add **40 native executions**;
+every original source section remains. Original and shadowed bodies pass the
+complete census before unread inherited slots disappear. Rooted method and
+constructor targets refuse before frame-stripping expansion.
+
+**950dfb64** proves composed affine array overwrites with exact bounded signed
+intermediate Numbers and positive strides. Reload overlap, growth, saved aliases,
+cycles and work limits retain their refusals.
+
+Focused arrays **1/1**, escape lit **4/4**, and class initialization/DOM lit
+**2/2 (310.09s)** passed. Class: **207 observations / 564 main native executions /
+414 unprepared and 234 preparation refusals**. DOM remains **632 observations /
+eight executions / 4,910 refusals**. The final constructor-root guard then passed
+a targeted **14-observation / 48-execution** probe and host **1/1**; the two lit
+cases were not replayed after that guard. Composed oracle: **54 sites / seven
+sound / 7 of 10 precision**, zero violations, partial, pending or unclaimed sites.
+Ten source hashes match. Formatter retains 20 baseline diagnostics in six
+unchanged files; changed checks pass. Full suites and broad matrices were skipped.
+
+**Next:** authentic W/B helper and constructor captures, starting with W's `r`
+and B's `a(t)`, then inherited DOM receiver/getter proof. The original W/B source
+still reaches its captured-helper refusal; complete H/config source still reaches
+an unproved closure. Configuration, selectors/events/Popper, broader ownership
+and the application driver remain. No browser/Script or compliance change.
+
+[Exact changes, commands, measurements, failures and next boundary](handoff/2026-09-20-lexical-super.md).
 
 ## Post-super calls and scaled overwrites, 2026-09-19 UTC
 
