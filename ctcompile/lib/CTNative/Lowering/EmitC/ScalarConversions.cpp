@@ -99,9 +99,21 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else {
         llvm::report_fatal_error("native scalar boundary has incompatible proved carriers");
     }
-    return callWithConstValueOperands(b, where, mlir::TypeRange{target}, b.getStringAttr(helper),
-                                      mlir::ValueRange{value})
-        .getResult(0);
+    const bool toNumber = helper == "ctnative::to_number";
+    auto result =
+        callWithConstValueOperands(
+            b, where,
+            mlir::TypeRange{toNumber ? ec::OpaqueType::get(context, "ctnative::js_num") : target},
+            b.getStringAttr(helper), mlir::ValueRange{value})
+            .getResult(0);
+    if (toNumber) {
+        // Arithmetic and storage still consume binary64 during Number migration.
+        return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, result,
+                                              b.getStringAttr("value"), mlir::ArrayAttr{},
+                                              mlir::ArrayAttr{}, mlir::ValueRange{})
+            .getResult(0);
+    }
+    return result;
 }
 
 mlir::Type lowering::joinedReturnType(ctjs::FuncOp fn) const {

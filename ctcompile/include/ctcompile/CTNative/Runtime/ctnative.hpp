@@ -95,10 +95,10 @@ public:
     requires std::is_same_v<T, bool>
     explicit constexpr js_boolean_t(T boolean) : value(boolean) {}
     explicit constexpr operator bool() const { return value; }
-    constexpr double to_number() const { return value ? 1.0 : 0.0; }
+    constexpr js_num to_number() const { return js_num{value ? 1.0 : 0.0}; }
     friend constexpr bool operator==(js_boolean_t, js_boolean_t) = default;
 };
-inline constexpr double to_number(js_boolean_t value) {
+inline constexpr js_num to_number(js_boolean_t value) {
     return value.to_number();
 }
 
@@ -116,17 +116,20 @@ struct nullable_scalar {
     nullable_scalar(js_null_t) : tag(kind::null) {}
     nullable_scalar(double number) : tag(kind::number), value(number) {}
     nullable_scalar(js_num number) : nullable_scalar(number.value()) {}
-    nullable_scalar(js_boolean_t boolean) : tag(kind::boolean), value(boolean.to_number()) {}
+    nullable_scalar(js_boolean_t boolean)
+        : tag(kind::boolean), value(boolean.to_number().value()) {}
     nullable_scalar(bool boolean) : nullable_scalar(js_boolean_t{boolean}) {}
     static nullable_scalar null() { return js_null_t{}; }
 };
 inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;
 }
-inline double to_number(nullable_scalar value) {
-    if (value.tag == nullable_scalar::kind::undefined) { return NAN; }
-    if (value.tag == nullable_scalar::kind::null) { return 0.0; }
-    return value.value;
+inline js_num to_number(nullable_scalar value) {
+    if (value.tag == nullable_scalar::kind::undefined) {
+        return js_num{js_nan_t{}};
+    }
+    if (value.tag == nullable_scalar::kind::null) { return js_num{}; }
+    return js_num{value.value};
 }
 // Numeric global admission is a proof about the stored tag. Check it at the
 // observation boundary so a missing generated store cannot imitate a NaN.

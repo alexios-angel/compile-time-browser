@@ -21,7 +21,8 @@ bool vector(mlir::Type type) {
 }
 
 bool scalar(mlir::Type type) {
-    return llvm::isa<mlir::FloatType, mlir::IntegerType>(type) || opaque(type, kScalar);
+    return llvm::isa<mlir::FloatType, mlir::IntegerType>(type) || opaque(type, kScalar) ||
+           opaque(type, "ctnative::js_num");
 }
 
 bool ordinaryCall(ec::CallOpaqueOp call) {
@@ -55,6 +56,12 @@ bool readOnlyCall(ec::CallOpaqueOp call) {
 bool readOnly(mlir::Operation * op) {
     if (op->getNumRegions() || op->getNumSuccessors()) { return false; }
     if (auto call = llvm::dyn_cast<ec::CallOpaqueOp>(op)) { return readOnlyCall(call); }
+    if (auto call = llvm::dyn_cast<ec::MemberCallOpaqueOp>(op)) {
+        return call.getCallee() == "value" &&
+               opaque(call.getReceiver().getType(), "ctnative::js_num") &&
+               call.getArgOperands().empty() && !call.getArgs() && !call.getTemplateArgs() &&
+               call.getNumResults() == 1 && call.getResult(0).getType().isF64();
+    }
     if (auto constant = llvm::dyn_cast<ec::ConstantOp>(op)) {
         if (llvm::isa<mlir::FloatAttr, mlir::IntegerAttr>(constant.getValue())) { return true; }
         // An arbitrary opaque initializer is C++ code, not a pure constant.

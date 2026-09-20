@@ -332,6 +332,7 @@ def check_scalar_global_emission(args, ir, name):
             re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
         )
         values, actual, calls, binaries = {}, [], 0, 0
+        numbers = set()
         for line in entry[1].splitlines():
             assignment = re.search(r"\b(\w+)\s*=\s*(.*);$", line)
             result, expression = assignment.groups() if assignment else (None, "")
@@ -357,7 +358,16 @@ def check_scalar_global_emission(args, ir, name):
                 if expression != "g_host" and result not in observed:
                     actual.append(("load", expression[2:]))
             elif match := re.fullmatch(
-                r"ctnative::(?:to_number|to_nullable|to_nullable_string|string_text|scalar_truthy)\((\w+)\)",
+                r"ctnative::(?:to_number|global_number)\((\w+)\)",
+                expression,
+            ):
+                numbers.add(result)
+                values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(r"(\w+)\.value\(\)", expression):
+                if match[1] in numbers:
+                    values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(
+                r"ctnative::(?:to_nullable|to_nullable_string|string_text|scalar_truthy)\((\w+)\)",
                 expression,
             ):
                 values[result] = values.get(match[1], "unknown")

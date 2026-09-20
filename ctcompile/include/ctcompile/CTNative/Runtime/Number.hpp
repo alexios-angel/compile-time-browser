@@ -2,9 +2,13 @@
 
 #include <cmath>
 #include <compare>
+#include <limits>
 #include <type_traits>
 
 namespace ctnative {
+
+// An explicit construction token; NaN remains a JavaScript Number.
+struct js_nan_t {};
 
 // Other representations need proofs that preserve JavaScript Number semantics.
 template <class T>
@@ -14,6 +18,7 @@ class js_basic_num {
 
 public:
     constexpr js_basic_num() = default;
+    explicit constexpr js_basic_num(js_nan_t) : number(std::numeric_limits<T>::quiet_NaN()) {}
     template <class U>
     requires std::is_same_v<U, T>
     explicit constexpr js_basic_num(U value) : number(value) {}

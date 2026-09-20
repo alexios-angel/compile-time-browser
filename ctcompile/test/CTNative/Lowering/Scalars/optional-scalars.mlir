@@ -21,6 +21,9 @@
 // NATIVE-DAG: emitc.func @retainedData_{{[0-9]+}}() -> f64
 // NATIVE-DAG: #emitc.opaque<"ctnative::nullable_scalar{ctnative::js_null_t{}}">
 // NATIVE-DAG: #emitc.opaque<"ctnative::nullable_scalar{ctnative::undefined_t{}}">
+// Numeric coercion yields a Number value before unwrapping for legacy arithmetic.
+// NATIVE-DAG: [[NUMBER:%[^ ]+]] = call_opaque "ctnative::to_number"{{.*}} -> !emitc.opaque<"ctnative::js_num">
+// NATIVE-DAG: member_call_opaque [[NUMBER]] "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
 
 // STRING: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
 // STRING: call_opaque "ctnative::to_nullable_string"

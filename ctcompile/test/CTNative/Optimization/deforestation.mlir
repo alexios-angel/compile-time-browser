@@ -14,6 +14,7 @@
 // RUN: ctjs-opt --ctnative-deforest %t/producer-conflict.mlir | FileCheck %s --check-prefix=PRODUCERS
 // RUN: ctjs-opt --ctnative-deforest %t/before-assignment.mlir | FileCheck %s --check-prefix=BEFORE
 // RUN: ctjs-opt --ctnative-deforest %t/unknown-runtime.mlir | FileCheck %s --check-prefix=ABI
+// RUN: ctjs-opt --ctnative-deforest %t/number-coercion.mlir | FileCheck %s --check-prefix=NUMBER
 
 // REPORT: deforestation: 9 snapshot site(s) eliminated, 6 retained with identity strategy
 // REPEAT: deforestation: 0 snapshot site(s) eliminated, 6 retained with identity strategy
@@ -64,6 +65,18 @@
 // ABI: call_opaque "ctnative::map_values"
 // ABI-SAME: ctnative.deforest_reason = "native Map runtime contract is not present"
 // ABI-NOT: ctnative.deforested
+
+// NUMBER-LABEL: emitc.func @number_index
+// NUMBER-NOT: call_opaque "ctnative::map_values"
+// NUMBER: call_opaque "ctnative::to_number"
+// NUMBER: member_call_opaque {{.*}} "value"()
+// NUMBER: call_opaque "ctnative::map_snapshot_at<false>"
+// NUMBER-LABEL: emitc.func @unknown_receiver
+// NUMBER: call_opaque "ctnative::map_values"
+// NUMBER-SAME: ctnative.deforest_reason = "snapshot observation crosses an effect or control barrier"
+// NUMBER-LABEL: emitc.func @unknown_method
+// NUMBER: call_opaque "ctnative::map_values"
+// NUMBER-SAME: ctnative.deforest_reason = "snapshot observation crosses an effect or control barrier"
 
 //--- escape.mlir
 // A returned vector is a consumer whose eventual uses are unknown.
@@ -116,4 +129,27 @@ emitc.func @old_slot(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<d
   %size = emitc.call_opaque "ctnative::vec_length"(%slot) : (!emitc.lvalue<!emitc.opaque<"std::vector<double>">>) -> f64
   emitc.assign %snapshot : !emitc.opaque<"std::vector<double>"> to %slot : <!emitc.opaque<"std::vector<double>">>
   emitc.return %size : f64
+}
+
+//--- number-coercion.mlir
+emitc.verbatim "#define CTNATIVE_ORDERED_MAPS 1"
+emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
+emitc.func @number_index(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">, %value: !emitc.opaque<"ctnative::nullable_scalar">) -> !emitc.opaque<"ctnative::nullable_scalar"> {
+  %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
+  %number = emitc.call_opaque "ctnative::to_number"(%value) : (!emitc.opaque<"ctnative::nullable_scalar">) -> !emitc.opaque<"ctnative::js_num">
+  %index = emitc.member_call_opaque %number "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
+  %result = emitc.call_opaque "ctnative::vec_at"(%snapshot, %index) : (!emitc.opaque<"std::vector<double>">, f64) -> !emitc.opaque<"ctnative::nullable_scalar">
+  emitc.return %result : !emitc.opaque<"ctnative::nullable_scalar">
+}
+emitc.func @unknown_receiver(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">, %unknown: !emitc.opaque<"Unknown">) -> !emitc.opaque<"ctnative::nullable_scalar"> {
+  %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
+  %index = emitc.member_call_opaque %unknown "value"() : !emitc.opaque<"Unknown">, () -> f64
+  %result = emitc.call_opaque "ctnative::vec_at"(%snapshot, %index) : (!emitc.opaque<"std::vector<double>">, f64) -> !emitc.opaque<"ctnative::nullable_scalar">
+  emitc.return %result : !emitc.opaque<"ctnative::nullable_scalar">
+}
+emitc.func @unknown_method(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">, %number: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::nullable_scalar"> {
+  %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
+  %index = emitc.member_call_opaque %number "other"() : !emitc.opaque<"ctnative::js_num">, () -> f64
+  %result = emitc.call_opaque "ctnative::vec_at"(%snapshot, %index) : (!emitc.opaque<"std::vector<double>">, f64) -> !emitc.opaque<"ctnative::nullable_scalar">
+  emitc.return %result : !emitc.opaque<"ctnative::nullable_scalar">
 }

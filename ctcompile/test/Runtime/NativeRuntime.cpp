@@ -41,12 +41,15 @@ int main() {
     static_assert(!std::is_constructible_v<ctnative::js_num, bool>);
     static_assert(!std::is_constructible_v<ctnative::js_num, int>);
     static_assert(!std::is_constructible_v<ctnative::js_num, const char *>);
+    static_assert(std::is_constructible_v<ctnative::js_num, js_nan_t>);
+    static_assert(!std::is_convertible_v<js_nan_t, ctnative::js_num>);
     static_assert(std::is_same_v<decltype(global_number(nullable_scalar{})), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(to_number(nullable_scalar{})), ctnative::js_num>);
     constexpr ctnative::js_num zero{}, one{1.0}, two{2.0}, negativeZero{-0.0};
     static_assert((one + two).value() == 3.0 && (one - two).value() == -1.0);
     static_assert((two * two).value() == 4.0 && (one / two).value() == 0.5);
     static_assert((-one).value() == -1.0 && static_cast<double>(+two) == 2.0);
-    const ctnative::js_num notANumber{std::numeric_limits<double>::quiet_NaN()};
+    constexpr ctnative::js_num notANumber{js_nan_t{}};
     CHECK(!zero && !negativeZero && !notANumber && one);
     CHECK(zero == negativeZero && !std::signbit(zero.value()));
     CHECK(std::signbit(negativeZero.value()) && std::signbit((-zero).value()));
@@ -55,6 +58,8 @@ int main() {
     CHECK(std::isinf((one / zero).value()) && std::isnan((zero / zero).value()));
     CHECK(std::signbit((one / negativeZero).value()));
     CHECK(std::signbit(global_number(to_nullable(negativeZero)).value()));
+    CHECK(std::signbit(to_number(to_nullable(negativeZero)).value()));
+    CHECK(!std::signbit(to_number(to_nullable(zero)).value()));
     CHECK(std::isnan(global_number(object_value{notANumber}).value()));
     CHECK(global_number(object_value{two}) == two);
     CHECK(!scalar_strict_equal(to_nullable(one), nullable_scalar{true}));
@@ -68,9 +73,12 @@ int main() {
     static_assert(!std::is_constructible_v<js_boolean_t, const char *>);
     static_assert(std::is_same_v<decltype(js_boolean_t{} == js_boolean_t{}), bool>);
     constexpr js_boolean_t enabled{true}, disabled{false};
-    static_assert(enabled.to_number() == 1.0 && to_number(disabled) == 0.0);
+    static_assert(std::is_same_v<decltype(enabled.to_number()), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(to_number(disabled)), ctnative::js_num>);
+    static_assert(enabled.to_number().value() == 1.0 && to_number(disabled).value() == 0.0);
     CHECK(enabled && !disabled && enabled != disabled);
-    CHECK(!std::signbit(to_number(disabled)));
+    CHECK(!std::signbit(to_number(disabled).value()));
+    CHECK(to_number(to_nullable(enabled)) == one && to_number(to_nullable(disabled)) == zero);
     CHECK(global_boolean(to_nullable(enabled)) == enabled);
     CHECK(to_nullable(disabled).tag == nullable_scalar::kind::boolean);
     CHECK(scalar_equal(enabled, 1.0) && !scalar_strict_equal(enabled, 1.0));
@@ -163,7 +171,7 @@ int main() {
     scalarMap(make_number_map<nullable_scalar>());
     scalarMap(std::make_shared<std::map<nullable_scalar, double, map_key_less<nullable_scalar>>>());
 
-    const nullable_scalar undefined{undefined_t{}}, null{js_null_t{}}, nan{NAN};
+    const nullable_scalar undefined{undefined_t{}}, null{js_null_t{}}, nan{notANumber};
     CHECK(undefined.tag == nullable_scalar::kind::undefined);
     CHECK(null.tag == nullable_scalar::kind::null);
     CHECK(nan.tag == nullable_scalar::kind::number && std::isnan(nan.value));
@@ -172,9 +180,11 @@ int main() {
     CHECK(scalar_equal(null, undefined));
     CHECK(!scalar_strict_equal(null, undefined));
     CHECK(!scalar_equal(nan, undefined) && !scalar_equal(nan, null));
-    CHECK(std::isnan(to_number(undefined)) && to_number(null) == 0.0);
+    CHECK(std::isnan(to_number(undefined).value()) && to_number(null) == zero);
+    CHECK(!std::signbit(to_number(null).value()) && std::isnan(to_number(nan).value()));
     CHECK(!scalar_truthy(undefined) && !scalar_truthy(null));
     CHECK(scalar_typeof(null) == "object" && scalar_typeof(undefined) == "undefined");
+    CHECK(scalar_typeof(nan) == "number");
     CHECK(string_equal(nullable_scalar::null(), nullable_string{}));
     CHECK(!string_truthy(nullable_string{std::string()}));
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

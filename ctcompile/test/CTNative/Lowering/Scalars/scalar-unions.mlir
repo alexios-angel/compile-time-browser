@@ -18,6 +18,8 @@
 // NATIVE-DAG: emitc.func @arithmetic_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::nullable_scalar">{{.*}}) -> f64
 // NATIVE-DAG: emitc.func @retainedData_{{[0-9]+}}() -> f64
 // NATIVE-DAG: emitc.field @value : !emitc.opaque<"ctnative::nullable_scalar">
+// NATIVE-DAG: [[NUMBER:%[^ ]+]] = call_opaque "ctnative::to_number"{{.*}} -> !emitc.opaque<"ctnative::js_num">
+// NATIVE-DAG: member_call_opaque [[NUMBER]] "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
 
 // GLOBAL-NOT: ctnative.not_native
 // GLOBAL: emitc.func @main
