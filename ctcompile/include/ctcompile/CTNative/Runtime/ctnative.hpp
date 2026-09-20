@@ -124,7 +124,9 @@ inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;
 }
 inline js_num to_number(nullable_scalar value) {
-    if (value.tag == nullable_scalar::kind::undefined) { return js_num{js_nan_t{}}; }
+    if (value.tag == nullable_scalar::kind::undefined) {
+        return js_num{js_nan_t{}};
+    }
     if (value.tag == nullable_scalar::kind::null) { return js_num{}; }
     return js_num{value.value};
 }

@@ -35,16 +35,16 @@ int main() {
     auto getter = table->m_get;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(getter), std::function<std::string(GETTER_PARAMETERS)>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(std::string)>>);
-    auto read = [&]([[maybe_unused]] bool other) { return getter(GETTER_ARGUMENT); };
+    static_assert(std::is_same_v<decltype(getter), std::function<ctnative::js_string(GETTER_PARAMETERS)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(ctnative::js_string)>>);
+    auto read = [&]([[maybe_unused]] bool other) { return getter(GETTER_ARGUMENT).value(); };
     auto saved = read(false);
     auto saved_other = read(true);
-    if (saved != expected || saved_other != other_expected || setter(saved).value() != INITIAL_SIZE ||
-        setter(saved_other).value() != INITIAL_SIZE) { return 91; }
+    if (saved != expected || saved_other != other_expected || setter(ctnative::js_string{saved}).value() != INITIAL_SIZE ||
+        setter(ctnative::js_string{saved_other}).value() != INITIAL_SIZE) { return 91; }
     saved.assign(expected.size(), 'x');
     saved_other.assign(other_expected.size(), 'x');
-    if (setter(expected).value() != INITIAL_SIZE || setter(other_expected).value() != INITIAL_SIZE) { return 92; }
+    if (setter(ctnative::js_string{expected}).value() != INITIAL_SIZE || setter(ctnative::js_string{other_expected}).value() != INITIAL_SIZE) { return 92; }
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset();
@@ -56,7 +56,7 @@ int main() {
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 94; }
     for (int index = 0; index < 128; ++index) {
         if (read(false) != expected || read(true) != other_expected ||
-            setter("saved-" + std::to_string(index)).value() != index + INITIAL_SIZE + 1 ||
+            setter(ctnative::js_string{"saved-" + std::to_string(index)}).value() != index + INITIAL_SIZE + 1 ||
             size().value() != index + INITIAL_SIZE + 1 || g_host->slot->m_size().value() != INITIAL_SIZE) {
             return 95;
         }
@@ -73,8 +73,8 @@ int main() {
         churn.emplace_back(expected.size(), 'q');
     }
     if (survivor != expected || other_survivor != other_expected ||
-        g_host->slot->m_get(FRESH_FIRST_ARGUMENT) != expected ||
-        g_host->slot->m_get(FRESH_OTHER_ARGUMENT) != other_expected) { return 98; }
+        g_host->slot->m_get(FRESH_FIRST_ARGUMENT).value() != expected ||
+        g_host->slot->m_get(FRESH_OTHER_ARGUMENT).value() != other_expected) { return 98; }
     g_host.reset();
     if (!ctn_test_maps[1].expired() || survivor != expected || other_survivor != other_expected) {
         return 99;

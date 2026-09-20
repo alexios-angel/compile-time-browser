@@ -320,10 +320,12 @@ int main() {
             : result.tag == Result::kind::number && result.value == value;
     };""",
             )
-            .replace("std::function<ctnative::js_num()>", "std::function<Result(std::string)>")
+            .replace(
+                "std::function<ctnative::js_num()>", "std::function<Result(ctnative::js_string)>"
+            )
             .replace(
                 "std::function<ctnative::js_num(ctnative::js_num)>",
-                "std::function<ctnative::js_num(ctnative::js_num, std::string)>",
+                "std::function<ctnative::js_num(ctnative::js_num, ctnative::js_string)>",
             )
             .replace(
                 "set(value) != value || get() != value",
@@ -383,6 +385,15 @@ int main() {
     if numeric_get:
         observer = observer.replace("get()", "get().value()")
     observer = re.sub(r'\bremove\((spelling|"[^"\n]*")\)', r"remove(\1).value()", observer)
+    if row["dynamic"]:
+        observer = re.sub(
+            r'\b(get|remove)\((spelling|"[^"\n]*")\)', r"\1(ctnative::js_string{\2})", observer
+        )
+        observer = re.sub(
+            r'\bset\((ctnative::js_num\{[^}]*\}), (key|"[^"\n]*")\)',
+            r"set(\1, ctnative::js_string{\2})",
+            observer,
+        )
     changed = generated + separator + observer
     return (
         changed.replace("CHILDREN", str(row["children"]))
@@ -784,7 +795,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
         for mode, native in (("explicit", default), ("deduced", deduced)):
             cpp = host.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
             signature = (
-                "std::function<ctnative::js_num(ctnative::js_num, std::string)>"
+                "std::function<ctnative::js_num(ctnative::js_num, ctnative::js_string)>"
                 if row["dynamic"]
                 else (
                     "std::function<ctnative::js_num(ctnative::object_value)>"

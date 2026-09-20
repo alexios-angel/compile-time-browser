@@ -62,8 +62,8 @@ def standalone(args, output, name, value, compilers, nm):
             params = {
                 "shared_parameter_number": "ctnative::js_num",
                 "shared_parameter_bool": "ctnative::js_boolean_t",
-                "shared_two_parameters": "std::string, ctnative::js_num",
-            }.get(name, "std::string")
+                "shared_two_parameters": "ctnative::js_string, ctnative::js_num",
+            }.get(name, "ctnative::js_string")
             if f"std::function<ctnative::js_num({params})>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: missing typed setter arguments\n{cpp}")
         if name in leaf_object_sources():
@@ -92,7 +92,11 @@ def standalone(args, output, name, value, compilers, nm):
             check_numeric_entry_calls(cpp, name, mode)
         if name in RESULT_SIGNATURES:
             result, params = (
-                spelling.replace("js_num", "ctnative::js_num")
+                (
+                    "ctnative::js_string"
+                    if spelling == "std::string"
+                    else spelling.replace("js_num", "ctnative::js_num")
+                )
                 for spelling in RESULT_SIGNATURES[name][:2]
             )
             getter_params = (

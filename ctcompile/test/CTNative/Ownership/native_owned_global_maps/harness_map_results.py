@@ -588,24 +588,27 @@ int main() {
         changed = changed.replace(
             "CHECK_SIGNATURE",
             """
-    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(std::string)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(ctnative::js_string)>>);
     static_assert(!std::is_invocable_v<decltype(setter)>);
     static_assert(!std::is_invocable_v<decltype(setter), int>);
     static_assert(!std::is_invocable_v<decltype(setter), std::string, int>);
 """,
         )
         changed = changed.replace("BEFORE_FIRST", "std::string saved_key(96, 's');")
-        changed = changed.replace("SAVED_FIRST", "setter(saved_key).value()")
+        changed = changed.replace("SAVED_FIRST", "setter(ctnative::js_string{saved_key}).value()")
         changed = changed.replace(
             "AFTER_FIRST",
             """
     saved_key.assign(96, 't');
-    if (setter(std::string(96, 's')).value() != 2 || getter().value() != 2) { return 100; }
+    if (setter(ctnative::js_string{std::string(96, 's')}).value() != 2 || getter().value() != 2) { return 100; }
 """,
         )
-        changed = changed.replace("SAVED_NEXT", 'setter("saved-" + std::to_string(index)).value()')
         changed = changed.replace(
-            "FRESH_NEXT", 'g_host->slot->m_set("fresh-" + std::to_string(index)).value()'
+            "SAVED_NEXT", 'setter(ctnative::js_string{"saved-" + std::to_string(index)}).value()'
+        )
+        changed = changed.replace(
+            "FRESH_NEXT",
+            'g_host->slot->m_set(ctnative::js_string{"fresh-" + std::to_string(index)}).value()',
         )
     else:
         for marker in ("CHECK_SIGNATURE", "BEFORE_FIRST", "AFTER_FIRST"):

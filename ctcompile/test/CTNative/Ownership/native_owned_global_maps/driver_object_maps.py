@@ -697,7 +697,7 @@ def check_leaf_readback_carriers(args, positives, node, reference, controls, com
             entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
             if (
                 "ctnative.host_owner_proved = true" not in text
-                or "std::function<ctnative::nullable_scalar(std::string)>" not in cpp
+                or "std::function<ctnative::nullable_scalar(ctnative::js_string)>" not in cpp
                 or not entry
                 or entry[1].count("ctnative::invoke_callable(") != 2
             ):

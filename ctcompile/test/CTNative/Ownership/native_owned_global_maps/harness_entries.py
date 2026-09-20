@@ -80,7 +80,7 @@ int main() {
     for (int call = 0; call < 128; ++call) {
         auto caller = original;
         const auto before = ctn_test_objects.size();
-        if (setter(caller CTN_FLAG).value() != 1 || size().value() != (reseeded ? 2 : 0) ||
+        if (setter(ctnative::js_string{caller} CTN_FLAG).value() != 1 || size().value() != (reseeded ? 2 : 0) ||
             ctn_test_objects.size() != before + 1) { return 142; }
         caller.assign(original.size(), 'q');
         for (std::size_t index = 1; index < before; ++index) {
@@ -114,7 +114,10 @@ int main() {
 """
     return (
         changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
-        .replace("CTN_PARAMS", "std::string" if reseeded else "std::string, ctnative::js_boolean_t")
+        .replace(
+            "CTN_PARAMS",
+            "ctnative::js_string" if reseeded else "ctnative::js_string, ctnative::js_boolean_t",
+        )
         .replace("CTN_FLAG", "" if reseeded else ", ctnative::js_boolean_t{call % 2 != 0}")
     )
 
@@ -159,9 +162,13 @@ def leaf_absence_lifetime(args, cpp, name, mode, compiler):
 def check_leaf_absence_calls(cpp, name, mode):
     source = {**leaf_absence_sources(), **leaf_clear_sources()}[name][0]
     params = (
-        "std::string, ctnative::js_boolean_t"
+        "ctnative::js_string, ctnative::js_boolean_t"
         if "set(key, flag)" in source
-        else "std::string, std::string" if "set(key, other)" in source else "std::string"
+        else (
+            "ctnative::js_string, ctnative::js_string"
+            if "set(key, other)" in source
+            else "ctnative::js_string"
+        )
     )
     if f"std::function<ctnative::js_num({params})>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: absence changed the numeric published ABI")
@@ -325,7 +332,7 @@ int main() {
         auto caller = original;
         if (call % 2) { caller += 'r'; }
         const auto before = ctn_test_objects.size();
-        if (setter(caller CTN_FLAG).value() != 1 || size().value() != (reseeded ? 1 : 0) ||
+        if (setter(ctnative::js_string{caller} CTN_FLAG).value() != 1 || size().value() != (reseeded ? 1 : 0) ||
             ctn_test_objects.size() != before + 1) { return 162; }
         caller.assign(original.size(), 'q');
         for (std::size_t index = 0; index < before; ++index) {
@@ -363,7 +370,10 @@ int main() {
 """
     return (
         changed.replace("CTN_RESEEDED", "true" if reseeded else "false")
-        .replace("CTN_PARAMS", "std::string, ctnative::js_boolean_t" if branch else "std::string")
+        .replace(
+            "CTN_PARAMS",
+            "ctnative::js_string, ctnative::js_boolean_t" if branch else "ctnative::js_string",
+        )
         .replace("CTN_FLAG", ", ctnative::js_boolean_t{call % 2 != 0}" if branch else "")
     )
 
@@ -387,10 +397,10 @@ def check_numeric_entry_calls(cpp, name, mode):
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
     params = (
-        "std::string, ctnative::js_num, ctnative::js_boolean_t"
+        "ctnative::js_string, ctnative::js_num, ctnative::js_boolean_t"
         if "set(key, value, flag)" in source
         else (
-            "std::string, ctnative::js_num"
+            "ctnative::js_string, ctnative::js_num"
             if "set(key, value)" in source
             else (
                 "ctnative::js_num"
@@ -403,7 +413,7 @@ def check_numeric_entry_calls(cpp, name, mode):
                     "local_clear_zero_size_key",
                     "scalar_result_key",
                 }
-                else "std::string"
+                else "ctnative::js_string"
             )
         )
     )
@@ -547,7 +557,7 @@ int main() {
         if (call % 2) { caller += 'r'; }
         const auto before = ctn_test_objects.size();
         const js_num value = static_cast<js_num>(call - 64) / 4;
-        saved.push_back(setter(caller, ctnative::js_num{value} CTN_FLAG).value());
+        saved.push_back(setter(ctnative::js_string{caller}, ctnative::js_num{value} CTN_FLAG).value());
         caller.assign(original.size(), 'q');
         if (saved.back() != value || size().value() != 0 || ctn_test_objects.size() != before + 1) {
             return 183;
@@ -773,9 +783,9 @@ int main() {
     return changed.replace(
         "CTN_PARAMS",
         (
-            "std::string, ctnative::js_num, ctnative::js_boolean_t"
+            "ctnative::js_string, ctnative::js_num, ctnative::js_boolean_t"
             if branch
-            else "std::string, ctnative::js_num"
+            else "ctnative::js_string, ctnative::js_num"
         ),
     ).replace("CTN_FLAG", ", ctnative::js_boolean_t{call % 2 != 0}" if branch else "")
 

@@ -333,6 +333,12 @@ def check_scalar_global_emission(args, ir, name):
         )
         values, actual, calls, binaries = {}, [], 0, 0
         numbers = set()
+        strings = set(re.findall(r"ctnative::js_string(?: const)? (\w+)", entry[1]))
+        strings.update(
+            re.findall(
+                r'CTCOMPILE_PIN\((\w+), "[^"\n]*", ctnative::js_string(?: const)?\)', entry[1]
+            )
+        )
         for line in entry[1].splitlines():
             assignment = re.search(r"\b(\w+)\s*=\s*(.*);$", line)
             result, expression = assignment.groups() if assignment else (None, "")
@@ -366,8 +372,11 @@ def check_scalar_global_emission(args, ir, name):
             elif match := re.fullmatch(r"\(ctnative::js_num\) (\w+)", expression):
                 numbers.add(result)
                 values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(r"\(ctnative::js_string\) (\w+)", expression):
+                strings.add(result)
+                values[result] = values.get(match[1], "unknown")
             elif match := re.fullmatch(r"(\w+)\.value\(\)", expression):
-                if match[1] in numbers:
+                if match[1] in numbers or match[1] in strings:
                     values[result] = values.get(match[1], "unknown")
             elif match := re.fullmatch(
                 r"ctnative::(?:to_nullable|to_nullable_string|string_text|scalar_truthy)\((\w+)\)",
@@ -381,6 +390,7 @@ def check_scalar_global_emission(args, ir, name):
                 literal = scalar_string_literal(match[1])
                 if match[2] and len(literal.encode("utf-8", "surrogatepass")) != int(match[2]):
                     raise RuntimeError(f"{name}/{mode}: emitted String lost its exact byte length")
+                strings.add(result)
                 values[result] = ("string", literal)
             elif expression in {"true", "false"}:
                 values[result] = ("boolean", expression)
