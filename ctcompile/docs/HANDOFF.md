@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved record Map methods and AND index gaps, 2026-09-20 UTC
+
+Saved Map aliases now call immutable instance methods in native output.
+**6fe314c8** connects the existing exact record origins to the method census,
+retains receiver identity across overwrite/delete, and reuses final closed-shape
+receiver admission. The unchanged original alias-method case and five new
+positives add **48 native executions**. **8b9d3f8b** preserves AND-mask trailing
+zero bits as an index stride, admitting disjoint reloads inside those gaps.
+
+Focused selection: **46 observations / 160 main native executions / 92
+unprepared refusals / 56 preparation refusals**. Exact host and arrays CTests
+pass **1/1** each; lowering lit **3/3** and escape lit **3/3** pass. Ten raw
+forged-proof refusals and **60** concrete record-pointer artifact checks pass;
+all ten tested file hashes match. AND oracle: **129 sites / 26 sound / 26 of 32
+confined precision**, zero violations, partial, pending or unclaimed sites.
+Required formatting retains 20 diagnostics in six unchanged files; changed
+files pass. Original class files 01–27 and all 32 prior AND source bodies remain
+unchanged.
+
+**Next:** original B/Data+B still refuse constructor-time registration of
+`this`. Prove partial publication, exception/reentry behavior and enclosing owner
+lifetime through the original nested Data Maps and helper calls. Saved-alias
+methods now work after completed construction; own-key snapshots and transported
+record Maps still need their separate proofs. Preserve conflict checks,
+`e.set`, `e.remove`, `P.off`, configuration and disposal bodies. Full Bootstrap
+and the application driver remain unfinished. No browser/runtime-oracle edits
+or push; full suites and broad replays were skipped.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-record-map-methods.md).
+
 ## Native record Map borrows and remainder congruence, 2026-09-20 UTC
 
 Completed class records now run through local native Maps. **c955af5a**
