@@ -495,6 +495,72 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero",
          .exit = "a -> {a}"},
         "x");
+    const auto positiveOutputBand =
+        replace(minimumLeftShift, "sub %part, %half", "add %part, %half");
+    const auto negativeOutputBand =
+        replace(replace(minimumLeftShift, "sub %part, %half", "sub %part, %maximum"),
+                "ctjs.binary add %shifted, %maximum", "ctjs.unary plus %shifted");
+    for (const auto & body :
+         {positiveOutputBand, negativeOutputBand,
+          replace(negativeOutputBand, "sub %part, %maximum", "add %part, %maximum")}) {
+        run({.what = "left-shift outputs remain affine inside one positive or negative wrap band",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "wrapped left-shift output preserves reversed visit order",
+         .body = replace(positiveOutputBand, "%position = ctjs.binary add %shifted, %maximum",
+                         "%forward = ctjs.binary add %shifted, %maximum\n"
+                         "  %position = ctjs.binary sub %two, %forward"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto outputBandReload =
+        replace(positiveOutputBand, "%shifted = ctjs.binary_static shl %input, %one",
+                "%count = ctjs.get_property %base[%one]\n"
+                "  %shifted = ctjs.binary_static shl %input, %count");
+    run({.what = "wrapped left-shift output preserves exact reload gaps",
+         .body = outputBandReload,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "wrapped left-shift output leaves unvisited children retained",
+         .body = replace(positiveOutputBand, "[%x, %one, %x, %one]", "[%x, %x, %x, %one]"),
+         .arrays = "a:[zero,x,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    auto wideOutputBand =
+        replace(replace(positiveOutputBand, "  %a =",
+                        "  %start = ctjs.constant #ctjs.number<4746794007235919872>\n"
+                        "  %count = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
+                "add %part, %half", "add %part, %start");
+    wideOutputBand = replace(replace(wideOutputBand, "shl %input, %one", "shl %input, %count"),
+                             "%position = ctjs.binary add %shifted, %maximum",
+                             "%quotient = ctjs.binary div %shifted, %maximum\n"
+                             "  %position = ctjs.binary add %quotient, %one");
+    wideOutputBand = replace(wideOutputBand, "[%x, %one, %x, %one]", "[%x, %x, %one, %one]");
+    for (const auto & body : {wideOutputBand, replace(replace(wideOutputBand, "4746794007235919872",
+                                                              "4746794007244308480"),
+                                                      "add %part, %start", "sub %part, %start")}) {
+        run({.what = "left-shift output bands use exact wide positive and negative products",
+             .body = body,
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    reject("wrapped left-shift output still refuses a later overlapping count store",
+           replace(outputBandReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("wrapped left-shift output still requires bounded own indices",
+           replace(positiveOutputBand, "add %shifted, %maximum", "add %shifted, %half"));
+    reject("equal left-shift endpoints cannot hide an intervening output wrap",
+           replace(replace(wideOutputBand, "ctjs.binary add %part, %start", "ctjs.unary plus %i"),
+                   "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"));
     const auto rightShiftIndex =
         replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
     for (const auto & kind : {"shr", "ushr"}) {

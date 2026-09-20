@@ -42,6 +42,18 @@
 // CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function quotientShift() {
@@ -264,3 +276,69 @@ signedRemaining(); signedOutputUnderflow(); signedInputWrap(); signedLaterOverla
 positiveBandNonzero(); negativeBandNonzero(); positiveBandReversed(); negativeBandReload();
 positiveBandRemaining(); negativeBandLaterOverlap(); positiveBandUnderflow(); negativeBandOverflow();
 positiveBandInputBoundary(); negativeBandZeroCount();
+function positiveOutputWrap() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((1073741824 + i / 2) << 1) + 2147483648] = 0;
+    return a;
+}
+function negativeOutputWrap() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2 - 2147483648) << 1] = 0;
+    return a;
+}
+function positiveInputOutputWrap() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2 + 2147483648) << 1] = 0;
+    return a;
+}
+function negativeInputOutputWrap() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 3221225472) << 1) + 2147483648] = 0;
+    return a;
+}
+function reversedOutputWrap() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[2 - (((1073741824 + i / 2) << 1) + 2147483648)] = 0;
+    return a;
+}
+function wrappedCountReload() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((1073741824 + i / 2) << a[1]) + 2147483648] = 0;
+    return a;
+}
+function widePositiveOutputWrap() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483645 + i / 2) << 31) / 2147483648 + 1] = 0;
+    return a;
+}
+function wideNegativeOutputWrap() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 2147483647) << 31) / 2147483648 + 1] = 0;
+    return a;
+}
+function wrappedRemaining() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((1073741824 + i / 2) << 1) + 2147483648] = 0;
+    return a;
+}
+function wrappedLaterOverlap() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[(i / 2 - 2147483648) << a[1]] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function wrappedHiddenMiddle() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i << 31) / 2147483648 + 1] = 0;
+    return a;
+}
+function wrappedSaved() {
+    var child = {}, a = [child, 0, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((1073741824 + i / 2) << 1) + 2147483648] = 0;
+    return saved;
+}
+positiveOutputWrap(); negativeOutputWrap(); positiveInputOutputWrap(); negativeInputOutputWrap();
+reversedOutputWrap(); wrappedCountReload(); widePositiveOutputWrap(); wideNegativeOutputWrap();
+wrappedRemaining(); wrappedLaterOverlap(); wrappedHiddenMiddle(); wrappedSaved();

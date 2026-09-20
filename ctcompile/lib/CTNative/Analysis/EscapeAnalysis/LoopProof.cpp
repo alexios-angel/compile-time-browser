@@ -319,8 +319,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                         : 0U - static_cast<std::uint32_t>(*negative);
             const auto factor = std::size_t{1} << (count & 31U);
             if (leftShift) {
-                // ToInt32 preserves order within the proved band. Bound the
-                // converted endpoints before scaling, including INT32_MIN.
+                // Within one input and output conversion band, left shift
+                // stays affine. The i32 endpoints times at most 2^31 fit i64.
                 const auto converted = [](const ContentsValue & endpoint) {
                     const auto bits =
                         endpoint.integerNumber
@@ -329,8 +329,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     return static_cast<std::int32_t>(bits);
                 };
                 const auto scale = static_cast<std::int64_t>(factor);
-                if (converted(range->first) < -2147483648LL / scale ||
-                    converted(range->last) > 2147483647LL / scale ||
+                const auto outputBand = [&](const ContentsValue & endpoint) {
+                    const auto biased =
+                        static_cast<std::int64_t>(converted(endpoint)) * scale + 2147483648LL;
+                    // Floor division also handles negative products below INT32_MIN.
+                    return biased / 4294967296LL - (biased < 0 && biased % 4294967296LL != 0);
+                };
+                if (outputBand(range->first) != outputBand(range->last) ||
                     range->stride > 4294967295ULL / factor) {
                     return std::nullopt;
                 }

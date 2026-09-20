@@ -316,6 +316,62 @@ void StructuredCases::reloads() {
            replace(leftShiftIndex, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"));
     reject("structured left-shift counts cannot borrow a changing value",
            replace(leftShiftIndex, "shl %part, %one", "shl %part, %last"));
+    const auto positiveOutputBand =
+        replace(minimumLeftShift, "sub %part, %half", "add %part, %half");
+    const auto negativeOutputBand =
+        replace(replace(minimumLeftShift, "sub %part, %half", "sub %part, %maximum"),
+                "ctjs.binary add %shifted, %maximum", "ctjs.unary plus %shifted");
+    for (const auto & body :
+         {positiveOutputBand, negativeOutputBand,
+          replace(negativeOutputBand, "sub %part, %maximum", "add %part, %maximum")}) {
+        rows.push_back({.what = "structured left shifts preserve one signed output wrap band",
+                        .body = body,
+                        .arrays = "a:[zero,one,zero,one]",
+                        .reads = "a[0]=zero; a[2]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto outputBandReload =
+        replace(positiveOutputBand, "%shifted = ctjs.binary_static shl %input, %one",
+                "%count = ctjs.get_property %base[%one]\n"
+                "    %shifted = ctjs.binary_static shl %input, %count");
+    rows.push_back({.what = "structured wrapped left-shift outputs preserve reload gaps",
+                    .body = outputBandReload,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "structured wrapped left-shift outputs retain unwritten children",
+         .body = replace(positiveOutputBand, "[%y, %one, %y, %one]", "[%y, %y, %y, %one]"),
+         .arrays = "a:[zero,y,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a,y}"});
+    auto wideOutputBand =
+        replace(replace(positiveOutputBand, "  %a =",
+                        "  %start = ctjs.constant #ctjs.number<4746794007235919872>\n"
+                        "  %count = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
+                "add %part, %half", "add %part, %start");
+    wideOutputBand = replace(replace(wideOutputBand, "shl %input, %one", "shl %input, %count"),
+                             "%position = ctjs.binary add %shifted, %maximum",
+                             "%quotient = ctjs.binary div %shifted, %maximum\n"
+                             "    %position = ctjs.binary add %quotient, %one");
+    wideOutputBand = replace(wideOutputBand, "[%y, %one, %y, %one]", "[%y, %y, %one, %one]");
+    for (const auto & body : {wideOutputBand, replace(replace(wideOutputBand, "4746794007235919872",
+                                                              "4746794007244308480"),
+                                                      "add %part, %start", "sub %part, %start")}) {
+        rows.push_back({.what = "structured left-shift output bands keep exact wide products",
+                        .body = body,
+                        .arrays = "a:[zero,zero,one,one]",
+                        .reads = "a[0]=zero; a[2]=one",
+                        .exit = "a -> {a}"});
+    }
+    reject("structured wrapped left-shift counts cannot overlap a later store",
+           replace(outputBandReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    reject("structured wrapped left-shift output must remain an own index",
+           replace(positiveOutputBand, "add %shifted, %maximum", "add %shifted, %half"));
+    reject("structured left-shift endpoints cannot hide intervening output wraps",
+           replace(replace(wideOutputBand, "ctjs.binary add %part, %start", "ctjs.unary plus %i"),
+                   "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"));
     const auto rightShiftIndex =
         replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
     for (const auto & kind : {"shr", "ushr"}) {
