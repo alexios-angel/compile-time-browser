@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Direct class Map captures and OR/XOR indices, 2026-09-20 UTC
+
+**cfc7a229** preserves immutable Map capture cells and selected slots for direct
+local constructors and instance methods. Existing closure and Map lowering
+proves calls, types and ownership; shared mutations, distinct Maps, mixed capture
+slot renumbering and a method loop add **40 native executions**. Original numeric
+field-key cases reach the optional-key carrier boundary; constructor own-callee
+getter reads, helper/holder, static and inherited Map captures remain refused.
+**5b2e832a** bounds nonnegative signed-i32 OR/XOR array indices while retaining
+exact replay, saved children, gap contents and the complete reload census.
+
+Final focused class selection: **38 observations / 120 main native executions /
+76 unprepared and 68 preparation refusals**, plus **nine native boundary controls**.
+Exact host **1/1**, arrays **1/1**, lowering lit **3/3** and escape lit **3/3** pass.
+OR/XOR oracle: **42 sites / seven sound / seven of 11 confined precision**, zero
+violations, partial, pending or unclaimed sites. All 13 tested hashes match.
+Required formatting retains 20 diagnostics in six unchanged files; changed files
+pass. Full suites, whole class lit, DOM replay and broad matrices were skipped.
+
+**Next:** preserve Map captures through the local Data holder and inherited
+constructor/method invocation graph. Original Data+B, now explicitly declaring
+Map identity, still refuses that boundary. Typed stored-class ownership across
+set/get/remove, saved aliases, overwrites/deletes and failure remains unproved.
+Keep original `e.set`, `e.remove`, `P.off` and configuration bodies. Native output
+currently reuses shared scalar Map owners; no stored-class or cyclic ownership
+graph was admitted. Full Bootstrap and the application driver remain unfinished.
+No browser/runtime changes or push.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-class-map-captures.md).
+
 ## Receiver forwarding and masked indices, 2026-09-20 UTC
 
 **52cc51db** composes read-only constructor-receiver borrows through exact helper
