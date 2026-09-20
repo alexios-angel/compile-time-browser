@@ -195,7 +195,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const std::size_t size = found->second.size();
     const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
     // ponytail: one header/body pair, with writes only to its current,
-    // invariant or bounded monotone own element. Other mutations need a
+    // invariant or bounded own element. Other mutations need a
     // termination proof; each index operation must have one varying operand.
     // Primitive kinds and every element still pass the ordinary operation transfers.
     llvm::SmallDenseSet<std::size_t, 4> guardStores;
@@ -268,12 +268,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
         const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
         const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
+        const bool bitAnd = addition && addition.getKind() == ctjs::BinaryKind::BitAnd;
         const bool leftShift = addition && addition.getKind() == ctjs::BinaryKind::Shl;
         const bool shift =
             leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
                                        addition.getKind() == ctjs::BinaryKind::UShr));
         if (!expression || expression->getBlock() != body ||
-            !(subtract || divide || multiply || shift ||
+            !(subtract || divide || multiply || shift || bitAnd ||
               (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
               (addition && addition.getKind() == ctjs::BinaryKind::Add))) {
             return std::nullopt;
@@ -292,6 +293,21 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             (!offset->integerNumber && !offset->negativeIntegerNumber &&
              !boundedNumber(offset->origin()) && !boundedNumber(offset->origin(), true))) {
             return std::nullopt;
+        }
+        if (bitAnd) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            const auto mask = boundedConvertedNumber(*offset);
+            if (!mask || *mask > 2147483647ULL) { return std::nullopt; }
+            // Clearing the sign bit bounds every ToInt32 input, including
+            // conversions across a signed boundary. Endpoints need not be extrema.
+            // ponytail: a dense enclosure; sparse mask facts could admit more
+            // disjoint reloads. Replay still records only the actual writes.
+            return IndexRange{{operand, ContentsKind::NonBigInt, 0},
+                              {operand, ContentsKind::NonBigInt, *mask},
+                              1};
         }
         bool descending = subtract && offsetOperand == 0;
         if (shift) {

@@ -37,6 +37,67 @@ void InductionCases::overwritesAndTransport() {
         "x");
     const std::string overwritten =
         replace(savedChild, "  %step =", "  ctjs.set_property %base[%i], %zero\n  %step =");
+    const auto masked =
+        replace(replace(savedChild, "ctjs.return %result", "ctjs.return %a"), "  %read =",
+                "  %position = ctjs.binary_static bitand %i, %one\n"
+                "  ctjs.set_property %base[%position], %zero\n  %read =");
+    for (const auto & expression :
+         {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i",
+          "ctjs.unary neg %i\n"
+          "  %position = ctjs.binary_static bitand %negative, %one"}) {
+        auto body = replace(masked, "ctjs.binary_static bitand %i, %one", expression);
+        if (body.find("%negative") != std::string::npos) {
+            body = replace(body, "%position = ctjs.unary", "%negative = ctjs.unary");
+        }
+        run({.what = "numeric masks bound both operand orders and signed inputs",
+             .body = body,
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "masked writes retain a child read before its overwrite",
+         .body = replace(overwritten, "  ctjs.set_property %base[%i], %zero",
+                         "  %position = ctjs.binary_static bitand %i, %one\n"
+                         "  ctjs.set_property %base[%position], %zero"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "a mask enclosure does not overwrite its unvisited positions",
+         .body = replace(replace(masked, "[%one, %x]", "[%x, %x, %x, %x]"), "bitand %i, %one",
+                         "bitand %i, %two"),
+         .arrays = "a:[zero,x,zero,x]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero; a[3]=x",
+         .exit = "a -> {a,x}"});
+    const auto maskedReload = replace(replace(masked, "[%one, %x]", "[%x, %x, %one, %zero]"),
+                                      "%position = ctjs.binary_static bitand %i, %one",
+                                      "%mask = ctjs.get_property %base[%two]\n"
+                                      "  %position = ctjs.binary_static bitand %i, %mask");
+    run({.what = "a disjoint mask reload survives every enclosed store",
+         .body = maskedReload,
+         .arrays = "a:[zero,zero,one,zero]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one; "
+                  "a[2]=one; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("a mask cannot reload inside its overwrite enclosure",
+           replace(maskedReload, "%mask = ctjs.get_property %base[%two]",
+                   "%mask = ctjs.get_property %base[%zero]"));
+    reject("a later store invalidates an earlier mask reload",
+           replace(maskedReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("the mask bound must remain inside the guard allocation",
+           replace(masked, "bitand %i, %one", "bitand %i, %two"));
+    reject("two varying operands cannot supply an invariant mask",
+           replace(masked, "bitand %i, %one", "bitand %i, %i"));
+    for (const auto & value :
+         {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
+          "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
+          "#ctjs.bigint<\"1\">"}) {
+        reject("masks require nonnegative signed-i32 integer Numbers",
+               replace(replace(masked, "  %a =",
+                               "  %mask = ctjs.constant " + std::string(value) + "\n  %a ="),
+                       "bitand %i, %one", "bitand %i, %mask"));
+    }
     run({.what = "overwriting current own elements preserves a saved child",
          .body = overwritten,
          .arrays = "a:[zero,zero]",

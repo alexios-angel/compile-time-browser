@@ -3,6 +3,39 @@
 namespace ctcompile::test::escape::arrays::structured_detail {
 
 void StructuredCases::reloads() {
+    const auto masked =
+        replace(replace(original, "ctjs.return %result", "ctjs.return %a"), "    %read =",
+                "    %position = ctjs.binary_static bitand %i, %one\n"
+                "    ctjs.set_property %base[%position], %zero\n    %read =");
+    for (const auto & expression :
+         {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i"}) {
+        rows.push_back({.what = "structured masked writes release exactly visited children",
+                        .body = replace(masked, "ctjs.binary_static bitand %i, %one", expression),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=zero; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto gaps = replace(
+        replace(replace(masked, "[%x]", "[%x, %y, %x, %y]"), "  ctjs.append %y to %a\n", ""),
+        "%position = ctjs.binary_static bitand %i, %one",
+        "%mask = ctjs.binary add %one, %one\n"
+        "    %position = ctjs.binary_static bitand %i, %mask");
+    rows.push_back({.what = "structured mask enclosures retain children in unvisited gaps",
+                    .body = gaps,
+                    .arrays = "a:[zero,y,zero,y]",
+                    .reads = "a[0]=zero; a[1]=y; a[2]=zero; a[3]=y",
+                    .exit = "a -> {a,y}"});
+    rows.push_back({.what = "structured zero masks preserve the unvisited final child",
+                    .body = replace(masked, "bitand %i, %one", "bitand %i, %zero"),
+                    .arrays = "a:[zero,y]",
+                    .reads = "a[0]=zero; a[1]=y",
+                    .exit = "a -> {a,y}"});
+    reject("structured masks cannot borrow a varying operand",
+           replace(masked, "bitand %i, %one", "bitand %i, %i"));
+    reject("structured masks must bound every possible own position",
+           replace(masked, "%position = ctjs.binary_static bitand %i, %one",
+                   "%mask = ctjs.binary add %one, %one\n"
+                   "    %position = ctjs.binary_static bitand %i, %mask"));
     reloaded =
         replace(replace(replace(original, "[%x]", "[%one]"),
                         "    %step =", "    %unit = ctjs.get_property %base[%zero]\n    %step ="),
