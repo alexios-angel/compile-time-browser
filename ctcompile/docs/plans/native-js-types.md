@@ -1,0 +1,229 @@
+# Native JavaScript types and prototype interfaces
+
+**Status: planned, 2026-09-20.** This is the user's revised direction for the
+native C++ interface. It supersedes raw-carrier prescriptions in master-plan
+part 24 where they conflict. Existing measurements describe the implementation
+that produced them; this document does not claim these new classes are shipped.
+
+## The request
+
+Generate statically typed JavaScript semantics through purpose-built C++ classes.
+Represent JavaScript values with concrete native types that expose appropriate
+operators, instance methods and typed prototype methods. Make emitted code read
+like `text.startsWith(prefix)`, `array.push(value)`,
+`Element.prototype.querySelector.call(element, selector)` and
+`document.querySelector(selector)`. Keep storage and ownership ordinary C++ and
+implement browser operations by calling ctbrowser's public subsystems.
+
+These types are the default public vocabulary for generated JavaScript values.
+Standard-library types remain their storage and algorithm building blocks.
+Compiler-only counters and proven storage operations may still use raw C++ types.
+The existing native rule remains: prove types, operations, identities and owners
+before emission; an unproved operation is a compile-time diagnostic. No VM,
+collector, universal value box or reference-counted object graph is introduced.
+
+## Target type vocabulary
+
+All names below belong to `ctnative`. Prefer composition over public inheritance
+from standard containers. Add a method when an admitted source operation needs
+it, with its semantic test; do not implement every prototype up front.
+
+| Target type | Meaning and implementation obligations |
+|---|---|
+| `js_string<char>` | Owning JavaScript String with byte/WTF-8 storage. Exposes String methods and admitted operators; `char` describes storage, not JavaScript indexing. Reuse public Core Unicode operations. |
+| `js_string<char16_t>` | The same String domain with UTF-16 storage where the encoding and conversion proof permits it. Storage choice must not silently change observable answers. |
+| `undefined_t` | The distinct undefined value. No numeric, null, empty-string or invalid-handle sentinel substitution. |
+| `js_null_t` | The distinct null value. Keep it separate from undefined at unions, calls, returns, fields and comparisons. |
+| `js_num<double>` | JavaScript Number backed by binary64, including NaN, infinities and signed zero. Arithmetic and conversions use the existing semantic helpers where C++ differs. |
+| `js_num<Rep>` | Narrowed Number representation only when range and operation proofs establish equivalence; an integer storage parameter does not authorize C++ integer division or overflow. |
+| `js_boolean_t` | The Boolean value with explicit contextual conversion to C++ `bool`. Numeric conversion is an admitted JavaScript operation, not an accidental implicit C++ promotion. |
+| `js_vector<T>` | Owning dense native sequence/snapshot storage, normally backed by `std::vector<T>`. It does not by itself claim JavaScript Array identity, holes, prototype or species semantics. |
+| `js_array_t<T>` | The interface for an admitted JavaScript Array, with `length()`, indexed operations and methods such as `push`, `pop` and `filter`. Use dense storage only under the existing density/content proof. Preserve reference identity, presence, mutation and eager evaluation. |
+| `js_object_t` | A non-virtual interface/tag for generated closed-shape objects. Concrete generated classes keep concrete fields and checked methods; no generic property dictionary, universal payload or slicing through this base. |
+| `js_bigint_t` | Owning arbitrary-precision integer with JavaScript BigInt semantics. Requires a public non-Script numeric implementation; a fixed-width integer or floating-point stand-in is insufficient. |
+| `js_symbol_t` | A symbol identity, distinct from its description. Well-known symbols and `Symbol.for` require separate identity/registry proofs; text equality cannot implement them. |
+| `js_document_t` | An explicit borrowed document interface over a public `ctbrowser::document` and its live `style::engine`. Exposes methods/accessors through ordinary `document.member(...)` syntax. A containing session owns the resources when ownership is required. |
+| `js_element_t` | The corresponding borrowed element interface, retaining document/node identity and its proved Style association. It enables receiver-only prototype calls without exposing a VM context. |
+
+Primitive assignment has value semantics. JavaScript object/array assignment
+aliases the existing identity; it must not invoke a deep container copy. An
+allocation owns its storage, and uses borrow or transfer that owner according to
+the existing escape proof. A copied native snapshot and an aliased JavaScript
+Array are different operations even when both contain the same `T`.
+
+Finite unions remain closed, proved sets of concrete alternatives. Reuse the
+existing nullable/union machinery during migration. A single `std::optional<T>`
+is suitable only when exactly one absence kind is possible or their distinction
+is proved unobservable; it cannot collapse null and undefined generally.
+
+## Operators and JavaScript semantics
+
+The typed classes centralize semantics currently spread across free helpers and
+emission sites. Instance methods and prototype method objects call the same
+implementation. Lift existing helpers into that implementation; do not maintain
+two algorithms for one operation.
+
+- Use C++ arithmetic, comparison, indexing and conversion operators only where
+  their expression behavior matches the admitted JavaScript operation. Number
+  division/remainder, shifts, NaN, signed zero and Boolean conversion need their
+  existing JavaScript rules. Disable unsafe implicit conversions to storage types.
+- Define typed `operator==` as strict JavaScript equality for the admitted operand
+  pair. Keep named `strict_equal`, coercive `equal`, SameValue and SameValueZero
+  operations distinct. A C++ operator cannot spell `===`; container key equality
+  must continue to use its required relation rather than inheriting `operator==`.
+- Keep `typeof` as a named operation. Null and objects, primitive wrappers and
+  boxed primitive objects must retain their JavaScript distinctions. A
+  `js_boolean_t` primitive is not `new Boolean(false)`.
+- Do not overload `&&` or `||` to implement JavaScript short-circuit expressions.
+  Overloaded C++ operators evaluate both operands, and JS returns an operand's
+  value. Preserve explicit structured control flow for `&&`, `||`, `??`, optional
+  chaining and conditional expressions.
+- Preserve receiver, argument and getter evaluation order with temporaries where
+  necessary. A readable call or overloaded operator cannot reorder source effects
+  or alter exceptions. `.call(receiver, ...)` invokes the original method;
+  `querySelector(selector).call()` is not its JavaScript equivalent.
+- `char` storage does not make String length or indexing byte operations.
+  JavaScript specifies UTF-16 code units, while iteration uses code points.
+  Reuse public Core conversion, surrogate and casing routines and verify each
+  operation against the current VM. Historical UTF-8 divergences are not evidence
+  of current behavior for every String method. Preserve measured oracle behavior
+  and existing refusals until any semantic alignment is separately implemented
+  and tested; a wrapper migration must not silently change the oracle or output.
+- Array holes, explicit undefined, missing properties, inherited properties and
+  empty `pop` results stay distinguishable where observed. `std::vector::at` is a
+  storage operation, not a universal JavaScript indexed read. Callback order,
+  captured length, species and iterator/spreadability hooks still require proofs.
+
+## Typed constructor and prototype objects
+
+Expose `ctnative::Element`, `ctnative::Object` and `ctnative::Array` as statically
+typed intrinsic objects with an ordinary C++ `prototype` member. Each supported
+prototype member is a typed method object with `.call(receiver, arguments...)`.
+Constructor-object static methods remain distinct: `Object.keys` belongs on
+`Object`, while `hasOwnProperty` belongs on `Object.prototype`.
+
+This is valid C++ member composition; it does not require overloading `.` or
+building a dynamic prototype lookup mechanism. `Element.prototype.*` means a
+specific supported member after the final dot, not a runtime wildcard.
+
+The following is the **target interface**, not currently compilable output.
+`element` is a proved `js_element_t`, and `options` is a concrete generated
+closed-shape object:
+
+```cpp
+ctnative::js_document_t document{dom, styles}; // Explicit borrowed resources.
+ctnative::js_string<char> selector{".selected"};
+auto match = document.querySelector(selector);
+auto nodes = ctnative::Element.prototype.querySelectorAll.call(element, selector);
+ctnative::js_num<double> count = nodes.length();
+
+ctnative::js_array_t<ctnative::js_num<double>> values;
+auto length = ctnative::Array.prototype.push.call(values, ctnative::js_num<double>{1.0});
+auto own = ctnative::Object.prototype.hasOwnProperty.call(
+    options, ctnative::js_string<char>{"enabled"});
+```
+
+The first additive implementation can reuse today's four stateless selector
+method types as members of `Element.prototype`, retaining the current explicit
+Style argument: `Element.prototype.querySelector.call(element, styles, selector)`.
+Once the typed element/document view carries a proved Style association, that
+argument is supplied by the receiver. Both spellings call the same public core.
+
+An intrinsic object's C++ type or spelling does not prove its JavaScript identity.
+HostContract must still establish the original binding, prototype, method,
+receiver, lookup chain and absence of relevant replacements/hooks. Source
+shadowing, own method overrides, getters and mutation cannot be skipped. Expose
+only methods with a complete source proof. `.apply` and `.bind` are added only
+with their argument, receiver, capture and lifetime proofs; no catch-all dispatch.
+
+User-defined JavaScript classes continue to become concrete generated C++ classes.
+Their field layout, inheritance and method dispatch use the existing closed-shape
+and prototype proofs. Intrinsic prototype method objects do not add virtual
+inheritance or a mandatory heap-allocated superclass to every value.
+
+## Browser ownership and accessors
+
+`js_document_t` borrows both the document and its associated live Style engine.
+The existing borrowed-entry caller or owned-session object owns the atom table,
+document and engine. Views cannot outlive that owner; owner moves must not
+invalidate outstanding views. Validate document/node generations and engine atom
+association before source effects. Element equality includes document identity.
+
+Use real accessor methods such as `document.documentElement()` and
+`document.querySelector(selector)`. If an accessor returns a nullable root, keep
+the source null/undefined distinction and require the appropriate use guard.
+Do not cache a root across mutations without a proof. Property proxy classes are
+unnecessary for this first interface: C++ does not have JavaScript property-getter
+syntax, and an accessor method makes evaluation explicit.
+
+All browser behavior stays in public ctbrowser DOM/Style and other owning
+subsystems. An operation currently trapped inside a VM binding requires the
+existing lift-core/thin-adapter extraction workflow. Generated code and these
+classes contain no `script::context`, `script::value`, collector handles or
+runtime lookup tables. ctbrowser never depends on ctcompile.
+
+The document facade alone does not authorize a JavaScript `document` global or
+the default `document.documentElement` argument. That source binding, root
+nullability and session ownership still require the documented host proof.
+
+## Existing implementation and migration
+
+The current entry header is `include/ctcompile/CTNative/Runtime/ctnative.hpp`.
+It contains a global `using js_num = double`, finite nullable carriers, object/Map
+storage helpers, and `matches`, `closest`, `querySelector`, `querySelectorAll`
+method objects. It does not yet expose this type family or intrinsic prototypes.
+Public Core already supplies String/Unicode primitives. BigInt currently lives
+behind Script and needs extraction before native use.
+
+Use `ctnative::js_num<double>` as the new canonical name. The current global
+`js_num` alias and a class template cannot share the same declaration name in
+the same scope. Migrate one admitted group of operations and all its type pins,
+signatures and clients together; any temporary compatibility alias lives at the
+old global name and is explicitly retired after its callers migrate. No regex-only
+rename or sudden reinterpretation of existing `auto`/template deduction.
+
+1. **Prototype composition first.** Add `Element.prototype` using the existing
+   selector method types; update their proven EmitC callees and emitted-code
+   checks. Preserve current callable aliases during the migration. Establish the
+   same layout for Object/Array when their first already-proved methods migrate.
+2. **Primitive types.** Migrate undefined/null, Boolean, Number and String in
+   coherent batches. Update literal creation, conversion, optional/union joins,
+   calls/returns, print helpers and deduced-type assertions with each batch.
+   Keep MLIR's semantic types and proof authority; C++ classes do not replace
+   inference. Extract type-specific headers only as their implementation grows,
+   retaining `ctnative.hpp` as the generated-code include.
+3. **Collections and objects.** Migrate dense snapshots to `js_vector<T>` and
+   admitted Arrays to `js_array_t<T>`. Preserve alias ownership and generated
+   concrete object shapes. Reconcile Shell's current NodeList indices above
+   1,000,000 returning undefined before broadening indexed `R.find` consumers;
+   retain the separate 2^24 proxy-spread cap. A NodeList is not a JavaScript Array.
+4. **Document/element views.** Adapt existing borrowed and owned entries to typed
+   views, then prove document-root access and shorten receiver calls. Do not
+   broaden source admission merely because a C++ accessor exists.
+5. **BigInt and Symbol.** Supply their native core, identities, operations and
+   ownership proofs in separate changes. Until then the names are plan targets
+   and unsupported uses remain compile-time diagnostics.
+
+## Focused acceptance criteria
+
+For each implementation batch, run only its affected devbox targets and exact
+CTest/lit cases under the build lock, plus required formatting. A docs-only plan
+revision needs no build or CTest. Full suites and broad matrices require an
+explicit user request.
+
+- Emit and compile representative operator, instance-method and prototype-method
+  expressions in both printing modes with GCC/Clang and the repository flags.
+  Pin the actual purpose-built result types, reference categories and ownership.
+- Compare changed semantics with the current VM and relevant public browser core.
+  Select edge cases for the batch: NaN/signed zero, absence tags, surrogate strings,
+  holes/aliases, evaluation order, property shadows or owner lifetime. Record
+  public-API-only checks separately from differential observations.
+- Preserve missing-identity, mutation, coercion, stale-proof, escape and insufficient
+  work-budget refusals. Unsupported BigInt/Symbol operations must not gain accidental
+  admission through a generic class interface.
+- Inspect generated C++ and linked symbols: direct public subsystem calls, no
+  Script/VM/collector dependency, no universal property/handle table. Use ordinary
+  value ownership, scoped borrows and proved moves; do not replace the collector
+  with a reference-counted object graph.
+- Record what migrated, what passed and the exact next operation in HANDOFF and
+  the master plan. Historical coverage numbers do not become type-migration claims.

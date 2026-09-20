@@ -22,6 +22,51 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed JavaScript interface plan, 2026-09-20 UTC
+
+The user requested purpose-built native C++ types with JavaScript methods,
+operators and `Element.prototype.*`, `Object.prototype.*`, `Array.prototype.*`
+syntax. [The maintained design](plans/native-js-types.md) records the exact
+vocabulary, primitive versus identity semantics, null/undefined distinction,
+String encoding rules, operator limitations, typed prototype objects and
+borrowed document/element views. Standard containers remain internal storage;
+all browser behavior uses ctbrowser's public subsystems. No universal runtime
+value, collector or reference-counted object graph is introduced.
+
+External master-plan parts **00, 01, 24 and 25** now point to this design.
+Part 24's future-facing type table, array methods, union semantics and prototype
+rules reflect it; part 25 retains owner/alias/effect proof requirements. Dated
+measurements and historical implementation examples are preserved. Native DOM
+documentation distinguishes the current `.call` interface from the planned one.
+These are documentation changes only: no runtime class, emitter behavior,
+source admission or measured native coverage changed.
+
+**Next implementation:** compose `Element.prototype` from the existing four
+selector method objects and migrate the exact proven EmitC callees/type checks,
+retaining explicit Style input initially. Then introduce the qualified
+`ctnative::js_num<double>` and other primitive classes in coherent batches,
+with their literals, signatures, conversions, optional joins and type pins.
+The current global `using js_num = double` cannot be renamed to a template
+blindly. Collections/closed shapes and document views follow; BigInt needs
+public-core extraction and Symbol needs a separate identity/registry proof.
+
+Carry forward the existing NodeList indexing defect: above 1,000,000 the VM
+returns undefined, while direct native indexing currently supplies an element.
+Resolve that before adding indexed `R.find` consumers; retain the separate
+2^24 spread cap. Default document roots, full Bootstrap and the application
+driver remain unfinished. Do not change the runtime oracle to match new wrappers.
+
+Validation passed: 14 requested type/prototype names, seven document fence
+balances, seven design links, six master-plan consistency assertions and
+whitespace; parallel read-only review found no blocking issues. The required
+formatter reports 16 pre-existing diagnostics in four untouched files. Build,
+CTest, lit, differential, corpus/matrix, WPT/test262 and sanitizer checks were
+skipped for this documentation-only change; no full-suite pass is claimed. The process check
+found no Windows Claude identity among 365 processes; Linux executable reads
+were denied for 57 processes, so availability was treated as uncertain. Work
+stayed in compiler docs and the explicitly requested external plan; no browser
+or shared-code edits, no broader authorization used, and no push.
+
 ## Bootstrap R.find count integration, 2026-09-20 UTC
 
 Resumed the explicit-element `R.find` boundary recorded below and in the master

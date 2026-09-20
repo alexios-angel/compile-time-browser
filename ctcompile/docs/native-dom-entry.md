@@ -17,6 +17,12 @@ matches the page. Every element and engine atom-table association is checked
 before source effects. The engine, document and their atom table must remain
 alive throughout the synchronous call.
 
+The [typed JavaScript interface plan](plans/native-js-types.md) changes the
+target spelling to `Element.prototype.querySelector.call(...)` and eventually
+borrowed `js_document_t`/`js_element_t` methods. That migration is planned; the
+examples and implementation guarantees below describe the currently shipped
+interface. The new classes will retain the same public DOM/Style calls and proofs.
+
 Generated selector calls use stateless C++ method objects from `ctnative.hpp`:
 
 ```cpp
