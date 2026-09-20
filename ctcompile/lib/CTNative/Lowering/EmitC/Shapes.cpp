@@ -184,7 +184,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
 // template parameters is a property of every site in the program, so no
 // site can be spelled until all of them have been seen.
 void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
-    std::vector<std::set<std::string>> keys; // per family, its distinct (name, type) keys
+    std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
             if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
