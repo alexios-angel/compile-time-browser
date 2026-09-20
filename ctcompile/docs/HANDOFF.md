@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared DOM intrinsic membership, 2026-09-20 UTC
+
+**65273121** replaces the duplicated name-comparison chains in `Contract.cpp`
+and `DOMEntry.cpp` with one `llvm::StringSet<>` and `.contains()`. The table is
+shared through existing host-contract support. The same 13 names, duplicate
+rejection and parser-only class-helper/Error exceptions remain; names longer
+than 23 bytes refuse before hashing, and the typed count bound follows set size.
+No browser semantics, emitted calls or source-proof authority changed.
+
+Final `.contains()` sources built on the devbox and passed host-contract CTest
+**1/1** (0.52s total); all **three** final source hashes match. Before the equivalent
+lookup-spelling change, the shared StringSet passed host CTest **1/1** (0.52s)
+and prototype-selector lit **1/1** (78.45s), with **32 native executions / 62
+refusals**. An uncommitted map draft also passed the same focused checks (host
+0.51s, prototype 77.88s); the final implementation follows the user's StringSet
+and contains refinements. No native replay was needed for the spelling change.
+
+Commands under `/tmp/ctbrowser-devbox-build.lock`, helper/SSH stdin from `/dev/null`:
+
+```sh
+# Local helper for each draft and the final sources:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+# On devbox, from projects/compile-time-browser:
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_host_contract$'
+# Map and StringSet drafts, before the final contains spelling:
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-prototype-query[.]test$'
+```
+
+Required formatting retains **20** baseline diagnostics in six untouched files;
+changed C++ formatting and whitespace pass. Full CTest/compiler lit, broad
+corpus/matrix, WPT/test262 and sanitizers were skipped. No push.
+**Next integration boundary remains:** confined Bootstrap `R.find` spread/concat
+with an explicit element; default document roots need their own ownership contract.
+The detailed proof requirements and unfinished application work follow below.
+
 ## Original prototype selector calls, 2026-09-20 UTC
 
 **3d701f64** proves Bootstrap's original
