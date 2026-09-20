@@ -273,6 +273,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
         const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
         const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
+        const bool remainder = binary && binary.getKind() == ctjs::BinaryKind::Mod;
         const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
         const bool bitAnd = addition && addition.getKind() == ctjs::BinaryKind::BitAnd;
         const bool bitOr = addition && addition.getKind() == ctjs::BinaryKind::BitOr;
@@ -282,14 +283,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
                                        addition.getKind() == ctjs::BinaryKind::UShr));
         if (!expression || expression->getBlock() != body ||
-            !(subtract || divide || multiply || shift || bitAnd || bitOr || bitXor ||
+            !(subtract || divide || remainder || multiply || shift || bitAnd || bitOr || bitXor ||
               (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
               (addition && addition.getKind() == ctjs::BinaryKind::Add))) {
             return std::nullopt;
         }
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1);
-        if (!range && !divide && !shift && invariantFailure != ArrayContentsFailure::WorkLimit) {
+        if (!range && !divide && !remainder && !shift &&
+            invariantFailure != ArrayContentsFailure::WorkLimit) {
             range = self(self, expression->getOperand(1), depth + 1);
             offsetOperand = 0;
         }
@@ -301,6 +303,23 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             (!offset->integerNumber && !offset->negativeIntegerNumber &&
              !boundedNumber(offset->origin()) && !boundedNumber(offset->origin(), true))) {
             return std::nullopt;
+        }
+        if (remainder) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            const auto divisor = boundedConvertedNumber(*offset);
+            if (!divisor || *divisor == 0 || !range->first.integerNumber ||
+                !range->last.integerNumber) {
+                return std::nullopt;
+            }
+            // ponytail: a dense enclosure across remainder wraps; sparse residue
+            // facts could admit more disjoint reloads. Replay keeps exact writes.
+            return IndexRange{{operand, ContentsKind::NonBigInt, 0},
+                              {operand, ContentsKind::NonBigInt,
+                               std::min(*range->last.integerNumber, *divisor - 1)},
+                              1};
         }
         if (bitAnd || bitOr || bitXor) {
             if (!spend()) {

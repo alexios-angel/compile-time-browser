@@ -7,6 +7,50 @@ void StructuredCases::reloads() {
         replace(replace(original, "ctjs.return %result", "ctjs.return %a"), "    %read =",
                 "    %position = ctjs.binary_static bitand %i, %one\n"
                 "    ctjs.set_property %base[%position], %zero\n    %read =");
+    const auto remainder =
+        replace(replace(masked, "  %a =",
+                        "  %two = ctjs.constant #ctjs.number<4611686018427387904> "
+                        "{storage_test_id = \"two\"}\n  %a ="),
+                "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
+    rows.push_back({.what = "structured remainder writes preserve reordered loop transport",
+                    .body = remainder,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured remainder wraps retain unvisited children",
+                    .body = replace(replace(remainder, "[%x]", "[%x, %y, %x, %y]"),
+                                    "  ctjs.append %y to %a\n", ""),
+                    .arrays = "a:[zero,zero,x,y]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=x; a[3]=y",
+                    .exit = "a -> {a,x,y}"});
+    const auto remainderReload =
+        replace(replace(replace(remainder, "[%x]", "[%x, %y, %two, %zero]"),
+                        "  ctjs.append %y to %a\n", ""),
+                "%position = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "    %position = ctjs.binary mod %i, %divisor");
+    rows.push_back({.what = "structured remainder bounds preserve disjoint divisor reloads",
+                    .body = remainderReload,
+                    .arrays = "a:[zero,zero,two,zero]",
+                    .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two; "
+                             "a[2]=two; a[3]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured remainder rejects overlapping divisor reloads",
+           replace(replace(remainderReload, "[%x, %y, %two, %zero]", "[%two, %y, %zero, %zero]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("later structured stores invalidate earlier remainder divisors",
+           replace(remainderReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    for (const auto & operands : {"%i, %zero", "%i, %i", "%two, %i"}) {
+        reject("structured remainder requires a positive invariant divisor without commutation",
+               replace(remainder, "mod %i, %two", "mod " + std::string(operands)));
+    }
+    reject("structured remainder refuses negative input even when the result is shifted",
+           replace(remainder, "%position = ctjs.binary mod %i, %two",
+                   "%negative = ctjs.unary neg %i\n"
+                   "    %part = ctjs.binary mod %negative, %two\n"
+                   "    %position = ctjs.binary add %part, %one"));
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i"}) {
         rows.push_back({.what = "structured masked writes release exactly visited children",

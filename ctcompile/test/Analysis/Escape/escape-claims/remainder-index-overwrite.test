@@ -1,0 +1,140 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name remainder-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-remainder-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj confined
+
+//--- source.js
+function wrapped() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i % 2] = 0;
+    return a;
+}
+function noWrap() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % 3] = 0;
+    return a;
+}
+function composed() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i % 2) * 2] = 0;
+    return a;
+}
+function offsetInput() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(i + 3) % 2] = 0;
+    return a;
+}
+function descendingInput() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(3 - i) % 2] = 0;
+    return a;
+}
+function reload() {
+    var child = {}, a = [child, child, 2, 0];
+    for (var i = 0; i < a.length; i++) a[i % a[2]] = 0;
+    return a;
+}
+function savedDivisor() {
+    var child = {}, a = [child, child, 2, 0], divisor = a[2];
+    a[2] = 0;
+    for (var i = 0; i < a.length; i++) a[i % divisor] = 0;
+    return a;
+}
+function savedChild() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i % 2] = 0;
+    return saved;
+}
+function remainingGap() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a[i % 2] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child];
+    for (var i = 1; i < a.length; i++) a[i % 2] = 0;
+    return a;
+}
+function zeroDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % 0] = 0;
+    return a;
+}
+function negativeDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % -2] = 0;
+    return a;
+}
+function fractionalDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % 1.5] = 0;
+    return a;
+}
+function stringDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % "2"] = 0;
+    return a;
+}
+function varyingDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % (i + 1)] = 0;
+    return a;
+}
+function negativeDividend() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-i) % 2 + 1] = 0;
+    return a;
+}
+function overwrittenReload() {
+    var child = {}, a = [child, child, 2, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[i % a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingReload() {
+    var child = {}, a = [2, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i % a[0]] = 0;
+    return a;
+}
+function interiorReload() {
+    var child = {}, a = [2, child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 + i) % a[0]] = 0;
+    return a;
+}
+function unprovedDividend() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(4294967295 + i) % 2] = 0;
+    return a;
+}
+function negativeZero() {
+    var child = {}, a = [child, child];
+    for (var i = -0; i < a.length; i++) a[i % 2] = 0;
+    return a;
+}
+wrapped(); noWrap(); composed(); offsetInput(); descendingInput(); reload(); savedDivisor();
+savedChild(); remainingGap(); zeroTrip(); zeroDivisor(); negativeDivisor(); fractionalDivisor();
+stringDivisor(); varyingDivisor(); negativeDividend(); overwrittenReload(); overlappingReload();
+interiorReload(); unprovedDividend(); negativeZero();

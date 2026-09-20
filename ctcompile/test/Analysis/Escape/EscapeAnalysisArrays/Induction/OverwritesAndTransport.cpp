@@ -41,6 +41,81 @@ void InductionCases::overwritesAndTransport() {
         replace(replace(savedChild, "ctjs.return %result", "ctjs.return %a"), "  %read =",
                 "  %position = ctjs.binary_static bitand %i, %one\n"
                 "  ctjs.set_property %base[%position], %zero\n  %read =");
+    const auto remainder =
+        replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
+    for (const auto & expression :
+         {"%position = ctjs.binary mod %i, %two", "%position = ctjs.binary mod %i, %three",
+          "%offset = ctjs.binary add %two, %i\n"
+          "  %position = ctjs.binary mod %offset, %two"}) {
+        run({.what = "Number remainder bounds preserve exact writes across wraps",
+             .body = replace(remainder, "%position = ctjs.binary mod %i, %two", expression),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "negative zero retains the own zero key through remainder",
+         .body = replace(remainder, "#ctjs.number<0>", "#ctjs.number<9223372036854775808>"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "remainder replay keeps child snapshots made before an overwrite",
+         .body = replace(overwritten, "  ctjs.set_property %base[%i], %zero",
+                         "  %position = ctjs.binary mod %i, %two\n"
+                         "  ctjs.set_property %base[%position], %zero"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    run({.what = "remainder enclosures do not erase unvisited children",
+         .body = replace(remainder, "mod %i, %two", "mod %i, %one"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero; a[1]=x",
+         .exit = "a -> {a,x}"});
+    const auto remainderReload = replace(replace(remainder, "[%one, %x]", "[%x, %x, %two, %zero]"),
+                                         "%position = ctjs.binary mod %i, %two",
+                                         "%divisor = ctjs.get_property %base[%two]\n"
+                                         "  %position = ctjs.binary mod %i, %divisor");
+    run({.what = "remainder divisors reload only outside the complete overwrite enclosure",
+         .body = remainderReload,
+         .arrays = "a:[zero,zero,two,zero]",
+         .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two; "
+                  "a[2]=two; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("remainder bounds reject overlapping divisor reloads",
+           replace(replace(remainderReload, "[%x, %x, %two, %zero]", "[%two, %x, %zero, %zero]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject(
+        "later stores invalidate earlier remainder divisor reloads",
+        replace(remainderReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    for (const auto & operands : {"%i, %zero", "%i, %i", "%two, %i"}) {
+        reject("remainder requires a positive invariant divisor in its original operand order",
+               replace(remainder, "mod %i, %two", "mod " + std::string(operands)));
+    }
+    reject("a remainder enclosure cannot hide a negative dividend",
+           replace(remainder, "%position = ctjs.binary mod %i, %two",
+                   "%negative = ctjs.unary neg %i\n"
+                   "  %part = ctjs.binary mod %negative, %two\n"
+                   "  %position = ctjs.binary add %part, %one"));
+    reject("a remainder divisor cannot hide an unproved large dividend",
+           replace(remainder, "%position = ctjs.binary mod %i, %two",
+                   "%maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                   "  %large = ctjs.binary add %maximum, %i\n"
+                   "  %position = ctjs.binary mod %large, %two"));
+    reject("a composed remainder still requires every final key inside its allocation",
+           replace(remainder, "%position = ctjs.binary mod %i, %two",
+                   "%part = ctjs.binary mod %i, %two\n"
+                   "  %position = ctjs.binary add %part, %one"));
+    for (const auto & value :
+         {"#ctjs.number<13835058055282163712>", "#ctjs.number<4609434218613702656>",
+          "#ctjs.string<\"2\">", "#ctjs.boolean<true>", "#ctjs.bigint<\"2\">"}) {
+        reject("remainder index divisors require positive integer Numbers",
+               replace(replace(remainder, "  %a =",
+                               "  %divisor = ctjs.constant " + std::string(value) + "\n  %a ="),
+                       "mod %i, %two", "mod %i, %divisor"));
+    }
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i",
           "ctjs.unary neg %i\n"
