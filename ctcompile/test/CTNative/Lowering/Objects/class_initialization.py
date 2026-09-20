@@ -280,11 +280,24 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "inherited-own-fields-iterate-method-missing": "class construction method requires an existing own field",
+            "inherited-own-fields-iterate-method-add-field": "class construction method requires an existing own field",
+            "inherited-own-fields-iterate-method-override-missing": "class construction method requires an existing own field",
+            "inherited-own-fields-iterate-method-snapshot": "class construction method observes an own-key snapshot",
+            "inherited-own-fields-iterate-method-inherited-snapshot": "class construction method observes an own-key snapshot",
+            "inherited-own-fields-iterate-method-super-snapshot": "class construction method observes an own-key snapshot",
+            "inherited-own-fields-iterate-method-inherited-early-snapshot": "class construction method observes an own-key snapshot",
+            "inherited-own-fields-iterate-method-super-early-snapshot": "class construction method observes an own-key snapshot",
+            "inherited-own-fields-iterate-method-recursive": "class construction method proof exceeds its depth bound",
+            "inherited-own-fields-iterate-method-alias-escape-distinct": "class construction method receiver escapes its fixed fields",
+            "inherited-own-fields-iterate-method-alias-escape": "class construction method receiver escapes its fixed fields",
+            "inherited-own-fields-iterate-method-dead-ambient": "unknown call, binding or reflective effect",
+            "inherited-own-fields-iterate-method-receiver-argument": "class receiver escapes or observes a prototype/descriptor",
             "inherited-post-super-holder-branches": "unknown call, binding or reflective effect",
             "own-fields-branch-order": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-branch-missing": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-branch-early": "super completion index is not proved",
-            "own-fields-branch-observed": "class own-key snapshot constructor observes its receiver",
+            "own-fields-branch-observed": "class construction method observes an own-key snapshot",
             "own-fields-branch-loop": "class own-key snapshot requires fixed constructor fields",
             "inherited-own-fields-branch-before-super": "super condition is not a proved Boolean",
             "inherited-own-fields-branch-unused-ambient": "unknown call, binding or reflective effect",
@@ -294,7 +307,7 @@ def main():
             "inherited-own-fields-grandchild-added": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-sibling-added": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-leaf-collision": "class own-key snapshot requires fixed constructor fields",
-            "inherited-own-fields-before-store": "class own-key snapshot constructor observes its receiver",
+            "inherited-own-fields-before-store": "class construction method observes an own-key snapshot",
             "inherited-own-fields-ancestor-write": "class own-key snapshot field set changes",
             "inherited-own-fields-implicit": "derived class requires receiver-preserving super normalization",
             "own-fields-conditional": "class own-key snapshot branches change ordered fields",
@@ -336,8 +349,8 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class own-key snapshot constructor observes its receiver",
-            "bootstrap-base-data": "class own-key snapshot constructor observes its receiver",
+            "bootstrap-base": "class construction method requires an existing own field",
+            "bootstrap-base-data": "class construction method requires an existing own field",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -567,10 +580,13 @@ def main():
         if name in (
             "inherited-own-fields-iterate-helper-captured",
             "inherited-own-fields-iterate-helper-nested",
+            "inherited-own-fields-iterate-method-read",
+            "inherited-own-fields-iterate-method-nested",
         ):
             cutoffs[name] = check_proof_budget(args, structured, manifest, prepared, name)
             preparation_refusals += 1
         if name in (
+            "inherited-own-fields-iterate-method-nearest",
             "inherited-own-fields-iterate-helper-distinct",
             "inherited-post-super-holder-chain",
             "inherited-post-super-holder-order",

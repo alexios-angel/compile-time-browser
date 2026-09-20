@@ -560,6 +560,7 @@ bool classInitialization::normalizeSuperMethods(
         // Argument effects already precede the original call. Preserve every
         // target operation there and keep the original body for the complete
         // source census; fieldsOnly will recheck the expanded leaf receiver.
+        if (snapshotMethods.contains(selected)) { snapshotMethods.insert(function); }
         for (mlir::Operation & op : body) {
             if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
                 at.clone(op, mapping);

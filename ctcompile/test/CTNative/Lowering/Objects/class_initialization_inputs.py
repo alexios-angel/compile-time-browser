@@ -16,6 +16,25 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-own-fields-iterate-method-inherited-early-snapshot": (27111, 27111),
+    "inherited-own-fields-iterate-method-super-early-snapshot": (27111, 27111),
+    "inherited-own-fields-iterate-method-read": (7911, 7911),
+    "inherited-own-fields-iterate-method-update": (10011, 10011),
+    "inherited-own-fields-iterate-method-primitive": (8911, 8911),
+    "inherited-own-fields-iterate-method-nested": (8511, 8511),
+    "inherited-own-fields-iterate-method-nearest": (241106211, 241106211),
+    "inherited-own-fields-iterate-method-arguments": (121137511, 121137511),
+    "inherited-own-fields-iterate-method-missing": (749111, 749111),
+    "inherited-own-fields-iterate-method-snapshot": (7111, 7111),
+    "inherited-own-fields-iterate-method-add-field": (783111, 783111),
+    "inherited-own-fields-iterate-method-alias-escape": (7711, None),
+    "inherited-own-fields-iterate-method-alias-escape-distinct": (7711, 7711),
+    "inherited-own-fields-iterate-method-recursive": (7711, 7711),
+    "inherited-own-fields-iterate-method-dead-ambient": (7811, 7811),
+    "inherited-own-fields-iterate-method-inherited-snapshot": (27211, 27211),
+    "inherited-own-fields-iterate-method-override-missing": (771107411, 771107411),
+    "inherited-own-fields-iterate-method-super-snapshot": (17111, 17111),
+    "inherited-own-fields-iterate-method-receiver-argument": (7711, 7711),
     "inherited-own-fields-iterate-helper-captured": (8911, 8911),
     "inherited-own-fields-iterate-helper-holder": (40811, 40811),
     "inherited-own-fields-iterate-helper-nested": (30311, 30311),
@@ -368,6 +387,12 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-own-fields-iterate-method-read",
+    "inherited-own-fields-iterate-method-update",
+    "inherited-own-fields-iterate-method-primitive",
+    "inherited-own-fields-iterate-method-nested",
+    "inherited-own-fields-iterate-method-nearest",
+    "inherited-own-fields-iterate-method-arguments",
     "inherited-own-fields-iterate-helper-captured",
     "inherited-own-fields-iterate-helper-holder",
     "inherited-own-fields-iterate-helper-nested",

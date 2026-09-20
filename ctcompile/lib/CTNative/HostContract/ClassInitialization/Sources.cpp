@@ -465,10 +465,14 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     for (ctjs::ConstructOp made : instances) { receivers.push_back(made.getResult()); }
     llvm::SmallVector<ctjs::SetPropertyOp> allDefinitions(definitions);
     if (inherited) { allDefinitions.append(inheritedMethods.lookup(base)); }
+    llvm::StringMap<ctjs::FuncOp> selectedMethods;
     for (ctjs::SetPropertyOp definition : allDefinitions) {
         if (!step()) { return false; }
         auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
-        if (fn) { receivers.push_back(fn.getBody().front().getArgument(ctjs::arg_receiver)); }
+        if (fn) {
+            receivers.push_back(fn.getBody().front().getArgument(ctjs::arg_receiver));
+            selectedMethods.try_emplace(ctjs::constantKey(definition.getKey()), fn);
+        }
     }
     llvm::SetVector<mlir::Operation *> snapshots;
     for (mlir::Value receiver : receivers) {
@@ -483,6 +487,7 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                 load.getName() == "Object" && read.getObject() == call.getReceiver() &&
                 ctjs::constantKey(read.getKey()) == "getOwnPropertyNames") {
                 snapshots.insert(call);
+                snapshotMethods.insert(call->getParentOfType<ctjs::FuncOp>());
             }
         }
     }
@@ -509,6 +514,61 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     }
     llvm::SmallVector<llvm::StringRef> fields;
     const auto self = function.getBody().front().getArgument(ctjs::arg_receiver);
+    const auto hasField = [&](llvm::ArrayRef<llvm::StringRef> ordered, llvm::StringRef key) {
+        for (auto field : ordered) {
+            if (!step()) { return false; }
+            if (field == key) { return true; }
+        }
+        return false;
+    };
+    // A construction-time call keeps its body and arguments. Only its receiver
+    // uses need a stricter proof here: the eventual field shape is not present yet.
+    const auto inspectMethod = [&](auto && visit, ctjs::FuncOp fn,
+                                   llvm::ArrayRef<llvm::StringRef> ordered,
+                                   unsigned depth) -> bool {
+        if (!step() || depth == 64) {
+            return refuse("class construction method proof exceeds its depth bound");
+        }
+        // A base's snapshot may already have folded. Keep its original identity
+        // so a descendant cannot call it with a partially initialized receiver.
+        if (!fn || snapshotMethods.contains(fn)) {
+            return refuse("class construction method observes an own-key snapshot");
+        }
+        const auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
+        for (mlir::OpOperand * use : sourceUses(receiver)) {
+            if (!step()) { return false; }
+            auto * op = use->getOwner();
+            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                auto callee = read ? selectedMethods.lookup(ctjs::constantKey(read.getKey()))
+                                   : ctjs::FuncOp{};
+                if (use->getOperandNumber() != 1 || !callee ||
+                    sourceValue(read.getObject()) != receiver ||
+                    !visit(visit, callee, ordered, depth + 1)) {
+                    return refuse("class construction method receiver escapes its fixed fields");
+                }
+                continue;
+            }
+            mlir::Value key;
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+                key = read.getKey();
+                if (selectedMethods.count(ctjs::constantKey(key)) && read.getResult().hasOneUse()) {
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
+                    if (call && call.getCallee() == read.getResult() &&
+                        sourceValue(call.getReceiver()) == receiver) {
+                        continue;
+                    }
+                }
+            }
+            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
+            if (use->getOperandNumber() != 0 || !key ||
+                !hasField(ordered, ctjs::constantKey(key))) {
+                return refuse("class construction method requires an existing own field");
+            }
+        }
+        return reason.empty();
+    };
     const auto inspect = [&](auto && visit, mlir::Block & block,
                              llvm::SmallVector<llvm::StringRef> & ordered, unsigned depth) -> bool {
         if (!step() || depth == 64) {
@@ -560,6 +620,23 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             }
             if (llvm::isa<ctjs::LoadGlobalOp, ctjs::LoadUpvalueOp, ctjs::CellGetOp,
                           ctjs::GetPropertyOp, ctjs::CallOp, ctjs::CallDirectOp>(op)) {
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+                    read && sourceValue(read.getObject()) == self &&
+                    (selectedMethods.count(ctjs::constantKey(read.getKey())) ||
+                     hasField(ordered, ctjs::constantKey(read.getKey())))) {
+                    continue;
+                }
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                    call && sourceValue(call.getReceiver()) == self) {
+                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    auto callee = read ? selectedMethods.lookup(ctjs::constantKey(read.getKey()))
+                                       : ctjs::FuncOp{};
+                    if (!callee || sourceValue(read.getObject()) != self ||
+                        !inspectMethod(inspectMethod, callee, ordered, 0)) {
+                        return refuse("class own-key snapshot constructor observes its receiver");
+                    }
+                    continue;
+                }
                 // Retain helper computations for the complete callable/body
                 // census. They cannot observe a partially initialized receiver,
                 // including through a method that snapshots its current fields.
@@ -637,7 +714,7 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     }
     // Every receiver still passes fieldsOnly after these exact key reads fold.
     // In addition, no method or external instance use may create a new field.
-    // The constructor never calls a method before all fields exist.
+    // Construction-time calls separately proved the fields present at that point.
     for (mlir::Value receiver : receivers) {
         for (mlir::OpOperand * use : sourceUses(receiver)) {
             if (!step()) { return false; }

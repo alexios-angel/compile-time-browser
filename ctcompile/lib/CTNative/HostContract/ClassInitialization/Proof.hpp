@@ -34,6 +34,7 @@ struct classInitialization {
     llvm::DenseSet<mlir::Value> baseClasses;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::SetPropertyOp>> inheritedMethods;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<llvm::StringRef>> snapshotFields;
+    llvm::DenseSet<mlir::Operation *> snapshotMethods;
     llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::SetPropertyOp>> inheritedSlots;
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
