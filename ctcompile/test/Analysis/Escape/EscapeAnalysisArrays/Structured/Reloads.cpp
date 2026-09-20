@@ -210,6 +210,47 @@ void StructuredCases::reloads() {
                         "[%one, %y, %one, %y]", "[%y, %y, %one, %one]"),
                 "ctjs.binary add %i, %one", "ctjs.binary div %i, %two"),
         "ctjs.return %result", "ctjs.return %a");
+    const auto leftShiftIndex =
+        replace(replace(complementIndex, "ctjs.return %result", "ctjs.return %a"),
+                "%negative = ctjs.unary bitnot %i\n    %position = ctjs.unary bitnot %negative",
+                "%part = ctjs.binary div %i, %two\n"
+                "    %position = ctjs.binary_static shl %part, %one");
+    rows.push_back({.what = "structured left shifts preserve nonwrapping positions and stride",
+                    .body = leftShiftIndex,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[0]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto leftShiftReload =
+        replace(leftShiftIndex, "    %position = ctjs.binary_static shl %part, %one",
+                "    %count = ctjs.get_property %base[%one]\n"
+                "    %position = ctjs.binary_static shl %part, %count");
+    rows.push_back({.what = "structured left-shift count reloads survive in the scaled stride gaps",
+                    .body = leftShiftReload,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto leftShiftBoundary =
+        replace(replace(leftShiftIndex, "  %a =",
+                        "  %half = ctjs.constant #ctjs.number<4742290407612743680>\n"
+                        "  %maximum = ctjs.binary mul %half, %two\n  %a ="),
+                "%position = ctjs.binary_static shl %part, %one",
+                "%input = ctjs.binary sub %half, %part\n"
+                "    %shifted = ctjs.binary_static shl %input, %one\n"
+                "    %position = ctjs.binary sub %maximum, %shifted");
+    rows.push_back({.what = "structured left shifts include the exact positive output boundary",
+                    .body = leftShiftBoundary,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[0]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured left shifts refuse the signed-output discontinuity",
+           replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"));
+    reject("structured left-shift counts cannot overlap a later store",
+           replace(leftShiftReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    reject("structured left shifts preserve integrality of every source intermediate",
+           replace(leftShiftIndex, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"));
+    reject("structured left-shift counts cannot borrow a changing value",
+           replace(leftShiftIndex, "shl %part, %one", "shl %part, %last"));
     const auto rightShiftIndex =
         replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
     for (const auto & kind : {"shr", "ushr"}) {

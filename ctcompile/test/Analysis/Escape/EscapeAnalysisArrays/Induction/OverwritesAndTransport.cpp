@@ -314,6 +314,93 @@ void InductionCases::overwritesAndTransport() {
     const auto quotientIndex =
         replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%x, %x, %one, %one]"),
                 "ctjs.binary add %i, %one", "ctjs.binary div %i, %two");
+    const auto leftShiftIndex =
+        replace(complementIndex,
+                "%negative = ctjs.unary bitnot %i\n  %position = ctjs.unary bitnot %negative",
+                "%part = ctjs.binary div %i, %two\n"
+                "  %position = ctjs.binary_static shl %part, %one");
+    run({.what = "nonwrapping left shifts scale exact quotient positions and stride",
+         .body = leftShiftIndex,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & count : {"4629700416936869888", "13852790978814935040"}) {
+        auto body = replace(
+            leftShiftIndex,
+            "  %a =", std::string{"  %count = ctjs.constant #ctjs.number<"} + count + ">\n  %a =");
+        body = replace(body, "shl %part, %one",
+                       std::string{count} == "4629700416936869888" ? "shl %i, %count"
+                                                                   : "shl %part, %count");
+        run({.what = "left-shift counts preserve modulo32 and negative Number semantics",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto leftShiftReload =
+        replace(leftShiftIndex, "  %position = ctjs.binary_static shl %part, %one",
+                "  %count = ctjs.get_property %base[%one]\n"
+                "  %position = ctjs.binary_static shl %part, %count");
+    run({.what = "left-shift count reloads retain the scaled stride gaps",
+         .body = leftShiftReload,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto carriedLeftShift = replace(
+        replace(replace(leftShiftIndex, "^header(%a, %zero, %zero", "^header(%a, %zero, %one"),
+                "^header(%base, %step, %read", "^header(%base, %step, %s"),
+        "shl %part, %one", "shl %part, %s");
+    run({.what = "left-shift counts retain exact CFG header and backedge transport",
+         .body = carriedLeftShift,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto leftShiftBoundary =
+        replace(replace(leftShiftIndex, "  %a =",
+                        "  %half = ctjs.constant #ctjs.number<4742290407612743680>\n"
+                        "  %maximum = ctjs.binary mul %half, %two\n  %a ="),
+                "%position = ctjs.binary_static shl %part, %one",
+                "%input = ctjs.binary sub %half, %part\n"
+                "  %shifted = ctjs.binary_static shl %input, %one\n"
+                "  %position = ctjs.binary sub %maximum, %shifted");
+    run({.what = "left shifts include the largest input whose doubled output stays positive",
+         .body = leftShiftBoundary,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("left shifts refuse the signed-output discontinuity",
+           replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"));
+    for (const auto & body :
+         {replace(leftShiftReload, "%count = ctjs.get_property %base[%one]",
+                  "%count = ctjs.get_property %base[%two]"),
+          replace(leftShiftReload,
+                  "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="),
+          replace(carriedLeftShift, "^header(%base, %step, %s", "^header(%base, %step, %read"),
+          replace(leftShiftIndex, "shl %part, %one", "shl %one, %part"),
+          replace(leftShiftIndex, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+          replace(leftShiftIndex, "shl %part, %one", "shl %i, %one"),
+          replace(leftShiftIndex, "%part = ctjs.binary div %i, %two",
+                  "%part = ctjs.unary neg %i")}) {
+        reject("left shifts retain count, reload, integral-input and own-bounds guards", body);
+    }
+    const auto hugeLeftShift = replace(
+        replace(replace(leftShiftIndex, "  %a =",
+                        "  %count = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
+                "[%x, %one, %x, %one]", "[%x]"),
+        "shl %part, %one", "shl %i, %count");
+    reject("left-shift stride multiplication must remain within the bounded Number range",
+           hugeLeftShift);
+    run({.what = "left-shift stride admits the exact high-bit factor for a single zero visit",
+         .body = replace(hugeLeftShift, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+         .arrays = "a:[zero]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
     const auto rightShiftIndex =
         replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
     for (const auto & kind : {"shr", "ushr"}) {
@@ -709,12 +796,15 @@ void InductionCases::overwritesAndTransport() {
                        "%part = ctjs.binary add %i, %huge\n"
                        "  %position = ctjs.binary sub %part, %huge"));
     }
-    std::string deepIndex, deepUnaryIndex;
+    std::string deepIndex, deepUnaryIndex, deepLeftShiftIndex;
     for (unsigned i = 0; i < 65; ++i) {
         deepIndex += "  %part" + std::to_string(i) + " = ctjs.binary add %" +
                      (i == 0 ? std::string{"i"} : "part" + std::to_string(i - 1)) + ", %zero\n";
         deepUnaryIndex += "  %part" + std::to_string(i) + " = ctjs.unary plus %" +
                           (i == 0 ? std::string{"i"} : "part" + std::to_string(i - 1)) + "\n";
+        deepLeftShiftIndex += "  %part" + std::to_string(i) + " = ctjs.binary_static shl %" +
+                              (i == 0 ? std::string{"i"} : "part" + std::to_string(i - 1)) +
+                              ", %zero\n";
     }
     reject("composed index depth is bounded even when every operation adds zero",
            replace(scaledIndex, "  %position = ctjs.binary mul %i, %one\n",
@@ -722,6 +812,9 @@ void InductionCases::overwritesAndTransport() {
     reject("unary index depth is bounded even when every operation preserves its Number",
            replace(scaledIndex, "  %position = ctjs.binary mul %i, %one\n",
                    deepUnaryIndex + "  %position = ctjs.unary plus %part64\n"));
+    reject("left-shift index depth is bounded even when every count is zero",
+           replace(scaledIndex, "  %position = ctjs.binary mul %i, %one\n",
+                   deepLeftShiftIndex + "  %position = ctjs.binary_static shl %part64, %zero\n"));
     const auto reverseIndex =
         replace(offsetIndex, "ctjs.binary add %i, %one", "ctjs.binary sub %three, %i");
     run({.what = "reversed subtraction overwrites only descending visited own positions",

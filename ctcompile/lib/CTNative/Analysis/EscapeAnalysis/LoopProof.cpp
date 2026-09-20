@@ -270,18 +270,19 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
         const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
         const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
-        const bool rightShift = addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
-                                             addition.getKind() == ctjs::BinaryKind::UShr);
+        const bool leftShift = addition && addition.getKind() == ctjs::BinaryKind::Shl;
+        const bool shift =
+            leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
+                                       addition.getKind() == ctjs::BinaryKind::UShr));
         if (!expression || expression->getBlock() != body ||
-            !(subtract || divide || multiply || rightShift ||
+            !(subtract || divide || multiply || shift ||
               (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
               (addition && addition.getKind() == ctjs::BinaryKind::Add))) {
             return std::nullopt;
         }
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1);
-        if (!range && !divide && !rightShift &&
-            invariantFailure != ArrayContentsFailure::WorkLimit) {
+        if (!range && !divide && !shift && invariantFailure != ArrayContentsFailure::WorkLimit) {
             range = self(self, expression->getOperand(1), depth + 1);
             offsetOperand = 0;
         }
@@ -295,7 +296,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return std::nullopt;
         }
         bool descending = subtract && offsetOperand == 0;
-        if (rightShift) {
+        if (shift) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
@@ -304,18 +305,29 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto negative = boundedConvertedNumber(*offset, true);
             if ((!positive && !negative) || !range->first.integerNumber ||
                 !range->last.integerNumber ||
-                *range->last.integerNumber >
-                    (addition.getKind() == ctjs::BinaryKind::Shr ? 2147483647ULL : 4294967295ULL)) {
+                *range->last.integerNumber > (addition.getKind() == ctjs::BinaryKind::UShr
+                                                  ? 4294967295ULL
+                                                  : 2147483647ULL)) {
                 return std::nullopt;
             }
             const auto count = positive ? static_cast<std::uint32_t>(*positive)
                                         : 0U - static_cast<std::uint32_t>(*negative);
-            const auto divisor = std::size_t{1} << (count & 31U);
-            // ponytail: nonnegative inputs and a divisible stride keep floor
-            // division affine. Signed/wrapping bands and repeated keys need
-            // a separate range proof; an unaligned first endpoint is safe.
-            if (range->stride % divisor != 0) { return std::nullopt; }
-            range->stride /= divisor;
+            const auto factor = std::size_t{1} << (count & 31U);
+            if (leftShift) {
+                // ponytail: nonnegative signed-i32 results exclude every wrap.
+                // Other conversion bands need their own affine range proof.
+                if (*range->last.integerNumber > 2147483647ULL / factor ||
+                    range->stride > 4294967295ULL / factor) {
+                    return std::nullopt;
+                }
+                range->stride *= factor;
+            } else {
+                // ponytail: nonnegative inputs and a divisible stride keep floor
+                // division affine. Signed/wrapping bands and repeated keys need
+                // a separate range proof; an unaligned first endpoint is safe.
+                if (range->stride % factor != 0) { return std::nullopt; }
+                range->stride /= factor;
+            }
         } else if (divide) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
@@ -355,7 +367,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 return std::nullopt;
             }
             ContentsValue result{operand, ContentsKind::NonBigInt};
-            if (rightShift) {
+            if (shift) {
                 boundedNumberBitwise(*endpoint, *offset, addition.getKind(), result);
             } else if (divide) {
                 boundedNumberDivision(*endpoint, *offset, false, result);
