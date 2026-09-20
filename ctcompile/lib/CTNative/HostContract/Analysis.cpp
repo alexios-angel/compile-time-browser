@@ -1,5 +1,6 @@
 #include "Analysis.h"
 
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/ScopeExit.h"
 
@@ -341,9 +342,7 @@ bool analyzer::capturedMapOuterKeys(
         // Even an unused outer snapshot can carry these identities away from
         // the direct formal. Child snapshots do not contain outer keys.
         if (action == "keys") { outerSnapshot = true; }
-        if (action == "set" || action == "get" || action == "has" || action == "delete") {
-            keyCalls.insert(call);
-        }
+        if (nativeMapKeyAction(action)) { keyCalls.insert(call); }
     }
     llvm::DenseSet<mlir::OpOperand *> keyUses;
     llvm::DenseSet<mlir::Operation *> candidates;

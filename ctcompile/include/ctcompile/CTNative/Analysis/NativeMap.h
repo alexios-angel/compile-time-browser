@@ -42,6 +42,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals =
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);
 
+/// Names an action taking a key; this lexical check supplies no call proof.
+bool nativeMapKeyAction(llvm::StringRef action);
+
 /// A proved keys/values snapshot or its confined standard Array.from copy.
 bool isNativeMapSnapshot(mlir::Operation * op);
 

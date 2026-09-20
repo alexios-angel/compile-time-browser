@@ -16,8 +16,7 @@ namespace {
 bool mapKeyUse(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     if (!call || use.getOperandNumber() != 2) { return false; }
-    const auto action = nativeMapAction(call);
-    return action == "set" || action == "get" || action == "has" || action == "delete";
+    return nativeMapKeyAction(nativeMapAction(call));
 }
 
 bool strictComparison(mlir::Operation * op) {

@@ -12,6 +12,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <functional>
 #include <string>
@@ -22,6 +23,12 @@ llvm::StringRef nativeMapAction(mlir::Operation * op) {
     if (op == nullptr) { return {}; }
     auto action = op->getAttrOfType<mlir::StringAttr>(kNativeMapAction);
     return action ? action.getValue() : llvm::StringRef{};
+}
+
+bool nativeMapKeyAction(llvm::StringRef action) {
+    static const llvm::StringSet<> actions{"set", "get", "has", "delete"};
+    // Reject long source names before hashing, as literal comparisons did.
+    return action.size() <= 6 && actions.contains(action);
 }
 
 int64_t nativeMapGroup(mlir::Value value) {

@@ -3,6 +3,7 @@
 #include "ProviderDiagnostics.h"
 #include "ProviderObjects.h"
 
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/bit.h"
 
@@ -143,7 +144,7 @@ struct mapPathReader {
                     context, llvm::bit_cast<uint64_t>(static_cast<double>(size))));
                 return record(read, owner.object, key, result) ? result : prefixValue{};
             }
-            if (key == "has" || key == "get" || key == "set" || key == "delete") {
+            if (nativeMapKeyAction(key)) {
                 return {prefixValue::Kind::resourceMethod,
                         ctjs::StringAttr::get(context, key),
                         {},

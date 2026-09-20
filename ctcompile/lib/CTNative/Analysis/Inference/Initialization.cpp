@@ -46,7 +46,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         if (action.empty()) { return; }
         const int64_t group = nativeMapGroup(call.getReceiver());
         if (group < 0) { return; }
-        if (action == "set" || action == "get" || action == "has" || action == "delete") {
+        if (nativeMapKeyAction(action)) {
             mlir::Type exact;
             if (auto proof = call->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType)) {
                 const auto tag = proof.getValue();
