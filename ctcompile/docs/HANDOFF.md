@@ -22,6 +22,87 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Bootstrap R.find count integration, 2026-09-20 UTC
+
+Resumed the explicit-element `R.find` boundary recorded below and in the master
+plan; the starting tree at **987dafbe** was clean. Linux `/proc` and Windows
+`Get-CimInstance Win32_Process` checks found no Claude executable, CLI or loop
+(65 Linux / 362 Windows processes, no unknowns); this was journaled before work.
+Parallel inspection traced the Shell/VM limits; after delegated agents hit their
+rate limit, Codex completed the implementation and native tests under its claims.
+
+**323fea4c** proves the exact imported NodeList spread into an empty concat
+receiver when the result has only `.length` observations. It retains the public
+Style query and emits a scalar minimum with **16,777,216**, the VM's proxy-spread
+cap. Original Array concat/species and absent receiver/element spreadability hooks
+are explicit embedding guarantees. Every source use, loop state and copied slot
+is checked; mutation, extra arguments, result indexing/identity/escape, stale
+fingerprints and exhausted budgets refuse without publishing partial changes.
+**a002f180** extends existing element guards to strict equality with `undefined`
+in either operand order. This removes the original helper's unused
+`document.documentElement` default only for an explicit validated element.
+Unproved cells, joins and nullable query results receive no new element facts.
+
+**454cfc3e** runs normalization after helper/default-guard expansion.
+Its source-pinned fixture calls the unchanged Bootstrap `find` arrow from a local
+holder and observes its count across DOM mutations. Direct spread tests also
+exercise scope/root/shadow boundaries, detached roots, invalid-selector effect
+order, and borrowed/owned document validation. Generated C++ uses existing
+`ctnative::querySelectorAll.call` and links DOM/Core/Style; no VM, GC or new
+native runtime carrier was added. Browser files are unchanged. Default document
+roots and indexed concat consumers remain refused.
+
+Final focused validation passed: host CTest **1/1** (0.55s), both existing
+selector lit cases, and corrected spread-length lit **1/1** (**75.54s**). The new
+case reports **32 native executions / 52 expected refusals** across borrowed and
+owned providers, GCC/Clang, both optimization modes and both printing layouts.
+Generated source and linked binaries pass Script/AOT symbol audits. All **11**
+final code/test source hashes match the devbox; the final synchronization needed
+no compilation. A whitespace-only fixture cleanup after its initial sync did
+not change JavaScript tokens or test behavior.
+
+Commands ran under `/tmp/ctbrowser-devbox-build.lock`, with helper and SSH stdin
+from `/dev/null`. From the local checkout and then the devbox project directory:
+
+```sh
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_host_contract$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-(spread-length|prototype-query|query-all)[.]test$'
+# Test-only iterations synchronized with these two explicit targets:
+tools/remote-build.sh ctjs-opt ctjs-translate
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-spread-length[.]test$'
+```
+
+The first build caught ambiguous MLIR dominance overloads; explicit operation
+pointers fixed them. The next host check caught a NumberAttr bit-pattern error;
+using the encoded double fixed the cap before the first commit. Initial source
+fixtures exposed existing same-block helper restrictions, then the missing
+parameter guard above. The final production build passed host CTest **1/1**
+(**0.55s**) and both existing selector lit cases; the new case then exposed only
+a duplicate local name in the owned test client (three-case run **81.76s**).
+The corrected client scopes its owned checks independently. Earlier the core
+normalizer also passed host CTest **1/1** (0.53s) and both existing selector cases
+(three-case run 79.03s, new fixture failed before native execution).
+
+Required `tools/format.sh --check` retains **16** pre-existing diagnostics in
+four untouched files: `ctdrive.cpp`, `ProviderPaths.h`, `Heap.h`, and
+`Symbolic/Facts.cpp`. Changed C++/Python formatting and whitespace checks pass.
+These are standalone native API checks and symbol audits, not VM/browser
+end-to-end differential observations. Full CTest/compiler lit, broad corpus/matrix,
+WPT/test262 and sanitizers were skipped. No push.
+
+**Exact next boundary:** reconcile direct query-all indexed reads with Shell's
+`collections.cpp:584` limit: indices above **1,000,000** return `undefined` in
+the oracle, while the existing native indexed path returns an element. Before
+admitting indexed `R.find` consumers, prove a distinct element-or-undefined slot
+and guard its dereference; preserve the separate **2^24** spread cap from
+`Script/vm/call/invoke.cpp:363`. Current count-only lowering does not observe
+slot values and retains their contribution to length. Large collections were
+not allocated in these tests; the cap and branch direction are checked in raw
+IR proof tests. Default document roots need a separate document/session identity,
+nullable-root and Style contract. Full Bootstrap initialization, retained events
+and the application driver remain unfinished.
+
 ## String-to-number lookup cleanup, 2026-09-20 UTC
 
 **38e51ca6** replaces `classIntrinsicArity` and `iteratorIntrinsicArity` branches

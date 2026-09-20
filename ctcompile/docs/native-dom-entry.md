@@ -276,8 +276,7 @@ The compiler erases the proved global/prototype/method reads and emits the
 existing typed selector call, using argument zero's document and live Style
 engine. Missing guarantees, detached `.call`, `.apply`/`.bind`, coercible
 selectors and unguarded nullable receivers refuse. Default
-`document.documentElement` roots and NodeList spread/concat remain separate
-boundaries.
+`document.documentElement` roots still require a separate document contract.
 
 `querySelectorAll(String)` calls public `engine::select` with `first_only=false`
 and returns a local `std::vector<ctbrowser::element_ref>`. The vector owns its
@@ -309,6 +308,52 @@ Snapshot writes, out-of-bounds or unproved indices, identity observation,
 borrowed returns, retained callbacks and NodeList `forEach`/iterator protocols
 remain refused. The original String-array iterator proof does not authorize
 NodeList iteration.
+
+A confined spread into an empty concat receiver also supports `.length`:
+
+```javascript
+const R = {
+  find: (t, e = document.documentElement) => [].concat(...Element.prototype.querySelectorAll.call(e, t))
+};
+return R.find('.selected', element).length;
+```
+
+This preserves the original Bootstrap helper. Its holder, property read and call
+must satisfy the local same-block helper proof above. The supplied element makes
+its default arm unreachable: exact declared element identities compare false to
+`undefined` under strict equality in either operand order. This fact does not
+propagate through unproved cells, joins or nullable query results.
+
+The manifest supplies `"initial_intrinsics": ["Array", "Element", "Function"]`.
+Array additionally promises original `Array.prototype.concat`, default
+constructor/species and no spreadability hooks on the fresh receiver. Element
+promises no `Symbol.isConcatSpreadable` hooks on result wrappers or their complete
+prototype chains. The complete source proof rejects operations that invalidate
+these guarantees, including unknown calls, mutation and escaping identities.
+
+The compiler proves the imported zero-based spread loop, its sole append, fresh
+empty receiver and arguments array, and length-only uses of the result. It keeps
+the public selector call and replaces concat length by
+`min(snapshot.length, 16777216)`, using ordinary scalar C++ control flow. That
+limit preserves the current VM's proxy materialization cap; direct NodeList length
+is uncapped. Undefined slots still contribute one concat slot. No JavaScript array,
+iterator, callable table or runtime value is emitted. Work-budget exhaustion or a
+stale fingerprint leaves the original source unchanged, and the resulting private
+candidate must pass the complete DOM proof before publication.
+
+Nonempty receivers, additional arguments/spreads, detached concat, replaced methods,
+result indexing, identity, escape or mutation remain refused. Default document roots
+are also refused. The source proof tests check the exact cap and selected arms;
+standalone native tests cover empty/scoped/detached results, saved counts across DOM
+writes, invalid-selector effect order and borrowed/owned document validation.
+
+**Known indexing boundary:** Shell's NodeList proxy returns `undefined` for numeric
+indices above 1,000,000 (`bindings/document/collections.cpp`). The existing direct
+query-all indexed lowering currently returns the corresponding element instead;
+large-index equivalence is unresolved. Count-only concat does not observe these
+values. Before admitting indexed concat consumers, preserve this distinction with
+an element-or-undefined proof and reconcile the existing direct indexed path;
+Script remains the oracle.
 
 A `closest` or `querySelector` result is a local borrowed identity, with a
 canonical empty `element_ref{}` for no match. Strict equality compares it with another result or
