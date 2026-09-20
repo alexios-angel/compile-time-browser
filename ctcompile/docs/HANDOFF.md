@@ -22,6 +22,89 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## String-to-number lookup cleanup, 2026-09-20 UTC
+
+**38e51ca6** replaces `classIntrinsicArity` and `iteratorIntrinsicArity` branches
+with `llvm::StringMap<unsigned>` lookups. **313fa8ef** converts six Map-method
+arity expressions in native analysis, host preparation and closure lifting;
+**cd029817** converts the leaf-object test call-count selector to `dict.get`.
+The scan found **nine** matching sites across **eight** files. Each table retains
+its original accepted names, fallback (0, 1, 7 or 99) and bounded string work.
+No shared policy API, browser/oracle changes or generated LLVM dependency.
+
+The explicit devbox build and **4/4** selected CTests passed (281.97s). Four
+selected Map/object lit cases passed; the fifth, class initialization, stopped
+at a stale preparation expectation (selected lit run 455.65s).
+Earlier **622f1ca8** already allowed preparing the read-only helper in
+`captured-holder-receiver-escape`, while native method forwarding still refuses.
+**dea36b1f** moves that control to `PREPARED_ONLY`, preserves its construction
+count and checks the exact `this`-argument native refusal in both modes. Source
+bytes and Node/interpreter observations remain unchanged.
+
+After correction, **12/12** selected existing class controls passed (30.36s):
+12 source observations, 32 native executions, 24 unprepared refusals, 12
+preparation refusals and four prepared native refusals. The same driver also
+passed its constructed-method checks (16 executions/20 refusals) and original
+`r` guards (eight executions/four refusals). The entire class aggregate was
+**not replayed**. All **ten** final code/test source hashes match the devbox.
+The Python metadata change also passed a before/after comparison of source,
+refusal, call/function/field metadata and string literals.
+
+Commands below ran under `/tmp/ctbrowser-devbox-build.lock`; local helper and
+non-heredoc SSH commands used stdin from `/dev/null`:
+
+```sh
+# Local helper, initial build:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-host-contract ctcompile-test-host-contract-seeded-maps ctcompile-test-exception-recovery ctcompile-test-owned-global-shared-map ctcompile-test-native-reference
+# On devbox, from projects/compile-time-browser:
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_(host_contract|host_contract_seeded_maps|exception_recovery|owned_global_shared_map)$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Lowering/(Maps/(maps[.]mlir|map-proof[.]mlir|map-iterators[.]test)|Objects/(object-fields|class-initialization)[.]mlir)$'
+# Local helper after the test-only correction (no compilation needed):
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference
+```
+
+The final focused driver invocation ran on the devbox against the split source
+fixtures left by that lit case. Only its observation selection changed:
+
+```python
+import sys
+import time
+from pathlib import Path
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path('ctcompile/test').resolve()))
+from CTNative.Lowering.Objects import class_initialization as test
+names = (
+    'captured-holder-receiver-escape', 'captured-holder-unused',
+    'captured-holder-receiver', 'inherited-own-fields-iterate-borrow-store',
+    'inherited-own-fields-iterate-borrow-return',
+    'inherited-own-fields-iterate-borrow-write', 'class-map-direct',
+    'class-map-helper-holder', 'class-map-record-direct', 'class-map-record-clear',
+    'class-map-member-replaced', 'class-map-stored-receiver',
+)
+test.OBSERVATIONS = {name: test.OBSERVATIONS[name] for name in names}
+sys.argv = [test.__file__,
+    '--translate', 'build/ctcompile/tools/ctjs-translate/ctjs-translate',
+    '--opt', 'build/ctcompile/tools/ctjs-opt/ctjs-opt',
+    '--node', '/home/ubuntu/tools/node-v26.8.1/bin/node',
+    '--reference', 'build/ctcompile/test/ctcompile-test-native-reference',
+    '--fixtures', 'build/ctcompile/test/CTNative/Lowering/Objects/Output/class-initialization.mlir.tmp',
+    '--work', 'build/ctcompile/test/CTNative/Lowering/Objects/Output/class-initialization.arity-focused',
+]
+print('Selected class controls: ' + ', '.join(names), flush=True)
+start = time.monotonic()
+test.main()
+print(f'Focused class controls passed in {time.monotonic() - start:.2f}s', flush=True)
+```
+
+Required formatting still reports **16** pre-existing diagnostics in the same
+four untouched files listed below. Changed C++/Python formatting and whitespace
+checks pass. Full CTest/compiler lit, broad corpus/matrix, WPT/test262 and
+sanitizers were skipped; no full-suite pass is claimed. No push.
+**Next native integration boundary remains:** confined Bootstrap `R.find`
+spread/concat with an explicit element, followed by separately proved document
+roots and ownership. Full Bootstrap initialization and the application driver
+remain unfinished.
+
 ## Literal membership cleanup, 2026-09-20 UTC
 
 Converted **27** same-subject literal equality chains of four or more comparisons
