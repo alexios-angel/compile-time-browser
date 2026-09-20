@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Boolean/String transport, 2026-09-20 UTC
+
+Continued clean **435aa9b8**, resuming the preserved parameter/return refusals.
+**9b234233** adds typed `boolean_string` and `nullable_boolean_string` carriers;
+**0e1928ce** carries them through parameters, explicit returns, branches, loops
+and global reads/writes. Strings remain owning typed values and optional storage
+keeps undefined and null distinct. Numeric conversion, generic addition,
+concatenation, truthiness and `typeof` reuse the existing primitives and public
+Core. Map storage and exact per-operation proof requirements remain unchanged.
+
+Focused checks pass: runtime CTest **1/1** and **eight distinct selected lit
+cases** across corrected runs. The new source gate checks **50 main observations
+in eight native modes**, two original-return observations on GCC/Clang, four
+refusals and two mutations. All **19 final code/test hashes** match the devbox.
+Scoped C++/Python formatting and whitespace pass; required repository formatting
+retains 16 pre-existing C++ diagnostics. Full suites were skipped. The selected
+Map case includes its existing focused ASan/UBSan and lifetime checks.
+[Exact checks, initial build correction and updated refusal pins](handoff/2026-09-20-native-boolean-string.md).
+
+**Next:** strict and loose equality for admitted String-containing primitive
+unions, starting with the unchanged `equality.js` controls in
+`boolean-string-transport.test` and `optional-number-string.test`. Preserve type
+identity for strict equality and JavaScript conversion for loose equality,
+including null/undefined, Boolean/Number/String, NaN and signed zero.
+String ordering, broader unions, mixed containers, object hooks, Core parser
+gaps and UTF-16 alignment remain separate. Collections/document views,
+`Symbol.hasInstance`, indexed Bootstrap `R.find` and the application driver
+remain unfinished. No browser or VM implementation changed in this slice.
+
 ## Optional Number/String transport, 2026-09-20 UTC
 
 Continued clean **61b688c3**, resuming the preserved changing-global refusal.

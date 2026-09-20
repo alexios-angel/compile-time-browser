@@ -18,8 +18,10 @@ conversion. String addition accepts Number, Boolean and finite nullable scalar
 values with their proper text. C++ callers can concatenate built-in arithmetic
 types and `js_boolean_t` in either order; Boolean words remain distinct from
 numbers. Optional String arithmetic retains null/undefined tags until numeric
-conversion. Closed local Boolean/String unions support numeric arithmetic and
-concatenation with an exact String. These operations reuse public Core conversion/
+conversion. Closed Boolean/String values use typed owning alternatives through
+parameters, returns, branch/loop edges and globals. Their optional form retains
+undefined and null separately. Both support numeric arithmetic, generic addition,
+concatenation, truthiness and `typeof`. These operations reuse public Core conversion/
 formatting. Generic primitive addition now returns a proved closed String/Number
 carrier, retaining its tags through calls, joins, loops and global stores. Its
 optional form now preserves undefined, null, Number and String through source
@@ -331,9 +333,9 @@ existing `auto`/template deduction.
    zero, and present text uses public Core without changing its stored tag.
    Closed local Boolean/String unions use `std::visit` for numeric conversion
    and concatenation with an exact String. Boolean false becomes Number zero;
-   String `"false"` becomes NaN. Their parameter/return/global ABI remains outside
-   admission. The `string-union-coercions.test` source gate passes 51 observations
-   across eight native modes, two remaining refusals, two generic-addition
+   String `"false"` becomes NaN. The `string-union-coercions.test` source gate
+   passes 51 observations across eight native modes, two remaining refusals,
+   two generic-addition
    admission controls and two distinguishing mutations.
    Generic primitive `+` now selects Number addition or String concatenation from
    the actual alternatives and returns `ctnative::number_string`, exactly
@@ -352,11 +354,23 @@ existing `auto`/template deduction.
    `optional-number-string.test`, whose 53 observations include early reads and
    saved copies across later writes. Eight native modes, four refusal controls
    and two mutations pass.
-   Next carry closed Boolean/String values through parameters, returns and
-   globals, beginning with the preserved `boolean-string-parameter.js` and
-   `boolean-string-return.js` refusals in `generic-addition.test`. Use the typed
-   String carrier and retain absence distinctions when globals add null/undefined.
-   Wider unions and mixed container payloads remain separate; never stringify
+   Closed Boolean/String values now use `boolean_string`, exactly
+   `std::variant<js_boolean_t, js_string>`, through parameters, returns, branches,
+   loops and globals. `nullable_boolean_string` adds distinct `undefined_t` and
+   `js_null_t` alternatives. Global storage starts as undefined; numeric/text
+   conversion, truthiness, `typeof` and generic addition preserve actual tags.
+   The original parameter/return refusal programs now execute unchanged in
+   `boolean-string-transport.test`: 50 main observations across eight native modes,
+   two return observations on GCC/Clang, four refusal controls and two mutations.
+   Map storage retains its existing raw String variant and exact per-operation
+   proof requirements; a proved String extraction unwraps the typed scalar at
+   that boundary. No whole-union Map adapter is introduced.
+   Next implement strict and loose equality for the admitted String-containing
+   primitive unions, starting with the preserved `equality.js` controls in
+   `boolean-string-transport.test` and `optional-number-string.test`. Strict
+   equality must retain type identity; loose equality must preserve JavaScript
+   conversion, including null/undefined, Boolean/Number, NaN and signed zero.
+   Broader unions and mixed container payloads remain separate; never stringify
    both sides unconditionally.
    Keep numeric relational conversion separate from String lexicographic ordering
    and loose equality. Object conversion hooks remain refused; an overload or class

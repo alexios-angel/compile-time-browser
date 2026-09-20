@@ -47,9 +47,9 @@ match under ASan/UBSan with leak detection. Native compile coverage
 stays Bootstrap 19/574, p5 39/4754 and Phaser 45/7725.
 
 The measurements above describe the original Boolean/Number slice. Closed
-local Boolean/String temporaries now support numeric conversion and exact String
-concatenation; their signatures/globals remain refused. Closed Number/String
-values use `ctnative::number_string` (`std::variant<js_num, js_string>`) through
+Boolean/String values now support numeric conversion and exact String
+concatenation, with typed signature and global transport described below.
+Closed Number/String values use `ctnative::number_string` (`std::variant<js_num, js_string>`) through
 parameters, returns, conditionals, loops and global stores. Generic primitive `+`
 chooses concatenation only when an actual operand is String; numeric arithmetic,
 truthiness, `typeof` and String concatenation consume that result without losing
@@ -63,7 +63,22 @@ proved definite observations retain checked extraction. The old optional-storage
 helper remains a compatibility overload. The new source fixture checks 53
 observations in eight native modes; see [the optional transport handoff](handoff/2026-09-20-native-optional-number-string.md).
 
-Boolean/String signatures/globals, equality/ordering of Number/String unions,
-broader unions and mixed scalar Map
-keys/payloads or array storage retain their existing refusal boundaries. This
-does not implement arbitrary `std::variant` lowering.
+Closed Boolean/String values use `ctnative::boolean_string`, exactly
+`std::variant<js_boolean_t, js_string>`. Their optional carrier is
+`ctnative::nullable_boolean_string`, exactly
+`std::variant<undefined_t, js_null_t, js_boolean_t, js_string>`. Parameters,
+explicit returns, branch/loop edges and global reads/writes retain actual tags.
+Early global reads remain undefined; saved Strings own their contents across
+later writes. Numeric conversion, generic addition, concatenation, truthiness
+and `typeof` reuse the existing primitives and public Core operations.
+
+The focused transport fixture checks 50 main observations in eight native modes
+and the two original return observations on GCC/Clang. Existing Map storage
+remains raw String storage with exact per-operation proofs; typed String values
+unwrap only after that proof. See [the Boolean/String handoff](handoff/2026-09-20-native-boolean-string.md).
+
+Next implement strict/loose equality for these closed String-containing unions,
+starting with the two optional transport fixtures' preserved equality refusals.
+Equality/ordering, broader unions and mixed scalar Map keys/payloads or array
+storage retain their existing refusal boundaries. This does not implement
+arbitrary `std::variant` lowering.
