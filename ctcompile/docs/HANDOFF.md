@@ -22,6 +22,58 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## LLVM command lines and lookup tables, 2026-09-20 UTC
+
+**a21ee995** moves `ctcompile` to a generated `llvm::opt::GenericOptTable` and
+`ctbaseline`/`ctpageload` to `llvm::cl::opt/list`. `ctjs-opt` and `ctjs-translate`
+already use LLVM parsing through their MLIR drivers. Boost.ProgramOptions is
+removed. LLVM **23** is now required even with `CTCOMPILE_ENABLE_MLIR=OFF`;
+MLIR remains optional. Named options, defaults, short aliases and parse-error
+exit 2 remain; help uses LLVM formatting. `ctpageload` now rejects extra inputs.
+
+**58a56367** maps String method names to the existing native/host enums and uses
+`DenseMap` for method and dataset-value proof lookup. RegExp identity, first-unit
+lowercasing, receiver checks and bounded key hashing remain. **a6fe76a6** uses
+`StringSet` for shape-instantiation counts. The container review kept ordered
+JavaScript Map snapshots, sorted emitted fields and escape-lattice vectors;
+those orders have consumers. No speedup was measured or claimed.
+
+Measured on the devbox: selected CTests **6/6** (0.85s), selected lit **5/5**
+(168.91s), final expanded CLI CTest **1/1** (0.25s). CLI checks cover aliases,
+missing/duplicate/unknown arguments, empty entry, a path starting with `--`,
+real bundles/manifests, baseline input order and page images. Packaging roundtrip
+also checks launcher execution, output-write failures and matching rendering.
+A separate MLIR-disabled configuration succeeded; it was a configure check,
+not another build. All **17** changed code/test hashes match the devbox.
+
+Commands ran under `/tmp/ctbrowser-devbox-build.lock` (SSH/helper calls used
+`</dev/null` so they could not consume the enclosing shell heredoc):
+
+```sh
+tools/remote-build.sh ctcompile-tool ctcompile-tool-ctbaseline ctcompile-tool-ctpageload ctjs-opt ctjs-translate ctcompile-test-host-contract ctcompile-test-native-reference ctcompile-test-app_bundle ctrun ctbrowse
+# On devbox, from projects/compile-time-browser:
+ctest --test-dir build --output-on-failure --no-tests=error -R '^(ctcompile_version|ctcompile_usage|ctcompile_help|ctcompile_rejects_nonsense|ctcompile_cli|ctcompile_host_contract)$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: (Packaging/roundtrip[.]test|CTNative/Browser/native-dom-(strings|dataset|class-list)[.]test|CTNative/Lowering/Objects/one-shape-one-definition[.]mlir)$'
+# After the final CLI edge cases and unconditional LLVM version check:
+# Local helper, then devbox CTest/configure:
+tools/remote-build.sh ctcompile-tool ctcompile-tool-ctbaseline ctcompile-tool-ctpageload
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_cli$'
+cmake -S ctbrowser -B build-cli-no-mlir -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$PWD/tools/clang-std-embed/bin/clang++" -DCMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew -DCTBROWSER_ENABLE_PROJECTS=ctcompile -DCTCOMPILE_ENABLE_MLIR=OFF -DCMAKE_DISABLE_FIND_PACKAGE_MLIR=ON -DBUILD_TESTING=OFF -DCTBROWSER_BUILD_EXAMPLES=OFF
+```
+
+Required `tools/format.sh --check` still reports the same **20** baseline
+diagnostics in six untouched files; changed C++ and Python pass scoped
+clang-format/Black checks, Python syntax and `git diff --check`. Full CTest,
+full compiler lit, broad corpus/matrix, WPT/test262 and sanitizer runs were
+skipped. No browser/runtime-oracle edits or push.
+
+**Next integration boundary:** typed `Element.querySelectorAll(String)` snapshots
+and proved iteration through public `style::engine::select(..., first_only=false)`.
+Document-root queries need an explicit document receiver contract. Original
+B/Data+B helper/inherited constructor publication, nested Map lifetimes,
+retained callbacks and Shell/rendering remain. Full Bootstrap initialization
+and the native application driver are unfinished.
+
 ## Native class-list integration, 2026-09-20 UTC
 
 **6ea177bc** lifts `classList.contains/add/remove` into the public DOM token-list
