@@ -79,6 +79,9 @@ template <class T> struct js_exception {
 // Opt and scalar-only Variant types share a carrier; the runtime tag preserves
 // which JavaScript value arrived. A present NaN is never an absence sentinel.
 
+struct undefined_t {};
+struct js_null_t {};
+
 // ctcompile: optional scalar values preserve null, undefined and present NaN
 struct nullable_scalar {
     enum class kind {
@@ -89,13 +92,11 @@ struct nullable_scalar {
     } tag = kind::undefined;
     double value = 0;
     nullable_scalar() = default;
+    nullable_scalar(undefined_t) {}
+    nullable_scalar(js_null_t) : tag(kind::null) {}
     nullable_scalar(double number) : tag(kind::number), value(number) {}
     nullable_scalar(bool boolean) : tag(kind::boolean), value(boolean ? 1.0 : 0.0) {}
-    static nullable_scalar null() {
-        nullable_scalar result;
-        result.tag = kind::null;
-        return result;
-    }
+    static nullable_scalar null() { return js_null_t{}; }
 };
 inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;

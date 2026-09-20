@@ -6,8 +6,9 @@ namespace ctcompile::ctnative::lowering_detail {
 mlir::Value lowering::absentConstant(mlir::OpBuilder & b, mlir::Location where, bool isNull) {
     return ec::ConstantOp::create(
         b, where, carrierType(context, carrier::nullable),
-        ec::OpaqueAttr::get(context, isNull ? "ctnative::nullable_scalar::null()"
-                                            : "ctnative::nullable_scalar{}"));
+        ec::OpaqueAttr::get(context, isNull
+                                         ? "ctnative::nullable_scalar{ctnative::js_null_t{}}"
+                                         : "ctnative::nullable_scalar{ctnative::undefined_t{}}"));
 }
 
 mlir::Value lowering::number(mlir::OpBuilder & b, mlir::Location where, mlir::Value value) {

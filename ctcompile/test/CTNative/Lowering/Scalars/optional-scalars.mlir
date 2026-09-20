@@ -1,14 +1,15 @@
 // Null and undefined have distinct tags even when their lattice type agrees.
 // The standalone differential fixture tests the semantics; this gate checks
 // that optional signatures survive lowering and unsupported payloads refuse.
+// Keep both source alternatives: default precomputation can erase the union.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Scalars/optional-scalars.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-present.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PAYLOAD
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MAP
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-array-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ARRAY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Scalars/optional-scalars.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=STRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-present.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PAYLOAD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MAP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-array-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=ARRAY
 
 // NATIVE-DAG: emitc.func @absent_{{[0-9]+}}() -> !emitc.opaque<"ctnative::nullable_scalar">
 // NATIVE-DAG: emitc.func @maybeNumber_{{[0-9]+}}({{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
@@ -18,6 +19,8 @@
 // NATIVE-DAG: emitc.func @numberFlags_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::nullable_scalar">{{.*}}) -> f64
 // NATIVE-DAG: emitc.func @booleanFlags_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::nullable_scalar">{{.*}}) -> f64
 // NATIVE-DAG: emitc.func @retainedData_{{[0-9]+}}() -> f64
+// NATIVE-DAG: #emitc.opaque<"ctnative::nullable_scalar{ctnative::js_null_t{}}">
+// NATIVE-DAG: #emitc.opaque<"ctnative::nullable_scalar{ctnative::undefined_t{}}">
 
 // STRING: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
 // STRING: call_opaque "ctnative::to_nullable_string"

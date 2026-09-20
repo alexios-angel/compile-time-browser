@@ -97,9 +97,18 @@ int main() {
     scalarMap(make_number_map<nullable_scalar>());
     scalarMap(std::make_shared<std::map<nullable_scalar, js_num, map_key_less<nullable_scalar>>>());
 
-    CHECK(scalar_equal(nullable_scalar::null(), nullable_scalar{}));
-    CHECK(!scalar_strict_equal(nullable_scalar::null(), nullable_scalar{}));
-    CHECK(scalar_typeof(nullable_scalar::null()) == "object");
+    const nullable_scalar undefined{undefined_t{}}, null{js_null_t{}}, nan{NAN};
+    CHECK(undefined.tag == nullable_scalar::kind::undefined);
+    CHECK(null.tag == nullable_scalar::kind::null);
+    CHECK(nan.tag == nullable_scalar::kind::number && std::isnan(nan.value));
+    CHECK(scalar_strict_equal(undefined, nullable_scalar{}));
+    CHECK(scalar_strict_equal(null, nullable_scalar::null()));
+    CHECK(scalar_equal(null, undefined));
+    CHECK(!scalar_strict_equal(null, undefined));
+    CHECK(!scalar_equal(nan, undefined) && !scalar_equal(nan, null));
+    CHECK(std::isnan(to_number(undefined)) && to_number(null) == 0.0);
+    CHECK(!scalar_truthy(undefined) && !scalar_truthy(null));
+    CHECK(scalar_typeof(null) == "object" && scalar_typeof(undefined) == "undefined");
     CHECK(string_equal(nullable_scalar::null(), nullable_string{}));
     CHECK(!string_truthy(nullable_string{std::string()}));
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
