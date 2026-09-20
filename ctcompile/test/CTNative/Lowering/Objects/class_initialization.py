@@ -203,6 +203,7 @@ def main():
                 raise RuntimeError("own-field scalar snapshot lost its boxed local producer")
         if (
             name in OWN_FIELDS
+            or name.startswith("own-fields-branch-")
             or name.startswith("inherited-own-fields-")
             or name == "bootstrap-base"
         ):
@@ -249,7 +250,14 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
-            "inherited-own-fields-conditional": "class own-key snapshot requires fixed constructor fields",
+            "own-fields-branch-order": "class own-key snapshot branches change ordered fields",
+            "inherited-own-fields-branch-missing": "class own-key snapshot branches change ordered fields",
+            "inherited-own-fields-branch-early": "super completion index is not proved",
+            "own-fields-branch-observed": "class own-key snapshot requires fixed constructor fields",
+            "own-fields-branch-loop": "class own-key snapshot requires fixed constructor fields",
+            "inherited-own-fields-branch-before-super": "super condition is not a proved Boolean",
+            "inherited-own-fields-branch-unused-ambient": "super initialization contains an unproved call",
+            "inherited-own-fields-conditional": "class own-key snapshot branches change ordered fields",
             "inherited-own-fields-added": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-empty-added": "inherited own-key snapshot requires the same ordered fields",
             "inherited-own-fields-grandchild-added": "inherited own-key snapshot requires the same ordered fields",
@@ -260,7 +268,7 @@ def main():
             "inherited-own-fields-implicit": "derived class requires receiver-preserving super normalization",
             "inherited-own-fields-loop": "class own-key snapshot requires fixed length or index reads",
             "own-fields-loop": "class own-key snapshot requires fixed length or index reads",
-            "own-fields-conditional": "class own-key snapshot requires fixed constructor fields",
+            "own-fields-conditional": "class own-key snapshot branches change ordered fields",
             "own-fields-dynamic": "class own-key snapshot requires fixed constructor fields",
             "own-fields-new-field": "class own-key snapshot field set changes",
             "own-fields-numeric-key": "class own-key snapshot requires fixed constructor fields",
@@ -299,7 +307,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "super condition is not a proved Boolean",
+            "bootstrap-base": "super initialization contains an unproved call",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -480,6 +488,8 @@ def main():
             preparation_refusals += 4
         if name in (
             "inherited-own-fields-shared",
+            "inherited-own-fields-branch-arguments",
+            "inherited-branch-helper",
             "inherited-super-order",
             "inherited-helper-distinct",
             "inherited-nested-helper-distinct",

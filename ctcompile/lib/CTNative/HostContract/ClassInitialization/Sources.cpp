@@ -503,31 +503,82 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
         }
     }
     // ponytail: fixed named fields, with one ordered shape across an inherited
-    // snapshot's receivers. Conditional presence and iteration need separate proofs.
+    // snapshot's receivers. Variable presence and iteration need separate proofs.
     if (!function.getBody().hasOneBlock()) {
         return refuse("class own-key snapshot requires fixed constructor fields");
     }
     llvm::SmallVector<llvm::StringRef> fields;
-    llvm::StringSet<> fieldSet;
     const auto self = function.getBody().front().getArgument(ctjs::arg_receiver);
-    for (mlir::Operation & op : function.getBody().front()) {
+    const auto inspect = [&](auto && visit, mlir::Block & block,
+                             llvm::SmallVector<llvm::StringRef> & ordered, unsigned depth) -> bool {
+        if (!step() || depth == 64) {
+            return refuse("class own-key snapshot field proof exceeds its depth bound");
+        }
+        for (mlir::Operation & op : block) {
+            if (!step()) { return false; }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
+                llvm::SmallVector<llvm::StringRef> joined;
+                for (auto [i, region] : llvm::enumerate(branch->getRegions())) {
+                    for (auto field : ordered) {
+                        (void)field;
+                        if (!step()) { return false; }
+                    }
+                    auto path = ordered;
+                    if (!region.empty() &&
+                        (!region.hasOneBlock() ||
+                         !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
+                         !visit(visit, region.front(), path, depth + 1))) {
+                        return refuse("class own-key snapshot requires fixed constructor fields");
+                    }
+                    if (i == 0) {
+                        joined = std::move(path);
+                    } else {
+                        if (joined.size() != path.size()) {
+                            return refuse("class own-key snapshot branches change ordered fields");
+                        }
+                        for (auto [left, right] : llvm::zip(joined, path)) {
+                            if (!step()) { return false; }
+                            if (left != right) {
+                                return refuse(
+                                    "class own-key snapshot branches change ordered fields");
+                            }
+                        }
+                    }
+                }
+                ordered = std::move(joined);
+                continue;
+            }
+            if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op);
+                returned && !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+                return refuse("class own-key snapshot requires a primitive constructor return");
+            }
+            if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                          ctjs::ReturnOp, ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
+                          ctjs::CompareOp, ctjs::TruthyOp, ctjs::FromBoolOp,
+                          mlir::arith::ConstantOp, mlir::ub::PoisonOp, mlir::scf::YieldOp>(op)) {
+                continue;
+            }
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            auto key = write ? ctjs::constantKey(write.getKey()) : llvm::StringRef{};
+            if (!write || write.getObject() != self || !ctjs::ordinaryKey(key) ||
+                methodKeys.contains(key) ||
+                llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; })) {
+                return refuse("class own-key snapshot requires fixed constructor fields");
+            }
+            bool found = false;
+            for (auto field : ordered) {
+                if (!step()) { return false; }
+                found |= field == key;
+            }
+            if (!found) { ordered.push_back(key); }
+        }
+        return true;
+    };
+    if (!inspect(inspect, function.getBody().front(), fields, 0)) { return false; }
+    llvm::StringSet<> fieldSet;
+    for (auto field : fields) {
         if (!step()) { return false; }
-        if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op);
-            returned && !returned.getValue().getDefiningOp<ctjs::ConstantOp>()) {
-            return refuse("class own-key snapshot requires a primitive constructor return");
-        }
-        if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
-                      ctjs::ReturnOp>(op)) {
-            continue;
-        }
-        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
-        auto key = write ? ctjs::constantKey(write.getKey()) : llvm::StringRef{};
-        if (!write || write.getObject() != self || !ctjs::ordinaryKey(key) ||
-            methodKeys.contains(key) ||
-            llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; })) {
-            return refuse("class own-key snapshot requires fixed constructor fields");
-        }
-        if (fieldSet.insert(key).second) { fields.push_back(key); }
+        fieldSet.insert(field);
     }
     if (required != snapshotFields.end()) {
         if (fields.size() != required->second.size()) {

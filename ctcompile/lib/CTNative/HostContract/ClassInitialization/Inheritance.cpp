@@ -138,13 +138,27 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
     llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, ctjs::FuncOp>> copiedCaptures;
     llvm::SmallVector<mlir::Operation *> copiedHelperCalls;
     const auto clone = [&](mlir::Operation & op, mlir::IRMapping & values) {
-        auto * copied = at.clone(op, values);
+        const auto counted = op.walk([&](mlir::Operation * source) {
+            const uint64_t cost = uint64_t(1) + source->getNumOperands() + source->getNumResults();
+            if (cost > remaining) {
+                refuse("class initialization work budget exhausted");
+                return mlir::WalkResult::interrupt();
+            }
+            remaining -= static_cast<unsigned>(cost);
+            return mlir::WalkResult::advance();
+        });
+        if (counted.wasInterrupted()) { return false; }
+        at.clone(op, values);
         // A base's slot number belongs to its original closure, never the
         // leaf's environment. Carry the proved callable identity with each copy.
-        if (auto helper = callableCaptures.lookup(&op)) {
-            copiedCaptures.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), helper);
-        }
-        if (helperCalls.contains(&op)) { copiedHelperCalls.push_back(copied); }
+        op.walk([&](mlir::Operation * source) {
+            auto * copied = values.lookupOrNull(source);
+            if (auto helper = callableCaptures.lookup(source)) {
+                copiedCaptures.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), helper);
+            }
+            if (helperCalls.contains(source)) { copiedHelperCalls.push_back(copied); }
+        });
+        return true;
     };
     const auto receiver = original.getArgument(ctjs::arg_receiver);
     const auto integer = [&](mlir::Value value) -> std::optional<int64_t> {
@@ -166,7 +180,57 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
             if (!step()) { return false; }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                 const auto bit = integer(branch.getCondition());
-                if (!bit) { return refuse("super initialization has an unproved branch"); }
+                auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                auto read =
+                    truth ? truth.getValue().getDefiningOp<ctjs::CellGetOp>() : ctjs::CellGetOp{};
+                const bool guardBranch = read && read.getCell() == guard.getResult();
+                if (!bit || !guardBranch) {
+                    if (phase != 4) {
+                        return refuse("super initialization has an unproved branch");
+                    }
+                    // Preserve runtime conditions after the receiver is initialized.
+                    // Each arm must return normally to this same super phase.
+                    auto * copied = at.cloneWithoutRegions(op, mapping);
+                    for (auto [source, destination] :
+                         llvm::zip(branch->getRegions(), copied->getRegions())) {
+                        if (source.empty()) { continue; }
+                        if (!source.hasOneBlock() || source.front().getNumArguments() ||
+                            !llvm::isa<mlir::scf::YieldOp>(source.front().getTerminator())) {
+                            return refuse("super branch requires a structured yield");
+                        }
+                        auto * body = new mlir::Block;
+                        destination.push_back(body);
+                        mlir::OpBuilder::InsertionGuard restore(at);
+                        at.setInsertionPointToEnd(body);
+                        llvm::SmallVector<mlir::Value> values;
+                        if (!self(self, source.front(), values, depth + 1) || phase != 4 ||
+                            finished || values.size() != branch.getNumResults()) {
+                            return refuse("super branch changes constructor completion");
+                        }
+                        mlir::scf::YieldOp::create(at, branch.getLoc(), values);
+                    }
+                    // Equal completion flags/receivers need no runtime selection.
+                    // Keep the branch itself and every original source effect.
+                    if (branch.getNumResults()) {
+                        auto conditional = llvm::cast<mlir::scf::IfOp>(copied);
+                        auto yes = conditional.thenYield().getOperands();
+                        auto no = conditional.elseYield().getOperands();
+                        for (auto [result, left, right] : llvm::zip(branch.getResults(), yes, no)) {
+                            if (!step()) { return false; }
+                            if (left == right) {
+                                mapping.map(result, left);
+                                continue;
+                            }
+                            auto a = left.getDefiningOp<mlir::arith::ConstantOp>();
+                            auto b = right.getDefiningOp<mlir::arith::ConstantOp>();
+                            if (a && b && left.getType() == right.getType() &&
+                                a.getValue() == b.getValue()) {
+                                mapping.map(result, at.clone(*a)->getResult(0));
+                            }
+                        }
+                    }
+                    continue;
+                }
                 auto & region = *bit ? branch.getThenRegion() : branch.getElseRegion();
                 if (!region.hasOneBlock()) { return refuse("super branch is not linear"); }
                 llvm::SmallVector<mlir::Value> values;
@@ -256,7 +320,11 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
                     mapping.lookupOrDefault(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
                 auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
                                  : ctjs::BooleanAttr{};
-                if (!bit) { return refuse("super condition is not a proved Boolean"); }
+                if (!bit) {
+                    if (phase != 4) { return refuse("super condition is not a proved Boolean"); }
+                    if (!clone(op, mapping)) { return false; }
+                    continue;
+                }
                 mapping.map(truth.getResult(), mlir::arith::ConstantIntOp::create(
                                                    at, truth.getLoc(), bit.getValue(), 1)
                                                    .getResult());
@@ -316,7 +384,7 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
                         if (!step()) { return false; }
                         if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(
                                 operation)) {
-                            clone(operation, arguments);
+                            if (!clone(operation, arguments)) { return false; }
                         }
                     }
                     mapping.map(call.getResult(), absent);
@@ -345,14 +413,14 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
                     // Preserve evaluation order and leaf receiver dispatch. The
                     // complete fieldsOnly census records the cloned call after
                     // takeBody; original operations would become stale there.
-                    clone(op, mapping);
+                    if (!clone(op, mapping)) { return false; }
                     continue;
                 }
                 if (helperCalls.contains(call) && (phase == 0 || phase == 4)) {
                     if (phase == 0 && llvm::is_contained(call.getOperands(), receiver)) {
                         return refuse("derived receiver is used before super initialization");
                     }
-                    clone(op, mapping);
+                    if (!clone(op, mapping)) { return false; }
                     continue;
                 }
                 return refuse("super initialization contains an unproved call");
@@ -364,7 +432,7 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
             if (op.getNumRegions() || op.hasTrait<mlir::OpTrait::IsTerminator>()) {
                 return refuse("super initialization contains unsupported control flow");
             }
-            clone(op, mapping);
+            if (!clone(op, mapping)) { return false; }
         }
         return false;
     };

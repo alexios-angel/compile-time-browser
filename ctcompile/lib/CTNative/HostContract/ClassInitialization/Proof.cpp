@@ -251,7 +251,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
                       ctjs::FromBoolOp>(op);
         // Proved ordinary methods and exact local helpers may contain control flow.
         // The recursive census still checks every arm/body, including ones
-        // never called. Setup, constructors and getter cloning stay linear.
+        // never called. Constructors additionally retain structured conditional
+        // fields; setup and getter cloning stay linear.
         // The lift represents break/continue/return edges with integer
         // flags and switches. These exact transport ops cannot reenter or
         // change the class helper; switch arms still get the full census.
@@ -267,6 +268,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             // the final typed DOM proof; class setup is still checked above.
             accepted =
                 methods.contains(fn) || helpers.contains(fn) ||
+                (constructors.contains(fn) &&
+                 llvm::isa<mlir::scf::IfOp, mlir::scf::YieldOp, mlir::arith::ConstantOp,
+                           mlir::ub::PoisonOp, ctjs::BinaryStaticOp>(op)) ||
                 (domEntry && fn == entry && llvm::isa<mlir::scf::IfOp, mlir::scf::YieldOp>(op));
             if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
                 dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());

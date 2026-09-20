@@ -16,6 +16,20 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "own-fields-branch-same-order": (21132117, 21132117),
+    "own-fields-branch-overwrite": (21172121, 21172121),
+    "own-fields-branch-nested": (212234256, 212234256),
+    "inherited-own-fields-branch-base": (212234, 212234),
+    "inherited-own-fields-branch-leaf": (212214, 212214),
+    "inherited-own-fields-branch-arguments": (2232562896, 2232562896),
+    "own-fields-branch-order": (12, 12),
+    "inherited-own-fields-branch-missing": (21, 21),
+    "inherited-own-fields-branch-early": (2223, 2223),
+    "own-fields-branch-observed": (102, 102),
+    "own-fields-branch-loop": (21, 21),
+    "inherited-own-fields-branch-before-super": (1719, 1719),
+    "inherited-branch-helper": (80050, 80050),
+    "inherited-own-fields-branch-unused-ambient": (1, 1),
     "inherited-own-fields-shared": (214218, 214218),
     "inherited-own-fields-leaf": (216, 216),
     "inherited-own-fields-external": (211, 211),
@@ -299,6 +313,14 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "own-fields-branch-same-order",
+    "own-fields-branch-overwrite",
+    "own-fields-branch-nested",
+    "inherited-own-fields-branch-base",
+    "inherited-own-fields-branch-leaf",
+    "inherited-own-fields-branch-arguments",
+    "inherited-branch-helper",
+    "constructor-branch",  # Preserve the original source; its linear-only refusal is retired.
     "inherited-own-fields-shared",
     "inherited-own-fields-leaf",
     "inherited-own-fields-external",
