@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native record Map borrows and remainder congruence, 2026-09-20 UTC
+
+Completed class records now run through local native Maps. **c955af5a**
+connects the live retention proof to closure lifting, closed-shape groups,
+exact saved-read origins and borrowed pointer emission. The six unchanged
+preparation-only cases and three new positives add **72 native executions**.
+Maps use the existing `map_storage<std::string, concrete_record *>`; records
+stay in the enclosing stack frame and saved aliases survive overwrite/delete.
+Existing object-identity Maps retain their separate representation.
+**35ceaf8b** preserves remainder congruence across quotient wraps using `gcd`.
+**2f10fa93** preserves branches in two older Map refusal tests.
+
+Focused selection: **37 observations / 112 main native executions / 74
+unprepared refusals / 47 preparation refusals**. Exact host and arrays CTests
+pass **1/1** each; lowering lit **3/3**, escape lit **3/3** and adjacent Map lit
+**6/6** pass. Eight raw refusal controls reject forged proof markers; all 36
+record C++ artifacts carry concrete borrowed pointers. All 19 tested hashes
+match. Remainder oracle: **183 sites / 36 sound / 36 of 41 confined precision**,
+zero violations, partial, pending or unclaimed sites. Required formatting still
+reports 20 diagnostics in six unchanged files; changed files pass.
+
+**Next:** original B/Data+B still refuse constructor-time registration of
+`this`. Prove partial publication, exception/reentry behavior and owner lifetime
+before transporting record payloads through the original nested Data Maps and
+helper calls. Current record Maps require direct entry-block operations,
+literal String keys and present gets. Saved-alias methods and own-key snapshots
+remain separate proofs. Preserve conflict checks, `e.set`, `e.remove`, `P.off`,
+configuration and disposal bodies. Full Bootstrap and the application driver
+remain unfinished. No browser/runtime-oracle edits or push; full suites and
+broad replays were skipped.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-record-map-borrows.md).
+
 ## Completed record Map preparation and remainder bands, 2026-09-20 UTC
 
 **77e02a65** prepares completed same-constructor records stored in direct local
