@@ -22,11 +22,11 @@
 // element types (native-array.mlir). The document cites those files by name.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EQUALITY
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relational.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RELATIONAL
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/typeof.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=TYPEOF
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bitwise.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=BITWISE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/concat.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CONCAT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=EQUALITY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relational.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=RELATIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/typeof.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=TYPEOF
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bitwise.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=BITWISE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/concat.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=CONCAT
 // RUN: cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%t/globalstring.js -DOUTPUT=%t/globalstring.mlir -P %S/../../Checks/pipeline.cmake
 // RUN: FileCheck %s --check-prefix=GLOBALSTRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/globalstring.mlir
 // RUN: ctjs-translate --mlir-to-cpp %t/globalstring.mlir > %t/globalstring.cpp
@@ -40,12 +40,12 @@
 // numeric ordering and typeof now lower; the source differential fixture
 // checks their answers independently of these structural assertions.
 //
-// EQUALITY: emitc.func @equality_1() -> f64
+// EQUALITY: emitc.func @equality_1() -> !emitc.opaque<"ctnative::js_num">
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native
-// RELATIONAL: emitc.func @relational_1() -> f64
+// RELATIONAL: emitc.func @relational_1() -> !emitc.opaque<"ctnative::js_num">
 // RELATIONAL-NOT: ctnative.not_native
-// TYPEOF: emitc.func @kind_1({{.*}}) -> f64
+// TYPEOF: emitc.func @kind_1({{.*}}) -> !emitc.opaque<"ctnative::js_num">
 // TYPEOF-NOT: ctnative.not_native
 
 // --- ND-9: A BITWISE OPERATOR IS ToInt32, WHICH IS NOT A C++ CAST -----------

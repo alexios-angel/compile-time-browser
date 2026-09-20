@@ -41,16 +41,16 @@
 //
 // SAME-NOT:  emitc.class
 // SAME:      emitc.class @ctn_x_y
-// SAME-NEXT: emitc.field @x : f64
-// SAME-NEXT: emitc.field @y : f64
+// SAME-NEXT: emitc.field @x : !emitc.opaque<"ctnative::js_num">
+// SAME-NEXT: emitc.field @y : !emitc.opaque<"ctnative::js_num">
 // SAME-NOT:  emitc.class
 // SAME-COUNT-3: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_x_y">>
 // SAME-NOT:  emitc.class
 
 // --- THE NAMES MATCH AND A TYPE DIFFERS: ONE TEMPLATE, TWO INSTANTIATIONS ---
 //
-// `at` is a number at both sites and stays a `double`; `hit` is a boolean at
-// one and a number at the other, and only IT becomes a parameter. A position
+// `at` is a number at both sites and stays a `ctnative::js_num`; `hit` is a
+// boolean at one and a number at the other, and only IT becomes a parameter. A position
 // the whole program agrees on keeps its concrete type, which is more
 // information and not less.
 //
@@ -63,11 +63,11 @@
 // VARYING:      emitc.class @ctn_at_hit
 // VARYING-SAME: 2 sites, 2 instantiations
 // VARYING-SAME: ctnative.template_params = ["T0"]
-// VARYING-NEXT: emitc.field @at : f64
+// VARYING-NEXT: emitc.field @at : !emitc.opaque<"ctnative::js_num">
 // VARYING-NEXT: emitc.field @hit : !emitc.opaque<"T0">
 // VARYING-NOT:  emitc.class
 // VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<ctnative::js_boolean_t>">>
-// VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<double>">>
+// VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<ctnative::js_num>">>
 
 // --- AND THE ORDER THE PROGRAM WROTE THE KEYS IN IS NOT PART OF THE KEY -----
 //
@@ -93,10 +93,10 @@
 // symbol-table verifier rejects it - which is how this guard is proved.
 //
 // COLLIDE:      emitc.class @ctn_a_b
-// COLLIDE-NEXT: emitc.field @a_b : f64
+// COLLIDE-NEXT: emitc.field @a_b : !emitc.opaque<"ctnative::js_num">
 // COLLIDE:      emitc.class @ctn_a_b_2
-// COLLIDE-NEXT: emitc.field @a : f64
-// COLLIDE-NEXT: emitc.field @b : f64
+// COLLIDE-NEXT: emitc.field @a : !emitc.opaque<"ctnative::js_num">
+// COLLIDE-NEXT: emitc.field @b : !emitc.opaque<"ctnative::js_num">
 
 // --- A FIELD MAY BE CALLED T0, AND A TEMPLATE PARAMETER MAY NOT -------------
 //
@@ -107,7 +107,7 @@
 //
 // SHADOW:      emitc.class @ctn_T0_y
 // SHADOW-SAME: ctnative.template_params = ["T1"]
-// SHADOW-NEXT: emitc.field @T0 : f64
+// SHADOW-NEXT: emitc.field @T0 : !emitc.opaque<"ctnative::js_num">
 // SHADOW-NEXT: emitc.field @y : !emitc.opaque<"T1">
 
 // --- THE SHAPE WITH NO FIELDS IS A PLAIN CLASS -----------------------------
@@ -145,11 +145,11 @@
 // CPP-NEXT: template <class T0>
 // CPP-NEXT: class ctn_at_hit {
 // CPP-NEXT: public:
-// CPP-NEXT: js_num at;
+// CPP-NEXT: ctnative::js_num at;
 // CPP-NEXT: T0 hit;
 // CPP-NEXT: };
 // CPP-DAG: ctn_at_hit<ctnative::js_boolean_t> v
-// CPP-DAG: ctn_at_hit<double> v
+// CPP-DAG: ctn_at_hit<ctnative::js_num> v
 
 //--- same.js
 function area() {

@@ -7,8 +7,8 @@
 //
 //   IT FIRES. `ctjs.unary plus` is gone and its operand flows straight into
 //   the addition - pinned with CHECK-NEXT, so there is nothing between the
-//   two constants and the add for it to have become. A driver reports nothing
-//   on a non-match, so if the pattern stopped matching the pass would abort in
+//   Number constructions and the add for it to have become. A driver reports
+//   nothing on a non-match, so if the pattern stopped matching the pass would abort in
 //   replace()'s Plus arm rather than miscompile; a test that only proved it
 //   does not crash would prove nothing about the rewrite.
 //
@@ -35,8 +35,10 @@
 // --- `+2 + 3` ---------------------------------------------------------------
 //
 // CHECK-LABEL: emitc.func @plus_is_identity_0
-// CHECK-NEXT: %[[TWO:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
-// CHECK-NEXT: %[[THREE:.*]] = "emitc.constant"() <{value = 3.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO_RAW:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO:.*]] = cast %[[TWO_RAW]] : f64 to !emitc.opaque<"ctnative::js_num">
+// CHECK-NEXT: %[[THREE_RAW:.*]] = "emitc.constant"() <{value = 3.000000e+00 : f64}>
+// CHECK-NEXT: %[[THREE:.*]] = cast %[[THREE_RAW]] : f64 to !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: %[[SUM:.*]] = add %[[TWO]], %[[THREE]]
 // CHECK-NEXT: return %[[SUM]]
 ctjs.func @plus_is_identity$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
@@ -54,7 +56,8 @@ ctjs.func @plus_is_identity$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // --- `-2`, WHICH THE SAME PATTERN MUST NOT TOUCH ----------------------------
 //
 // CHECK-LABEL: emitc.func @neg_is_not_identity_1
-// CHECK-NEXT: %[[TWO:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO_RAW:.*]] = "emitc.constant"() <{value = 2.000000e+00 : f64}>
+// CHECK-NEXT: %[[TWO:.*]] = cast %[[TWO_RAW]] : f64 to !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: %[[NEG:.*]] = unary_minus %[[TWO]]
 // CHECK-NEXT: return %[[NEG]]
 ctjs.func @neg_is_not_identity$1(%receiver: !ctjs.value, %new_target: !ctjs.value,

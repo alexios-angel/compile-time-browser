@@ -127,7 +127,7 @@ ctjs.func @while_initial$4(%receiver: !ctjs.value, %new_target: !ctjs.value,
 
 // Control flags have builtin types, not JavaScript carrier types. Verify the
 // uncanonicalized edges, then execute the live alternative after C++ emission.
-// CHECK-LABEL: emitc.func @control_poison_7() -> f64
+// CHECK-LABEL: emitc.func @control_poison_7() -> !emitc.opaque<"ctnative::js_num">
 // CHECK: "emitc.constant"() <{value = 0 : i32}> : () -> i32
 // CHECK: arith.constant 0 : index
 ctjs.func @control_poison$7(%receiver: !ctjs.value, %new_target: !ctjs.value,
@@ -157,7 +157,7 @@ ctjs.func @control_poison$7(%receiver: !ctjs.value, %new_target: !ctjs.value,
 }
 
 // The before region changes the backedge even when after only yields.
-// CHECK-LABEL: emitc.func @empty_after_8() -> f64
+// CHECK-LABEL: emitc.func @empty_after_8() -> !emitc.opaque<"ctnative::js_num">
 ctjs.func @empty_after$8(%receiver: !ctjs.value, %new_target: !ctjs.value,
                         %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -176,4 +176,4 @@ ctjs.func @empty_after$8(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %result
 }
 
-emitc.verbatim "int main() { return control_poison_7() == 7.0 && empty_after_8() == 4.0 ? 0 : 1; }"
+emitc.verbatim "int main() { return control_poison_7().value() == 7.0 && empty_after_8().value() == 4.0 ? 0 : 1; }"

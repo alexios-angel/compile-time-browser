@@ -47,13 +47,13 @@ var r = outer(5);
 
 // --- ONE VALUE, PASSED DOWN THREE LEVELS ------------------------------------
 //
-// CHECK: emitc.func @outer_1(%arg0: f64) -> f64
+// CHECK: emitc.func @outer_1(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: call @mid_2(%arg0)
-// CHECK: emitc.func @mid_2(%arg0: f64) -> f64
+// CHECK: emitc.func @mid_2(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: call @inner_3(%arg0)
-// CHECK: emitc.func @inner_3(%arg0: f64) -> f64
+// CHECK: emitc.func @inner_3(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: call @deep_4(%arg0)
-// CHECK: emitc.func @deep_4(%arg0: f64) -> f64
+// CHECK: emitc.func @deep_4(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: mul %arg0
 
 // --- AND THE COUNTS ---------------------------------------------------------

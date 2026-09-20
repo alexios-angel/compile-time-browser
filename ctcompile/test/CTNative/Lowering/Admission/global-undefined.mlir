@@ -89,11 +89,11 @@
 // OUTERSTORE-NOT: ctnative.not_native
 // DOMINATES-NOT: ctnative.not_native
 // DOMINATES: emitc.global static @g_c : !emitc.opaque<"ctnative::nullable_scalar">
-// DOMINATES: emitc.func @counter_1() -> f64
+// DOMINATES: emitc.func @counter_1() -> !emitc.opaque<"ctnative::js_num">
 // DOMINATES-NOT: ctnative.not_native
 // FIELD-NOT: ctnative.not_native
 // FIELD: emitc.global static @g_f : !emitc.opaque<"ctnative::nullable_scalar">
-// FIELD: emitc.func @held_1() -> f64
+// FIELD: emitc.func @held_1() -> !emitc.opaque<"ctnative::js_num">
 // FIELD-NOT: ctnative.not_native
 // READBEFORE-NOT: ctnative.not_native
 // READBEFORE: call_opaque "ctnative::print_scalar"

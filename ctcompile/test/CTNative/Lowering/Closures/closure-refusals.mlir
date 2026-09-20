@@ -145,8 +145,8 @@
 
 // A mutable string binding now has an owning carrier and a lifted pointer.
 // The mixed-carrier refusal is covered by native-strings.mlir's SHARED-MIXED.
-// SHAREDSTRING: emitc.func @tag_1() -> f64
-// SHAREDSTRING: emitc.func @grow_2({{.*}}!emitc.ptr<!emitc.opaque<"std::string">>) -> f64
+// SHAREDSTRING: emitc.func @tag_1() -> !emitc.opaque<"ctnative::js_num">
+// SHAREDSTRING: emitc.func @grow_2({{.*}}!emitc.ptr<!emitc.opaque<"std::string">>) -> !emitc.opaque<"ctnative::js_num">
 // SHAREDSTRING-NOT: ctnative.not_native
 
 // --- CONDITION 3 ACROSS FUNCTIONS: A METHOD CALLED FROM ANOTHER METHOD -----
@@ -259,8 +259,8 @@
 // into deep's owning environment. This checks the interaction of the two
 // rewrites, and repeating the pass must not change the capture arity.
 //
-// RELIFT: emitc.func @mid_2({{.*}}f64) -> !emitc.opaque<"ctnative::ctn_env_deep_3">
-// RELIFT: emitc.func @deep_3({{.*}}f64) -> f64
+// RELIFT: emitc.func @mid_2({{.*}}!emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::ctn_env_deep_3">
+// RELIFT: emitc.func @deep_3({{.*}}!emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // RELIFT-NOT: ctnative.not_native
 
 // --- STAGE 59B: AN ARROW THAT READS ITS LEXICAL `this` ----------------------

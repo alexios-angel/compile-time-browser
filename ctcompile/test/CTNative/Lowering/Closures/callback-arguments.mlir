@@ -11,13 +11,13 @@
 // RUN: ctjs-opt --ctnative-lower-to-emitc %t/new-target.mlir | FileCheck %s --check-prefix=NEW-TARGET --implicit-check-not=ctnative.callback}
 
 // NATIVE: emitc.func @main() -> i32
-// NATIVE: emitc.func @initialize_{{[0-9]+}}() -> f64
+// NATIVE: emitc.func @initialize_{{[0-9]+}}() -> !emitc.opaque<"ctnative::js_num">
 // NATIVE: call @bootstrapFactory_{{[0-9]+}}()
-// NATIVE: emitc.func @bootstrapFactory_{{[0-9]+}}() -> f64
+// NATIVE: emitc.func @bootstrapFactory_{{[0-9]+}}() -> !emitc.opaque<"ctnative::js_num">
 
 // ESCAPE: ctjs.func private @fn$1
 // ESCAPE-SAME: ctnative.callback_refusal = "the callback value or its identity escapes the call-only parameter"
-// ESCAPE: ctjs.call_direct @fn$2({{.*}}) {ctnative.callback}
+// ESCAPE: ctjs.call_direct @fn$2({{.*}}) {ctnative.callback{{[,}]}}
 // ESCAPE: ctjs.call
 // ESCAPE: ctjs.func @fn$2
 // ESCAPE-SAME: ctnative.not_native
@@ -27,10 +27,10 @@
 // RAW: ctnative.callback_refusal = "the wrapper reads its raw argument window"
 // OPEN: ctnative.callback_refusal = "not every caller of the wrapper is a direct call of its closure"
 // IDENTITY: ctnative.callback_refusal = "the callback value or its identity escapes the call-only parameter"
-// IDENTITY: ctjs.call_direct @fn$2({{.*}}) {ctnative.callback}
+// IDENTITY: ctjs.call_direct @fn$2({{.*}}) {ctnative.callback{{[,}]}}
 // LEXICAL: ctnative.callback_refusal = "callers do not supply one known capture-free callback target"
 // SELF: ctnative.callback_refusal = "the callback value or its identity escapes the call-only parameter"
-// SELF: ctjs.call_direct @self$2({{.*}}) {ctnative.callback}
+// SELF: ctjs.call_direct @self$2({{.*}}) {ctnative.callback{{[,}]}}
 // NEW-TARGET: ctnative.callback_refusal = "the wrapper passes new.target"
 
 //--- escape.js
