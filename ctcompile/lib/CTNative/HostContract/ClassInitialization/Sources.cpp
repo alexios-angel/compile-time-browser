@@ -454,11 +454,14 @@ bool classInitialization::unusedReceiver(ctjs::FuncOp fn) {
 
 bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
                                               const llvm::StringSet<> & methodKeys,
-                                              llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads) {
+                                              llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads,
+                                              unsigned depth) {
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     if ((!direct && !call) || use.getOperandNumber() < (direct ? 3u : 2u)) { return false; }
     if (!step()) { return false; }
+    // ponytail: bound recursive proof depth; use a worklist for deeper chains.
+    if (depth >= 64) { return refuse("class construction helper proof exceeds its depth bound"); }
     const auto callee = direct ? direct.getCalleeValue() : call.getCallee();
     auto fn = callableCaptures.lookup(callee.getDefiningOp());
     if (!fn) { fn = target(sourceClosure(callee)); }
@@ -478,11 +481,13 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
     const unsigned index = use.getOperandNumber() + (direct ? 0u : 1u);
     auto & body = fn.getBody().front();
     if (index >= body.getNumArguments()) { return false; }
-    // ponytail: read-only named fields. Writes, forwarding and method/getter
-    // dispatch need their own construction-point and shared-receiver proofs.
+    // Every forwarding edge repeats the exact target and borrowed-use proof.
+    // The caller checks all leaf reads against its current construction fields.
+    // Writes and method/getter dispatch still need separate receiver proofs.
     for (mlir::OpOperand * selected : sourceUses(body.getArgument(index))) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(selected->getOwner())) { continue; }
+        if (borrowedHelperReads(*selected, methodKeys, reads, depth + 1)) { continue; }
         auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(selected->getOwner());
         const auto key = read ? ctjs::constantKey(read.getKey()) : llvm::StringRef{};
         if (!read || selected->getOperandNumber() != 0 || !ctjs::ordinaryKey(key) ||

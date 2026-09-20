@@ -16,6 +16,18 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-own-fields-iterate-forward-direct": (7911, 7911),
+    "inherited-own-fields-iterate-forward-captured": (8011, 8011),
+    "inherited-own-fields-iterate-forward-holder": (7911, 7911),
+    "inherited-own-fields-iterate-forward-arguments": (35311, 35311),
+    "inherited-own-fields-iterate-forward-inherited": (121137611, 121137611),
+    "inherited-own-fields-iterate-forward-missing": (321107111, 321107111),
+    "inherited-own-fields-iterate-forward-store": (77111, 77111),
+    "inherited-own-fields-iterate-forward-return": (7711, 7711),
+    "inherited-own-fields-iterate-forward-write": (8811, 8811),
+    "inherited-own-fields-iterate-forward-dynamic": (7711, 7711),
+    "inherited-own-fields-iterate-forward-recursive": (7711, 7711),
+    "inherited-own-fields-iterate-forward-unused-effects": (7911, 7911),
     "inherited-own-fields-iterate-borrow-direct": (7911, 7911),
     "inherited-own-fields-iterate-borrow-captured": (7911, 7911),
     "inherited-own-fields-iterate-borrow-holder": (7911, 7911),
@@ -424,6 +436,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-own-fields-iterate-forward-direct",
+    "inherited-own-fields-iterate-forward-captured",
+    "inherited-own-fields-iterate-forward-holder",
+    "inherited-own-fields-iterate-forward-arguments",
+    "inherited-own-fields-iterate-forward-inherited",
     "inherited-own-fields-iterate-borrow-direct",
     "inherited-own-fields-iterate-borrow-captured",
     "inherited-own-fields-iterate-borrow-holder",

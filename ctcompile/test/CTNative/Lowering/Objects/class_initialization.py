@@ -305,6 +305,9 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "inherited-own-fields-iterate-forward-missing": "class construction helper requires an existing own field",
+            "inherited-own-fields-iterate-forward-recursive": "class construction helper proof exceeds its depth bound",
+            "inherited-own-fields-iterate-forward-unused-effects": "unknown call, binding or reflective effect",
             "inherited-own-fields-iterate-borrow-missing": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-borrow-incompatible": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-method-missing": "class construction method requires an existing own field",
@@ -565,7 +568,10 @@ def main():
             preparation_refusals += 1
         if name == "static-chain":
             preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
-        if name == "inherited-own-fields-iterate-borrow-captured":
+        if name in (
+            "inherited-own-fields-iterate-borrow-captured",
+            "inherited-own-fields-iterate-forward-captured",
+        ):
             prepared_refusals += check_borrowed_helper_inputs(args, prepared)
         if name == "method-captured-class-name":
             preparation_refusals += check_class_capture_inputs(args, structured, manifest)
@@ -607,6 +613,8 @@ def main():
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         if name in (
+            "inherited-own-fields-iterate-forward-direct",
+            "inherited-own-fields-iterate-forward-captured",
             "inherited-own-fields-iterate-borrow-direct",
             "inherited-own-fields-iterate-borrow-captured",
             "inherited-own-fields-iterate-borrow-holder",
@@ -621,6 +629,7 @@ def main():
             cutoffs[name] = check_proof_budget(args, structured, manifest, prepared, name)
             preparation_refusals += 1
         if name in (
+            "inherited-own-fields-iterate-forward-inherited",
             "inherited-own-fields-iterate-borrow-inherited",
             "inherited-own-fields-iterate-method-nearest",
             "inherited-own-fields-iterate-helper-distinct",
