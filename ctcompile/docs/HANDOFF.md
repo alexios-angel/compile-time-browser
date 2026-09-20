@@ -22,6 +22,33 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nested helper captures and negative divisors, 2026-09-20 UTC
+
+**c5cd6e4f** proves bounded immutable nested helper captures using the existing
+fixed-cell and complete source-body checks. Seven new executable cases add
+**56 native executions**, including a helper-only root/frame preservation check.
+Shared targets, inherited capture identities, argument order and refusal controls
+remain covered. **353114ba** proves exact bounded negative-divisor array
+index overwrites with positive stride magnitudes and full reload-overlap checks.
+
+Focused arrays **1/1**, escape lit **4/4**, host **1/1**, and class initialization/DOM
+lit **2/2 (366.33s)** passed. Class: **246 observations / 692 main native executions /
+492 unprepared and 269 preparation refusals**. DOM remains **632 / eight / 4,910**.
+Negative-divisor oracle: **69 sites / nine sound / 9 of 13 confined precision**,
+zero violations, partial, pending or unclaimed sites. Nine source hashes match.
+Formatter retains 20 diagnostics in six unchanged files; changed checks pass.
+Full suites and broad matrices were skipped. No browser/runtime change or push.
+
+**Next measured boundary:** unchanged Bootstrap W/B now passes nested `a` → `r`
+captures and refuses ordinary static method setup (`getInstance`,
+`getOrCreateInstance`, `eventName`). Reuse the existing method/capture/getter
+proofs for fixed constructor slots and exact receivers; retain all original
+bodies. Inherited DOM per-leaf receiver/getters, `new this`, selectors and full
+H/config/events/Popper remain separate proof work, as do broader ownership,
+own-data provenance and the application driver.
+
+[Exact changes, checks and next boundary](handoff/2026-09-20-nested-captures.md).
+
 ## Inherited helper captures and negative-scale overwrites, 2026-09-20 UTC
 
 **1ef56773** completes inherited constructor helper captures: each copied read
