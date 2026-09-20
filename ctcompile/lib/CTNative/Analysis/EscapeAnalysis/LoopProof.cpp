@@ -220,6 +220,28 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (depth == 64) { return std::nullopt; }
         auto * expression = operand.getDefiningOp();
+        if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression)) {
+            if (unary->getBlock() != body || (unary.getKind() != ctjs::UnaryKind::Plus &&
+                                              unary.getKind() != ctjs::UnaryKind::Neg)) {
+                return std::nullopt;
+            }
+            auto range = self(self, unary.getOperand(), depth + 1);
+            if (!range) { return std::nullopt; }
+            // The recursive range already proves exact bounded Numbers. Negation
+            // changes their sign and order; both signed zeros remain own key zero.
+            for (ContentsValue * endpoint : {&range->first, &range->last}) {
+                if (!spend()) {
+                    invariantFailure = ArrayContentsFailure::WorkLimit;
+                    return std::nullopt;
+                }
+                endpoint->original = operand;
+                if (unary.getKind() == ctjs::UnaryKind::Neg && endpoint->integerNumber != 0) {
+                    std::swap(endpoint->integerNumber, endpoint->negativeIntegerNumber);
+                }
+            }
+            if (unary.getKind() == ctjs::UnaryKind::Neg) { std::swap(range->first, range->last); }
+            return range;
+        }
         auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
         auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
         const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;

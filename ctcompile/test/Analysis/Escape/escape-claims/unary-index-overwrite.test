@@ -1,0 +1,142 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name unary-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-unary-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function plusIndex() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[+i] = 0;
+    return a;
+}
+function doubleNegative() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-(-i)] = 0;
+    return a;
+}
+function signedZero() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i++) a[-i] = 0;
+    return a;
+}
+function negativeOffset() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[-i + (a.length - 1)] = 0;
+    return a;
+}
+function plusNegative() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[+(-i) + 3] = 0;
+    return a;
+}
+function signedQuotient() {
+    var child = {}, a = [0, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[-(i - 2) / 2 + 1] = 0;
+    return a;
+}
+function quotientReverse() {
+    var child = {}, a = [child, child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[-(i / 2) + 2] = 0;
+    return a;
+}
+function reloadGap() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 0; i < a.length; i += 2) a[-i + a[2]] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [0, child, 0, child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[-i + 3] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[-i + 3] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child];
+    for (var i = 1; i < a.length; i++) a[-i] = 0;
+    return a;
+}
+function fractionalIntermediate() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[-(-(i / 2)) * 2] = 0;
+    return a;
+}
+function roundedIntermediate() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-(-(i + 9007199254740992)) - 9007199254740992] = 0;
+    return a;
+}
+function unboundedIntermediate() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-(-(i + 4294967295)) - 4294967295] = 0;
+    return a;
+}
+function negativePosition() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-i] = 0;
+    return a;
+}
+function growth() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i += 4) a[2 - (-i)] = 0;
+    return a;
+}
+function overlappingReload() {
+    var child = {}, a = [0, child, 0, 3];
+    for (var i = 0; i < a.length; i += 2) a[-i + a[3]] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[-i + a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function stringConversion() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[+(i + "")] = 0;
+    return a;
+}
+function bitwiseComplement() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~i) + 2] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[-i + 1] = a;
+        a[-i + 1] = 0;
+    }
+    return a;
+}
+plusIndex(); doubleNegative(); signedZero(); negativeOffset(); plusNegative();
+signedQuotient(); quotientReverse(); reloadGap(); saved(); remaining(); zeroTrip();
+fractionalIntermediate(); roundedIntermediate(); unboundedIntermediate(); negativePosition();
+growth(); overlappingReload(); laterOverlap(); stringConversion(); bitwiseComplement(); cycle();

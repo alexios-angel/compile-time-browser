@@ -33,12 +33,17 @@ void StructuredCases::mutationRefusals() {
                                              "    ctjs.set_property %base[%position], %zero\n"
                                              "    %read ="),
                                      "ctjs.return %result", "ctjs.return %a");
-    for (const auto & expression : {"mul %i, %one", "mul %one, %i"}) {
-        rows.push_back({.what = "structured unit scaling preserves current-element overwrites",
-                        .body = replace(scaledIndex, "mul %i, %one", expression),
-                        .arrays = "a:[zero,zero]",
-                        .reads = "a[0]=zero; a[1]=zero",
-                        .exit = "a -> {a}"});
+    for (const auto & expression :
+         {"%position = ctjs.binary mul %i, %one", "%position = ctjs.binary mul %one, %i",
+          "%position = ctjs.unary plus %i",
+          "%part = ctjs.unary neg %i\n"
+          "    %position = ctjs.unary neg %part"}) {
+        rows.push_back(
+            {.what = "structured scaling and signs preserve current-element overwrites",
+             .body = replace(scaledIndex, "%position = ctjs.binary mul %i, %one", expression),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"});
     }
     const auto scaledVisit =
         replace(replace(replace(replace(scaledIndex, "  %a =",
@@ -49,6 +54,11 @@ void StructuredCases::mutationRefusals() {
                 "add %i, %one", "add %i, %two");
     rows.push_back({.what = "structured scaling accepts a single bounded visit",
                     .body = scaledVisit,
+                    .arrays = "a:[zero,one]",
+                    .reads = "a[0]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured unary negation preserves the signed-zero own key",
+                    .body = replace(scaledVisit, "ctjs.binary mul %i, %two", "ctjs.unary neg %i"),
                     .arrays = "a:[zero,one]",
                     .reads = "a[0]=zero",
                     .exit = "a -> {a}"});
@@ -181,9 +191,10 @@ void StructuredCases::mutationRefusals() {
                 "%position = ctjs.binary sub %one, %i",
                 "%part = ctjs.binary mul %i, %negative\n"
                 "    %position = ctjs.binary add %part, %one");
-    for (const auto & expression : {"mul %i, %negative", "mul %negative, %i"}) {
-        rows.push_back({.what = "structured negative scaling reverses exact own writes",
-                        .body = replace(negativeScale, "mul %i, %negative", expression),
+    for (const auto & expression :
+         {"ctjs.binary mul %i, %negative", "ctjs.binary mul %negative, %i", "ctjs.unary neg %i"}) {
+        rows.push_back({.what = "structured negative factors and signs reverse exact own writes",
+                        .body = replace(negativeScale, "ctjs.binary mul %i, %negative", expression),
                         .arrays = "a:[zero,zero]",
                         .reads = "a[0]=x; a[1]=zero",
                         .exit = "a -> {a}"});
@@ -201,6 +212,12 @@ void StructuredCases::mutationRefusals() {
            replace(negativeScale, "add %part, %one", "add %part, %zero"));
     reject("structured negative products cannot conceal array growth",
            replace(negativeScale, "add %part, %one", "sub %one, %part"));
+    const auto unaryIndex =
+        replace(negativeScale, "ctjs.binary mul %i, %negative", "ctjs.unary neg %i");
+    reject("structured unary signs cannot conceal negative own positions",
+           replace(unaryIndex, "add %part, %one", "add %part, %zero"));
+    reject("structured unary signs cannot conceal array growth",
+           replace(unaryIndex, "add %part, %one", "sub %one, %part"));
     const std::string fixedOverwrite =
         replace(original, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
     rows.push_back({.what = "structured invariant own-index overwrites precede later reads",

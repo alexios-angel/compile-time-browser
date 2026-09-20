@@ -367,9 +367,13 @@ void InductionCases::overwritesAndTransport() {
                         "  %position = ctjs.binary mul %i, %one\n"
                         "  ctjs.set_property %base[%position], %zero\n  %read ="),
                 "ctjs.return %result", "ctjs.return %a");
-    for (const auto & expression : {"mul %i, %one", "mul %one, %i"}) {
-        run({.what = "unit scaling preserves every current-index overwrite",
-             .body = replace(scaledIndex, "mul %i, %one", expression),
+    for (const auto & expression :
+         {"%position = ctjs.binary mul %i, %one", "%position = ctjs.binary mul %one, %i",
+          "%position = ctjs.unary plus %i",
+          "%part = ctjs.unary neg %i\n"
+          "  %position = ctjs.unary neg %part"}) {
+        run({.what = "unit scaling and unary signs preserve current-index overwrites",
+             .body = replace(scaledIndex, "%position = ctjs.binary mul %i, %one", expression),
              .arrays = "a:[zero,zero]",
              .reads = "a[0]=zero; a[1]=zero",
              .exit = "a -> {a}"},
@@ -380,6 +384,12 @@ void InductionCases::overwritesAndTransport() {
         "add %i, %one", "add %i, %two");
     run({.what = "a nonunit factor admits a single bounded visit",
          .body = scaledVisit,
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "unary negation preserves a single signed-zero own key",
+         .body = replace(scaledVisit, "ctjs.binary mul %i, %two", "ctjs.unary neg %i"),
          .arrays = "a:[zero,one]",
          .reads = "a[0]=zero",
          .exit = "a -> {a}"},
@@ -534,14 +544,19 @@ void InductionCases::overwritesAndTransport() {
                        "%part = ctjs.binary add %i, %huge\n"
                        "  %position = ctjs.binary sub %part, %huge"));
     }
-    std::string deepIndex;
+    std::string deepIndex, deepUnaryIndex;
     for (unsigned i = 0; i < 65; ++i) {
         deepIndex += "  %part" + std::to_string(i) + " = ctjs.binary add %" +
                      (i == 0 ? std::string{"i"} : "part" + std::to_string(i - 1)) + ", %zero\n";
+        deepUnaryIndex += "  %part" + std::to_string(i) + " = ctjs.unary plus %" +
+                          (i == 0 ? std::string{"i"} : "part" + std::to_string(i - 1)) + "\n";
     }
     reject("composed index depth is bounded even when every operation adds zero",
            replace(scaledIndex, "  %position = ctjs.binary mul %i, %one\n",
                    deepIndex + "  %position = ctjs.binary add %part64, %zero\n"));
+    reject("unary index depth is bounded even when every operation preserves its Number",
+           replace(scaledIndex, "  %position = ctjs.binary mul %i, %one\n",
+                   deepUnaryIndex + "  %position = ctjs.unary plus %part64\n"));
     const auto reverseIndex =
         replace(offsetIndex, "ctjs.binary add %i, %one", "ctjs.binary sub %three, %i");
     run({.what = "reversed subtraction overwrites only descending visited own positions",
@@ -591,9 +606,10 @@ void InductionCases::overwritesAndTransport() {
         "%position = ctjs.binary sub %three, %i",
         "%part = ctjs.binary mul %i, %negative\n"
         "  %position = ctjs.binary add %part, %three");
-    for (const auto & expression : {"mul %i, %negative", "mul %negative, %i"}) {
-        run({.what = "negative factors reverse the exact visited own positions",
-             .body = replace(negativeScale, "mul %i, %negative", expression),
+    for (const auto & expression :
+         {"ctjs.binary mul %i, %negative", "ctjs.binary mul %negative, %i", "ctjs.unary neg %i"}) {
+        run({.what = "negative factors and unary negation reverse exact visited positions",
+             .body = replace(negativeScale, "ctjs.binary mul %i, %negative", expression),
              .arrays = "a:[one,zero,one,zero]",
              .reads = "a[0]=one; a[2]=one",
              .exit = "a -> {a}"},
@@ -608,6 +624,25 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=one; a[2]=one",
          .exit = "a -> {a}"},
         "x");
+    const auto unaryReload = replace(reverseReload, "%position = ctjs.binary sub %offset, %i",
+                                     "%part = ctjs.unary neg %i\n"
+                                     "  %position = ctjs.binary add %offset, %part");
+    run({.what = "unary index reversal preserves reloads in stride gaps",
+         .body = unaryReload,
+         .arrays = "a:[one,zero,three,zero]",
+         .reads = "a[2]=three; a[0]=one; a[2]=three; a[2]=three",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body :
+         {replace(unaryReload, "add %offset, %part", "add %zero, %part"),
+          replace(unaryReload, "add %offset, %part", "sub %offset, %part"),
+          replace(replace(unaryReload, "[%one, %x, %three, %x]", "[%one, %x, %one, %three]"),
+                  "%offset = ctjs.get_property %base[%two]",
+                  "%offset = ctjs.get_property %base[%three]"),
+          replace(unaryReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="),
+          replace(unaryReload, "ctjs.unary neg %i", "ctjs.unary bitnot %i")}) {
+        reject("unary indices retain own bounds, exact operations and reload exclusions", body);
+    }
     const auto negativeReload =
         replace(replace(negativeScale, "[%one, %x, %one, %x]", "[%one, %x, %negative, %x]"),
                 "%part = ctjs.binary mul %i, %negative",
