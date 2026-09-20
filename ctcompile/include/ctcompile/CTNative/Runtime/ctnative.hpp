@@ -884,7 +884,6 @@ struct matches_method {
         return style.element_matches(element.owner->read(), element.id, parsed.selectors);
     }
 };
-inline constexpr matches_method matches{};
 
 struct closest_method {
     template <class Style>
@@ -895,7 +894,6 @@ struct closest_method {
         return found ? ctbrowser::element_ref{element.owner, found} : ctbrowser::element_ref{};
     }
 };
-inline constexpr closest_method closest{};
 
 struct query_selector_method {
     template <class Style>
@@ -907,7 +905,6 @@ struct query_selector_method {
                              : ctbrowser::element_ref{element.owner, found.front()};
     }
 };
-inline constexpr query_selector_method querySelector{};
 
 struct query_selector_all_method {
     template <class Style>
@@ -921,7 +918,22 @@ struct query_selector_all_method {
         return snapshot;
     }
 };
-inline constexpr query_selector_all_method querySelectorAll{};
+struct element_prototype {
+    matches_method matches;
+    closest_method closest;
+    query_selector_method querySelector;
+    query_selector_all_method querySelectorAll;
+};
+struct element_constructor {
+    element_prototype prototype;
+};
+inline constexpr element_constructor Element{};
+
+// Existing callers retain the same method objects while emission migrates.
+inline constexpr const auto & matches = Element.prototype.matches;
+inline constexpr const auto & closest = Element.prototype.closest;
+inline constexpr const auto & querySelector = Element.prototype.querySelector;
+inline constexpr const auto & querySelectorAll = Element.prototype.querySelectorAll;
 // Comparison never resolves either borrowed owner; both slot and generation
 // belong to identity.
 template <> struct map_key_less<ctbrowser::element_ref> {

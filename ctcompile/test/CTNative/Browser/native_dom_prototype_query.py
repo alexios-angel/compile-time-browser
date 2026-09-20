@@ -36,6 +36,21 @@ QUERY_SOURCE = prototype_source(query.SOURCE, "querySelector", 2).replace(
 )
 QUERY_ALL_SOURCE = prototype_source(query_all.SOURCE, "querySelectorAll", 3)
 
+PROTOTYPE_CHECKS = r"""
+        static_assert(std::is_same_v<decltype((ctnative::Element.prototype.matches)),
+                                     const ctnative::matches_method &>);
+        static_assert(std::is_same_v<decltype((ctnative::Element.prototype.closest)),
+                                     const ctnative::closest_method &>);
+        static_assert(std::is_same_v<decltype((ctnative::Element.prototype.querySelector)),
+                                     const ctnative::query_selector_method &>);
+        static_assert(std::is_same_v<decltype((ctnative::Element.prototype.querySelectorAll)),
+                                     const ctnative::query_selector_all_method &>);
+        static_assert(&ctnative::matches == &ctnative::Element.prototype.matches);
+        static_assert(&ctnative::closest == &ctnative::Element.prototype.closest);
+        static_assert(&ctnative::querySelector == &ctnative::Element.prototype.querySelector);
+        static_assert(&ctnative::querySelectorAll == &ctnative::Element.prototype.querySelectorAll);
+"""
+
 REFUSALS = {
     "replace-element": "Element=element; return false;",
     "replace-function": "Function=element; return false;",
@@ -102,13 +117,13 @@ def main():
                     if case == "query"
                     else ("querySelectorAll",)
                 ):
-                    if f'"ctnative::{method}.call"' not in native.read_text():
+                    if f'"ctnative::Element.prototype.{method}.call"' not in native.read_text():
                         raise RuntimeError(f"{case}: prototype call bypassed the native method")
                 dom.standalone(
                     args,
                     native,
                     name,
-                    checks + (owned_checks if owned else ""),
+                    PROTOTYPE_CHECKS + checks + (owned_checks if owned else ""),
                     compilers,
                     includes,
                     libraries,

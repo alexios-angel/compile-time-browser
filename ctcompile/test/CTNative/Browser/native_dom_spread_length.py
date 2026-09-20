@@ -182,7 +182,7 @@ def main():
             for optimize in (False, True):
                 case = f"spread-{name}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, case, optimize=optimize)
-                if '"ctnative::querySelectorAll.call"' not in native.read_text():
+                if '"ctnative::Element.prototype.querySelectorAll.call"' not in native.read_text():
                     raise RuntimeError("spread count lost its public Style selector call")
                 dom.standalone(
                     args,

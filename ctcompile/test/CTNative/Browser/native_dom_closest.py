@@ -181,8 +181,8 @@ def main():
                 if dom.VM.search(cpp) or "nullable_scalar" in cpp:
                     raise RuntimeError("closest introduced a VM or scalar value carrier")
                 for call in (
-                    "ctnative::closest.call(",
-                    "ctnative::matches.call(",
+                    "ctnative::Element.prototype.closest.call(",
+                    "ctnative::Element.prototype.matches.call(",
                     "ctnative::toggle_class(",
                 ):
                     if call not in cpp:
