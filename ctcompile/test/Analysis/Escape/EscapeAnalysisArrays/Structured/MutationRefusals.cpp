@@ -96,6 +96,34 @@ void StructuredCases::mutationRefusals() {
                   "    %position = ctjs.binary mul %i, %factor")}) {
         reject("structured scaled stores retain bounds, invariance and reload exclusions", body);
     }
+    const auto composedIndex =
+        replace(replace(scaledVisit, "create_array [%x]", "create_array [%one, %x, %y]"),
+                "%position = ctjs.binary mul %i, %two",
+                "%part = ctjs.binary div %i, %two\n"
+                "    %position = ctjs.binary add %part, %one");
+    rows.push_back({.what = "structured composed quotients release exactly the shifted children",
+                    .body = composedIndex,
+                    .arrays = "a:[one,zero,zero,one]",
+                    .reads = "a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured compositions keep signed intermediate Numbers exact",
+                    .body = replace(composedIndex,
+                                    "%part = ctjs.binary div %i, %two\n"
+                                    "    %position = ctjs.binary add %part, %one",
+                                    "%part = ctjs.binary sub %i, %two\n"
+                                    "    %half = ctjs.binary div %part, %two\n"
+                                    "    %position = ctjs.binary add %half, %two"),
+                    .arrays = "a:[one,zero,zero,one]",
+                    .reads = "a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    for (const auto & body : {replace(composedIndex, "add %i, %two", "add %i, %one"),
+                              replace(composedIndex, "add %part, %one", "add %part, %i"),
+                              replace(composedIndex, "add %part, %one", "sub %part, %one"),
+                              replace(composedIndex, "%part = ctjs.binary div %i, %two",
+                                      "%factor = ctjs.get_property %base[%one]\n"
+                                      "    %part = ctjs.binary div %i, %factor")}) {
+        reject("structured compositions preserve integrality, bounds and invariance", body);
+    }
     const std::string fixedOverwrite =
         replace(original, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
     rows.push_back({.what = "structured invariant own-index overwrites precede later reads",

@@ -387,6 +387,99 @@ void InductionCases::overwritesAndTransport() {
              .body = body,
              .failure = ArrayContentsFailure::UnsupportedControlFlow});
     }
+    const std::string quotientOffset =
+        "ctjs.binary div %i, %two\n  %position = ctjs.binary add %part, %one";
+    const auto composedIndex =
+        replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%one, %x, %x, %one]"),
+                "%position = ctjs.binary add %i, %one", "%part = " + quotientOffset);
+    for (const auto & expression : {quotientOffset,
+                                    std::string{"ctjs.binary div %i, %two\n"
+                                                "  %position = ctjs.binary add %one, %part"},
+                                    std::string{"ctjs.binary add %i, %two\n"
+                                                "  %position = ctjs.binary div %part, %two"},
+                                    std::string{"ctjs.binary sub %i, %two\n"
+                                                "  %half = ctjs.binary div %part, %two\n"
+                                                "  %position = ctjs.binary add %half, %two"}}) {
+        run({.what = "composed exact quotients and offsets retain every intermediate Number",
+             .body = replace(composedIndex, quotientOffset, expression),
+             .arrays = "a:[one,zero,zero,one]",
+             .reads = "a[0]=one; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const auto & expression : {"ctjs.binary mul %i, %two", "ctjs.binary mul %two, %i"}) {
+        run({.what = "composed scaling retains operation order and the translated stride",
+             .body = replace(offsetIndex, "%position = ctjs.binary add %i, %one",
+                             std::string{"%part = "} + expression +
+                                 "\n  %half = ctjs.binary div %part, %two\n"
+                                 "  %position = ctjs.binary_static add %one, %half"),
+             .arrays = "a:[one,zero,one,zero]",
+             .reads = "a[0]=one; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto composedReload =
+        replace(replace(replace(replace(composedIndex, "[%one, %x, %x, %one]",
+                                        "[%one, %x, %two, %x, %one]"),
+                                "  %a =", "  %four = ctjs.binary add %two, %two\n  %a ="),
+                        "add %i, %two\n  cf.br", "add %i, %four\n  cf.br"),
+                "  %part = ctjs.binary div %i, %two",
+                "  %divisor = ctjs.get_property %base[%two]\n"
+                "  %part = ctjs.binary div %i, %divisor");
+    run({.what = "composed footprints preserve reloads in their translated stride gaps",
+         .body = composedReload,
+         .arrays = "a:[one,zero,two,zero,one]",
+         .reads = "a[2]=two; a[0]=one; a[2]=two; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "composed overwrites retain children saved before the loop",
+         .body = replace(replace(composedIndex, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[one,zero,zero,one]",
+         .reads = "a[1]=x; a[0]=one; a[2]=zero",
+         .exit = "x -> {x}"});
+    run({.what = "zero-trip composed overwrites preserve original children",
+         .body = replace(replace(composedIndex, "[%one, %x, %x, %one]", "[%one, %x]"),
+                         "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
+         .arrays = "a:[one,x]",
+         .exit = "a -> {a,x}"});
+    for (const auto & body :
+         {replace(composedIndex, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+          replace(composedIndex, "div %i, %two", "div %i, %zero"),
+          replace(composedIndex, "add %part, %one", "add %part, %i"),
+          replace(composedIndex, "add %part, %one", "add %part, %s"),
+          replace(composedIndex, "add %part, %one", "add %part, %three"),
+          replace(composedIndex, "div %i, %two", "mul %i, %zero"),
+          replace(replace(composedIndex,
+                          "  %a =", "  %text = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
+                  "add %part, %one", "add %part, %text"),
+          replace(
+              replace(composedReload, "[%one, %x, %two, %x, %one]", "[%one, %x, %two, %two, %one]"),
+              "%divisor = ctjs.get_property %base[%two]",
+              "%divisor = ctjs.get_property %base[%three]"),
+          replace(composedReload,
+                  "  %step =", "  ctjs.set_property %base[%two], %one\n  %step =")}) {
+        reject("composed stores retain exact division, own bounds and invariant reload guards",
+               body);
+    }
+    for (const auto & number : {"4751297606873776128", "4845873199050653696"}) {
+        reject("cancelling a large offset cannot conceal an unproved intermediate Number",
+               replace(replace(scaledIndex, "  %a =",
+                               std::string{"  %huge = ctjs.constant #ctjs.number<"} + number +
+                                   ">\n  %a ="),
+                       "%position = ctjs.binary mul %i, %one",
+                       "%part = ctjs.binary add %i, %huge\n"
+                       "  %position = ctjs.binary sub %part, %huge"));
+    }
+    std::string deepIndex;
+    for (unsigned i = 0; i < 65; ++i) {
+        deepIndex += "  %part" + std::to_string(i) + " = ctjs.binary add %" +
+                     (i == 0 ? std::string{"i"} : "part" + std::to_string(i - 1)) + ", %zero\n";
+    }
+    reject("composed index depth is bounded even when every operation adds zero",
+           replace(scaledIndex, "  %position = ctjs.binary mul %i, %one\n",
+                   deepIndex + "  %position = ctjs.binary add %part64, %zero\n"));
     reversed = replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
          .body = reversed,

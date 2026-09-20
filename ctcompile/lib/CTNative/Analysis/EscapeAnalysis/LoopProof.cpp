@@ -195,98 +195,129 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const std::size_t size = found->second.size();
     const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
     // ponytail: one header/body pair, with writes only to its current,
-    // invariant, Number-offset, scaled or exact-quotient own element. Other
-    // mutations need a termination proof.
+    // invariant or composed affine own element. Other mutations need a
+    // termination proof; each affine operation must have one varying operand.
     // Primitive kinds and every element still pass the ordinary operation transfers.
     llvm::SmallDenseSet<std::size_t, 4> guardStores;
     struct StoreRange {
         std::size_t first, last, stride;
     };
     llvm::SmallVector<StoreRange, 4> guardStoreRanges;
+    struct IndexRange {
+        ContentsValue first, last;
+        std::size_t stride;
+    };
+    const auto indexRange = [&](auto && self, mlir::Value operand,
+                                unsigned depth) -> std::optional<IndexRange> {
+        if (!spend()) {
+            invariantFailure = ArrayContentsFailure::WorkLimit;
+            return std::nullopt;
+        }
+        if (fromHeader(operand) == index) {
+            return IndexRange{{index, ContentsKind::NonBigInt, *start},
+                              {index, ContentsKind::NonBigInt, last},
+                              *stride};
+        }
+        if (depth == 64) { return std::nullopt; }
+        auto * expression = operand.getDefiningOp();
+        auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
+        auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
+        const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
+        const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
+        const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
+        if (!expression || expression->getBlock() != body ||
+            !(subtract || divide || multiply ||
+              (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
+              (addition && addition.getKind() == ctjs::BinaryKind::Add))) {
+            return std::nullopt;
+        }
+        unsigned offsetOperand = 1;
+        auto range = self(self, expression->getOperand(0), depth + 1);
+        if (!range && !subtract && !divide && invariantFailure != ArrayContentsFailure::WorkLimit) {
+            range = self(self, expression->getOperand(1), depth + 1);
+            offsetOperand = 0;
+        }
+        if (!range) { return std::nullopt; }
+        const auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
+        // Only Number operands: String Add concatenates, and other primitive
+        // conversions need their own source proof before composing an index.
+        if (!offset ||
+            (!offset->integerNumber && !offset->negativeIntegerNumber &&
+             !boundedNumber(offset->origin()) && !boundedNumber(offset->origin(), true))) {
+            return std::nullopt;
+        }
+        if (divide) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            const auto divisor = boundedConvertedNumber(*offset);
+            const auto first = range->first.integerNumber ? range->first.integerNumber
+                                                          : range->first.negativeIntegerNumber;
+            // Integral endpoints alone miss fractional intermediate positions.
+            if (!divisor || *divisor == 0 || *first % *divisor != 0 ||
+                range->stride % *divisor != 0) {
+                return std::nullopt;
+            }
+            range->stride /= *divisor;
+        } else if (multiply) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            ContentsValue product;
+            boundedNumberProduct({index, ContentsKind::NonBigInt, range->stride}, *offset, product);
+            if (!product.integerNumber || *product.integerNumber == 0) { return std::nullopt; }
+            range->stride = *product.integerNumber;
+        }
+        // Preserve each source operation: reassociating (i + large) - large
+        // could hide an inexact intermediate. Signed bounded intermediates are
+        // allowed; only the final key must be a nonnegative own element.
+        for (ContentsValue * endpoint : {&range->first, &range->last}) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            ContentsValue result{operand, ContentsKind::NonBigInt};
+            if (divide) {
+                boundedNumberDivision(*endpoint, *offset, false, result);
+            } else if (multiply) {
+                boundedNumberProduct(*endpoint, *offset, result);
+            } else if (subtract) {
+                boundedNumberDifference(*endpoint, *offset, result);
+            } else {
+                boundedNumberSum(*endpoint, *offset, result);
+            }
+            if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+            *endpoint = result;
+        }
+        return range;
+    };
     for (mlir::Block * block : {header, body}) {
         for (mlir::Operation & operation : *block) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
             if (&operation == block->getTerminator()) { continue; }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 if (block != body) { return unsupported; }
-                if (fromHeader(store.getKey()) == index) {
-                    if (*start < size) { guardStoreRanges.push_back({*start, last, *stride}); }
-                } else {
-                    auto * expression = store.getKey().getDefiningOp();
-                    auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
-                    auto binary = llvm::dyn_cast_or_null<ctjs::BinaryOp>(expression);
-                    const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
-                    const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
-                    const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
-                    if (expression && expression->getBlock() == body &&
-                        (subtract || divide || multiply ||
-                         (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
-                         (addition && addition.getKind() == ctjs::BinaryKind::Add)) &&
-                        (fromHeader(expression->getOperand(0)) == index ||
-                         (!subtract && !divide &&
-                          fromHeader(expression->getOperand(1)) == index))) {
-                        const unsigned offsetOperand =
-                            fromHeader(expression->getOperand(0)) == index ? 1U : 0U;
-                        const auto offset =
-                            invariant(invariant, expression->getOperand(offsetOperand), 0);
-                        if (!offset) { return invariantFailure; }
-                        // Only exact Numbers: String Add concatenates, and
-                        // other primitive conversions need their own source proof.
-                        if (!offset->integerNumber && !offset->negativeIntegerNumber &&
-                            !boundedNumber(offset->origin()) &&
-                            !boundedNumber(offset->origin(), true)) {
+                if (const auto range = indexRange(indexRange, store.getKey(), 0)) {
+                    if (*start < size) {
+                        if (!range->first.integerNumber || !range->last.integerNumber ||
+                            *range->first.integerNumber >= size ||
+                            *range->last.integerNumber >= size) {
                             return unsupported;
                         }
-                        StoreRange range{0, 0, *stride};
-                        if (divide) {
-                            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-                            const auto divisor = boundedConvertedNumber(*offset);
-                            // Every visited quotient must be integral. Endpoints alone
-                            // would miss fractional intermediate property names.
-                            if (!divisor || *divisor == 0 || *start % *divisor != 0 ||
-                                *stride % *divisor != 0) {
-                                return unsupported;
-                            }
-                            range.stride /= *divisor;
-                        } else if (multiply) {
-                            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-                            ContentsValue product;
-                            boundedNumberProduct({index, ContentsKind::NonBigInt, *stride}, *offset,
-                                                 product);
-                            if (!product.integerNumber || *product.integerNumber == 0) {
-                                return unsupported;
-                            }
-                            range.stride = *product.integerNumber;
-                        }
-                        for (auto [endpoint, position] :
-                             {std::pair{*start, &range.first}, std::pair{last, &range.last}}) {
-                            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-                            ContentsValue result;
-                            const ContentsValue current{index, ContentsKind::NonBigInt, endpoint};
-                            if (divide) {
-                                boundedNumberDivision(current, *offset, false, result);
-                            } else if (multiply) {
-                                boundedNumberProduct(current, *offset, result);
-                            } else if (subtract) {
-                                boundedNumberDifference(current, *offset, result);
-                            } else {
-                                boundedNumberSum(current, *offset, result);
-                            }
-                            if (*start < size) {
-                                if (!result.integerNumber || *result.integerNumber >= size) {
-                                    return unsupported;
-                                }
-                                *position = *result.integerNumber;
-                            }
-                        }
-                        if (*start < size) { guardStoreRanges.push_back(range); }
-                    } else {
-                        const auto key = invariant(invariant, store.getKey(), 0);
-                        if (!key) { return invariantFailure; }
-                        const auto position = ownArrayIndex(*key);
-                        if (!position || *position >= size) { return unsupported; }
-                        guardStores.insert(*position);
+                        guardStoreRanges.push_back({*range->first.integerNumber,
+                                                    *range->last.integerNumber, range->stride});
                     }
+                } else {
+                    if (invariantFailure == ArrayContentsFailure::WorkLimit) {
+                        return invariantFailure;
+                    }
+                    const auto key = invariant(invariant, store.getKey(), 0);
+                    if (!key) { return invariantFailure; }
+                    const auto position = ownArrayIndex(*key);
+                    if (!position || *position >= size) { return unsupported; }
+                    guardStores.insert(*position);
                 }
                 // A saved or reloaded receiver must keep the same allocation
                 // across transport, without reading an overwritten element.
