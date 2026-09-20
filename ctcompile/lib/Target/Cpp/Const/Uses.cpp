@@ -31,8 +31,9 @@ bool readsBinding(mlir::OpOperand & operand) {
             const auto string = llvm::dyn_cast<ec::OpaqueType>(result);
             return string && string.getValue() == "ctnative::js_string";
         }
-        if (receiver.getValue() == "ctnative::js_string" && call.getCallee() == "to_number" &&
-            call.getArgOperands().empty()) {
+        if ((receiver.getValue() == "ctnative::js_string" ||
+             receiver.getValue() == "ctnative::nullable_string") &&
+            call.getCallee() == "to_number" && call.getArgOperands().empty()) {
             const auto number = llvm::dyn_cast<ec::OpaqueType>(result);
             return number && number.getValue() == "ctnative::js_num";
         }

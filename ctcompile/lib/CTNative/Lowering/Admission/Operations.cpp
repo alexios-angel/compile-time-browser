@@ -582,15 +582,19 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto b = llvm::dyn_cast<BinaryOp>(o)) {
         switch (b.getKind()) {
-        case BinaryKind::Add:
+        case BinaryKind::Add: {
             if (stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs()))) { return true; }
+            const auto textOperand = [](carrier c) {
+                return isScalarCarrier(c) || c == carrier::booleanString;
+            };
             if ((carrierOf(typeOf(b.getLhs())) == carrier::string &&
-                 isScalarCarrier(carrierOf(typeOf(b.getRhs())))) ||
+                 textOperand(carrierOf(typeOf(b.getRhs())))) ||
                 (carrierOf(typeOf(b.getRhs())) == carrier::string &&
-                 isScalarCarrier(carrierOf(typeOf(b.getLhs()))))) {
+                 textOperand(carrierOf(typeOf(b.getLhs()))))) {
                 return true;
             }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
+        }
         case BinaryKind::Concat:
             return stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs())) ||
                    refuse("concatenation requires two proved owning UTF-8 strings");
@@ -599,9 +603,9 @@ bool admission::op(mlir::Operation * o) {
         case BinaryKind::Div:
         case BinaryKind::Mod:
         case BinaryKind::Pow:
-            return (carrierOf(typeOf(b.getLhs())) == carrier::string ||
+            return (isStringCarrier(carrierOf(typeOf(b.getLhs()))) ||
                     numeric(b.getLhs(), "binary")) &&
-                   (carrierOf(typeOf(b.getRhs())) == carrier::string ||
+                   (isStringCarrier(carrierOf(typeOf(b.getRhs()))) ||
                     numeric(b.getRhs(), "binary"));
         // (`**` is not std::pow; exponentiate() below is why.)
         default: return refuse("a bitwise or string operator is not native yet");
@@ -617,7 +621,7 @@ bool admission::op(mlir::Operation * o) {
         switch (u.getKind()) {
         case UnaryKind::Neg:
         case UnaryKind::Plus:
-            return carrierOf(typeOf(u.getOperand())) == carrier::string ||
+            return isStringCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    numeric(u.getOperand(), "unary");
         case UnaryKind::TypeOf:
             return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||

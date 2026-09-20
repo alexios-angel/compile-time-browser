@@ -29,10 +29,17 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
                                               mlir::ArrayAttr{}, mlir::ValueRange{})
             .getResult(0);
     }
-    if (value.getType() == string && isNumberCarrier(target)) {
+    if ((value.getType() == string || isNullableStringCarrier(value.getType())) &&
+        isNumberCarrier(target)) {
         return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, value,
                                               b.getStringAttr("to_number"), mlir::ArrayAttr{},
                                               mlir::ArrayAttr{}, mlir::ValueRange{})
+            .getResult(0);
+    }
+    if (isBooleanStringCarrier(value.getType()) && target == string) {
+        return callWithConstValueOperands(b, where, mlir::TypeRange{target},
+                                          b.getStringAttr("ctnative::boolean_string_text"),
+                                          mlir::ValueRange{value})
             .getResult(0);
     }
     if (value.getType() == rawString && target == string) {

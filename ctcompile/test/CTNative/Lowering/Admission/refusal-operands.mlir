@@ -4,7 +4,7 @@
 // slightly outside the tier will ever see, and none of which had a pin - plus
 // the one refusal that cites an obligation by number:
 //
-//   1. `admission::numeric` - ONE message with NINE call sites, each passing a
+//   1. `admission::numeric` - ONE message with several call sites, each passing a
 //      different `where`. The word in front of "operand is" is the only thing
 //      that tells a reader which operation refused, so a rewrite that lost the
 //      `where` argument would leave every one of them saying the same thing
@@ -26,6 +26,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/binary.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=BINARY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-binary.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=OPTIONAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/store.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STORE
@@ -56,10 +59,13 @@
 
 // --- numeric(), where = "binary" --------------------------------------------
 //
-// Exact String subtraction is native. An optional String still has no numeric
-// conversion, preserving the diagnostic's operation and offending operand type.
+// Exact and optional String subtraction are native. A Boolean/String union
+// still has no numeric conversion, preserving the diagnostic's operation and
+// offending operand type. Keep the original optional String source as a positive.
 // BINARY: ctjs.func {{.*}}@badd$1
-// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.opt<!ctnative.str<utf8>>, not a number"
+// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.variant<{{.*}}>, not a number"
+
+// OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 
 // --- a formerly refused Boolean global ------------------------------------
 //
@@ -142,6 +148,10 @@
 // FRAMESLOT-SAME: ctnative.not_native = "an array literal created inside a branch or a loop - its storage has to be one frame slot (obligation O-4)"
 
 //--- binary.js
+function badd(n) { var u; if (n > 0) { u = "text"; } else { u = false; } return u - n; }
+var r = badd(1);
+
+//--- optional-binary.js
 function badd(n) { var u; if (n > 0) { u = "text"; } return u - n; }
 var r = badd(1);
 
