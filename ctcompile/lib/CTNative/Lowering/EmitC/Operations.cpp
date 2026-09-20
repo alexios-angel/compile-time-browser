@@ -597,7 +597,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                                    carrierType(context, carrier::nullable));
                 mlir::Value current =
                     callWithConstValueOperands(
-                        b, where, mlir::TypeRange{isBoolean ? boolean : mlir::Type(f64)},
+                        b, where,
+                        mlir::TypeRange{
+                            isBoolean ? boolean : ec::OpaqueType::get(context, "ctnative::js_num")},
                         b.getStringAttr(isBoolean ? "ctnative::global_boolean"
                                                   : "ctnative::global_number"),
                         mlir::ValueRange{loaded})
@@ -609,6 +611,12 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                     current =
                         ec::ConditionalOp::create(b, where, textType, truthy(b, where, current),
                                                   literal("\"true\""), literal("\"false\""));
+                } else {
+                    // C varargs consume binary64, not the JavaScript value class.
+                    current = ec::MemberCallOpaqueOp::create(
+                                  b, where, mlir::TypeRange{f64}, current, b.getStringAttr("value"),
+                                  mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{})
+                                  .getResult(0);
                 }
                 mlir::Value format = ec::LiteralOp::create(
                     b, where, textType,

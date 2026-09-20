@@ -21,6 +21,8 @@
 // oracle and never a dependency of a native program.
 #pragma once
 
+#include "ctcompile/CTNative/Runtime/Number.hpp"
+
 #include <ctbrowser/core/algorithms.hpp>
 
 #include <cmath>
@@ -58,6 +60,7 @@
 #include <ctbrowser/style/css/parser.hpp>
 #endif
 
+// Compatibility for arithmetic/signatures not yet migrated to ctnative::js_num.
 using js_num = double;
 
 namespace ctnative {
@@ -112,6 +115,7 @@ struct nullable_scalar {
     nullable_scalar(undefined_t) {}
     nullable_scalar(js_null_t) : tag(kind::null) {}
     nullable_scalar(double number) : tag(kind::number), value(number) {}
+    nullable_scalar(js_num number) : nullable_scalar(number.value()) {}
     nullable_scalar(js_boolean_t boolean) : tag(kind::boolean), value(boolean.to_number()) {}
     nullable_scalar(bool boolean) : nullable_scalar(js_boolean_t{boolean}) {}
     static nullable_scalar null() { return js_null_t{}; }
@@ -126,9 +130,9 @@ inline double to_number(nullable_scalar value) {
 }
 // Numeric global admission is a proof about the stored tag. Check it at the
 // observation boundary so a missing generated store cannot imitate a NaN.
-inline double global_number(nullable_scalar value) {
+inline js_num global_number(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::number) { std::terminate(); }
-    return value.value;
+    return js_num{value.value};
 }
 inline js_boolean_t global_boolean(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::boolean) { std::terminate(); }
@@ -329,6 +333,7 @@ struct object_value {
     object_value() = default;
     object_value(nullable_scalar value) : scalar(value) {}
     object_value(double value) : scalar(value) {}
+    object_value(js_num value) : scalar(value) {}
     object_value(js_boolean_t value) : scalar(value) {}
     object_value(bool value) : object_value(js_boolean_t{value}) {}
     object_value(std::shared_ptr<identity_object> value) : object(std::move(value)) {}
@@ -337,7 +342,7 @@ inline nullable_scalar global_scalar(const object_value & value) {
     if (value.object) { std::terminate(); }
     return value.scalar;
 }
-inline double global_number(const object_value & value) {
+inline js_num global_number(const object_value & value) {
     return global_number(global_scalar(value));
 }
 inline object_value to_object_value(object_value value) {
@@ -370,7 +375,7 @@ inline std::string object_typeof(const object_value & value) {
 template <class K> bool map_key_equal(const K & a, const K & b) {
     return a == b;
 }
-inline bool map_key_equal(js_num a, js_num b) {
+inline bool map_key_equal(double a, double b) {
     return a == b || (std::isnan(a) && std::isnan(b));
 }
 inline bool map_key_equal(nullable_scalar a, nullable_scalar b) {
@@ -426,8 +431,8 @@ template <class K> struct map_key_less {
 template <> struct map_key_less<js_boolean_t> {
     bool operator()(js_boolean_t a, js_boolean_t b) const { return !a && b; }
 };
-template <> struct map_key_less<js_num> {
-    bool operator()(js_num a, js_num b) const {
+template <> struct map_key_less<double> {
+    bool operator()(double a, double b) const {
         if (std::isnan(a)) { return !std::isnan(b); }
         return !std::isnan(b) && a < b;
     }
@@ -437,7 +442,7 @@ template <> struct map_key_less<nullable_scalar> {
         if (a.tag != b.tag) { return a.tag < b.tag; }
         return (a.tag == nullable_scalar::kind::number ||
                 a.tag == nullable_scalar::kind::boolean) &&
-               map_key_less<js_num>{}(a.value, b.value);
+               map_key_less<double>{}(a.value, b.value);
     }
 };
 template <class... T> struct map_key_less<std::variant<T...>> {
@@ -464,7 +469,7 @@ template <class K, class V> using map_storage = std::map<K, V, map_key_less<K>>;
 // --- Map helpers -------------------------------------------------------------
 // ctcompile: primitive keys, acyclic primitive/Map payloads, owning identity
 
-template <class K> using number_map = map_storage<K, js_num>;
+template <class K> using number_map = map_storage<K, double>;
 using string_to_number_map = number_map<std::string>;
 template <class K, class V> std::shared_ptr<map_storage<K, V>> make_map() {
     return std::make_shared<map_storage<K, V>>();
@@ -527,7 +532,7 @@ T map_get_present_as(const std::shared_ptr<map_storage<K, std::variant<V...>>> &
 template <class K> const K & map_normalize_key(const K & key) {
     return key;
 }
-inline js_num map_normalize_key(js_num key) {
+inline double map_normalize_key(double key) {
     return key == 0 ? 0.0 : key;
 }
 inline nullable_scalar map_normalize_key(nullable_scalar key) {
@@ -549,8 +554,8 @@ template <class Map, class K> js_boolean_t map_delete(const Map & map, const K &
 template <class Map> void map_clear(const Map & map) {
     map->clear();
 }
-template <class Map> js_num map_size(const Map & map) {
-    return static_cast<js_num>(map->size());
+template <class Map> double map_size(const Map & map) {
+    return static_cast<double>(map->size());
 }
 
 // Nullable Strings also own payload storage. Every read returns a copy;

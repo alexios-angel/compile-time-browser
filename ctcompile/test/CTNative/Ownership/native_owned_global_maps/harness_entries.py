@@ -163,7 +163,7 @@ def check_leaf_absence_calls(cpp, name, mode):
         if "set(key, flag)" in source
         else "std::string, std::string" if "set(key, other)" in source else "std::string"
     )
-    if f"std::function<js_num({params})>" not in cpp:
+    if f"std::function<::js_num({params})>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: absence changed the numeric published ABI")
     allocations = source.count("{value:") + source.count("const item = {};")
     if cpp.count("std::make_shared<ctnative::identity_object>()") != allocations or (
@@ -387,13 +387,13 @@ def check_numeric_entry_calls(cpp, name, mode):
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
     params = (
-        "std::string, js_num, ctnative::js_boolean_t"
+        "std::string, ::js_num, ctnative::js_boolean_t"
         if "set(key, value, flag)" in source
         else (
-            "std::string, js_num"
+            "std::string, ::js_num"
             if "set(key, value)" in source
             else (
-                "js_num"
+                "::js_num"
                 if name
                 in {
                     "local_add_result_key",
@@ -407,7 +407,7 @@ def check_numeric_entry_calls(cpp, name, mode):
             )
         )
     )
-    result = "ctnative::js_boolean_t" if name == "constant_boolean_saved_result" else "js_num"
+    result = "ctnative::js_boolean_t" if name == "constant_boolean_saved_result" else "::js_num"
     if f"std::function<{result}({params})>" not in cpp:
         raise RuntimeError(
             f"{name}/{mode}: arithmetic changed the independently typed callable ABI"
@@ -596,12 +596,12 @@ int main() {
         changed = changed.replace(
             "    auto owner = g_host;",
             """
-    const auto first_snapshot = ctnative::global_number(g_first);
-    const auto second_snapshot = ctnative::global_number(g_second);
-    const auto third_snapshot = ctnative::global_number(g_third);
+    const auto first_snapshot = ctnative::global_number(g_first).value();
+    const auto second_snapshot = ctnative::global_number(g_second).value();
+    const auto third_snapshot = ctnative::global_number(g_third).value();
     static_assert(std::is_same_v<decltype(first_snapshot), const js_num>);
     if (first_snapshot != 2 || second_snapshot != 3 || third_snapshot != 4 ||
-        ctnative::global_number(g_trace) != first_snapshot + second_snapshot * third_snapshot) {
+        ctnative::global_number(g_trace).value() != first_snapshot + second_snapshot * third_snapshot) {
         return 194;
     }
     auto owner = g_host;""",
@@ -610,10 +610,10 @@ int main() {
             "    ctn_test_retained.reset();",
             """
     if (first_snapshot != 2 || second_snapshot != 3 || third_snapshot != 4 ||
-        ctnative::global_number(g_first) != first_snapshot ||
-        ctnative::global_number(g_second) != second_snapshot ||
-        ctnative::global_number(g_third) != third_snapshot ||
-        ctnative::global_number(g_trace) != first_snapshot + second_snapshot * third_snapshot) {
+        ctnative::global_number(g_first).value() != first_snapshot ||
+        ctnative::global_number(g_second).value() != second_snapshot ||
+        ctnative::global_number(g_third).value() != third_snapshot ||
+        ctnative::global_number(g_trace).value() != first_snapshot + second_snapshot * third_snapshot) {
         return 195;
     }
     {
@@ -621,7 +621,7 @@ int main() {
             std::static_pointer_cast<const ctnative::identity_object>(ctn_test_retained));
         leaf->field_76616c7565.value = 99;
         if (saved.back() != 15.75 || first_snapshot != 2 || second_snapshot != 3 ||
-            third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
+            third_snapshot != 4 || ctnative::global_number(g_first).value() != 2) { return 196; }
     }
     ctn_test_retained.reset();""",
         )
@@ -634,9 +634,9 @@ int main() {
         changed = changed.replace(
             "    auto owner = g_host;",
             """
-    const auto left_snapshot = ctnative::global_number(g_left);
-    const auto middle_snapshot = ctnative::global_number(g_middle);
-    const auto right_snapshot = ctnative::global_number(g_right);
+    const auto left_snapshot = ctnative::global_number(g_left).value();
+    const auto middle_snapshot = ctnative::global_number(g_middle).value();
+    const auto right_snapshot = ctnative::global_number(g_right).value();
     static_assert(std::is_same_v<decltype(left_snapshot), const js_num>);
     if (left_snapshot != first_snapshot || middle_snapshot != second_snapshot ||
         right_snapshot != third_snapshot) { return 197; }
@@ -645,10 +645,10 @@ int main() {
         changed = changed.replace(
             "    ctn_test_keep_leaf = false;",
             """
-    if (ctnative::global_number(g_left) != left_snapshot ||
-        ctnative::global_number(g_middle) != middle_snapshot ||
-        ctnative::global_number(g_right) != right_snapshot ||
-        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
+    if (ctnative::global_number(g_left).value() != left_snapshot ||
+        ctnative::global_number(g_middle).value() != middle_snapshot ||
+        ctnative::global_number(g_right).value() != right_snapshot ||
+        ctnative::global_number(g_trace).value() != left_snapshot + middle_snapshot * right_snapshot) {
         return 199;
     }
     ctn_test_keep_leaf = false;""",
@@ -657,10 +657,10 @@ int main() {
             "    ctn_test_retained.reset();",
             """
     if (left_snapshot != 2 || middle_snapshot != 3 || right_snapshot != 4 ||
-        ctnative::global_number(g_left) != left_snapshot ||
-        ctnative::global_number(g_middle) != middle_snapshot ||
-        ctnative::global_number(g_right) != right_snapshot ||
-        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
+        ctnative::global_number(g_left).value() != left_snapshot ||
+        ctnative::global_number(g_middle).value() != middle_snapshot ||
+        ctnative::global_number(g_right).value() != right_snapshot ||
+        ctnative::global_number(g_trace).value() != left_snapshot + middle_snapshot * right_snapshot) {
         return 198;
     }
     ctn_test_retained.reset();""",
@@ -673,9 +673,9 @@ int main() {
         changed = changed.replace(
             "    auto owner = g_host;",
             """
-    const auto fixed_snapshot = ctnative::global_number(g_fixed);
-    const auto offset_snapshot = ctnative::global_number(g_offset);
-    const auto copy_snapshot = ctnative::global_number(g_copy);
+    const auto fixed_snapshot = ctnative::global_number(g_fixed).value();
+    const auto offset_snapshot = ctnative::global_number(g_offset).value();
+    const auto copy_snapshot = ctnative::global_number(g_copy).value();
     static_assert(std::is_same_v<decltype(copy_snapshot), const js_num>);
     if (fixed_snapshot != 7 || offset_snapshot != fixed_snapshot || copy_snapshot != offset_snapshot) {
         return 200;
@@ -684,10 +684,10 @@ int main() {
         )
         checks = """
     if (fixed_snapshot != 7 || offset_snapshot != 7 || copy_snapshot != 7 ||
-        ctnative::global_number(g_fixed) != fixed_snapshot ||
-        ctnative::global_number(g_offset) != offset_snapshot ||
-        ctnative::global_number(g_copy) != copy_snapshot ||
-        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot +
+        ctnative::global_number(g_fixed).value() != fixed_snapshot ||
+        ctnative::global_number(g_offset).value() != offset_snapshot ||
+        ctnative::global_number(g_copy).value() != copy_snapshot ||
+        ctnative::global_number(g_trace).value() != left_snapshot + middle_snapshot * right_snapshot +
                                            copy_snapshot - fixed_snapshot) {
         return 201;
     }

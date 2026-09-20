@@ -189,7 +189,7 @@ def recorder_lifetime_cpp(cpp, values, entry_objects=False):
         .replace('"future-" + i', '"future-" + std::to_string(i)')
     )
     for binding in ("traceErrorCount", "traceErrorMessage"):
-        body = body.replace(binding, f"ctnative::global_number(g_{binding})")
+        body = body.replace(binding, f"ctnative::global_number(g_{binding}).value()")
     changed += (
         """
 int main() {
@@ -207,7 +207,7 @@ int main() {
     std::weak_ptr first_lifetime = first;
     std::weak_ptr table_lifetime = table;
     std::weak_ptr element_lifetime = element;
-    const auto initial_count = ctnative::global_number(g_traceErrorCount);
+    const auto initial_count = ctnative::global_number(g_traceErrorCount).value();
     g_host.reset(); g_element.reset();
     first.reset();
     if (!first_lifetime.expired() || table_lifetime.expired()) { return 121; }
@@ -217,33 +217,31 @@ int main() {
 """
         + body
         + """    }
-    if (ctnative::global_number(g_traceErrorCount) != initial_count + 2048 ||
-        ctnative::global_number(g_traceErrorMessage) != 0) { return 125; }
+    if (ctnative::global_number(g_traceErrorCount).value() != initial_count + 2048 ||
+        ctnative::global_number(g_traceErrorMessage).value() != 0) { return 125; }
 """
     )
     for binding, value in sorted(values.items()):
         if binding not in {"traceErrorCount", "traceErrorMessage"}:
-            changed += (
-                f"    if (ctnative::global_number(g_{binding}) != {value}) {{ return 126; }}\n"
-            )
+            changed += f"    if (ctnative::global_number(g_{binding}).value() != {value}) {{ return 126; }}\n"
     changed += """    set(element, "bs.alert", 42);
     const auto next = ctn_test_maps.size();
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() <= next || element == g_element ||
         !recorder_owner_lifetime.expired() ||
         ctn_test_maps[0].lock() == ctn_test_maps[next].lock() ||
-        ctnative::global_number(get(element, "bs.alert")) != 42 ||
+        ctnative::global_number(get(element, "bs.alert")).value() != 42 ||
         !ctnative::scalar_strict_equal(get(g_element, "bs.alert"), ctnative::nullable_scalar::null()) ||
         !ctnative::scalar_strict_equal(g_host->slot->m_get(element, "bs.alert"),
                                       ctnative::nullable_scalar::null())) { return 127; }
     // Old and new callable families must both use the current scalar globals.
     set(element, "bs.collapse", 99);
-    if (ctnative::global_number(g_traceErrorCount) != initial_count + 1 ||
-        ctnative::global_number(g_traceErrorMessage) != 1) { return 128; }
+    if (ctnative::global_number(g_traceErrorCount).value() != initial_count + 1 ||
+        ctnative::global_number(g_traceErrorMessage).value() != 1) { return 128; }
     g_host->slot->m_remove(g_element, "bs.collapse");
     g_host->slot->m_set(g_element, "bs.alert", 7);
     g_host->slot->m_set(g_element, "bs.collapse", 9);
-    if (ctnative::global_number(g_traceErrorCount) != initial_count + 2 ||
-        ctnative::global_number(g_traceErrorMessage) != 1) { return 129; }
+    if (ctnative::global_number(g_traceErrorCount).value() != initial_count + 2 ||
+        ctnative::global_number(g_traceErrorMessage).value() != 1) { return 129; }
     element.reset();
     get = {};
     if (ctn_test_maps[0].expired() || element_lifetime.expired()) { return 130; }
@@ -265,12 +263,12 @@ int main() {
     if (!current_recorder_owner.expired()) { return 135; }
     // Both detached closures outlive their owners and update the current globals.
     error("Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert.");
-    if (ctnative::global_number(g_traceErrorCount) != initial_count + 3 ||
-        ctnative::global_number(g_traceErrorMessage) != 1) { return 136; }
+    if (ctnative::global_number(g_traceErrorCount).value() != initial_count + 3 ||
+        ctnative::global_number(g_traceErrorMessage).value() != 1) { return 136; }
     error = {};
     current_error("a different future message");
-    if (ctnative::global_number(g_traceErrorCount) != initial_count + 4 ||
-        ctnative::global_number(g_traceErrorMessage) != 0) { return 137; }
+    if (ctnative::global_number(g_traceErrorCount).value() != initial_count + 4 ||
+        ctnative::global_number(g_traceErrorMessage).value() != 0) { return 137; }
     current_error = {};
     return 0;
 }
@@ -289,7 +287,7 @@ int main() {
                 "ctnative::object_strict_equal(g_host->slot->m_get(",
             )
             .replace(
-                'ctnative::global_number(get(element, "bs.alert")) != 42',
+                'ctnative::global_number(get(element, "bs.alert")).value() != 42',
                 '!ctnative::object_strict_equal(get(element, "bs.alert"), js_num{42})',
             )
         )

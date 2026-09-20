@@ -30,7 +30,7 @@ def string_field_cpp_value(value):
 def check_string_field_calls(cpp, name, mode):
     row = string_field_cases()[name]
     source, value = row["source"], row["expected_trace"]
-    result = "std::string" if isinstance(value, StringValue) else "js_num"
+    result = "std::string" if isinstance(value, StringValue) else "::js_num"
     params = (
         "std::string, std::string, ctnative::js_boolean_t"
         if name == "field_string_lifetime"
@@ -315,9 +315,9 @@ def check_one_size_calls(cpp, name, mode):
 
 def check_exact_size_calls(cpp, name, mode, row):
     source = row["source"]
-    params = "js_num, ctnative::js_boolean_t" if "set(key, flag)" in source else "js_num"
+    params = "::js_num, ctnative::js_boolean_t" if "set(key, flag)" in source else "::js_num"
     result = (
-        "ctnative::nullable_scalar" if name == "size_one_present_field_entry_repair" else "js_num"
+        "ctnative::nullable_scalar" if name == "size_one_present_field_entry_repair" else "::js_num"
     )
     if (
         f"std::function<{result}({params})>" not in cpp

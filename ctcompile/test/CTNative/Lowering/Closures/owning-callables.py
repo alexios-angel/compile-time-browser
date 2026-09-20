@@ -53,9 +53,9 @@ def main():
         decisions = []
         for label, ir in [("plain", module), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
-            assert "std::function<js_num(js_num)>" in cpp, cpp
+            assert "std::function<::js_num(::js_num)>" in cpp, cpp
             if fixture == "fallback":
-                assert "std::tuple<js_num>" in cpp and "std::make_tuple(" in cpp, cpp
+                assert "std::tuple<::js_num>" in cpp and "std::make_tuple(" in cpp, cpp
                 assert "std::get<0>" in cpp, cpp
             else:
                 assert "std::make_tuple(" not in cpp and "std::get<" not in cpp, cpp

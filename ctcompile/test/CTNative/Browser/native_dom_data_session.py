@@ -48,10 +48,10 @@ int main() {
                               session.observe_traceEntered(), session.observe_traceOther()};
         };
         auto check = [&](bool equal) {
-            assert(ctnative::global_number(session.observe_traceEntered()) == 1);
+            assert(ctnative::global_number(session.observe_traceEntered()).value() == 1);
             assert(!ctnative::global_boolean(session.observe_traceBefore()));
-            assert(ctnative::global_boolean(session.observe_traceOther()) == equal);
-            assert(ctnative::global_boolean(session.observe_traceAfter()) != equal);
+            assert(ctnative::global_boolean(session.observe_traceOther()) == ctnative::js_boolean_t{equal});
+            assert(ctnative::global_boolean(session.observe_traceAfter()) != ctnative::js_boolean_t{equal});
         };
         assert(session.observe_traceEntered().tag == ctnative::nullable_scalar::kind::undefined);
         element_ref dangling = foreign;
@@ -138,14 +138,14 @@ def main():
             "assert(session.observe_traceBefore().tag == ctnative::nullable_scalar::kind::undefined);",
         )
         .replace(
-            "assert(ctnative::global_boolean(session.observe_traceOther()) == equal);",
-            "assert(equal ? ctnative::global_number(session.observe_traceOther()) == 42 : "
+            "assert(ctnative::global_boolean(session.observe_traceOther()) == ctnative::js_boolean_t{equal});",
+            "assert(equal ? ctnative::global_number(session.observe_traceOther()).value() == 42 : "
             "session.observe_traceOther().tag == ctnative::nullable_scalar::kind::undefined);",
         )
         .replace(
-            "assert(ctnative::global_boolean(session.observe_traceAfter()) != equal);",
+            "assert(ctnative::global_boolean(session.observe_traceAfter()) != ctnative::js_boolean_t{equal});",
             "assert(equal ? session.observe_traceAfter().tag == ctnative::nullable_scalar::kind::undefined : "
-            "ctnative::global_number(session.observe_traceAfter()) == 42);",
+            "ctnative::global_number(session.observe_traceAfter()).value() == 42);",
         )
         .replace(
             "assert(!ctnative::global_boolean(second.observe_traceAfter()));",

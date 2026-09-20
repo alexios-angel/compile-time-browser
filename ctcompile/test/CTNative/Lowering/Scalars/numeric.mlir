@@ -63,6 +63,9 @@ function scale(x) { return x * 2; }
 // CHECK: call_opaque "std::isfinite"
 // CHECK: call_opaque "std::pow"
 // CHECK: conditional
+// Global reads produce the Number class, then explicitly unwrap for C varargs.
+// CHECK: call_opaque "ctnative::global_number"{{.*}} -> !emitc.opaque<"ctnative::js_num">
+// CHECK: member_call_opaque {{.*}} "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
 // CHECK: call_opaque "printf"({{.*}}) {ctnative.const_operands = array<i32: 0, 1>} : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 // CHECK: return %{{.*}} : i32
 

@@ -103,7 +103,7 @@ def check_object_argument_calls(cpp, name, mode):
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     arity = 2 if name == "object_argument_two_formals" else 1
     signature = (
-        "std::function<js_num("
+        "std::function<::js_num("
         + ", ".join(["std::shared_ptr<ctnative::identity_object>"] * arity)
         + ")>"
     )

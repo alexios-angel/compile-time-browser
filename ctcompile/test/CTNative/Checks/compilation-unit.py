@@ -365,7 +365,7 @@ def mutate(cpp, target, kind, fail):
         # like a present NaN. Handwritten fixtures still use plain doubles.
         increment = f"{symbol} + 1"
         if re.search(rf"ctnative::nullable_scalar {re.escape(symbol)}[; =]", cpp):
-            increment = f"ctnative::global_number({symbol}) + 1"
+            increment = f"ctnative::global_number({symbol}).value() + 1"
         mutation = f"{symbol} = {increment};"
         cpp = f"{head}{mutation}\n  {tail}"
         if mutation not in cpp:

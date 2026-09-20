@@ -33,6 +33,32 @@ void check(bool value, const char * message) {
 
 int main() {
     using namespace ctnative;
+    static_assert(std::is_same_v<ctnative::js_num, js_basic_num<double>>);
+    static_assert(std::is_constructible_v<ctnative::js_num, double>);
+    static_assert(!std::is_convertible_v<double, ctnative::js_num>);
+    static_assert(!std::is_convertible_v<ctnative::js_num, double>);
+    static_assert(!std::is_convertible_v<ctnative::js_num, bool>);
+    static_assert(!std::is_constructible_v<ctnative::js_num, bool>);
+    static_assert(!std::is_constructible_v<ctnative::js_num, int>);
+    static_assert(!std::is_constructible_v<ctnative::js_num, const char *>);
+    static_assert(std::is_same_v<decltype(global_number(nullable_scalar{})), ctnative::js_num>);
+    constexpr ctnative::js_num zero{}, one{1.0}, two{2.0}, negativeZero{-0.0};
+    static_assert((one + two).value() == 3.0 && (one - two).value() == -1.0);
+    static_assert((two * two).value() == 4.0 && (one / two).value() == 0.5);
+    static_assert((-one).value() == -1.0 && static_cast<double>(+two) == 2.0);
+    const ctnative::js_num notANumber{std::numeric_limits<double>::quiet_NaN()};
+    CHECK(!zero && !negativeZero && !notANumber && one);
+    CHECK(zero == negativeZero && !std::signbit(zero.value()));
+    CHECK(std::signbit(negativeZero.value()) && std::signbit((-zero).value()));
+    CHECK(notANumber != notANumber && (notANumber <=> one) == std::partial_ordering::unordered);
+    CHECK(one < two && two >= one);
+    CHECK(std::isinf((one / zero).value()) && std::isnan((zero / zero).value()));
+    CHECK(std::signbit((one / negativeZero).value()));
+    CHECK(std::signbit(global_number(to_nullable(negativeZero)).value()));
+    CHECK(std::isnan(global_number(object_value{notANumber}).value()));
+    CHECK(global_number(object_value{two}) == two);
+    CHECK(!scalar_strict_equal(to_nullable(one), nullable_scalar{true}));
+
     static_assert(std::is_constructible_v<js_boolean_t, bool>);
     static_assert(!std::is_convertible_v<bool, js_boolean_t>);
     static_assert(!std::is_convertible_v<js_boolean_t, bool>);
@@ -67,7 +93,7 @@ int main() {
     CHECK(vec_at(three, nullable_scalar::null()).tag == nullable_scalar::kind::undefined);
     CHECK(vec_length(three) == 3);
 
-    auto numbers = make_number_map<js_num>();
+    auto numbers = make_number_map<double>();
     map_set(numbers, NAN, 1.0);
     map_set(numbers, NAN, 2.0);
     map_set(numbers, -0.0, 3.0);
@@ -105,7 +131,7 @@ int main() {
         std::make_shared<std::map<js_boolean_t, js_boolean_t, map_key_less<js_boolean_t>>>());
 
     // The associative layout's comparator: every NaN is one key, before all.
-    map_key_less<js_num> less;
+    map_key_less<double> less;
     CHECK(!less(NAN, NAN) && less(NAN, 1.0) && !less(1.0, NAN));
 
     const std::vector<nullable_scalar> scalarKeys{
@@ -135,7 +161,7 @@ int main() {
         CHECK(map_has(map, nullable_scalar{}) && map_has(map, nullable_scalar::null()));
     };
     scalarMap(make_number_map<nullable_scalar>());
-    scalarMap(std::make_shared<std::map<nullable_scalar, js_num, map_key_less<nullable_scalar>>>());
+    scalarMap(std::make_shared<std::map<nullable_scalar, double, map_key_less<nullable_scalar>>>());
 
     const nullable_scalar undefined{undefined_t{}}, null{js_null_t{}}, nan{NAN};
     CHECK(undefined.tag == nullable_scalar::kind::undefined);

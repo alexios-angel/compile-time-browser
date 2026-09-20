@@ -134,7 +134,7 @@ int main() {
 def check_leaf_object_calls(cpp, name, mode):
     source = leaf_object_sources()[name][0]
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
-    if not entry or "std::function<js_num(std::string)>" not in cpp:
+    if not entry or "std::function<::js_num(std::string)>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: missing numeric leaf setter ABI")
     methods_by_value = dict(
         re.findall(r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1])
@@ -172,10 +172,12 @@ def check_leaf_readback_calls(cpp, name, mode):
     body = source.split("set(key", 1)[1].split("\n", 1)[0]
     allocations = body.count("{") - 1
     params = (
-        "std::string, js_num" if name.startswith("local_field_readback_lifetime") else "std::string"
+        "std::string, ::js_num"
+        if name.startswith("local_field_readback_lifetime")
+        else "std::string"
     )
     if (
-        f"std::function<js_num({params})>" not in cpp
+        f"std::function<::js_num({params})>" not in cpp
         or "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
         or cpp.count("std::make_shared<ctnative::identity_object>()") != allocations
     ):
