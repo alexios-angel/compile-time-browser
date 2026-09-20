@@ -474,6 +474,65 @@ void InductionCases::overwritesAndTransport() {
            replace(signedShiftBoundary, "4746794007244308480", "4746794007248502784"));
     reject("unsigned right shifts cannot borrow an input above the bounded u32 range",
            replace(unsignedShiftBoundary, "4751297606873776128", "4751297606875873280"));
+    const auto negativeShiftBoundary =
+        replace(replace(unsignedShiftBoundary, "sub %maximum, %i", "sub %i, %maximum"),
+                "sub %half, %shifted", "sub %shifted, %zero");
+    run({.what = "unsigned shifts include the lowest bounded negative ToUint32 input",
+         .body = negativeShiftBoundary,
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[0]=zero; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto negativeShift = replace(
+        replace(replace(negativeShiftBoundary, "4751297606873776128", "4616189618054758400"),
+                "4746794007244308480", "4746794007240114176"),
+        "sub %shifted, %zero", "sub %shifted, %half");
+    const auto negativeSignBoundary =
+        replace(replace(negativeShift, "4616189618054758400", "4746794007250599936"),
+                "4746794007240114176", "4742290407612743680");
+    for (const auto & body : {negativeShift, negativeSignBoundary}) {
+        run({.what = "negative unsigned shifts keep one ToUint32 band across the signed boundary",
+             .body = body,
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "negative unsigned shifts allow an unaligned first input",
+         .body = replace(negativeShift, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[1]=x; a[3]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative unsigned shifts retain exact masked negative counts",
+         .body = replace(replace(negativeShift, "  %a =",
+                                 "  %count = ctjs.constant #ctjs.number<13852790978814935040>\n"
+                                 "  %a ="),
+                         "ushr %part, %one", "ushr %part, %count"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[0]=zero; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto negativeShiftReload =
+        replace(negativeShift, "  %shifted = ctjs.binary_static ushr %part, %one",
+                "  %count = ctjs.get_property %base[%three]\n"
+                "  %shifted = ctjs.binary_static ushr %part, %count");
+    run({.what = "negative unsigned shift counts reload outside the translated footprint",
+         .body = negativeShiftReload,
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body :
+         {replace(negativeShift, "sub %i, %maximum", "sub %i, %two"),
+          replace(negativeShiftBoundary, "4751297606873776128", "4751297606875873280"),
+          replace(negativeShift, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+          replace(negativeSignBoundary, "binary_static ushr", "binary_static shr"),
+          replace(negativeShiftReload, "%base[%three]", "%base[%one]"),
+          replace(negativeShiftReload,
+                  "  %step =", "  ctjs.set_property %base[%three], %two\n  %step =")}) {
+        reject("negative unsigned shifts retain band, bounds, stride and reload guards", body);
+    }
     for (const auto & body :
          {replace(shiftReload, "%base[%three]", "%base[%one]"),
           replace(shiftReload, "  %step =", "  ctjs.set_property %base[%three], %two\n  %step ="),

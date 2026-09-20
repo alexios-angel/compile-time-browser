@@ -19,10 +19,22 @@
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function signedShift() {
@@ -136,7 +148,73 @@ function cycle() {
     }
     return a;
 }
+function negativeLower() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 4294967295) >>> 1] = 0;
+    return a;
+}
+function negativeAcrossSign() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483649) >>> 1) - 1073741823] = 0;
+    return a;
+}
+function negativeReversed() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[2147483647 - ((-1 - i) >>> 1)] = 0;
+    return a;
+}
+function negativeMaskedCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> -31) - 2147483646] = 0;
+    return a;
+}
+function negativeReloadGap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> a[3]) - 2147483646] = 0;
+    return a;
+}
+function negativeUnaligned() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 1; i < a.length; i += 2) a[((i - 4) >>> 1) - 2147483646] = 0;
+    return a;
+}
+function negativeSaved() {
+    var child = {}, a = [child, child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> 1) - 2147483646] = 0;
+    return saved;
+}
+function negativeZeroCrossing() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 1) >>> 0) - 4294967295] = 0;
+    return a;
+}
+function negativeOverflow() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(i - 4294967296) >>> 0] = 0;
+    return a;
+}
+function negativeNondivisible() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 4) >>> 1) - 2147483646] = 0;
+    return a;
+}
+function negativeReloadOverlap() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 4) >>> a[1]) - 2147483646] = 0;
+    return a;
+}
+function negativeLaterOverlap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i - 4) >>> a[3]) - 2147483646] = 0;
+        a[3] = 2;
+    }
+    return a;
+}
 signedShift(); unsignedShift(); unalignedStart(); modulo32(); negativeCount(); reloadGap();
 signedUpper(); unsignedUpper(); reversedShift(); saved(); remaining(); zeroTrip();
 nondivisibleStride(); overlappingCount(); laterOverlap(); signedDiscontinuity();
 unsignedOverflow(); negativeInput(); stringCount(); varyingCount(); cycle();
+negativeLower(); negativeAcrossSign(); negativeReversed(); negativeMaskedCount();
+negativeReloadGap(); negativeUnaligned(); negativeSaved(); negativeZeroCrossing();
+negativeOverflow(); negativeNondivisible(); negativeReloadOverlap(); negativeLaterOverlap();

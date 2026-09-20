@@ -299,6 +299,43 @@ void StructuredCases::reloads() {
                    "    %step =", "    ctjs.set_property %base[%three], %two\n    %step ="));
     reject("structured right shifts cannot borrow a changing count",
            replace(rightShiftIndex, "shr %i, %one", "shr %i, %last"));
+    const auto negativeShift = replace(
+        replace(replace(replace(signedShiftBoundary, "4746794007244308480", "4616189618054758400"),
+                        "4742290407612743680", "4746794007240114176"),
+                "sub %maximum, %i", "sub %i, %maximum"),
+        "binary_static shr", "binary_static ushr");
+    const auto negativeShiftForward =
+        replace(negativeShift, "sub %half, %shifted", "sub %shifted, %half");
+    const auto negativeShiftBoundary =
+        replace(replace(negativeShiftForward, "4616189618054758400", "4751297606873776128"),
+                "sub %shifted, %half", "sub %shifted, %zero");
+    for (const auto & body : {negativeShiftForward, negativeShiftBoundary}) {
+        rows.push_back({.what = "structured unsigned shifts preserve one bounded negative band",
+                        .body = body,
+                        .arrays = "a:[zero,zero,one,one]",
+                        .reads = "a[0]=zero; a[2]=one",
+                        .exit = "a -> {a}"});
+    }
+    const auto negativeShiftReload = replace(
+        replace(negativeShiftForward, "  %a =", "  %three = ctjs.binary add %two, %one\n  %a ="),
+        "    %shifted = ctjs.binary_static ushr %part, %one",
+        "    %count = ctjs.get_property %base[%three]\n"
+        "    %shifted = ctjs.binary_static ushr %part, %count");
+    rows.push_back({.what = "structured negative unsigned shift counts retain disjoint reloads",
+                    .body = negativeShiftReload,
+                    .arrays = "a:[zero,zero,one,one]",
+                    .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
+                    .exit = "a -> {a}"});
+    for (const auto & body :
+         {replace(negativeShiftForward, "sub %i, %maximum", "sub %i, %two"),
+          replace(negativeShiftBoundary, "4751297606873776128", "4751297606875873280"),
+          replace(negativeShiftForward, "add %i, %two\n    scf.yield",
+                  "add %i, %one\n    scf.yield"),
+          replace(negativeShiftReload, "%base[%three]", "%base[%one]"),
+          replace(negativeShiftReload,
+                  "    %step =", "    ctjs.set_property %base[%three], %two\n    %step =")}) {
+        reject("structured negative unsigned shifts retain band, stride and reload guards", body);
+    }
     rows.push_back({.what = "structured exact quotients overwrite their bounded prefix",
                     .body = quotientIndex,
                     .arrays = "a:[zero,zero,one,one]",

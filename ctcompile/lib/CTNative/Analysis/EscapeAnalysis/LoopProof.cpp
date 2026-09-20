@@ -303,11 +303,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             const auto positive = boundedConvertedNumber(*offset);
             const auto negative = boundedConvertedNumber(*offset, true);
-            if ((!positive && !negative) || !range->first.integerNumber ||
-                !range->last.integerNumber ||
-                *range->last.integerNumber > (addition.getKind() == ctjs::BinaryKind::UShr
-                                                  ? 4294967295ULL
-                                                  : 2147483647ULL)) {
+            const bool unsignedShift = addition.getKind() == ctjs::BinaryKind::UShr;
+            // Exact negative magnitudes are bounded by 2^32-1. Within this
+            // band ToUint32 adds 2^32; crossing zero would break its order.
+            const bool negativeBand = unsignedShift && range->first.negativeIntegerNumber &&
+                                      range->last.negativeIntegerNumber;
+            if ((!positive && !negative) ||
+                (!negativeBand &&
+                 (!range->first.integerNumber || !range->last.integerNumber ||
+                  *range->last.integerNumber > (unsignedShift ? 4294967295ULL : 2147483647ULL)))) {
                 return std::nullopt;
             }
             const auto count = positive ? static_cast<std::uint32_t>(*positive)
@@ -322,9 +326,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 }
                 range->stride *= factor;
             } else {
-                // ponytail: nonnegative inputs and a divisible stride keep floor
-                // division affine. Signed/wrapping bands and repeated keys need
-                // a separate range proof; an unaligned first endpoint is safe.
+                // ponytail: one conversion band and a divisible stride keep
+                // floor division affine. Other signed bands and repeated keys
+                // need a separate proof; an unaligned first endpoint is safe.
                 if (range->stride % factor != 0) { return std::nullopt; }
                 range->stride /= factor;
             }
