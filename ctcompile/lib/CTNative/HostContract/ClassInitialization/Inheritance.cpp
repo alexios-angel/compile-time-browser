@@ -750,7 +750,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         auto base =
             target(sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>());
-        if (!constructors.contains(base) || !normalizeSuper(function, base, contract, methodKeys)) {
+        if (!constructors.contains(base) ||
+            (!snapshotFields.contains(closure.getResult()) &&
+             !normalizeSuper(function, base, contract, methodKeys))) {
             return false;
         }
         setup.insert(inherited);

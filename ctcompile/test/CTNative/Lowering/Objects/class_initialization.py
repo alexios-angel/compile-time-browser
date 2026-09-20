@@ -201,7 +201,11 @@ def main():
                 for value in scalar_reads
             ):
                 raise RuntimeError("own-field scalar snapshot lost its boxed local producer")
-        if name in OWN_FIELDS or name == "bootstrap-base":
+        if (
+            name in OWN_FIELDS
+            or name.startswith("inherited-own-fields-")
+            or name == "bootstrap-base"
+        ):
             manifest["initial_intrinsics"].append("Object")
         if name.startswith(("inherited", "override-")) or name == "bootstrap-base":
             # Declare the mutable implementation hooks emitted by the source.
@@ -245,6 +249,16 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "inherited-own-fields-conditional": "class own-key snapshot requires fixed constructor fields",
+            "inherited-own-fields-added": "inherited own-key snapshot requires the same ordered fields",
+            "inherited-own-fields-empty-added": "inherited own-key snapshot requires the same ordered fields",
+            "inherited-own-fields-grandchild-added": "inherited own-key snapshot requires the same ordered fields",
+            "inherited-own-fields-sibling-added": "inherited own-key snapshot requires the same ordered fields",
+            "inherited-own-fields-leaf-collision": "class own-key snapshot requires fixed constructor fields",
+            "inherited-own-fields-before-store": "class own-key snapshot requires fixed constructor fields",
+            "inherited-own-fields-ancestor-write": "class own-key snapshot field set changes",
+            "inherited-own-fields-implicit": "derived class requires receiver-preserving super normalization",
+            "inherited-own-fields-loop": "class own-key snapshot requires fixed length or index reads",
             "own-fields-loop": "class own-key snapshot requires fixed length or index reads",
             "own-fields-conditional": "class own-key snapshot requires fixed constructor fields",
             "own-fields-dynamic": "class own-key snapshot requires fixed constructor fields",
@@ -285,7 +299,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class own-key snapshot requires fixed constructor fields",
+            "bootstrap-base": "super condition is not a proved Boolean",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -465,6 +479,7 @@ def main():
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         if name in (
+            "inherited-own-fields-shared",
             "inherited-super-order",
             "inherited-helper-distinct",
             "inherited-nested-helper-distinct",
@@ -475,7 +490,7 @@ def main():
                 manifest,
                 (
                     "super constructor declarations, roots and global writes remain unsupported"
-                    if name in ("inherited-helper-distinct", "inherited-nested-helper-distinct")
+                    if name != "inherited-super-order"
                     else "super method target has unsupported control flow, roots or declarations"
                 ),
             )

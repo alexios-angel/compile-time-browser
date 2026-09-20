@@ -458,9 +458,14 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                                             const llvm::StringSet<> & methodKeys,
                                             const HostContract & contract) {
     auto function = target(constructor);
+    auto inherited = heritage.lookup(constructor.getResult());
+    const auto base = inherited ? sourceValue(inherited.getArgs()[1]) : mlir::Value{};
+    auto required = snapshotFields.find(base);
     llvm::SmallVector<mlir::Value> receivers;
     for (ctjs::ConstructOp made : instances) { receivers.push_back(made.getResult()); }
-    for (ctjs::SetPropertyOp definition : definitions) {
+    llvm::SmallVector<ctjs::SetPropertyOp> allDefinitions(definitions);
+    if (inherited) { allDefinitions.append(inheritedMethods.lookup(base)); }
+    for (ctjs::SetPropertyOp definition : allDefinitions) {
         if (!step()) { return false; }
         auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
         if (fn) { receivers.push_back(fn.getBody().front().getArgument(ctjs::arg_receiver)); }
@@ -481,15 +486,25 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             }
         }
     }
-    if (!reason.empty() || snapshots.empty()) { return reason.empty(); }
+    if (!reason.empty() || (snapshots.empty() && required == snapshotFields.end())) {
+        return reason.empty();
+    }
     if (!llvm::is_contained(contract.initialIntrinsics, "Object")) {
         return refuse("class own-key snapshot needs declared Object identity");
     }
-    // ponytail: fixed named fields on a non-inherited class. Conditional
-    // presence, indexed-name ordering and iterator consumers need separate proofs.
-    if (contract.provider != HostContract::Provider::closedSource ||
-        heritage.contains(constructor.getResult()) ||
-        baseClasses.contains(constructor.getResult()) || !function.getBody().hasOneBlock()) {
+    if (contract.provider != HostContract::Provider::closedSource) {
+        return refuse("class own-key snapshot requires fixed constructor fields");
+    }
+    if (inherited) {
+        auto baseFunction = target(base.getDefiningOp<ctjs::CreateClosureOp>());
+        if (!constructors.contains(baseFunction) ||
+            !normalizeSuper(function, baseFunction, contract, methodKeys)) {
+            return false;
+        }
+    }
+    // ponytail: fixed named fields, with one ordered shape across an inherited
+    // snapshot's receivers. Conditional presence and iteration need separate proofs.
+    if (!function.getBody().hasOneBlock()) {
         return refuse("class own-key snapshot requires fixed constructor fields");
     }
     llvm::SmallVector<llvm::StringRef> fields;
@@ -513,6 +528,17 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             return refuse("class own-key snapshot requires fixed constructor fields");
         }
         if (fieldSet.insert(key).second) { fields.push_back(key); }
+    }
+    if (required != snapshotFields.end()) {
+        if (fields.size() != required->second.size()) {
+            return refuse("inherited own-key snapshot requires the same ordered fields");
+        }
+        for (auto [field, inheritedField] : llvm::zip(fields, required->second)) {
+            if (!step()) { return false; }
+            if (field != inheritedField) {
+                return refuse("inherited own-key snapshot requires the same ordered fields");
+            }
+        }
     }
     llvm::MapVector<mlir::Value, mlir::Attribute> replacements;
     for (mlir::Operation * operation : snapshots) {
@@ -611,6 +637,9 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             eraseRooted(operation);
         }
     }
+    // An empty snapshot is a requirement too. Descendants must recheck every
+    // inherited body and field write even after its snapshot has been folded.
+    snapshotFields[constructor.getResult()] = std::move(fields);
     return true;
 }
 

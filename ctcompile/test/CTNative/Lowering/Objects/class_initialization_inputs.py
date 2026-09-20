@@ -16,6 +16,22 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-own-fields-shared": (214218, 214218),
+    "inherited-own-fields-leaf": (216, 216),
+    "inherited-own-fields-external": (211, 211),
+    "inherited-own-fields-chain": (234, 234),
+    "inherited-own-fields-clear": (1111, 1111),
+    "inherited-own-fields-empty": (0, 0),
+    "inherited-own-fields-conditional": (1, 1),
+    "inherited-own-fields-added": (12, 12),
+    "inherited-own-fields-empty-added": (1, 1),
+    "inherited-own-fields-grandchild-added": (2, 2),
+    "inherited-own-fields-sibling-added": (12, 12),
+    "inherited-own-fields-leaf-collision": (1, 1),
+    "inherited-own-fields-before-store": (2, 2),
+    "inherited-own-fields-ancestor-write": (2, 2),
+    "inherited-own-fields-implicit": (1, 1),
+    "inherited-own-fields-loop": (11, 11),
     "static-call-arguments": (1022, 1022),
     "static-call-capture": (16, 16),
     "static-call-getter": (107, 107),
@@ -283,6 +299,12 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-own-fields-shared",
+    "inherited-own-fields-leaf",
+    "inherited-own-fields-external",
+    "inherited-own-fields-chain",
+    "inherited-own-fields-clear",
+    "inherited-own-fields-empty",
     "static-call-arguments",
     "static-call-capture",
     "static-call-getter",
