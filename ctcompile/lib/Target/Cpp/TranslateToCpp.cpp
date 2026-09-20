@@ -1716,7 +1716,9 @@ LogicalResult CppEmitter::emitAttribute(Location loc, Attribute attr) {
         llvm_unreachable("unsupported floating point type");
       };
     } else if (val.isNaN()) {
-      os << "NAN";
+      os << (numericAlias && &val.getSemantics() == &APFloat::IEEEdouble()
+                 ? "ctnative::js_num{ctnative::js_nan_t{}}.value()"
+                 : "NAN");
     } else if (val.isInfinity()) {
       if (val.isNegative())
         os << "-";
