@@ -1,4 +1,5 @@
 #include "Cases.hpp"
+#include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::test::escape::arrays::length_detail {
 
@@ -497,13 +498,13 @@ void LengthCases::shrinkArithmetic() {
             const auto body = values + "  %input = ctjs.constant " + literal +
                               "\n  %wanted = " + producer +
                               "\n  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n";
+            static const llvm::StringSet<> negativeNumberProducers{
+                "ctjs.binary mul %input, %zero", "ctjs.binary div %input, %input",
+                "ctjs.binary mod %input, %input", "ctjs.binary_static ushr %input, %input",
+                "ctjs.unary neg %input"};
             if ((literal == "#ctjs.number<13830554455654793216>" ||
                  literal == "#ctjs.string<\"-1\">") &&
-                (producer == "ctjs.binary mul %input, %zero" ||
-                 producer == "ctjs.binary div %input, %input" ||
-                 producer == "ctjs.binary mod %input, %input" ||
-                 producer == "ctjs.binary_static ushr %input, %input" ||
-                 producer == "ctjs.unary neg %input")) {
+                negativeNumberProducers.contains(producer)) {
                 const bool retained = producer == "ctjs.binary div %input, %input" ||
                                       producer == "ctjs.binary_static ushr %input, %input" ||
                                       producer == "ctjs.unary neg %input";
@@ -514,23 +515,23 @@ void LengthCases::shrinkArithmetic() {
                     retained ? "" : "x");
                 continue;
             }
-            if (literal == "#ctjs.string<\"0\">" &&
-                (producer == "ctjs.binary sub %input, %zero" ||
-                 producer == "ctjs.binary mul %input, %zero" ||
-                 producer == "ctjs.binary_static ushr %input, %input" ||
-                 producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input")) {
+            static const llvm::StringSet<> zeroStringProducers{
+                "ctjs.binary sub %input, %zero", "ctjs.binary mul %input, %zero",
+                "ctjs.binary_static ushr %input, %input", "ctjs.unary plus %input",
+                "ctjs.unary neg %input"};
+            if (literal == "#ctjs.string<\"0\">" && zeroStringProducers.contains(producer)) {
                 run({.what = "canonical String numeric conversion supplies an exact empty length",
                      .body = body,
                      .arrays = "a:[]",
                      .exit = "a -> {a}"});
                 continue;
             }
+            static const llvm::StringSet<> zeroPrimitiveProducers{
+                "ctjs.unary plus %input",        "ctjs.unary neg %input",
+                "ctjs.binary add %input, %zero", "ctjs.binary sub %input, %zero",
+                "ctjs.binary mul %input, %zero", "ctjs.binary_static ushr %input, %input"};
             if ((literal == "#ctjs.boolean<false>" || literal == "#ctjs.null") &&
-                (producer == "ctjs.unary plus %input" || producer == "ctjs.unary neg %input" ||
-                 producer == "ctjs.binary add %input, %zero" ||
-                 producer == "ctjs.binary sub %input, %zero" ||
-                 producer == "ctjs.binary mul %input, %zero" ||
-                 producer == "ctjs.binary_static ushr %input, %input")) {
+                zeroPrimitiveProducers.contains(producer)) {
                 run({.what = "Boolean/null numeric conversion supplies an exact empty length",
                      .body = body,
                      .arrays = "a:[]",

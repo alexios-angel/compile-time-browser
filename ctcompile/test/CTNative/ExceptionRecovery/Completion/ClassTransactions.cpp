@@ -1,6 +1,7 @@
 #include "ClassTransactions.hpp"
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "llvm/ADT/DenseSet.h"
 
 namespace ctcompile::test::exception_recovery {
 
@@ -699,16 +700,13 @@ bool testClassTransactions(mlir::MLIRContext & context) {
             }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
-            auto error = ctnative::prepareDOMEntry(
-                *candidate, request,
-                control == 3 || control == 32 || control == 55 || control == 69 || control == 81 ||
-                        control == 91 || control == 103 || control == 115 || control == 125 ||
-                        control == 139 || control == 147 || control == 153 || control == 164 ||
-                        control == 171 || control == 180 || control == 188 || control == 196
-                    ? 0
-                : control == 4 || control == 17 ? 1000
-                : control >= 47                 ? 1000000
-                                                : 100000);
+            static const llvm::DenseSet<unsigned> zeroBudgetControls{
+                3, 32, 55, 69, 81, 91, 103, 115, 125, 139, 147, 153, 164, 171, 180, 188, 196};
+            auto error = ctnative::prepareDOMEntry(*candidate, request,
+                                                   zeroBudgetControls.contains(control) ? 0
+                                                   : control == 4 || control == 17      ? 1000
+                                                   : control >= 47                      ? 1000000
+                                                                                        : 100000);
             if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
                 control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
                 control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&

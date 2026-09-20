@@ -16,6 +16,7 @@
 #include "DOMPrototypeQuery.h"
 #include "DOMURI.h"
 #include "Fingerprint.h"
+#include "llvm/ADT/StringSet.h"
 
 #include "check.hpp"
 
@@ -127,15 +128,12 @@ module {
                 replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
                 (std::string("\"initial_intrinsics\":") + identities + ",\"element_parameters\""));
             auto classes = parseHostContract(request);
-            const bool allowed =
-                std::string_view(identities) == "[\"__ctbrowser_class_defined\"]" ||
-                std::string_view(identities) == "[\"__ctbrowser_class_defined\",\"Error\"]" ||
-                std::string_view(identities) == "[\"Error\",\"__ctbrowser_class_defined\"]" ||
-                std::string_view(identities) ==
-                    "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]" ||
-                std::string_view(identities) ==
-                    "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]";
-            check(static_cast<bool>(classes) == allowed,
+            static const llvm::StringSet<> allowed{
+                "[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
+                "[\"Error\",\"__ctbrowser_class_defined\"]",
+                "[\"__ctbrowser_class_defined\",\"Error\",\"Object\"]",
+                "[\"Number\",\"__ctbrowser_class_defined\",\"String\"]"};
+            check(static_cast<bool>(classes) == allowed.contains(identities),
                   "DOM class declarations compose unique existing intrinsic identities");
             if (classes) {
                 check(!DOMEntryAnalysis(*module, *classes).proved(),

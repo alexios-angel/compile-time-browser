@@ -1,6 +1,7 @@
 #include "Tests.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
+#include "llvm/ADT/DenseSet.h"
 
 namespace ctcompile::test::exception_recovery {
 
@@ -596,7 +597,8 @@ void testEffects(mlir::MLIRContext & context) {
         const auto where = arithmetic.getLoc();
         const auto unknown = entry.getArgument(3);
         const auto type = ctjs::ValueType::get(&context);
-        if (mutation == 0 || mutation == 3 || mutation == 4 || mutation == 9) {
+        static const llvm::DenseSet<unsigned> globalLoadMutations{0, 3, 4, 9};
+        if (globalLoadMutations.contains(mutation)) {
             if (mutation == 3) { at.setInsertionPoint(normal); }
             if (mutation == 4) { at.setInsertionPoint(caught); }
             auto load = ctjs::LoadGlobalOp::create(at, where, "unprovedGetter");

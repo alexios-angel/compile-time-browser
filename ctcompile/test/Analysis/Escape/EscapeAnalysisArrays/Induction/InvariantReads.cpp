@@ -1,4 +1,5 @@
 #include "Cases.hpp"
+#include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::test::escape::arrays::induction_detail {
 
@@ -792,8 +793,9 @@ void InductionCases::invariantReads() {
          {"#ctjs.number<0>", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.string<\"0\">",
           "#ctjs.number<13835058055282163712>", "#ctjs.string<\"-2\">",
           "#ctjs.number<4751297606871678976>", "#ctjs.string<\"4294967294\">"}) {
-        const bool subtract = literal == "#ctjs.number<0>" || literal == "#ctjs.boolean<false>" ||
-                              literal == "#ctjs.null" || literal == "#ctjs.string<\"0\">";
+        static const llvm::StringSet<> zeroLiterals{"#ctjs.number<0>", "#ctjs.boolean<false>",
+                                                    "#ctjs.null", "#ctjs.string<\"0\">"};
+        const bool subtract = zeroLiterals.contains(literal);
         const std::string update = subtract ? "sub" : "add";
         const auto source =
             replace(savedChild, "  %step = ctjs.binary_static add %i, %one",
