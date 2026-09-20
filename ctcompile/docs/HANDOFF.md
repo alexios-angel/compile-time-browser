@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native browser queries and guarded handles, 2026-09-20 UTC
+
+**fbb510e2** permits existing DOM/Style calls on a `closest()` result inside
+its proved present branch. **67a8af42** adds `Element.querySelector(String)`
+through the public ctbrowser selector engine and reuses that guarded borrow.
+Selector chains retain their original live Style engine; document ownership,
+source effect order and no-Script/VM/GC linkage remain intact. **c188f3e5**
+corrects the guide's stale claim that document-owned Data sessions were only
+analysis: that integration was already implemented.
+
+The two new focused tests pass **32 native executions / 40 refusal controls**
+across GCC/Clang, both optimization policies and printing layouts, including
+owned-session calls. Final host CTest **1/1** (0.49s), closest/query lit **2/2**
+(39.44s); the preceding DOM/DOM-session/closest selection passed **3/3**
+(251.44s). The existing session test includes generated-client ASan/UBSan.
+All seven final query file hashes match. Required formatting still reports
+20 baseline diagnostics in six unchanged files; changed files pass.
+
+**Next browser boundary:** `classList.contains/add/remove` still need a shared
+plain C++ token-list API extracted from Shell before native binding; do not
+duplicate their algorithms. Document-root queries, `querySelectorAll` iteration,
+retained callbacks and Shell/rendering integration also remain. Original
+B/Data+B constructor publication through helpers/inheritance and nested Maps
+is unchanged from the previous handoff. Full Bootstrap initialization and the
+application driver remain unfinished. No browser/runtime-oracle edits or push;
+full suites and broad replays were skipped.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-guarded-closest.md).
+
 ## Terminal constructor publication and AND input congruence, 2026-09-20 UTC
 
 Terminal constructor registration now runs natively. **05dbf77e** moves one
