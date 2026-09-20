@@ -239,6 +239,41 @@ void StructuredCases::reloads() {
                         .arrays = isOr ? "a:[x,zero,x,zero]" : "a:[zero,zero,zero,zero]",
                         .reads = "a[0]=x; a[1]=zero; a[2]=x; a[3]=zero",
                         .exit = isOr ? "a -> {a,x}" : "a -> {a}"});
+        const auto gapReload =
+            replace(replace(replace(replace(replace(bitwise, "[%x]", "[%zero, %x, %one, %y]"),
+                                            "  ctjs.append %y to %a\n", ""),
+                                    "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                            "add %i, %one", "add %i, %two"),
+                    "%position = ctjs.binary_static " + kind + " %i, %one",
+                    "%mask = ctjs.get_property %base[%two]\n"
+                    "    %position = ctjs.binary_static " +
+                        kind + " %i, %mask");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            rows.push_back(
+                {.what = "structured OR/XOR low bits preserve reloads inside the output interval",
+                 .body = replace(gapReload, kind + " %i, %mask", kind + " " + operands),
+                 .arrays = "a:[zero,zero,one,zero]",
+                 .reads = "a[2]=one; a[0]=zero; a[2]=one; a[2]=one",
+                 .exit = "a -> {a}"});
+        }
+        rows.push_back({.what = "structured OR/XOR low-bit lattices retain unvisited gap children",
+                        .body = replace(gapReload, "[%zero, %x, %one, %y]",
+                                        "[%zero, %x, %one, %x, %y, %zero, %zero, %zero]"),
+                        .arrays = "a:[zero,zero,one,zero,y,zero,zero,zero]",
+                        .reads = "a[2]=one; a[0]=zero; a[2]=one; a[2]=one; "
+                                 "a[2]=one; a[4]=y; a[2]=one; a[6]=zero",
+                        .exit = "a -> {a,y}"});
+        const auto three =
+            replace(gapReload, "  %a =", "  %three = ctjs.binary add %two, %one\n  %a =");
+        reject("structured OR/XOR low-bit lattices reject a visited reload residue",
+               replace(replace(three, "[%zero, %x, %one, %y]", "[%zero, %x, %zero, %one]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%three]"));
+        reject("later structured stores invalidate a reload in an OR/XOR low-bit gap",
+               replace(gapReload,
+                       "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+        reject("structured odd input strides cannot retain an OR/XOR low-bit gap",
+               replace(three, "add %i, %two", "add %i, %three"));
         reject("structured OR/XOR reject an enclosure beyond the guard allocation",
                replace(bitwise, "[%x]", "[%x, %y]"));
         reject("structured OR/XOR require an invariant mask",

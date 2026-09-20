@@ -372,6 +372,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!positive && !negative) { return std::nullopt; }
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
+            const auto writeStride =
+                bitAnd ? (mask != 0 ? std::size_t{1} << std::countr_zero(mask) : 1)
+                       : std::size_t{1} << std::countr_zero(range->stride);
             std::uint32_t first = 0, last = mask;
             if (!bitAnd || mask > 2147483647U) {
                 if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
@@ -380,13 +383,16 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // All bits above the highest differing bit are fixed throughout
                 // this unsigned interval. Enclose the lower bits densely: endpoint
                 // bitwise results alone miss interior extrema.
-                const auto varying = static_cast<std::uint32_t>(
+                auto varying = static_cast<std::uint32_t>(
                     std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
                 if (varying > 2147483647U) {
                     // ponytail: one converted sign half; crossing zero or the
                     // sign bit needs a union of ranges before composition.
                     return std::nullopt;
                 }
+                // An input lattice fixes its low bits. OR/XOR preserve those
+                // bits' transformed residue, even when higher bits vary.
+                if (!bitAnd) { varying &= ~static_cast<std::uint32_t>(writeStride - 1); }
                 first = bitAnd  ? (lower & ~varying) & mask
                         : bitOr ? (lower & ~varying) | mask
                                 : (lower ^ mask) & ~varying;
@@ -399,7 +405,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // records only the actual writes.
             IndexRange result{{operand, ContentsKind::NonBigInt},
                               {operand, ContentsKind::NonBigInt},
-                              bitAnd && mask != 0 ? std::size_t{1} << std::countr_zero(mask) : 1};
+                              writeStride};
             boundedNumberBitwise({operand, ContentsKind::NonBigInt, first},
                                  {operand, ContentsKind::NonBigInt, 0}, ctjs::BinaryKind::BitOr,
                                  result.first);

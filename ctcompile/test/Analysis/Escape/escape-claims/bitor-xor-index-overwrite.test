@@ -30,6 +30,18 @@
 // CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function orWrites() {
@@ -185,3 +197,69 @@ negativeXor(); negativeXorCommuted(); negativeLowBand(); signedOrOutput();
 unsignedMaskOrOutput(); unsignedInputOrOutput(); signedOrReload(); savedSignedChild();
 signedRemainingGap(); signedCrossZero(); upperInputCrossing(); lowerInputCrossing();
 overwrittenSignedReload(); highPrefixInteriorExtrema();
+function orStrideReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) a[i | a[2]] = 0;
+    return a;
+}
+function xorStrideReloadCommuted() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) a[a[2] ^ i] = 0;
+    return a;
+}
+function orOddStridePhase() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 1; i < a.length; i += 2) a[(i | a[1]) - 1] = 0;
+    return a;
+}
+function xorOddStridePhase() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 1; i < a.length; i += 2) a[i ^ a[1]] = 0;
+    return a;
+}
+function xorNegativeStrideReload() {
+    var child = {}, a = [child, -1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~i) ^ a[1]] = 0;
+    return a;
+}
+function orSignedStrideReload() {
+    var child = {}, a = [child, -2147483648, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i | a[1]) + 2147483648] = 0;
+    return a;
+}
+function xorSixStrideReload() {
+    var child = {}, a = [child, 0, 0, 0, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 6) a[i ^ a[1]] = 0;
+    return a;
+}
+function xorFourStrideReload() {
+    var child = {}, a = [child, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 4) a[i ^ a[2]] = 0;
+    return a;
+}
+function savedStrideChild() {
+    var child = {}, a = [0, child, 1, child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[i | a[2]] = 0;
+    return saved;
+}
+function xorStrideRemainingGap() {
+    var child = {}, a = [0, child, 1, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[2]] = 0;
+    return a;
+}
+function xorStrideOverlappingReload() {
+    var child = {}, a = [0, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[3]] = 0;
+    return a;
+}
+function orStrideLaterOverwrite() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i | a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+orStrideReload(); xorStrideReloadCommuted(); orOddStridePhase(); xorOddStridePhase();
+xorNegativeStrideReload(); orSignedStrideReload(); xorSixStrideReload(); xorFourStrideReload();
+savedStrideChild(); xorStrideRemainingGap(); xorStrideOverlappingReload(); orStrideLaterOverwrite();

@@ -405,6 +405,37 @@ void InductionCases::overwritesAndTransport() {
              .reads = "a[0]=x; a[1]=zero; a[2]=x; a[3]=zero",
              .exit = isOr ? "a -> {a,x}" : "a -> {a}"},
             isOr ? "" : "x");
+        const auto gapReload =
+            replace(replace(replace(bitwise, "[%one, %x]", "[%zero, %x, %one, %x]"), "add %i, %one",
+                            "add %i, %two"),
+                    "%position = ctjs.binary_static " + kind + " %i, %one",
+                    "%mask = ctjs.get_property %base[%two]\n"
+                    "  %position = ctjs.binary_static " +
+                        kind + " %i, %mask");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            run({.what = "OR/XOR input low bits preserve reloads inside the output interval",
+                 .body = replace(gapReload, kind + " %i, %mask", kind + " " + operands),
+                 .arrays = "a:[zero,zero,one,zero]",
+                 .reads = "a[2]=one; a[0]=zero; a[2]=one; a[2]=one",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "OR/XOR low-bit lattices retain unvisited children between writes",
+             .body = replace(gapReload, "[%zero, %x, %one, %x]",
+                             "[%zero, %x, %one, %x, %x, %zero, %zero, %zero]"),
+             .arrays = "a:[zero,zero,one,zero,x,zero,zero,zero]",
+             .reads = "a[2]=one; a[0]=zero; a[2]=one; a[2]=one; "
+                      "a[2]=one; a[4]=x; a[2]=one; a[6]=zero",
+             .exit = "a -> {a,x}"});
+        reject("OR/XOR low-bit lattices reject reloads at a possible visited residue",
+               replace(replace(gapReload, "[%zero, %x, %one, %x]", "[%zero, %x, %zero, %one]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%three]"));
+        reject(
+            "later stores invalidate a reload in an OR/XOR low-bit gap",
+            replace(gapReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+        reject("odd input strides cannot retain a low-bit gap through OR/XOR",
+               replace(gapReload, "add %i, %two", "add %i, %three"));
         reject("OR/XOR bounds cannot miss a store beyond the guard array",
                replace(bitwise, "[%one, %x]", "[%one, %x, %zero]"));
         reject("OR/XOR require one invariant operand", replace(bitwise, "%i, %one", "%i, %i"));
