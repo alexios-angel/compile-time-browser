@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Construction-time getters and left-shift bands, 2026-09-20 UTC
+
+**5b171856** lets construction-time `this.constructor` reads reach the existing
+exact getter proof instead of treating the prototype backedge as an own field.
+Direct reads, nested methods, getter dependencies, argument order and fresh empty
+object identity add **48 native executions**. Shadowing, effects, missing fields,
+early snapshots and inherited getter targets still refuse. **2c7810ed** proves
+bounded left shifts within one ToInt32 conversion band, preserving output bounds
+and complete reload checks.
+
+Focused class probe: **63 observations / 168 main native executions / 126
+unprepared and 82 preparation refusals**. Exact host **1/1**, arrays **1/1** and
+escape lit **3/3** pass. Left shift: **120 sites / 21 sound / 21 of 26 confined
+precision**, zero violations, partial, pending or unclaimed sites. All eight
+tested hashes match. Changed formatting passes; the required formatter retains
+20 diagnostics in six unchanged files. Full suites, whole class lit, DOM replay
+and broad matrices were skipped.
+
+**Next:** original Bootstrap B and Data+B now refuse `class own-key snapshot
+constructor observes its receiver`. Source tracing identifies the receiver
+argument in `e.set(this._element, this.constructor.DATA_KEY, this)` after
+`_getConfig`. Prove that registration's complete shared Map/stored-receiver
+ownership and lifetime; retain `e.remove`, `P.off` and all config/disposal bodies.
+Variable field presence and inherited per-leaf getter targets remain separate
+obligations. Shared method/getter reads must keep the same selected target and
+transitive dependencies across receivers, or require separate body proofs.
+Inherited DOM, static construction, full Bootstrap and the application driver
+remain unfinished. No browser/runtime changes or push.
+
+[Exact changes, focused checks and boundary](handoff/2026-09-20-construction-getters.md).
+
 ## Construction-point methods and signed left shifts, 2026-09-20 UTC
 
 **e6cfaede** proves instance-method receiver uses against the fields already
