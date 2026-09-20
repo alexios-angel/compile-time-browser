@@ -126,6 +126,7 @@ struct classInitialization {
     bool proveDOMMethods(const HostContract & contract);
 
     bool normalizeMethods();
+    bool transportHelperMaps();
 
     static void eraseRooted(mlir::Operation * operation);
     llvm::SmallVector<ctjs::FuncOp> expandHolders();

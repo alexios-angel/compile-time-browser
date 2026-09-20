@@ -2,6 +2,233 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+bool classInitialization::transportHelperMaps() {
+    if (mapClosures.empty()) { return true; }
+    // Keep helper bodies and frames, passing their exact Maps as ordinary
+    // parameters. Only real class closures retain capture slots; no closure
+    // is synthesized at a cross-frame call or duplicated for another caller.
+    llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> closures;
+    llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value>> needed;
+    llvm::MapVector<mlir::Operation *, ctjs::FuncOp> edges;
+    auto scanned = module.walk([&](ctjs::CreateClosureOp closure) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        closures[target(closure)] = closure;
+        return mlir::WalkResult::advance();
+    });
+    if (scanned.wasInterrupted()) { return false; }
+    scanned = module.walk([&](ctjs::LoadUpvalueOp read) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        auto function = read->getParentOfType<ctjs::FuncOp>();
+        if (auto map = mapCaptures.lookup(read.getResult()); map && helpers.contains(function)) {
+            auto & values = needed[function];
+            if (!llvm::is_contained(values, map)) { values.push_back(map); }
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (scanned.wasInterrupted()) { return false; }
+    if (needed.empty()) { return true; }
+    scanned = module.walk([&](mlir::Operation * op) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (!helperCalls.contains(op)) { return mlir::WalkResult::advance(); }
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        auto callee = direct ? direct.getCalleeValue() : call.getCallee();
+        auto function =
+            direct ? direct.getTarget() : callableCaptures.lookup(callee.getDefiningOp());
+        if (!function) { function = target(sourceClosure(sourceValue(callee))); }
+        if (!function) {
+            refuse("class Map helper call lacks an exact target");
+            return mlir::WalkResult::interrupt();
+        }
+        edges[op] = function;
+        return mlir::WalkResult::advance();
+    });
+    if (scanned.wasInterrupted()) { return false; }
+    // A caller either owns the original Map or carries the same identity.
+    // The bounded fixpoint includes helpers which only forward another helper.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto [op, function] : edges) {
+            if (!step()) { return false; }
+            auto caller = op->getParentOfType<ctjs::FuncOp>();
+            const auto values = needed.lookup(function);
+            for (auto map : values) {
+                if (!step()) { return false; }
+                if (map.getDefiningOp()->getParentOfType<ctjs::FuncOp>() == caller) { continue; }
+                auto & carried = needed[caller];
+                if (!llvm::is_contained(carried, map)) {
+                    carried.push_back(map);
+                    changed = true;
+                }
+            }
+        }
+    }
+    // A changed signature must cover every caller and cannot remain externally
+    // observable. Check both symbol-attribute locations as well as value aliases.
+    llvm::DenseSet<mlir::Operation *> referencedCalls;
+    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+        if (!uses) { return refuse("class Map helper symbol uses could not be enumerated"); }
+        for (const auto & use : *uses) {
+            if (!step()) { return false; }
+            auto function = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                use.getUser(), use.getSymbolRef());
+            if (helpers.contains(function) && needed.contains(function)) {
+                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                if (!direct || direct.getTarget() != function || edges.lookup(direct) != function ||
+                    use.getSymbolRef() != direct.getCalleeAttr() ||
+                    !referencedCalls.insert(direct).second) {
+                    return refuse("class Map helper has an unproved symbol reference");
+                }
+            }
+        }
+    }
+    for (const auto & [operation, values] : needed) {
+        (void)values;
+        if (!step()) { return false; }
+        auto closure = closures.lookup(operation);
+        if (!closure) { return refuse("class Map transport lacks its original closure"); }
+        if (!helpers.contains(operation)) { continue; }
+        for (auto * use : sourceUses(closure.getResult())) {
+            if (!step()) { return false; }
+            auto * owner = use->getOwner();
+            if (llvm::isa<ctjs::RootOp>(owner)) { continue; }
+            if (edges.lookup(owner) == operation &&
+                use->getOperandNumber() == (llvm::isa<ctjs::CallDirectOp>(owner) ? 2U : 0U)) {
+                continue;
+            }
+            if (auto captured = llvm::dyn_cast<ctjs::CreateClosureOp>(owner);
+                captured && use->getOperandNumber() >= 2 &&
+                llvm::is_contained(capturedClosures, captured)) {
+                continue;
+            }
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(owner);
+            auto holder = store ? localHolders.find(sourceValue(store.getObject()).getDefiningOp())
+                                : localHolders.end();
+            if (store && use->getOperandNumber() == 2 && holder != localHolders.end() &&
+                llvm::is_contained(holder->second.stores, store)) {
+                continue;
+            }
+            return refuse("class Map helper identity escapes its complete call census");
+        }
+    }
+    llvm::DenseMap<mlir::Operation *, llvm::DenseMap<mlir::Value, mlir::Value>> available;
+    llvm::DenseMap<mlir::Operation *, unsigned> originalParameters;
+    for (const auto & [operation, values] : needed) {
+        if (!step()) { return false; }
+        auto function = llvm::cast<ctjs::FuncOp>(operation);
+        auto closure = closures.lookup(operation);
+        auto & block = function.getBody().front();
+        if (helpers.contains(operation)) {
+            originalParameters[operation] = block.getNumArguments() - ctjs::implicit_arguments;
+            for (auto map : values) {
+                if (!step()) { return false; }
+                available[operation][map] = block.addArgument(map.getType(), function.getLoc());
+            }
+            function.setFunctionTypeAttr(mlir::TypeAttr::get(
+                mlir::FunctionType::get(module.getContext(), block.getArgumentTypes(),
+                                        function.getFunctionType().getResults())));
+            auto rewritten = function.walk([&](ctjs::LoadUpvalueOp read) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (auto value =
+                        available[operation].lookup(mapCaptures.lookup(read.getResult()))) {
+                    read.getResult().replaceAllUsesWith(value);
+                    read.erase();
+                }
+                return mlir::WalkResult::advance();
+            });
+            if (rewritten.wasInterrupted()) { return false; }
+            mapClosures.erase(closure);
+            mlir::SymbolTable::setSymbolVisibility(function,
+                                                   mlir::SymbolTable::Visibility::Private);
+            continue;
+        }
+        if (!constructors.contains(operation) && !methods.contains(operation)) {
+            return refuse("class Map transport requires a proved class or helper caller");
+        }
+        if (llvm::is_contained(staticMethodClosures, closure)) {
+            return refuse("static class helper Map captures remain unsupported");
+        }
+        llvm::SmallVector<mlir::Value> captures(closure.getUpvalues());
+        for (auto map : values) {
+            if (!step()) { return false; }
+            auto * producer = map.getDefiningOp();
+            if (producer->getBlock() != closure->getBlock() ||
+                !producer->isBeforeInBlock(closure)) {
+                return refuse("class helper Map must be initialized before its caller closure");
+            }
+            size_t index = 0;
+            while (index < captures.size() && sourceValue(cells.lookup(captures[index])) != map) {
+                if (!step()) { return false; }
+                ++index;
+            }
+            if (index == captures.size()) {
+                mlir::Value cell;
+                for (auto [candidate, initial] : cells) {
+                    if (!step()) { return false; }
+                    if (initial == map && mapCells.contains(candidate)) {
+                        cell = candidate;
+                        break;
+                    }
+                }
+                if (!cell) { return refuse("class helper Map lacks its original immutable cell"); }
+                for (auto * user : cell.getUsers()) {
+                    if (!step()) { return false; }
+                    if (llvm::isa<ctjs::CellSetOp>(user) &&
+                        (user->getBlock() != closure->getBlock() ||
+                         !user->isBeforeInBlock(closure))) {
+                        return refuse(
+                            "class helper Map cell is initialized after its caller closure");
+                    }
+                }
+                captures.push_back(cell);
+            }
+            mlir::OpBuilder at(&block, block.begin());
+            auto read = ctjs::LoadUpvalueOp::create(at, function.getLoc(), map.getType(),
+                                                    block.getArgument(ctjs::arg_callee),
+                                                    static_cast<uint32_t>(index));
+            available[operation][map] = read;
+        }
+        closure.getUpvaluesMutable().assign(captures);
+        closure.removeEnclosingIndicesAttr();
+        function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+        mapClosures.insert(closure);
+        if (!llvm::is_contained(capturedClosures, closure)) { capturedClosures.push_back(closure); }
+    }
+    for (auto [op, function] : edges) {
+        if (!step()) { return false; }
+        if (!originalParameters.contains(function)) { continue; }
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        auto caller = op->getParentOfType<ctjs::FuncOp>();
+        mlir::OpBuilder at(op);
+        auto absent = ctjs::ConstantOp::create(at, op->getLoc(),
+                                               ctjs::UndefinedAttr::get(module.getContext()));
+        llvm::SmallVector<mlir::Value> arguments(direct ? direct.getArgs() : call.getArgs());
+        arguments.resize(originalParameters.lookup(function), absent);
+        for (auto map : needed.lookup(function)) {
+            if (!step()) { return false; }
+            if (map.getDefiningOp()->getParentOfType<ctjs::FuncOp>() == caller) {
+                mlir::DominanceInfo dominance(caller);
+                if (!dominance.properlyDominates(map, op)) {
+                    return refuse("class helper Map does not reach its local call");
+                }
+                arguments.push_back(map);
+            } else {
+                arguments.push_back(available[caller].lookup(map));
+            }
+        }
+        auto replacement =
+            ctjs::CallDirectOp::create(at, op->getLoc(), op->getResult(0).getType(),
+                                       mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()),
+                                       absent, absent, absent, arguments, nullptr, nullptr);
+        op->getResult(0).replaceAllUsesWith(replacement);
+        op->erase();
+    }
+    return reason.empty();
+}
+
 void classInitialization::eraseRooted(mlir::Operation * operation) {
     for (mlir::Operation * root : llvm::make_early_inc_range(operation->getUsers())) {
         if (!llvm::isa<ctjs::RootOp>(root)) {

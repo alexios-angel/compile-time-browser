@@ -260,11 +260,9 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         auto value = sourceValue(cells.lookup(capture));
         if (value == constructorValue) { continue; }
         if (maps.contains(value)) {
-            // Holder/helper calls still need their own capture transport.
-            if (!constructor || domEntry ||
-                value.getDefiningOp()->getBlock() != method->getBlock() ||
+            if (domEntry || value.getDefiningOp()->getBlock() != method->getBlock() ||
                 !value.getDefiningOp()->isBeforeInBlock(method)) {
-                return refuse("class Map capture requires a direct local class");
+                return refuse("class Map capture requires ordered local initialization");
             }
             mapCells.insert(capture);
             mapClosures.insert(method);

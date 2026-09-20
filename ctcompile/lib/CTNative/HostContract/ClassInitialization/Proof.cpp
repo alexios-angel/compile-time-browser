@@ -142,21 +142,28 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         if (!direct && !method) { return mlir::WalkResult::advance(); }
         if (!step()) { return mlir::WalkResult::interrupt(); }
         auto callee = direct ? direct.getCalleeValue() : method.getCallee();
-        auto closure = sourceClosure(
-            callee, domEntry && op->getParentOfType<ctjs::FuncOp>() == entry, domEntry);
+        auto closure =
+            sourceClosure(sourceValue(callee),
+                          domEntry && op->getParentOfType<ctjs::FuncOp>() == entry, domEntry);
         auto fn = target(closure);
         if (!fn || constructors.contains(fn) || methods.contains(fn) || getters.contains(fn)) {
             return mlir::WalkResult::advance();
         }
         auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
-        const bool localCall =
-            domEntry && method && callee == closure.getResult() && undefined(method.getReceiver());
+        const bool localCall = method && sourceValue(callee) == closure.getResult() &&
+                               undefined(method.getReceiver()) &&
+                               (domEntry || capturedHelpers.contains(closure));
         if (direct ? direct.getTarget() != fn || !undefined(direct.getReceiver()) ||
                          !undefined(direct.getNewTarget())
                    : !localCall && (!read || method.getReceiver() != read.getObject())) {
             return mlir::WalkResult::advance();
         }
         auto & block = fn.getBody().front();
+        if (localCall &&
+            method.getArgs().size() + ctjs::implicit_arguments > block.getNumArguments()) {
+            refuse("class helper call has excess arguments");
+            return mlir::WalkResult::interrupt();
+        }
         const bool entryLocal = domEntry && op->getParentOfType<ctjs::FuncOp>() == entry &&
                                 closure->getParentOfType<ctjs::FuncOp>() == entry &&
                                 callee == closure.getResult();
@@ -434,7 +441,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             }
         }
     }
-    return true;
+    return transportHelperMaps();
 }
 
 bool classInitialization::proveDOMMethods(const HostContract & contract) {

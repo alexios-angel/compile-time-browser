@@ -16,6 +16,25 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-helper-excess-arguments": (85, 85),
+    "class-map-helper-method-name": (8, None),
+    "class-map-helper-static": (8, 8),
+    "class-map-helper-constructor": (388, 388),
+    "class-map-helper-holder": (84100, 84100),
+    "class-map-helper-shared-callers": (29444, 29444),
+    "class-map-helper-distinct-mixed": (3489959, 3489959),
+    "class-map-helper-chain": (71805, 71805),
+    "class-map-inherited-helper-callers": (385110, 385110),
+    "class-map-helper-loop": (61, 61),
+    "class-map-helper-reassigned-cell": (9, 9),
+    "class-map-helper-replaced": (89, 89),
+    "class-map-helper-holder-replaced": (9, 9),
+    "class-map-helper-member-replaced": (9, 9),
+    "class-map-helper-prototype-replaced": (9, 9),
+    "class-map-helper-unused-ambient": (8, 8),
+    "class-map-helper-stored-receiver": (7, 7),
+    "class-map-helper-published": (85, 85),
+    "class-map-helper-numeric-key": (8, 8),
     "class-map-inherited-constructor": (3855, 3855),
     "class-map-inherited-distinct": (30989, 30989),
     "class-map-inherited-shared": (31188, 31188),
@@ -470,6 +489,15 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-helper-constructor",
+    "class-map-helper-holder",
+    "class-map-helper-shared-callers",
+    "class-map-helper-distinct-mixed",
+    "class-map-helper-chain",
+    "class-map-inherited-helper-callers",
+    "class-map-helper-loop",
+    "class-map-inherited-helper",
+    "class-map-inherited-holder",
     "class-map-inherited-constructor",
     "class-map-inherited-distinct",
     "class-map-inherited-shared",
@@ -630,6 +658,8 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "class-map-nested-holder",
+    "class-map-helper-numeric-key",
     "class-map-inherited",
     "class-map-direct",
     "class-map-distinct",

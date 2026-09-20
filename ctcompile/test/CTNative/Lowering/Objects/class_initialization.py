@@ -386,7 +386,7 @@ def main():
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
             "bootstrap-base": "class own-key snapshot constructor observes its receiver",
-            "bootstrap-base-data": "class Map capture requires a direct local class",
+            "bootstrap-base-data": "class own-key snapshot constructor observes its receiver",
             "class-map-inherited-early-snapshot": "class construction method observes an own-key snapshot",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
@@ -486,6 +486,24 @@ def main():
             prepared = check_nested_helper_root(args, structured, manifest, "static-method-root")
         if name == "nested-helper-constructor":
             prepared = check_nested_helper_root(args, structured, manifest)
+        if name == "class-map-helper-constructor":
+            symbol = re.search(r"ctjs.func private @(fn\$\d+)\(", prepared.read_text())[1]
+            source = args.work / "map-helper-symbol.mlir"
+            source.write_text(
+                structured.read_text().replace(
+                    "module attributes {", f"module attributes {{test.helper_ref = @{symbol}, ", 1
+                )
+            )
+            prepare(
+                args,
+                "map-helper-symbol",
+                source,
+                dict(manifest, module_sha256=host.fingerprint(args.opt, source)),
+                success=False,
+                diagnostic="class Map helper has an unproved symbol reference",
+            )
+            preparation_refusals += 1
+            check_nested_helper_root(args, structured, manifest, "map-helper-root")
         if name == "inherited-explicit":
             preparation_refusals += check_ancestry_inputs(args, structured, manifest)
             preparation_refusals += check_super_inputs(args, structured, manifest)
@@ -538,6 +556,8 @@ def main():
                 "captured-holder-unused",
             ):
                 operations = ()
+            elif name in ("class-map-nested-holder", "class-map-helper-numeric-key"):
+                operations = ("ctjs.construct",)
             elif name == "class-map-inherited":
                 # Super guard Error constructions disappear during normalization.
                 operations = ("ctjs.load_upvalue",)
@@ -639,6 +659,10 @@ def main():
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         if name in (
+            "class-map-helper-constructor",
+            "class-map-helper-holder",
+            "class-map-helper-chain",
+            "class-map-helper-shared-callers",
             "class-map-direct",
             "class-map-mixed-method",
             "class-map-method-loop",
