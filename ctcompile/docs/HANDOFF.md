@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited helper captures and negative-scale overwrites, 2026-09-20 UTC
+
+**1ef56773** completes inherited constructor helper captures: each copied read
+keeps its original helper identity across base/leaf slots, transitive chains and
+shared bases. Four new executable cases plus one promotion add **40 native
+executions**. The original object-mutating order source remains preparation-only
+with its ownership refusal; a primitive companion executes with **1010013**.
+
+**bd099c65** proves bounded negative-scaled own-index overwrites using the existing
+Number product and reload-overlap proofs. Earlier **d24dd479** (sibling helper
+captures) and **b85f8c14** (reversed subtraction overwrites) are also now recorded
+in the detailed handoff; both had landed before this recovery.
+
+Focused arrays **1/1**, escape lit **4/4**, host **1/1**, and class initialization/DOM
+lit **2/2 (340.27s)** passed. Class: **230 observations / 636 main native executions /
+460 unprepared and 254 preparation refusals**. DOM remains **632 / eight / 4,910**.
+Negative-scale oracle: **66 sites / nine sound / 9 of 13 confined precision**,
+zero violations, partial, pending or unclaimed sites. Eight source hashes match.
+Formatter retains 20 diagnostics in six unchanged files; changed checks pass.
+Full suites and broad matrices were skipped. No browser/runtime change or push.
+
+**Next:** Bootstrap's captured `a` helper itself captures `r`. Prove bounded
+immutable nested helper captures with the complete body census, then inherited
+DOM per-leaf receiver/getter proof. `a` also references `n` and `document` in its
+selector branch; the null-input observation grants no authority there. Full
+H/config, selectors/events/Popper, broader ownership and the driver remain.
+
+[Exact changes, validation, recovery and next boundary](handoff/2026-09-20-helper-captures.md).
+
 ## Lexical super and composed overwrites, 2026-09-20 UTC
 
 **6acc1c5c** resumes lexical-super dispatch: immutable nearest-base selection,
