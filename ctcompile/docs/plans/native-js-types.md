@@ -17,11 +17,13 @@ String numeric `-`, `*`, `/`, `%` and `**` reuse Number operations after that
 conversion. String addition accepts Number, Boolean and finite nullable scalar
 values with their proper text. C++ callers can concatenate built-in arithmetic
 types and `js_boolean_t` in either order; Boolean words remain distinct from
-numbers. These operations reuse public Core conversion/formatting. Optional String
-numeric conversion, Object/Array prototypes and document views remain planned. This is the user's
-revised direction for the native C++ interface and supersedes conflicting
-raw-carrier prescriptions in master-plan part 24. Historical measurements retain
-their original scope.
+numbers. Optional String arithmetic retains null/undefined tags until numeric
+conversion. Closed local Boolean/String unions support numeric arithmetic and
+concatenation with an exact String. These operations reuse public Core conversion/
+formatting. Generic addition with a String/Number result, Object/Array prototypes
+and document views remain planned. This is the user's revised direction for the
+native C++ interface and supersedes conflicting raw-carrier prescriptions in
+master-plan part 24. Historical measurements retain their original scope.
 
 ## The request
 
@@ -304,25 +306,36 @@ existing `auto`/template deduction.
    String/Number addition in either order uses class overloads and public Core
    `number_to_string`. Generated programs link Core and its configured dependencies,
    with no Script symbols. The focused `string-coercions.test` passes 18 distinct
-   Node/VM/native observations across eight native modes, six refusal controls
-   and a distinguishing `baNaNa` mutation. Core
+   Node/VM/native observations across eight native modes, five refusal controls,
+   an optional String admission control and a distinguishing `baNaNa` mutation. Core
    `number_to_string` now checks range before its integer fast-path cast.
    String numeric arithmetic (`-`, `*`, `/`, `%`, `**`) now uses that conversion
    and the existing Number operators/remainder/exponentiation guards. Addition
    with an exact String admits Boolean and finite nullable scalar alternatives;
    `nullable_scalar.to_string()` preserves null/undefined, Boolean words, NaN
    and Number zero spelling. The `string-arithmetic.test` source gate passes
-   26 observations across eight native modes, four refusals and one mutation.
+   26 observations across eight native modes, three refusals, an optional String
+   admission control and one mutation.
    Raw C++ arithmetic types and `js_boolean_t` also have constrained String
    addition overloads in both orders. Raw numerics enter the binary64 Number
    domain: for example, `9007199254740993LL` spells `9007199254740992`; extended
    floating-point overflow is checked before narrowing and spells Infinity.
    Boolean operands spell `true`/`false`. Pointers, enums and merely convertible
    classes are excluded; the explicit String constructors remain unchanged.
-   Next implement optional String numeric conversion and closed Boolean/String
-   union concatenation with their own finite-alternative proofs. Keep numeric
-   relational conversion separate from String lexicographic ordering and loose
-   equality. Object conversion hooks remain refused; an overload or class
+   Optional String unary `+`/`-` and binary `-`, `*`, `/`, `%`, `**` now call
+   `nullable_string.to_number()`: undefined produces NaN, null produces positive
+   zero, and present text uses public Core without changing its stored tag.
+   Closed local Boolean/String unions use `std::visit` for numeric conversion
+   and concatenation with an exact String. Boolean false becomes Number zero;
+   String `"false"` becomes NaN. Their parameter/return/global ABI remains outside
+   admission. The `string-union-coercions.test` source gate passes 51 observations
+   across eight native modes, four refusals and two distinguishing mutations.
+   Next give generic `+` a proved closed String/Number result carrier when neither
+   operand is definitely String, then select addition or concatenation from its
+   actual primitive alternatives. These additions stay refused until that
+   complete boundary is implemented; never stringify both sides unconditionally.
+   Keep numeric relational conversion separate from String lexicographic ordering
+   and loose equality. Object conversion hooks remain refused; an overload or class
    method does not establish their source proof.
    Resolve general UTF-16 length/index/comparison/casing alignment as a separate
    runtime/compiler change. Update literal creation, joins, calls/returns,

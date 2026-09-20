@@ -185,3 +185,83 @@ finite-alternative proof. Mixed String/Number joins, object hooks, String
 ordering and loose equality do not gain support from these overloads. Shared
 Core parser gaps, UTF-16 alignment, raw Number alias retirement, collections,
 document views, `Symbol.hasInstance` and indexed Bootstrap remain separate work.
+
+## Optional and union primitive coercions, 2026-09-20 UTC
+
+Resumed clean **c83df6b8** and its documented optional String/Boolean-String
+boundary. No dirty or September 7 WIP remained. Linux `ps` executable/CLI checks
+covered 71 processes; Windows CIM covered 348, including executable paths and
+command lines. No Claude executable, Node CLI or loop matched, and no candidate
+CLI lacked its command line. No browser code changed in this iteration.
+
+**d29f1bf2** adds `nullable_string.to_number() -> js_num`: undefined produces
+NaN, null produces positive zero, and the present String calls public Core's
+`string_to_number` without copying or changing its tag. `boolean_string_text`
+visits the existing closed `std::variant<js_boolean_t, std::string>` and returns
+an owning `js_string`, reusing the Boolean concatenation overload.
+**1e87b5ad** connects optional String unary `+`/`-` and binary `-`, `*`, `/`, `%`,
+`**` to Number lowering, and exact String addition to Boolean/String text.
+The exact const-method contract includes only the new optional String method.
+
+**5c556051** closes the adjacent numeric Boolean/String temporary boundary.
+The `to_number` overload visits the held alternative, calling Boolean's
+`.to_number()` or the public Core String parser. The admission helper applies
+only to unary `+`/`-` and numeric binary operators. Comparison/equality, static
+increment and generic addition keep their existing rules. Boolean/String unions
+still require local temporaries; their parameter/return/global ABI is not added.
+No universal value box, Script dependency, parser copy or VM behavior change was
+introduced. Independent review found no additional inference/emitter dependency.
+
+Focused validation, serialized under `/tmp/ctbrowser-devbox-build.lock`:
+
+```sh
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-runtime ctcompile-test-native-reference
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_native_runtime$'
+# Resync the completed test draft with the same explicit targets; no rebuild needed.
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-runtime ctcompile-test-native-reference
+g++ -std=c++23 -O2 -pedantic -Wall -Wextra -Werror -Wconversion -Ictcompile/include -Ictbrowser/include -c ctcompile/test/Runtime/NativeRuntime.cpp -o /tmp/ctcompile-native-runtime-unions-gcc.o
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: (CTNative/Lowering/(Scalars/(string-union-coercions[.]test|string-coercions[.]test|string-arithmetic[.]test|optional-scalars[.]mlir|scalar-unions[.]mlir)|Admission/refusal-operands[.]mlir)|Target/Cpp/(native-string|const-bindings)[.]mlir)$'
+# After adding numeric Boolean/String temporary conversion:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-runtime
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_native_runtime$'
+g++ -std=c++23 -O2 -pedantic -Wall -Wextra -Werror -Wconversion -Ictcompile/include -Ictbrowser/include -c ctcompile/test/Runtime/NativeRuntime.cpp -o /tmp/ctcompile-native-runtime-unions-gcc.o
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Lowering/(Scalars/string-union-coercions[.]test|Admission/refusal-operands[.]mlir)$'
+```
+
+The initial affected build passed **nine steps**, the resync required no work,
+and the numeric-union follow-up passed **six steps**. Runtime CTest passed
+**1/1 (0.02s total)** both times. The first eight-case lit selection passed
+**8/8 (10.64s)**; the final two affected cases passed **2/2 (10.32s)**. No selected
+test failed. This is eight distinct lit cases and one distinct CTest, not a
+full suite. Both GCC runtime checks compile only; generated programs execute
+under GCC 13.3 and configured Clang 24 in the lit fixtures.
+
+The new `string-union-coercions.test` initially measured 33 observations. Its
+final version measures **51 Node value/type/NaN/zero-sign observations**, then
+VM/native agreement across **eight executions**: GCC/Clang, explicit/deduced
+printing, and optimized/runtime lowering. The additions exercise false versus
+`"false"`, both zeros, null/undefined, empty/NUL text, left/right optional operands,
+two optional operands, both union alternatives and every admitted operator.
+It retains **four refusal controls** and **two distinguishing numeric mutations**.
+The existing 18- and 26-observation String fixtures also pass their eight modes.
+Their former optional numeric refusal sources are unchanged, now positive
+`.to_number()` controls. `refusal-operands.mlir` likewise retains both optional
+and Boolean/String subtraction bodies as positives; its binary refusal now
+uses Boolean/String plus Number, which still lacks a String/Number result carrier.
+
+All **nine** final code/test SHA-256 hashes match the devbox. Five changed C++
+files pass pinned formatting; fixture structure/counts and whitespace pass.
+Required `tools/format.sh --check` reports the same **16 pre-existing** diagnostics
+in four untouched files: ctdrive.cpp (2), ProviderPaths.h (2), Heap.h (4) and
+Symbolic/Facts.cpp (8). Full CTest/lit, broad corpus/matrix, WPT/test262, sanitizer
+replays and a complete wtfjs replay were skipped. No push occurred.
+
+**Exact next boundary:** generic `+` where an optional String or Boolean/String
+operand can select numeric addition or concatenation. Add the proved closed
+String/Number result carrier together with tag-dependent emission and source
+witnesses. Do not stringify both alternatives or add an implicit C++ conversion.
+String ordering, loose equality, object hooks and Boolean/String signatures stay
+separate. Public Core parser gaps and general UTF-16 alignment remain as recorded
+above. Raw Number alias retirement, collections/document views, the planned
+`Symbol.hasInstance` wrapper, NodeList slots above 1,000,000 (with the independent
+2^24 spread cap), indexed Bootstrap and the application driver remain unfinished.

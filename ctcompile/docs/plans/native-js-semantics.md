@@ -16,9 +16,12 @@ examples must distinguish browser and Node behavior.
 No full wtfjs corpus has been imported or executed. The adapted primitive
 `baNaNa` witness is now a named passing source check in
 `CTNative/Lowering/Scalars/string-coercions.test`: 18 distinct Node/VM/native
-observations, eight native executions, six refusal controls and one distinguishing
-mutation. The follow-up `string-arithmetic.test` passes 26 further observations
-across eight native modes, four refusal controls and one mutation. Existing
+observations, eight native executions, five refusal controls, an optional String
+admission control and one distinguishing mutation. The follow-up
+`string-arithmetic.test` passes 26 further observations across eight native modes,
+three refusal controls, an optional String admission control and one mutation.
+`string-union-coercions.test` adds 51 optional/Boolean-String observations across
+those eight modes, four refusal controls and two mutations. Existing
 focused Number/Boolean/String, scalar, ownership and browser
 checks validate particular building blocks; they do not establish support for
 every specimen below.
@@ -48,7 +51,7 @@ the named primitive String witness above is claimed as a measured wtfjs example.
 | Binary64: `0.1 + 0.2 !== 0.3`, `NaN !== NaN`, rounding near 2^53, signed zero | `js_num` retains binary64, NaN, infinities, signed zero and partial ordering; arithmetic and conversions carry the class. | Add source witnesses for rounding, subnormals, infinities, remainder and exponentiation edge cases; preserve results through folding, specialization and code generation. Add `ToInt32`/`ToUint32`, modulo-2^32 bitwise operations and masked shift counts; raw out-of-range C++ integer casts are not equivalent. Never use integer arithmetic merely because inputs are integral. |
 | Equality: `Object.is(NaN, NaN)`, `Object.is(-0, 0)`, `-0 === 0` | Strict scalar equality and Map SameValueZero have separate implementations; absence retains tags. | Prove and emit `Object.is` through SameValue. Keep the three relations distinct in classes, closed unions and containers. A C++ default comparison cannot supply all three. |
 | Boolean/absence: `null == 0` versus `null >= 0`, `3 > 2 > 1`, `Number()` versus `Number(undefined)` | Boolean/nullable numeric conversion, contextual truthiness and Number arithmetic exist. | Test the different equality/relational conversion paths. Preserve omitted-argument count separately from an explicit undefined argument; the Number constructor's no-argument case is a distinct source proof. Keep null, undefined, false and present NaN distinguishable. |
-| Primitive String coercion: `"b" + "a" + +"a" + "a"`, numeric/string `+`, `parseInt(1e-7)` | `js_string` owns values and supplies `.to_number()` for unary and binary numeric arithmetic. String `+` with Number, Boolean or finite nullable scalars retains JavaScript text through class overloads and `.to_string()`. Public Core supplies parsing/formatting; `baNaNa` and the named arithmetic fixture pass runtime and optimized paths. | Optional String numeric conversion and closed Boolean/String union concatenation are next. Object hooks, equality and ordering need separate proofs. Distinguish Number conversion from prefix/radix parsing, coercive `isNaN` from `Number.isNaN`, and `toFixed`/precision formatting from locale-dependent C++ streams. Preserve UTF-16 length/index/comparison semantics where required, including lone surrogates; separately resolve existing byte-oriented oracle differences. |
+| Primitive String coercion: `"b" + "a" + +"a" + "a"`, numeric/string `+`, `parseInt(1e-7)` | `js_string` owns values and supplies `.to_number()` for unary and binary numeric arithmetic. String `+` with Number, Boolean, finite nullable scalars or a closed Boolean/String temporary retains JavaScript text. Optional Strings and Boolean/String temporaries also support numeric arithmetic. Public Core supplies parsing/formatting; named fixtures pass runtime and optimized paths. | Generic `+` for optional/union inputs needs a proved String/Number result carrier and tag-dependent addition. Object hooks, equality and ordering need separate proofs. Distinguish Number conversion from prefix/radix parsing, coercive `isNaN` from `Number.isNaN`, and `toFixed`/precision formatting from locale-dependent C++ streams. Preserve UTF-16 length/index/comparison semantics where required, including lone surrogates; separately resolve existing byte-oriented oracle differences. |
 | Object coercion: `[] == ![]`, `[] + []`, `({valueOf(){ return 1; }}) + 1`, throwing `Symbol.toPrimitive` | Closed object identities and some proved method calls exist. | Prove `Symbol.toPrimitive` lookup/invocation, hint and primitive result; otherwise preserve the required `valueOf`/`toString` order, receiver, observable calls and exceptions. Array-to-string and Date's special default hint need their own admitted paths. Do not route loose equality through truthiness or erase conversion side effects. |
 | Arrays and property keys: sparse trailing commas, `[10, 1, 3].sort()`, objects/arrays used as property names | Dense vectors, snapshots, Map storage and exact field proofs exist. | Add `js_array_t<T>`/`js_vector<T>` interfaces with identity, holes versus explicit undefined, inherited indexed reads and length mutation rules. Default sort compares converted strings by UTF-16 code units, with stable ordering and specified treatment of undefined/holes. Prove callbacks, species/spreadability and iteration order. Use `ToPropertyKey`, preserving Symbols; an object property dictionary does not have Map key semantics. |
 | Primitive versus boxed object: `"str" instanceof String`, `new String("str")`, constructor/prototype mutation | Typed primitive values and `Element.prototype` composition exist. | Represent admitted boxed primitives as distinct object identities. Prove prototype chains and constructor identity. Implement the scheduled `instanceof` wrapper: invoke proved `Symbol.hasInstance` first; use `std::holds_alternative<T>` only for an equivalent default test. Preserve inheritance, invalid operands, effects and thrown exceptions. |
@@ -88,10 +91,11 @@ General String UTF-16 length/index/casing alignment also remains separate.
    operation group now use the class. General length remains the current byte
    count; admitted DOM UTF-16 operations retain their existing separate behavior.
    The first primitive-only witness, `baNaNa`, now passes the named source gate.
-   Exact String numeric arithmetic and Boolean/nullable scalar concatenation now
-   pass their source fixture. Next cover optional String numeric conversion and
-   closed Boolean/String union concatenation; do not claim object conversion
-   from this subset.
+   Exact/optional String and local Boolean/String numeric arithmetic, plus
+   concatenation with an exact String, now pass their source fixtures. Next give
+   generic optional/union `+` a proved String/Number result carrier and preserve
+   its numeric-versus-concatenating choice. Object conversion hooks, String
+   ordering and loose equality need separate proofs and witnesses.
 3. **Array/object/prototype semantics.** Add concrete wrappers and proved
    `ToPrimitive`/property-key paths, then boxed primitives and `Symbol.hasInstance`.
    Pair every admitted hook with replaced/unknown/throwing-hook controls.

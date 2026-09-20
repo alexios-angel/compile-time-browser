@@ -22,6 +22,31 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Optional and union primitive coercions, 2026-09-20 UTC
+
+Continued clean **c83df6b8**. **d29f1bf2** adds `nullable_string.to_number()` and
+Boolean/String text conversion over the existing finite carriers. **1e87b5ad**
+admits optional String unary `+`/`-`, numeric `-`, `*`, `/`, `%`, `**`, and exact
+String concatenation with local Boolean/String unions. **5c556051** also admits
+numeric arithmetic on those local unions. `std::visit` selects the existing
+Boolean conversion or public Core String parser. Numeric conversion maps null
+to positive zero and undefined to NaN; String `"false"` differs from Boolean false.
+
+Focused checks pass: runtime CTest **1/1** for each implementation step, **eight
+distinct lit cases**, and GCC compilation of the runtime checks. The final new
+fixture checks **51 Node/VM/native observations** across eight native modes,
+four refusals and two mutations. All **nine** final code/test hashes match the
+devbox. Scoped formatting passes; required global formatting retains the same
+16 pre-existing diagnostics. Full suites were skipped. [Exact checks and retained controls](handoff/2026-09-20-native-string-coercions.md#optional-and-union-primitive-coercions-2026-09-20-utc).
+
+**Next:** generic optional/union `+` needs a proved closed String/Number result
+carrier and a choice between numeric addition and concatenation based on the
+actual alternatives. It stays refused until that boundary is implemented.
+Boolean/String parameter/return/global support, String ordering, loose equality,
+object hooks, shared Core parser gaps and UTF-16 alignment remain separate.
+Collections/document views, `Symbol.hasInstance`, indexed Bootstrap `R.find`
+and the application driver remain unfinished.
+
 ## String arithmetic and C++ primitive operands, 2026-09-20 UTC
 
 **9c23d2e6** adds constrained `js_string` concatenation with built-in arithmetic
