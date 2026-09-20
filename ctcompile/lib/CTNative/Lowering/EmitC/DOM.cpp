@@ -488,7 +488,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         // Earlier selector replacements update operands and erase the original
         // producer. Read the live receiver instead of its cached source value.
         mlir::Value element = call.getReceiver();
-        if (edge.kind == HostDOMMethod::toggleClass) {
+        if (edge.kind == HostDOMMethod::toggleClass || edge.kind == HostDOMMethod::containsClass ||
+            edge.kind == HostDOMMethod::addClass || edge.kind == HostDOMMethod::removeClass) {
             element = element.getDefiningOp<ctjs::GetPropertyOp>().getObject();
         } else if (edge.kind == HostDOMMethod::datasetKeys) {
             element = call.getArgs().front().getDefiningOp<ctjs::GetPropertyOp>().getObject();
@@ -503,6 +504,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     switch (edge.kind) {
     case HostDOMMethod::datasetKeys: callee = "ctnative::dataset_keys"; break;
     case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
+    case HostDOMMethod::containsClass: callee = "ctnative::contains_class"; break;
+    case HostDOMMethod::addClass: callee = "ctnative::add_class"; break;
+    case HostDOMMethod::removeClass: callee = "ctnative::remove_class"; break;
     case HostDOMMethod::setAttribute:
         callee = call.getArgs()[1].getType() == optionalString ? "ctnative::set_optional_attribute"
                                                                : "ctnative::set_attribute";

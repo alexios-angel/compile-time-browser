@@ -1,6 +1,28 @@
 #include "Body.hpp"
 
+#include "llvm/ADT/StringMap.h"
+
 namespace ctcompile::ctnative::dom_entry_detail {
+
+namespace {
+const llvm::StringMap<std::pair<Kind, HostDOMMethod>> elementMethods{
+    {"getAttribute", {Kind::getAttribute, HostDOMMethod::getAttribute}},
+    {"setAttribute", {Kind::attribute, HostDOMMethod::setAttribute}},
+    {"contains", {Kind::contains, HostDOMMethod::contains}},
+    {"matches", {Kind::matches, HostDOMMethod::matches}},
+    {"closest", {Kind::closest, HostDOMMethod::closest}},
+    {"querySelector", {Kind::querySelector, HostDOMMethod::querySelector}},
+    {"toggleAttribute", {Kind::toggleAttribute, HostDOMMethod::toggleAttribute}},
+    {"hasAttribute", {Kind::hasAttribute, HostDOMMethod::hasAttribute}},
+    {"removeAttribute", {Kind::removeAttribute, HostDOMMethod::removeAttribute}},
+};
+const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
+    {"toggle", {Kind::toggle, HostDOMMethod::toggleClass}},
+    {"contains", {Kind::containsClass, HostDOMMethod::containsClass}},
+    {"add", {Kind::addClass, HostDOMMethod::addClass}},
+    {"remove", {Kind::removeClass, HostDOMMethod::removeClass}},
+};
+} // namespace
 
 std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
@@ -151,43 +173,23 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             provedTokens.push_back(read);
             return true;
         }
-        if (hasKind(read.getObject(), Kind::element) && key == "getAttribute") {
-            values[read.getResult()] = Kind::getAttribute;
-            provedMethods.emplace_back(read, HostDOMMethod::getAttribute);
-            return true;
+        // Bound hashing by the longest supported member, as literal comparisons
+        // did before the name tables. Unknown long keys must not bypass the work budget.
+        if (hasKind(read.getObject(), Kind::element) && key.size() <= 15) {
+            if (auto method = elementMethods.find(key); method != elementMethods.end()) {
+                const auto [kind, hostMethod] = method->second;
+                values[read.getResult()] = kind;
+                provedMethods.emplace_back(read, hostMethod);
+                return true;
+            }
         }
-        if (hasKind(read.getObject(), Kind::element) && key == "setAttribute") {
-            values[read.getResult()] = Kind::attribute;
-            provedMethods.emplace_back(read, HostDOMMethod::setAttribute);
-            return true;
-        }
-        if (hasKind(read.getObject(), Kind::element) &&
-            (key == "contains" || key == "matches" || key == "closest" || key == "querySelector")) {
-            values[read.getResult()] = key == "contains"  ? Kind::contains
-                                       : key == "matches" ? Kind::matches
-                                       : key == "closest" ? Kind::closest
-                                                          : Kind::querySelector;
-            provedMethods.emplace_back(read, key == "contains"  ? HostDOMMethod::contains
-                                             : key == "matches" ? HostDOMMethod::matches
-                                             : key == "closest" ? HostDOMMethod::closest
-                                                                : HostDOMMethod::querySelector);
-            return true;
-        }
-        if (hasKind(read.getObject(), Kind::element) &&
-            (key == "toggleAttribute" || key == "hasAttribute" || key == "removeAttribute")) {
-            values[read.getResult()] = key == "toggleAttribute" ? Kind::toggleAttribute
-                                       : key == "hasAttribute"  ? Kind::hasAttribute
-                                                                : Kind::removeAttribute;
-            provedMethods.emplace_back(read,
-                                       key == "toggleAttribute" ? HostDOMMethod::toggleAttribute
-                                       : key == "hasAttribute"  ? HostDOMMethod::hasAttribute
-                                                                : HostDOMMethod::removeAttribute);
-            return true;
-        }
-        if (hasKind(read.getObject(), Kind::tokenList) && key == "toggle") {
-            values[read.getResult()] = Kind::toggle;
-            provedMethods.emplace_back(read, HostDOMMethod::toggleClass);
-            return true;
+        if (hasKind(read.getObject(), Kind::tokenList) && key.size() <= 8) {
+            if (auto method = tokenMethods.find(key); method != tokenMethods.end()) {
+                const auto [kind, hostMethod] = method->second;
+                values[read.getResult()] = kind;
+                provedMethods.emplace_back(read, hostMethod);
+                return true;
+            }
         }
         refusal = "DOM property read lacks a proved receiver and supported member";
         return false;
@@ -401,13 +403,33 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (arguments.size() == 1 &&
             ((contains && hasKind(arguments[0], Kind::element)) ||
              ((matches || closest || query) && hasKind(arguments[0], Kind::string)))) {
-            provedCalls.push_back({invoke,
-                                   contains  ? HostDOMMethod::contains
-                                   : matches ? HostDOMMethod::matches
-                                   : closest ? HostDOMMethod::closest
-                                             : HostDOMMethod::querySelector,
-                                   invoke.getReceiver()});
+            const auto hostMethod =
+                elementMethods.find(ctjs::constantKey(method.getKey()))->second.second;
+            provedCalls.push_back({invoke, hostMethod, invoke.getReceiver()});
             values[invoke.getResult()] = closest || query ? Kind::nullableElement : Kind::boolean;
+            return true;
+        }
+        const bool containsClass = hasKind(invoke.getCallee(), Kind::containsClass);
+        const bool addClass = hasKind(invoke.getCallee(), Kind::addClass);
+        const bool removeClass = hasKind(invoke.getCallee(), Kind::removeClass);
+        if (containsClass || addClass || removeClass) {
+            if (containsClass && arguments.size() != 1) {
+                refusal = "DOM classList.contains requires one String";
+                return false;
+            }
+            for (mlir::Value argument : arguments) {
+                if (!spend()) { return false; }
+                if (!hasKind(argument, Kind::string)) {
+                    refusal = "DOM classList arguments require proved Strings";
+                    return false;
+                }
+            }
+            if (!containsClass) { ++mutationEpoch; }
+            auto element = invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>().getObject();
+            const auto hostMethod =
+                tokenMethods.find(ctjs::constantKey(method.getKey()))->second.second;
+            provedCalls.push_back({invoke, hostMethod, element});
+            values[invoke.getResult()] = containsClass ? Kind::boolean : Kind::undefined;
             return true;
         }
         if ((hasKind(invoke.getCallee(), Kind::toggle) ||

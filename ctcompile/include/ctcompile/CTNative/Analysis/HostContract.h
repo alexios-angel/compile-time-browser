@@ -101,6 +101,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
 
 enum class HostDOMMethod {
     toggleClass,
+    containsClass,
+    addClass,
+    removeClass,
     setAttribute,
     getAttribute,
     toggleAttribute,
@@ -149,7 +152,8 @@ struct HostDOMCall {
     [[nodiscard]] bool returnsBoolean() const {
         return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
                !returnsString() && !returnsJSON() && !returnsStringVector() &&
-               kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute;
+               kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute &&
+               kind != HostDOMMethod::addClass && kind != HostDOMMethod::removeClass;
     }
     [[nodiscard]] bool usesStyle() const {
         return kind == HostDOMMethod::matches || returnsElement();

@@ -43,6 +43,7 @@
 
 #ifdef CTNATIVE_DOM
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <expected>
 #include <limits>
@@ -802,6 +803,26 @@ inline bool toggle_class(ctbrowser::element_ref element, std::string_view token,
                       .value();
     result.update.value();
     return result.present;
+}
+inline bool contains_class(ctbrowser::element_ref element, std::string_view token) {
+    return ctbrowser::contains_token(
+        element.owner->read().attribute_value(element.id, element.owner->atoms().intern("class")),
+        token);
+}
+template <class... Tokens>
+void add_class(ctbrowser::element_ref element, const Tokens &... tokens) {
+    const std::array<std::string, sizeof...(Tokens)> given{tokens...};
+    ctbrowser::add_tokens(*element.owner, element.id, element.owner->atoms().intern("class"), given)
+        .value()
+        .value();
+}
+template <class... Tokens>
+void remove_class(ctbrowser::element_ref element, const Tokens &... tokens) {
+    const std::array<std::string, sizeof...(Tokens)> given{tokens...};
+    ctbrowser::remove_tokens(*element.owner, element.id, element.owner->atoms().intern("class"),
+                             given)
+        .value()
+        .value();
 }
 inline std::optional<std::string> get_attribute(ctbrowser::element_ref element,
                                                 std::string_view name) {

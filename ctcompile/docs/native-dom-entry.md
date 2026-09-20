@@ -213,10 +213,20 @@ unknown receivers, unproved loops and unstructured control flow refuse.
 Current operations are
 strict element identity, Boolean/Number negation, and Number/Boolean/String/undefined
 constants and returns,
-`classList.toggle(token[, force])`, `toggleAttribute(name[, force])`,
+`classList.toggle(token[, force])`, `classList.contains(token)`,
+`classList.add(...tokens)`, `classList.remove(...tokens)`, `toggleAttribute(name[, force])`,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from definite source strings, including String + String expressions;
 force is a proved Boolean (including an earlier DOM result) or explicit undefined.
+Class-list add/remove accept zero or more definite String arguments and return
+undefined (C++ `void`). Saved local class lists read the element's current
+attribute. All mutation arguments are validated before any token is changed;
+the first invalid argument throws `std::bad_expected_access<ctbrowser::token_argument_error>`
+with its index and token error. Empty calls normalize an existing attribute,
+including same-value writes, but leave an absent attribute absent. Membership
+does not write and preserves the current browser behavior for empty or
+whitespace-containing tokens: false. Add/remove invalidate saved dataset
+presence proofs, including calls with no arguments; contains preserves them.
 `contains(otherElement)`, `matches(selector)`, `closest(selector)` and
 `querySelector(selector)` also use proved element receivers. Selectors are
 source strings, parsed by the
@@ -537,6 +547,9 @@ constant before reproof and C++ type selection. Forced no-ops preserve attribute
 bytes and mutation behavior; invalid toggle names still throw before a no-op.
 
 Generated calls use the public `dom/element.hpp` and `dom/token_list.hpp` APIs.
+Class-list membership and mutations share `contains_token`, `add_tokens` and
+`remove_tokens` with the Shell adapters; the native wrappers only assemble typed
+arguments and propagate the shared API's errors.
 Attribute toggling shares `toggle_element_attribute` with the VM adapter;
 presence and removal call the existing document API and shared name folding.
 `validate_element` checks every incoming handle before effects. Token validation
@@ -545,7 +558,7 @@ VM adapters use the same platform implementation and retain their own value
 conversion, JavaScript exceptions and Shell notifications. This entry does not
 deliver Shell mutation observers, custom-element callbacks, events or rendering.
 
-The registered `ctcompile_native_dom_entry` CTest compiles and executes real
+The focused `CTNative/Browser/native-dom.test` lit case compiles and executes real
 DOM clients with GCC and the configured C++23 Clang, both printing layouts and
 optimization policies. It checks document domains, detached subtree lifetime,
 ordered mutations, String/Boolean conversion, validation failures, refusal
@@ -554,6 +567,11 @@ other actions keep DOM/Core-only linkage. Query checks cover live interactive
 state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar
 value-model helpers from the emitted C++.
+`native-dom-class-list.test` additionally checks variadic and zero-argument
+mutations, validation atomicity, saved aliases, HTML/SVG, guarded selector
+receivers, void results, and mutation-epoch refusal controls under both DOM
+providers. The browser's `dom_token_list`, `dom_mutation` and `element_attrs`
+CTests cover the shared core and Shell adapter behavior.
 
 The `ctcompile_native_dom_strings` CTest compares **783** copied-value, Boolean
 and numeric-prefix observations with Node and the ctbrowser VM, then executes
