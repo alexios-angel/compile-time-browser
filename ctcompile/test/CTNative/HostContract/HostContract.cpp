@@ -14,6 +14,7 @@
 #include "DOMNullable.h"
 #include "DOMNumbers.h"
 #include "DOMPrototypeQuery.h"
+#include "DOMSnapshotLengths.h"
 #include "DOMURI.h"
 #include "Fingerprint.h"
 #include "llvm/ADT/StringSet.h"
@@ -884,6 +885,7 @@ int main() {
     checkDOMJSON(context);
     checkDOMNullable(context);
     checkDOMPrototypeQuery(context);
+    checkDOMSnapshotLengths(context);
     checkSessionProvider(context);
     if (ctbrowser_test_failures == 0) { std::puts("host contract live proof queries passed"); }
     return ctbrowser_test_failures == 0 ? 0 : 1;

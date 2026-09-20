@@ -3,6 +3,7 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   DOMEntry.cpp
   DOMSource.cpp
   DOMIteration.cpp
+  DOMSnapshotLengths.cpp
   Values.cpp
   CapturedMapBody.cpp
   ScalarCallbacks.cpp

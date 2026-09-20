@@ -18,6 +18,7 @@ if(TARGET ctcompile-test-host-contract)
     DOMJSON.h
     DOMNullable.h
     DOMNumbers.h
+    DOMSnapshotLengths.h
     DOMURI.h
     Fingerprint.h
     HostContractFixtures.h

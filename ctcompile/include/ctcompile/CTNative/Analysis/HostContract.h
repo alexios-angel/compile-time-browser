@@ -70,6 +70,11 @@ struct HostContract {
     // as standard own global data bindings, including Number.prototype.toString,
     // Object.keys, JSON.parse, Array.prototype.filter, String.prototype.startsWith
     // and the default Array constructor/species chain. Array also promises
+    // original Array.prototype.concat, with no spreadability hooks on the fresh
+    // empty receiver. Element includes inert query-result wrappers and their
+    // complete prototype chains, with no Symbol.isConcatSpreadable hooks.
+    // These guarantees permit confined spread/concat length observations.
+    // Array also promises
     // original Array iteration, including its Symbol.iterator/values method
     // and iterator-prototype chain, with no custom next or return hooks. Element
     // promises its original own prototype and querySelector/querySelectorAll
@@ -103,6 +108,10 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
                                       unsigned maxSteps);
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps);
+// Replace only exact query-result spread/empty-concat length observations.
+// Reprove on a private clone; refusal leaves the original module unchanged.
+llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
+                                        unsigned maxSteps);
 
 enum class HostDOMMethod {
     toggleClass,
