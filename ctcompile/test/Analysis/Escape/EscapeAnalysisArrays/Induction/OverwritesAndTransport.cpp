@@ -98,6 +98,88 @@ void InductionCases::overwritesAndTransport() {
                                "  %mask = ctjs.constant " + std::string(value) + "\n  %a ="),
                        "bitand %i, %one", "bitand %i, %mask"));
     }
+    for (const std::string kind : {"bitor", "bitxor"}) {
+        const bool isOr = kind == "bitor";
+        const auto bitwise = replace(masked, "bitand", kind);
+        for (const auto & operands : {"%i, %one", "%one, %i"}) {
+            run({.what = "OR/XOR enclosures preserve both operand orders and exact writes",
+                 .body = replace(bitwise, "%i, %one", operands),
+                 .arrays = isOr ? "a:[one,zero]" : "a:[zero,zero]",
+                 .reads = "a[0]=one; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "OR/XOR zero input ranges retain the exact zero key",
+             .body = replace(replace(bitwise, "[%one, %x]", "[%x]"), "%i, %one", "%i, %zero"),
+             .arrays = "a:[zero]",
+             .reads = "a[0]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "OR/XOR replay preserves children saved before their overwrite",
+             .body = replace(overwritten, "  ctjs.set_property %base[%i], %zero",
+                             "  %position = ctjs.binary_static " + kind +
+                                 " %i, %zero\n"
+                                 "  ctjs.set_property %base[%position], %zero"),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=one; a[1]=x",
+             .exit = "x -> {x}"});
+        run({.what = "OR/XOR bounds enclose nonmonotone writes without filling gaps",
+             .body = replace(bitwise, "[%one, %x]", "[%x, %x, %x, %x]"),
+             .arrays = isOr ? "a:[x,zero,x,zero]" : "a:[zero,zero,zero,zero]",
+             .reads = "a[0]=x; a[1]=zero; a[2]=x; a[3]=zero",
+             .exit = isOr ? "a -> {a,x}" : "a -> {a}"},
+            isOr ? "" : "x");
+        reject("OR/XOR bounds cannot miss a store beyond the guard array",
+               replace(bitwise, "[%one, %x]", "[%one, %x, %zero]"));
+        reject("OR/XOR require one invariant operand", replace(bitwise, "%i, %one", "%i, %i"));
+        reject("OR/XOR refuse negative varying input bands",
+               replace(bitwise, "%position = ctjs.binary_static " + kind + " %i, %one",
+                       "%negative = ctjs.unary neg %i\n"
+                       "  %position = ctjs.binary_static " +
+                           kind + " %negative, %one"));
+        reject("OR/XOR refuse unsigned varying input bands",
+               replace(bitwise, "%position = ctjs.binary_static " + kind + " %i, %one",
+                       "%maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                       "  %large = ctjs.binary add %maximum, %i\n"
+                       "  %position = ctjs.binary_static " +
+                           kind + " %large, %one"));
+        for (const auto & value :
+             {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
+              "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
+              "#ctjs.bigint<\"1\">"}) {
+            reject("OR/XOR masks require nonnegative signed-i32 integer Numbers",
+                   replace(replace(bitwise, "  %a =",
+                                   "  %mask = ctjs.constant " + std::string(value) + "\n  %a ="),
+                           "%i, %one", "%i, %mask"));
+        }
+    }
+    const auto orReload = replace(replace(masked, "[%one, %x]", "[%one, %x, %zero, %zero]"),
+                                  "%position = ctjs.binary_static bitand %i, %one",
+                                  "%mask = ctjs.get_property %base[%zero]\n"
+                                  "  %position = ctjs.binary_static bitor %i, %mask");
+    run({.what = "OR's mask lower bound preserves a disjoint reload below all writes",
+         .body = orReload,
+         .arrays = "a:[one,zero,zero,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero; "
+                  "a[0]=one; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("XOR cannot borrow OR's nonzero lower bound for a reload",
+           replace(orReload, "bitor", "bitxor"));
+    reject("a later write invalidates an earlier OR reload",
+           replace(orReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    const auto xorReload = replace(maskedReload, "%position = ctjs.binary_static bitand %i, %mask",
+                                   "%part = ctjs.binary_static bitand %i, %one\n"
+                                   "  %position = ctjs.binary_static bitxor %part, %mask");
+    run({.what = "composed XOR writes preserve a reload beyond their enclosing range",
+         .body = xorReload,
+         .arrays = "a:[zero,zero,one,zero]",
+         .reads = "a[2]=one; a[0]=x; a[2]=one; a[1]=zero; a[2]=one; a[2]=one; "
+                  "a[2]=one; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("a later write invalidates an earlier XOR reload",
+           replace(xorReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
     run({.what = "overwriting current own elements preserves a saved child",
          .body = overwritten,
          .arrays = "a:[zero,zero]",

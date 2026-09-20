@@ -36,6 +36,43 @@ void StructuredCases::reloads() {
            replace(masked, "%position = ctjs.binary_static bitand %i, %one",
                    "%mask = ctjs.binary add %one, %one\n"
                    "    %position = ctjs.binary_static bitand %i, %mask"));
+    for (const std::string kind : {"bitor", "bitxor"}) {
+        const bool isOr = kind == "bitor";
+        const auto bitwise = replace(masked, "bitand", kind);
+        for (const auto & operands : {"%i, %one", "%one, %i"}) {
+            rows.push_back({.what = "structured OR/XOR operands preserve exact overwritten aliases",
+                            .body = replace(bitwise, "%i, %one", operands),
+                            .arrays = isOr ? "a:[x,zero]" : "a:[zero,zero]",
+                            .reads = "a[0]=x; a[1]=zero",
+                            .exit = isOr ? "a -> {a,x}" : "a -> {a}"});
+        }
+        rows.push_back({.what = "structured OR/XOR enclosures preserve unvisited gap children",
+                        .body = replace(replace(bitwise, "[%x]", "[%x, %y, %x, %y]"),
+                                        "  ctjs.append %y to %a\n", ""),
+                        .arrays = isOr ? "a:[x,zero,x,zero]" : "a:[zero,zero,zero,zero]",
+                        .reads = "a[0]=x; a[1]=zero; a[2]=x; a[3]=zero",
+                        .exit = isOr ? "a -> {a,x}" : "a -> {a}"});
+        reject("structured OR/XOR reject an enclosure beyond the guard allocation",
+               replace(bitwise, "[%x]", "[%x, %y]"));
+        reject("structured OR/XOR require an invariant mask",
+               replace(bitwise, "%i, %one", "%i, %i"));
+    }
+    const auto orReload = replace(replace(replace(masked, "[%x]", "[%one, %y, %zero, %zero]"),
+                                          "  ctjs.append %y to %a\n", ""),
+                                  "%position = ctjs.binary_static bitand %i, %one",
+                                  "%mask = ctjs.get_property %base[%zero]\n"
+                                  "    %position = ctjs.binary_static bitor %i, %mask");
+    rows.push_back({.what = "structured OR bounds exclude lower invariant reloads",
+                    .body = orReload,
+                    .arrays = "a:[one,zero,zero,zero]",
+                    .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero; "
+                             "a[0]=one; a[3]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured XOR may overwrite slots below its mask",
+           replace(orReload, "bitor", "bitxor"));
+    reject(
+        "later structured stores invalidate earlier OR mask reloads",
+        replace(orReload, "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
     reloaded =
         replace(replace(replace(original, "[%x]", "[%one]"),
                         "    %step =", "    %unit = ctjs.get_property %base[%zero]\n    %step ="),

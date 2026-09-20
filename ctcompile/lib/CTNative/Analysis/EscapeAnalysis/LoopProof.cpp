@@ -1,4 +1,5 @@
 #include "LoopProof.hpp"
+#include <bit>
 
 namespace ctcompile::ctnative::escape_detail {
 
@@ -269,12 +270,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
         const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
         const bool bitAnd = addition && addition.getKind() == ctjs::BinaryKind::BitAnd;
+        const bool bitOr = addition && addition.getKind() == ctjs::BinaryKind::BitOr;
+        const bool bitXor = addition && addition.getKind() == ctjs::BinaryKind::BitXor;
         const bool leftShift = addition && addition.getKind() == ctjs::BinaryKind::Shl;
         const bool shift =
             leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
                                        addition.getKind() == ctjs::BinaryKind::UShr));
         if (!expression || expression->getBlock() != body ||
-            !(subtract || divide || multiply || shift || bitAnd ||
+            !(subtract || divide || multiply || shift || bitAnd || bitOr || bitXor ||
               (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
               (addition && addition.getKind() == ctjs::BinaryKind::Add))) {
             return std::nullopt;
@@ -294,19 +297,31 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
              !boundedNumber(offset->origin()) && !boundedNumber(offset->origin(), true))) {
             return std::nullopt;
         }
-        if (bitAnd) {
+        if (bitAnd || bitOr || bitXor) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
             const auto mask = boundedConvertedNumber(*offset);
             if (!mask || *mask > 2147483647ULL) { return std::nullopt; }
+            std::size_t first = 0, last = *mask;
+            if (!bitAnd) {
+                if (!range->first.integerNumber || !range->last.integerNumber ||
+                    *range->last.integerNumber > 2147483647ULL) {
+                    return std::nullopt;
+                }
+                // OR/XOR need both inputs below the sign bit. Enclose every
+                // possible input bit; endpoint results alone miss interior extrema.
+                first = bitOr ? *mask : 0;
+                last |= static_cast<std::size_t>(
+                    std::bit_ceil(static_cast<std::uint64_t>(*range->last.integerNumber) + 1) - 1);
+            }
             // Clearing the sign bit bounds every ToInt32 input, including
-            // conversions across a signed boundary. Endpoints need not be extrema.
+            // conversions across a signed boundary for AND.
             // ponytail: a dense enclosure; sparse mask facts could admit more
             // disjoint reloads. Replay still records only the actual writes.
-            return IndexRange{{operand, ContentsKind::NonBigInt, 0},
-                              {operand, ContentsKind::NonBigInt, *mask},
+            return IndexRange{{operand, ContentsKind::NonBigInt, first},
+                              {operand, ContentsKind::NonBigInt, last},
                               1};
         }
         bool descending = subtract && offsetOperand == 0;
