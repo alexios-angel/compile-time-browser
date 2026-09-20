@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Helper Map environments and signed AND masks, 2026-09-20 UTC
+
+**a95574e6** passes exact Map environments through local captured helpers and
+Data-style holders. Original helper bodies receive ordinary Map parameters;
+constructor/method closures retain the corresponding immutable cells. Entry,
+transitive, shared, distinct and inherited calls add **72 native executions**,
+including the two original inherited-helper/holder sources. Missing user arguments
+are padded before environment arguments. Complete caller, symbol, identity,
+initialization, static-capture and work-budget checks remain mandatory.
+**ed61b17a** extends AND index enclosures to signed/high-bit masks within a proved
+conversion band, retaining exact replay and the complete reload census.
+
+Focused class selection: **61 observations / 208 main native executions / 122
+unprepared and 90 preparation refusals**, plus **ten native boundary controls**.
+Exact host **1/1**, arrays **1/1**, lowering lit **3/3** and escape lit **3/3** pass.
+AND oracle: **96 sites / 18 sound / 18 of 24 confined precision**, zero violations,
+partial, pending or unclaimed sites. All eleven final tested hashes match.
+Required formatting retains 20 diagnostics in six unchanged files; changed files
+pass. Full suites, whole class lit, DOM replay and broad matrices were skipped.
+
+**Next:** original B and Data+B both refuse receiver observation at registration.
+Local helper Map transport is connected; retaining `this` in the nested Data Maps
+still requires typed payload and lifetime proof across construction/disposal,
+set/get/remove, saved aliases, overwrite/delete and failure. Retain original
+`e.set`, `e.remove`, `P.off`, nested Map creation and all configuration bodies.
+Native output uses stack class records, direct functions and existing scalar Map
+owners; no stored-class graph or Script/VM/GC dependency was introduced. A new
+same-named helper/method control pins Node 8 versus a VM recursion throw.
+Full Bootstrap and the application driver remain unfinished. No browser/runtime
+changes or push.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-helper-map-environments.md).
+
 ## Inherited Map captures and signed OR/XOR bands, 2026-09-20 UTC
 
 **d4c4a82b** preserves exact Map capture cells through inherited constructor
