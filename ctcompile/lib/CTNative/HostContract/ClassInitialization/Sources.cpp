@@ -101,6 +101,7 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
 }
 
 mlir::Value classInitialization::sourceValue(mlir::Value value) {
+    if (auto map = mapCaptures.lookup(value)) { return map; }
     if (auto holder = holderCaptures.lookup(value)) { return holder; }
     while (auto read = value.getDefiningOp<ctjs::CellGetOp>()) {
         if (!step()) { return value; }
@@ -122,6 +123,10 @@ llvm::SmallVector<mlir::OpOperand *> classInitialization::sourceUses(mlir::Value
             if (!step()) { return {}; }
             if (object == current) { pending.push_back(read); }
         }
+        for (auto [read, map] : mapCaptures) {
+            if (!step()) { return {}; }
+            if (map == current) { pending.push_back(read); }
+        }
         for (mlir::OpOperand & use : current.getUses()) {
             if (!step()) { return {}; }
             auto * op = use.getOwner();
@@ -141,6 +146,55 @@ llvm::SmallVector<mlir::OpOperand *> classInitialization::sourceUses(mlir::Value
         }
     }
     return result;
+}
+
+bool classInitialization::proveMaps() {
+    // Map keys and payloads are not coerced by these operations. Keep every
+    // body and call for native type/ownership admission; this proof establishes
+    // only that class setup cannot be observed or changed through the Map.
+    for (mlir::Value map : maps) {
+        for (mlir::OpOperand * use : sourceUses(map)) {
+            if (!step()) { return false; }
+            auto * op = use->getOwner();
+            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                call && use->getOperandNumber() == 1) {
+                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (read && read.getObject() == call.getReceiver()) { continue; }
+            }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+            if (!read || use->getOperandNumber() != 0) {
+                return refuse("class captured Map escapes its exact local operations");
+            }
+            const auto key = ctjs::constantKey(read.getKey());
+            mapOperations.insert(read);
+            if (key == "size") { continue; }
+            const unsigned arity = key == "set"                                      ? 2U
+                                   : key == "get" || key == "has" || key == "delete" ? 1U
+                                   : key == "clear"                                  ? 0U
+                                                                                     : 99U;
+            if (arity == 99U) { return refuse("class captured Map has an unproved member"); }
+            for (mlir::OpOperand & selected : read.getResult().getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
+                if (!call || selected.getOperandNumber() != 0 ||
+                    call.getReceiver() != read.getObject() || call.getArgs().size() != arity) {
+                    return refuse("class captured Map method escapes its exact receiver call");
+                }
+                if (key == "set") {
+                    for (mlir::Operation * resultUse : call->getUsers()) {
+                        if (!step()) { return false; }
+                        if (!llvm::isa<ctjs::RootOp>(resultUse)) {
+                            return refuse("class captured Map set result escapes");
+                        }
+                    }
+                }
+                mapOperations.insert(call);
+            }
+        }
+    }
+    return reason.empty();
 }
 
 bool classInitialization::helperCallback(mlir::OpOperand & use) {
@@ -205,6 +259,18 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         }
         auto value = sourceValue(cells.lookup(capture));
         if (value == constructorValue) { continue; }
+        if (maps.contains(value)) {
+            // ponytail: direct local class captures only. Holder expansion and
+            // super cloning need separate capture transport before widening.
+            if (!constructor || domEntry || !heritage.empty() ||
+                value.getDefiningOp()->getBlock() != method->getBlock() ||
+                !value.getDefiningOp()->isBeforeInBlock(method)) {
+                return refuse("class Map capture requires a direct local class without heritage");
+            }
+            mapCells.insert(capture);
+            mapClosures.insert(method);
+            continue;
+        }
         if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>(); constructor && object) {
             if (object->getBlock() != method->getBlock() || !object->isBeforeInBlock(method)) {
                 return refuse("captured holder lacks ordered local initialization");
@@ -267,6 +333,11 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
             return refuse("class method observes or changes its captured identity");
         }
         auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
+        if (maps.contains(value)) {
+            mapCaptures[load.getResult()] = value;
+            mapOperations.insert(load);
+            continue;
+        }
         if (value.getDefiningOp<ctjs::CreateObjectOp>()) {
             holderCaptures[load.getResult()] = value;
             captureReads.push_back(load);

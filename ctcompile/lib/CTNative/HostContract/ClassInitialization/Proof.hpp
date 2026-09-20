@@ -59,6 +59,11 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> cellOperations;
     llvm::SmallVector<ctjs::CellGetOp> cellReads;
     llvm::SmallVector<ctjs::LoadUpvalueOp> captureReads;
+    llvm::DenseSet<mlir::Value> maps;
+    llvm::DenseSet<mlir::Value> mapCells;
+    llvm::DenseMap<mlir::Value, mlir::Value> mapCaptures;
+    llvm::DenseSet<mlir::Operation *> mapClosures;
+    llvm::DenseSet<mlir::Operation *> mapOperations;
     llvm::DenseMap<mlir::Value, mlir::Value> holderCaptures;
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> callableCaptures;
     llvm::SetVector<mlir::Operation *> capturedHelpers;
@@ -75,6 +80,7 @@ struct classInitialization {
     static bool undefined(mlir::Value value);
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
     bool proveCells(ctjs::FuncOp entry);
+    bool proveMaps();
     mlir::Value sourceValue(mlir::Value value);
     llvm::SmallVector<mlir::OpOperand *> sourceUses(mlir::Value value);
     bool helperCallback(mlir::OpOperand & use);

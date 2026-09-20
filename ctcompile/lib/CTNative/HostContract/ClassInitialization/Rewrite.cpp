@@ -100,6 +100,7 @@ void classInitialization::rewrite() {
     // Holder expansion erases its slot closures. Clear their proved capture
     // metadata first; the retained bodies still own all recorded reads.
     for (ctjs::CreateClosureOp closure : capturedClosures) {
+        if (mapClosures.contains(closure)) { continue; }
         target(closure).setUpvalueCount(0);
         closure.getUpvaluesMutable().clear();
         closure.removeEnclosingIndicesAttr();
@@ -200,12 +201,30 @@ void classInitialization::rewrite() {
         }
         read.erase();
     }
+    for (ctjs::CreateClosureOp closure : capturedClosures) {
+        if (!mapClosures.contains(closure)) { continue; }
+        llvm::SmallVector<mlir::Value> retained;
+        llvm::SmallVector<unsigned> indices;
+        for (mlir::Value cell : closure.getUpvalues()) {
+            indices.push_back(static_cast<unsigned>(retained.size()));
+            if (mapCells.contains(cell)) { retained.push_back(cell); }
+        }
+        // Other captured reads were consumed above. Preserve the original
+        // Map cells for the ordinary closure lifter and its call-site proof.
+        target(closure).walk([&](ctjs::LoadUpvalueOp read) {
+            read.setIndex(indices[static_cast<size_t>(read.getIndex())]);
+        });
+        closure.getUpvaluesMutable().assign(retained);
+        closure.removeEnclosingIndicesAttr();
+        target(closure).setUpvalueCount(static_cast<uint32_t>(retained.size()));
+    }
     for (ctjs::CellGetOp read : cellReads) {
         read.getResult().replaceAllUsesWith(cells.lookup(read.getCell()));
         read.erase();
     }
     for (auto [value, initial] : cells) {
         (void)initial;
+        if (mapCells.contains(value)) { continue; }
         for (mlir::Operation * use : llvm::make_early_inc_range(value.getUsers())) {
             use->erase(); // Proved identical stores and inert cell roots.
         }

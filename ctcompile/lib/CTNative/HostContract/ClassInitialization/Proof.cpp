@@ -106,7 +106,20 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         if (walked.wasInterrupted()) { return false; }
     }
     for (ctjs::CallOp call : calls) {
-        if (!proveCells(call->getParentOfType<ctjs::FuncOp>())) { return false; }
+        auto scope = call->getParentOfType<ctjs::FuncOp>();
+        if (!proveCells(scope)) { return false; }
+        if (domEntry || !llvm::is_contained(contract.initialIntrinsics, "Map")) { continue; }
+        for (ctjs::ConstructOp made : scope.getBody().front().getOps<ctjs::ConstructOp>()) {
+            if (!step()) { return false; }
+            auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+            if (!load || load.getName() != "Map" || !made.getArgs().empty() ||
+                made.getNewTarget() != made.getCallee()) {
+                continue;
+            }
+            maps.insert(made.getResult());
+            mapOperations.insert(made);
+            mapOperations.insert(load);
+        }
     }
     if (!proveHeritage(contract)) { return false; }
     if (!heritage.empty()) {
@@ -223,6 +236,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             domEntryHelpers.erase(target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
         }
     }
+    if (!proveMaps()) { return false; }
     // No ambient object, unknown callee, accessor, dynamic key or reflective
     // instruction can replace the fixed helper between entry and any call.
     // Reject the whole module, including suffixes and uncalled bodies.
@@ -234,8 +248,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             (op == declaration || op->getParentOfType<ctjs::FuncOp>() == declaration)) {
             return mlir::WalkResult::advance();
         }
-        if (setup.contains(op) || retainedSetup.contains(op) || methodCalls.contains(op) ||
-            helperCalls.contains(op) || llvm::is_contained(calls, op) ||
+        if (mapOperations.contains(op) || setup.contains(op) || retainedSetup.contains(op) ||
+            methodCalls.contains(op) || helperCalls.contains(op) || llvm::is_contained(calls, op) ||
             llvm::is_contained(constructorReads, op) || cellOperations.contains(op) ||
             llvm::is_contained(captureReads, op)) {
             return mlir::WalkResult::advance();

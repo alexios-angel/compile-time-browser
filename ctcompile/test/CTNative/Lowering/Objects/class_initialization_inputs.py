@@ -16,6 +16,24 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-direct-string-keys": (3313100, 3313100),
+    "class-map-distinct-string-keys": (3434454, 3434454),
+    "class-map-mixed-method": (203203, 203203),
+    "class-map-direct": (8328100, 8328100),
+    "class-map-shared": (7070999, 7070999),
+    "class-map-distinct": (8934959, 8934959),
+    "class-map-mixed-captures": (207203, 207203),
+    "class-map-method-loop": (63, 63),
+    "class-map-reassigned-cell": (9, 9),
+    "class-map-global-replaced": (9, 9),
+    "class-map-prototype-replaced": (9, 9),
+    "class-map-member-replaced": (9, 9),
+    "class-map-escaped": (9, 9),
+    "class-map-unused-ambient": (8, 8),
+    "class-map-stored-receiver": (7, 7),
+    "class-map-nested-holder": (8, 8),
+    "class-map-static": (8, 8),
+    "class-map-inherited": (8, 8),
     "inherited-own-fields-iterate-forward-direct": (7911, 7911),
     "inherited-own-fields-iterate-forward-captured": (8011, 8011),
     "inherited-own-fields-iterate-forward-holder": (7911, 7911),
@@ -436,6 +454,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-direct-string-keys",
+    "class-map-distinct-string-keys",
+    "class-map-mixed-method",
+    "class-map-shared",
+    "class-map-method-loop",
     "inherited-own-fields-iterate-forward-direct",
     "inherited-own-fields-iterate-forward-captured",
     "inherited-own-fields-iterate-forward-holder",
@@ -585,6 +608,8 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "class-map-direct",
+    "class-map-distinct",
     "inherited-own-fields-iterate-borrow-mixed-literal",
     "inherited-own-fields-iterate-borrow-missing-argument",
     "captured-holder-unused",

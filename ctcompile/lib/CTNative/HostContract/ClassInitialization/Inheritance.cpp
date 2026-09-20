@@ -741,6 +741,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             return refuse("class method needs a local ordinary closure");
         }
         if (!methodCaptures(method, closure, staticReads, domEntry && !isStatic)) { return false; }
+        if (isStatic && mapClosures.contains(method)) {
+            return refuse("static class Map captures require separate call transport");
+        }
         ctjs::SetPropertyOp methodHome;
         for (mlir::OpOperand & use : method.getResult().getUses()) {
             if (!step()) { return false; }

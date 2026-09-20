@@ -221,6 +221,7 @@ def main():
                 *(
                     ["--mlir-print-op-generic"]
                     if name.startswith(("inherited-", "override-", "bootstrap-base"))
+                    or name == "class-map-inherited"
                     else []
                 ),
                 "-o",
@@ -231,6 +232,8 @@ def main():
             host.manifest(args.opt, structured),
             initial_intrinsics=["__ctbrowser_class_defined"],
         )
+        if name.startswith("class-map-") or name == "bootstrap-base-data":
+            manifest["initial_intrinsics"].append("Map")
         if name == "own-fields-boxed-key":
             lifted = structured.read_text()
             calls = set(re.findall(r"(%\w+) = ctjs.call ", lifted))
@@ -262,7 +265,10 @@ def main():
                 "__ctbrowser_iter_next",
                 "__ctbrowser_iter_close",
             ]
-        if name.startswith(("inherited", "override-", "bootstrap-base")):
+        if (
+            name.startswith(("inherited", "override-", "bootstrap-base"))
+            or name == "class-map-inherited"
+        ):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
             manifest["initial_intrinsics"] += [
@@ -380,7 +386,7 @@ def main():
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
             "bootstrap-base": "class own-key snapshot constructor observes its receiver",
-            "bootstrap-base-data": "class method capture is not its constructor or an inert sibling helper",
+            "bootstrap-base-data": "class Map capture requires a direct local class without heritage",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -408,6 +414,15 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name.startswith("class-map-") and name in POSITIVES | PREPARED_ONLY:
+            prepare(
+                args,
+                name + "-no-map-identity",
+                structured,
+                dict(manifest, initial_intrinsics=["__ctbrowser_class_defined"]),
+                success=False,
+            )
+            preparation_refusals += 1
         if name == "own-fields-loop":
             for identity in (
                 "Array",
@@ -517,6 +532,8 @@ def main():
                 "captured-holder-unused",
             ):
                 operations = ()
+            elif name.startswith("class-map-"):
+                operations = ("ctjs.construct", "ctjs.load_upvalue")
             elif name in GLOBAL_HOLDERS:
                 operations = ()
                 for operation in ('ctjs.load_global "H"', 'ctjs.store_global "H"'):
@@ -613,6 +630,9 @@ def main():
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         if name in (
+            "class-map-direct",
+            "class-map-mixed-method",
+            "class-map-method-loop",
             "inherited-own-fields-iterate-forward-direct",
             "inherited-own-fields-iterate-forward-captured",
             "inherited-own-fields-iterate-borrow-direct",
@@ -687,6 +707,11 @@ def main():
                 if name in PREPARED_ONLY and not (name == "bootstrap-r" and optimize):
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
+                    if (
+                        name.startswith("class-map-")
+                        and "!ctnative.map<!ctnative.opt" not in native_text
+                    ):
+                        raise RuntimeError("class Map lost its optional-key representation refusal")
                     if name == "inherited-helper-order" and (
                         "an object literal passed to a direct call as an argument"
                         not in native_text
