@@ -533,6 +533,51 @@ void InductionCases::overwritesAndTransport() {
                   "  %step =", "  ctjs.set_property %base[%three], %two\n  %step =")}) {
         reject("negative unsigned shifts retain band, bounds, stride and reload guards", body);
     }
+    const auto signedNegative =
+        replace(replace(negativeShift, "binary_static ushr", "binary_static shr"),
+                "sub %shifted, %half", "add %shifted, %two");
+    const auto signedMinimum =
+        replace(replace(replace(signedNegative, "4616189618054758400", "4746794007248502784"),
+                        "4746794007240114176", "4742290407621132288"),
+                "add %shifted, %two", "add %shifted, %half");
+    const auto signedPositiveWrapped =
+        replace(signedMinimum, "sub %i, %maximum", "add %i, %maximum");
+    const auto signedZeroCrossing =
+        replace(replace(signedNegative, "sub %i, %maximum", "sub %i, %one"), "add %shifted, %two",
+                "add %shifted, %one");
+    for (const auto & body :
+         {signedNegative, signedMinimum, signedPositiveWrapped, signedZeroCrossing,
+          replace(negativeShiftBoundary, "binary_static ushr", "binary_static shr")}) {
+        run({.what = "signed right shifts remain affine inside each bounded ToInt32 band",
+             .body = body,
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "negative signed shifts floor unaligned inputs with a divisible stride",
+         .body = replace(signedNegative, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[1]=x; a[3]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto signedNegativeReload =
+        replace(replace(negativeShiftReload, "binary_static ushr", "binary_static shr"),
+                "sub %shifted, %half", "add %shifted, %two");
+    run({.what = "signed shift count reloads retain the translated negative-band footprint",
+         .body = signedNegativeReload,
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body :
+         {replace(signedMinimum, "4746794007248502784", "4746794007250599936"),
+          replace(signedNegative, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+          replace(signedNegativeReload, "%base[%three]", "%base[%one]"),
+          replace(signedNegativeReload,
+                  "  %step =", "  ctjs.set_property %base[%three], %two\n  %step =")}) {
+        reject("signed shift bands retain discontinuity, stride and full reload guards", body);
+    }
     for (const auto & body :
          {replace(shiftReload, "%base[%three]", "%base[%one]"),
           replace(shiftReload, "  %step =", "  ctjs.set_property %base[%three], %two\n  %step ="),

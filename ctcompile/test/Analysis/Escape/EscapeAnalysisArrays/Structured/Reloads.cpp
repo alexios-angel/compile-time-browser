@@ -336,6 +336,43 @@ void StructuredCases::reloads() {
                   "    %step =", "    ctjs.set_property %base[%three], %two\n    %step =")}) {
         reject("structured negative unsigned shifts retain band, stride and reload guards", body);
     }
+    const auto signedNegative =
+        replace(replace(negativeShiftForward, "binary_static ushr", "binary_static shr"),
+                "sub %shifted, %half", "add %shifted, %two");
+    const auto signedMinimum =
+        replace(replace(replace(signedNegative, "4616189618054758400", "4746794007248502784"),
+                        "4746794007240114176", "4742290407621132288"),
+                "add %shifted, %two", "add %shifted, %half");
+    const auto signedZeroCrossing =
+        replace(replace(signedNegative, "sub %i, %maximum", "sub %i, %one"), "add %shifted, %two",
+                "add %shifted, %one");
+    for (const auto & body :
+         {signedNegative, signedMinimum, signedZeroCrossing,
+          replace(signedMinimum, "sub %i, %maximum", "add %i, %maximum"),
+          replace(negativeShiftBoundary, "binary_static ushr", "binary_static shr")}) {
+        rows.push_back({.what = "structured signed shifts retain one bounded ToInt32 band",
+                        .body = body,
+                        .arrays = "a:[zero,zero,one,one]",
+                        .reads = "a[0]=zero; a[2]=one",
+                        .exit = "a -> {a}"});
+    }
+    const auto signedNegativeReload =
+        replace(replace(negativeShiftReload, "binary_static ushr", "binary_static shr"),
+                "sub %shifted, %half", "add %shifted, %two");
+    rows.push_back({.what = "structured signed shift bands preserve disjoint count reloads",
+                    .body = signedNegativeReload,
+                    .arrays = "a:[zero,zero,one,one]",
+                    .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
+                    .exit = "a -> {a}"});
+    for (const auto & body :
+         {replace(signedMinimum, "4746794007248502784", "4746794007250599936"),
+          replace(signedNegative, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"),
+          replace(signedNegativeReload, "%base[%three]", "%base[%one]"),
+          replace(signedNegativeReload,
+                  "    %step =", "    ctjs.set_property %base[%three], %two\n    %step =")}) {
+        reject("structured signed shift bands retain discontinuity, stride and reload guards",
+               body);
+    }
     rows.push_back({.what = "structured exact quotients overwrite their bounded prefix",
                     .body = quotientIndex,
                     .arrays = "a:[zero,zero,one,one]",
