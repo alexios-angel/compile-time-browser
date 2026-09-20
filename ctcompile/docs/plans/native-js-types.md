@@ -6,9 +6,10 @@ using the existing four selector method objects. Distinct `undefined_t` and
 unchanged. `js_boolean_t` now carries JavaScript Boolean values through literals,
 comparisons, calls, fields, closures and Maps, with explicit conversion to C++
 conditions and numbers. `js_basic_num<double>` now supplies the `js_num` class
-for numeric global observations and Boolean/nullable numeric conversions.
+for Number literals, arithmetic, comparisons, calls, fields, captures, conversions
+and browser counts. Raw Map/vector/JSON storage uses explicit adapters.
 `js_nan_t` explicitly constructs Number NaN values and native binary64 NaN
-literals. Full Number adoption, String classes,
+literals. String classes,
 Object/Array prototypes and document views remain planned. This is the user's
 revised direction for the native C++ interface and supersedes conflicting
 raw-carrier prescriptions in master-plan part 24. Historical measurements retain
@@ -30,6 +31,12 @@ Compiler-only counters and proven storage operations may still use raw C++ types
 The existing native rule remains: prove types, operations, identities and owners
 before emission; an unproved operation is a compile-time diagnostic. No VM,
 collector, universal value box or reference-counted object graph is introduced.
+
+The [semantic edge-case plan](native-js-semantics.md) uses a pinned wtfjs README
+as a regression inventory and records additional coercion, equality, prototype,
+evaluation-order, parser and host obligations. These classes centralize value
+semantics; passing their unit checks does not establish that every source
+specimen is admitted or behaves correctly.
 
 ## Target type vocabulary
 
@@ -216,7 +223,7 @@ method objects. `Element.prototype` now owns those method objects, with the
 flat names retained as constant reference aliases. Distinct absence tokens now
 construct the existing nullable scalar, and `js_boolean_t` carries Boolean
 values. `Number.hpp` supplies `js_basic_num<double>` and its `js_num` alias;
-numeric global observations and scalar numeric conversions use this class.
+proved Number values and signatures use this class throughout lowering.
 `js_nan_t` supplies explicit NaN construction. String and Object/Array intrinsic
 prototype classes are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
@@ -255,15 +262,21 @@ existing `auto`/template deduction.
    producing NaN, null producing positive zero and numeric payloads retaining
    their value and zero sign. Native binary64 NaN literals use the token while
    ordinary EmitC and other floating-point formats retain their own spelling.
-   The emitter extracts `.value()` for existing f64 arithmetic/storage; exact
-   Number extraction stays pure for dead-code pruning and Map snapshot fusion.
-   Existing arithmetic, Map storage and capture signatures still use raw
-   binary64; generated declarations inside `ctnative` spell the compatibility
-   alias `::js_num` explicitly to avoid changing those representations.
-   Next migrate the remaining numeric literals, arithmetic/math operations and
-   call/capture signatures together, with explicit collection boundaries;
-   introduce `js_basic_string<char>` and
-   `js_string` with their first admitted String operation group. Update
+   The Number value carrier now uses `ctnative::js_num` for literals, arithmetic,
+   comparisons, function/capture signatures, fields and exceptions. Numeric
+   literals retain binary64 attributes and construct the class explicitly.
+   Remainder and exponentiation extract operands for existing standard-library
+   calls and wrap the result; the JavaScript exponentiation guard is unchanged.
+   Map keys/payloads and vector/JSON storage retain binary64, with explicit
+   construction/extraction at their boundaries. SameValueZero still operates
+   on that storage. Vector/Map lengths and optional DOM Number conversion return
+   the class; public Core calls and proved vector indices receive raw values.
+   Const qualification, deduction pins and Map snapshot fusion recognize the
+   typed carrier. The global raw `js_num` alias remains for raw f64 printer/storage
+   compatibility and existing clients; generated JS signatures use the qualified
+   class name. Remove that alias only with its remaining raw clients/printer.
+   Next introduce `js_basic_string<char>` and `js_string` with their first
+   admitted String operation group. Update
    literal creation, conversion, optional/union joins,
    calls/returns, print helpers and deduced-type assertions with each batch.
    Keep MLIR's semantic types and proof authority; C++ classes do not replace

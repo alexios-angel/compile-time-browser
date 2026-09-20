@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Number value carrier and semantic edge-case plan, 2026-09-20 UTC
+
+Continued clean **5d084ecf**. **dbc82d9a** preserves typed Number values through
+const qualification, deduction and exceptions. **25472dd7** migrates Number
+literals, arithmetic, comparisons, fields, calls, captures and browser counts to
+`ctnative::js_num`. Map/vector/JSON storage and public Core/C formatting keep
+explicit binary64 adapters; Map SameValueZero is unchanged. **ae8124d6** updates
+15 further signature/shape checks and retains their intended runtime proof paths.
+No source admission or browser/VM behavior changed.
+
+Measured focused validation: runtime CTest **1/1**, **36 distinct selected lit
+cases** and **8 selected ownership cases** passed across corrected runs. All
+**62** final code/test hashes matched the devbox. Scoped formatting/syntax passes;
+required global formatting retains the same 16 pre-existing diagnostics. Full
+CTest/lit, broad corpus/matrix and WPT/test262 were skipped.
+[Exact changes, checks and intermediate failures](handoff/2026-09-20-native-number-carrier.md).
+
+The user's wtfjs reference now has a [semantic edge-case plan](plans/native-js-semantics.md),
+pinned to its README revision. It assigns missing coercion/equality, array,
+prototype, evaluation-order, parser and host work to the correct layer. No wtfjs
+corpus has been executed or claimed supported.
+
+**Next:** implement `js_basic_string<char>` / `js_string` with an admitted String
+operation group and primitive-coercion witnesses. Retire the raw global
+`js_num = double` alias only with its remaining printer/storage clients. Preserve
+the scheduled `Symbol.hasInstance` / equivalent `std::holds_alternative` wrapper.
+Before indexed Bootstrap `R.find`, resolve NodeList slots above 1,000,000 returning
+undefined in Shell; retain the separate 2^24 spread cap. Full Bootstrap and the
+application driver remain unfinished.
+
 ## Typed Number conversions and NaN, 2026-09-20 UTC
 
 **5c2f4332** implements `js_nan_t` and makes Boolean/nullable numeric conversions

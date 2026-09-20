@@ -24,19 +24,19 @@ source body appear at the closure's creation site, inside the factory. A
 shortened rendering of the example above is:
 
 ```cpp
-using js_num = double;
+using js_num = ctnative::js_num;
 using ctn_env_fn_2 = std::function<js_num(js_num)>;
 
 ctn_env_fn_2 makeStore_1(js_num const seed) {
     auto const state = ctnative::make_string_to_number_map();
-    ctnative::map_set(state, std::string("value", 5), seed);
+    ctnative::map_set(state, std::string("value", 5), seed.value());
     ctn_env_fn_2 const ctn_lambda =
         [capture_state = state](js_num const argument_delta) -> js_num {
             std::string const key("value", 5);
-            js_num const next = ctnative::to_number(ctnative::map_get(capture_state, key)).value()
+            js_num const next = ctnative::to_number(ctnative::map_get(capture_state, key))
                                 + argument_delta;
-            ctnative::map_set(capture_state, key, next);
-            return ctnative::to_number(ctnative::map_get(capture_state, key)).value() + 0.0;
+            ctnative::map_set(capture_state, key, next.value());
+            return ctnative::to_number(ctnative::map_get(capture_state, key)) + js_num{0.0};
         };
     return ctn_lambda;
 }
