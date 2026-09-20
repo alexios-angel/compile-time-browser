@@ -22,6 +22,28 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed Number conversions and NaN, 2026-09-20 UTC
+
+**5c2f4332** implements `js_nan_t` and makes Boolean/nullable numeric conversions
+return `ctnative::js_num`. Undefined converts to a Number NaN; null/false to
+positive zero; numeric payloads retain signed zero. Lowering explicitly extracts
+`.value()` for existing f64 arithmetic/storage. Exact Number extraction remains
+pure for dead-code pruning and Map snapshot fusion; unknown members remain
+barriers. **30e9e3c7** prints native binary64 NaN literals through the token.
+
+Focused checks pass: runtime CTest **1/1**, **10 distinct lit cases** and
+**4 selected ownership cases**, including existing differential, mutation and
+sanitizer checks. The new NaN test's missing type-pin macro was fixed before its
+successful rerun. All **13** code/test hashes matched the devbox. Scoped formatting
+passes; global formatting retains the same 16 pre-existing diagnostics. Full
+suites were skipped. [Exact changes and validation](handoff/2026-09-20-native-number-coercions.md).
+
+**Next:** migrate the Number value carrier in `LoweringSupport.cpp::carrierType`,
+remaining literals/arithmetic/math and call/capture signatures together, with
+explicit Map/vector/JSON storage adapters. Then introduce `js_basic_string<char>`
+and `js_string` using public Core string algorithms. Preserve the existing
+`instanceof`/`Symbol.hasInstance` schedule and NodeList >1,000,000 Bootstrap boundary.
+
 ## Basic Number class and default type aliases, 2026-09-20 UTC
 
 **21b2dee2** names the planned templates `ctnative::js_basic_num<T>` and

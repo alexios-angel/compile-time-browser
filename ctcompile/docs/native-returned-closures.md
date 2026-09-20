@@ -33,10 +33,10 @@ ctn_env_fn_2 makeStore_1(js_num const seed) {
     ctn_env_fn_2 const ctn_lambda =
         [capture_state = state](js_num const argument_delta) -> js_num {
             std::string const key("value", 5);
-            js_num const next = ctnative::to_number(ctnative::map_get(capture_state, key))
+            js_num const next = ctnative::to_number(ctnative::map_get(capture_state, key)).value()
                                 + argument_delta;
             ctnative::map_set(capture_state, key, next);
-            return ctnative::to_number(ctnative::map_get(capture_state, key)) + 0.0;
+            return ctnative::to_number(ctnative::map_get(capture_state, key)).value() + 0.0;
         };
     return ctn_lambda;
 }

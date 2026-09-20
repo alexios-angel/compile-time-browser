@@ -6,7 +6,9 @@ using the existing four selector method objects. Distinct `undefined_t` and
 unchanged. `js_boolean_t` now carries JavaScript Boolean values through literals,
 comparisons, calls, fields, closures and Maps, with explicit conversion to C++
 conditions and numbers. `js_basic_num<double>` now supplies the `js_num` class
-for numeric global observations. Full Number adoption, String classes,
+for numeric global observations and Boolean/nullable numeric conversions.
+`js_nan_t` explicitly constructs Number NaN values and native binary64 NaN
+literals. Full Number adoption, String classes,
 Object/Array prototypes and document views remain planned. This is the user's
 revised direction for the native C++ interface and supersedes conflicting
 raw-carrier prescriptions in master-plan part 24. Historical measurements retain
@@ -94,7 +96,7 @@ two algorithms for one operation.
   pair. Keep named `strict_equal`, coercive `equal`, SameValue and SameValueZero
   operations distinct. A C++ operator cannot spell `===`; container key equality
   must continue to use its required relation rather than inheriting `operator==`.
-- Plan `js_num{js_nan_t{}}` as explicit construction of a Number NaN. The token
+- Use `js_num{js_nan_t{}}` for explicit construction of a Number NaN. The token
   adds no JavaScript type or union alternative: `typeof` remains `"number"`,
   truthiness is false, strict equality with itself is false, and SameValue and
   SameValueZero still match NaNs. Keep a present NaN distinct from null,
@@ -214,7 +216,8 @@ method objects. `Element.prototype` now owns those method objects, with the
 flat names retained as constant reference aliases. Distinct absence tokens now
 construct the existing nullable scalar, and `js_boolean_t` carries Boolean
 values. `Number.hpp` supplies `js_basic_num<double>` and its `js_num` alias;
-numeric global observations use this class. String and Object/Array intrinsic
+numeric global observations and scalar numeric conversions use this class.
+`js_nan_t` supplies explicit NaN construction. String and Object/Array intrinsic
 prototype classes are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
 behind Script and needs extraction before native use.
@@ -247,13 +250,19 @@ existing `auto`/template deduction.
    `js_num` alias is the numeric global-read result; emitted observations extract
    `.value()` before C varargs. Nullable/object scalar adapters preserve the tag,
    NaN and signed zero. Only `double` is currently supported by the template.
-   Add the planned `js_nan_t` construction token with the next numeric
-   literal/conversion batch; it is not implemented in this first Number batch.
+   `js_nan_t` now constructs a Number NaN explicitly. Boolean and nullable
+   `.to_number()` / `to_number()` conversions return `js_num`, with undefined
+   producing NaN, null producing positive zero and numeric payloads retaining
+   their value and zero sign. Native binary64 NaN literals use the token while
+   ordinary EmitC and other floating-point formats retain their own spelling.
+   The emitter extracts `.value()` for existing f64 arithmetic/storage; exact
+   Number extraction stays pure for dead-code pruning and Map snapshot fusion.
    Existing arithmetic, Map storage and capture signatures still use raw
    binary64; generated declarations inside `ctnative` spell the compatibility
    alias `::js_num` explicitly to avoid changing those representations.
-   Next migrate numeric literals, arithmetic and conversion boundaries together,
-   then calls/captures and collections; introduce `js_basic_string<char>` and
+   Next migrate the remaining numeric literals, arithmetic/math operations and
+   call/capture signatures together, with explicit collection boundaries;
+   introduce `js_basic_string<char>` and
    `js_string` with their first admitted String operation group. Update
    literal creation, conversion, optional/union joins,
    calls/returns, print helpers and deduced-type assertions with each batch.
