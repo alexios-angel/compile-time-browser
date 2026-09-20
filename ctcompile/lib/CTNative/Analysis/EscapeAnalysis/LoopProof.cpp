@@ -394,10 +394,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             // Clearing the sign bit bounds every ToInt32 input, including
             // conversions across a signed boundary for a low-bit AND mask.
-            // ponytail: a dense enclosure; sparse mask facts could admit more
-            // disjoint reloads. Replay still records only the actual writes.
-            IndexRange result{
-                {operand, ContentsKind::NonBigInt}, {operand, ContentsKind::NonBigInt}, 1};
+            // AND preserves the mask's low zero bits, including signed results.
+            // ponytail: higher mask gaps need a union of lattices; replay still
+            // records only the actual writes.
+            IndexRange result{{operand, ContentsKind::NonBigInt},
+                              {operand, ContentsKind::NonBigInt},
+                              bitAnd && mask != 0 ? std::size_t{1} << std::countr_zero(mask) : 1};
             boundedNumberBitwise({operand, ContentsKind::NonBigInt, first},
                                  {operand, ContentsKind::NonBigInt, 0}, ctjs::BinaryKind::BitOr,
                                  result.first);

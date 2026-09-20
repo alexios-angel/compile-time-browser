@@ -305,6 +305,37 @@ void StructuredCases::reloads() {
     reject("later structured stores invalidate earlier signed AND reloads",
            replace(readAndMask,
                    "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    for (const auto & bits : {"4611686018427387904", "13835058055282163712"}) {
+        const auto gapReload = replace(
+            replace(replace(readAndMask, "13970166044099084288", bits),
+                    "[%x, %y, %negativeMask, %zero]", "[%x, %negativeMask, %y, %zero]"),
+            "%mask = ctjs.get_property %base[%two]", "%mask = ctjs.get_property %base[%one]");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            rows.push_back(
+                {.what = "structured AND low zero bits preserve reloads in an interval gap",
+                 .body = replace(gapReload, "bitand %i, %mask", "bitand " + std::string(operands)),
+                 .arrays = "a:[zero,mask,zero,zero]",
+                 .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask; a[1]=mask; a[2]=zero; "
+                          "a[1]=mask; a[3]=zero",
+                 .exit = "a -> {a}"});
+        }
+        rows.push_back({.what = "structured AND lattices preserve unvisited gap children",
+                        .body = replace(gapReload, "[%x, %negativeMask, %y, %zero]",
+                                        "[%x, %negativeMask, %y, %y]"),
+                        .arrays = "a:[zero,mask,zero,y]",
+                        .reads =
+                            "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask; a[1]=mask; a[2]=zero; "
+                            "a[1]=mask; a[3]=y",
+                        .exit = "a -> {a,y}"});
+        reject("structured AND lattices reject a mask at a visited residue",
+               replace(replace(gapReload, "[%x, %negativeMask, %y, %zero]",
+                               "[%x, %zero, %negativeMask, %zero]"),
+                       "%mask = ctjs.get_property %base[%one]",
+                       "%mask = ctjs.get_property %base[%two]"));
+        reject("later structured stores invalidate a mask in an AND lattice gap",
+               replace(gapReload,
+                       "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    }
     for (const auto & expression :
          {"%high = ctjs.binary sub %maximum, %i\n"
           "    %position = ctjs.binary_static bitxor %high, %maximum",

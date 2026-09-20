@@ -502,6 +502,36 @@ void InductionCases::overwritesAndTransport() {
                    "%mask = ctjs.get_property %base[%zero]"));
     reject("later stores invalidate earlier signed AND mask reloads",
            replace(andReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    for (const auto & bits : {"4611686018427387904", "13835058055282163712"}) {
+        const auto gapReload = replace(
+            replace(replace(andReload, "13970166044099084288", bits),
+                    "[%x, %x, %negativeMask, %zero]", "[%x, %negativeMask, %x, %zero]"),
+            "%mask = ctjs.get_property %base[%two]", "%mask = ctjs.get_property %base[%one]");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            run({.what = "AND low zero bits preserve mask reloads inside the enclosing interval",
+                 .body = replace(gapReload, "bitand %i, %mask", "bitand " + std::string(operands)),
+                 .arrays = "a:[zero,mask,zero,zero]",
+                 .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask; a[1]=mask; a[2]=zero; "
+                          "a[1]=mask; a[3]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "AND lattice gaps retain children the exact writes never visit",
+             .body = replace(gapReload, "[%x, %negativeMask, %x, %zero]",
+                             "[%x, %negativeMask, %x, %x]"),
+             .arrays = "a:[zero,mask,zero,x]",
+             .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask; a[1]=mask; a[2]=zero; "
+                      "a[1]=mask; a[3]=x",
+             .exit = "a -> {a,x}"});
+        reject("AND lattices reject a mask reloaded at a visited residue",
+               replace(replace(gapReload, "[%x, %negativeMask, %x, %zero]",
+                               "[%x, %zero, %negativeMask, %zero]"),
+                       "%mask = ctjs.get_property %base[%one]",
+                       "%mask = ctjs.get_property %base[%two]"));
+        reject(
+            "later stores invalidate a mask in an AND lattice gap",
+            replace(gapReload, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    }
     for (const auto & expression :
          {"%high = ctjs.binary sub %maximum, %i\n"
           "  %position = ctjs.binary_static bitxor %high, %maximum",
