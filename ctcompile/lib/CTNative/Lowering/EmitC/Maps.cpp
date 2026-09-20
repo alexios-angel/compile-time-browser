@@ -100,8 +100,13 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 .getResult(0);
         };
         if (map && args.size() >= 2) {
-            args[1] = convertAlternative(extractProvedScalar(args[1], kNativeMapKeyType),
-                                         map.getKeyType(), true);
+            if (llvm::isa<OptType>(map.getKeyType()) &&
+                carrierOf(map.getKeyType()) == carrier::nullable) {
+                args[1] = convertScalar(b, where, args[1], carrierType(context, carrier::nullable));
+            } else {
+                args[1] = convertAlternative(extractProvedScalar(args[1], kNativeMapKeyType),
+                                             map.getKeyType(), true);
+            }
         }
         if (action == "set") {
             auto call = llvm::cast<CallOp>(o);

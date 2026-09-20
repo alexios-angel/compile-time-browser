@@ -147,6 +147,16 @@ bool admission::op(mlir::Operation * o) {
             return refuse("native Map receiver has no supported key/value carrier");
         }
         const auto map = llvm::cast<MapType>(typeOf(call.getReceiver()));
+        const bool scalarKey = llvm::isa<OptType>(map.getKeyType()) &&
+                               carrierOf(map.getKeyType()) == carrier::nullable;
+        if (scalarKey && !call.getArgs().empty() &&
+            !isScalarCarrier(carrierOf(typeOf(call.getArgs()[0])))) {
+            return refuse("nullable scalar Map key requires Number, Boolean, Null or Undefined");
+        }
+        // Numeric vectors erase absent tags; a key snapshot must preserve them.
+        if (scalarKey && action == "keys") {
+            return refuse("nullable scalar Map key snapshot needs a tagged element carrier");
+        }
         const auto typedAlternative = [&](mlir::Type schema, mlir::Value operand) {
             const auto value = typeOf(operand);
             auto alternatives = llvm::cast<VariantType>(schema).getAlternatives();

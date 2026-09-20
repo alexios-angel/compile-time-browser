@@ -354,6 +354,11 @@ template <class K> bool map_key_equal(const K & a, const K & b) {
 inline bool map_key_equal(js_num a, js_num b) {
     return a == b || (std::isnan(a) && std::isnan(b));
 }
+inline bool map_key_equal(nullable_scalar a, nullable_scalar b) {
+    if (a.tag != b.tag) { return false; }
+    return a.tag == nullable_scalar::kind::undefined || a.tag == nullable_scalar::kind::null ||
+           map_key_equal(a.value, b.value);
+}
 template <class... T>
 bool map_key_equal(const std::variant<T...> & a, const std::variant<T...> & b) {
     return std::visit(
@@ -403,6 +408,14 @@ template <> struct map_key_less<js_num> {
     bool operator()(js_num a, js_num b) const {
         if (std::isnan(a)) { return !std::isnan(b); }
         return !std::isnan(b) && a < b;
+    }
+};
+template <> struct map_key_less<nullable_scalar> {
+    bool operator()(nullable_scalar a, nullable_scalar b) const {
+        if (a.tag != b.tag) { return a.tag < b.tag; }
+        return (a.tag == nullable_scalar::kind::number ||
+                a.tag == nullable_scalar::kind::boolean) &&
+               map_key_less<js_num>{}(a.value, b.value);
     }
 };
 template <class... T> struct map_key_less<std::variant<T...>> {
@@ -494,6 +507,10 @@ template <class K> const K & map_normalize_key(const K & key) {
 }
 inline js_num map_normalize_key(js_num key) {
     return key == 0 ? 0.0 : key;
+}
+inline nullable_scalar map_normalize_key(nullable_scalar key) {
+    if (key.tag == nullable_scalar::kind::number) { key.value = map_normalize_key(key.value); }
+    return key;
 }
 template <class... T> std::variant<T...> map_normalize_key(const std::variant<T...> & key) {
     return std::visit(

@@ -88,6 +88,7 @@ carrier carrierOf(mlir::Type type) {
         const bool supportedKey =
             llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType, DOMElementType>(key) ||
             (string && string.getEncoding() == StrEncoding::UTF8) ||
+            (llvm::isa<OptType>(key) && carrierOf(key) == carrier::nullable) ||
             !mixedMapKeySpelling(key).empty() || !nullableMapSpelling(key).empty();
         const auto value = map.getValueType();
         const bool ownedValue =
@@ -183,6 +184,7 @@ llvm::StringRef nullableMapSpelling(mlir::Type type) {
 }
 
 llvm::StringRef mapKeySpelling(mlir::Type type) {
+    if (llvm::isa<OptType>(type) && carrierOf(type) == carrier::nullable) { return kNullableType; }
     if (auto nullable = nullableMapSpelling(type); !nullable.empty()) { return nullable; }
     if (auto mixed = mixedMapKeySpelling(type); !mixed.empty()) { return mixed; }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }

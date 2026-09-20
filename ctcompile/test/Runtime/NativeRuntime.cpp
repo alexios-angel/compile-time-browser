@@ -68,6 +68,35 @@ int main() {
     map_key_less<js_num> less;
     CHECK(!less(NAN, NAN) && less(NAN, 1.0) && !less(1.0, NAN));
 
+    const std::vector<nullable_scalar> scalarKeys{
+        {}, nullable_scalar::null(), false, true, -0.0, 0.0, NAN, -NAN, -INFINITY, INFINITY, 1.0};
+    map_key_less<nullable_scalar> scalarLess;
+    for (const auto left : scalarKeys) {
+        for (const auto right : scalarKeys) {
+            CHECK(map_key_equal(left, right) ==
+                  (!scalarLess(left, right) && !scalarLess(right, left)));
+            for (const auto third : scalarKeys) {
+                CHECK(!(scalarLess(left, right) && scalarLess(right, third)) ||
+                      scalarLess(left, third));
+            }
+        }
+    }
+    // Exercise both storage layouts regardless of this translation unit's switch.
+    const auto scalarMap = [&](const auto & map) {
+        for (const auto key : scalarKeys) { map_set(map, key, -0.0); }
+        CHECK(map_size(map) == 9);
+        const auto zero = map->find(nullable_scalar{0.0});
+        CHECK(zero != map->end() && !std::signbit(zero->first.value) && std::signbit(zero->second));
+        const auto saved = map_get_present(map, nullable_scalar{NAN});
+        CHECK(map_delete(map, nullable_scalar{-NAN}));
+        CHECK(!map_has(map, nullable_scalar{NAN}) && std::signbit(saved));
+        map_set(map, nullable_scalar{NAN}, 7.0);
+        CHECK(map_get_present(map, nullable_scalar{-NAN}) == 7.0);
+        CHECK(map_has(map, nullable_scalar{}) && map_has(map, nullable_scalar::null()));
+    };
+    scalarMap(make_number_map<nullable_scalar>());
+    scalarMap(std::make_shared<std::map<nullable_scalar, js_num, map_key_less<nullable_scalar>>>());
+
     CHECK(scalar_equal(nullable_scalar::null(), nullable_scalar{}));
     CHECK(!scalar_strict_equal(nullable_scalar::null(), nullable_scalar{}));
     CHECK(scalar_typeof(nullable_scalar::null()) == "object");

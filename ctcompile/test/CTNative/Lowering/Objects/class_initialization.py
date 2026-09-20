@@ -743,11 +743,16 @@ def main():
                 if name in PREPARED_ONLY and not (name == "bootstrap-r" and optimize):
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
+                    key_type = (
+                        "!ctnative.boxed"
+                        if name == "class-map-optional-key-object"
+                        else "!ctnative.opt"
+                    )
                     if (
                         name.startswith("class-map-")
-                        and "!ctnative.map<!ctnative.opt" not in native_text
+                        and f"!ctnative.map<{key_type}" not in native_text
                     ):
-                        raise RuntimeError("class Map lost its optional-key representation refusal")
+                        raise RuntimeError("class Map lost its key representation refusal")
                     if name == "inherited-helper-order" and (
                         "an object literal passed to a direct call as an argument"
                         not in native_text

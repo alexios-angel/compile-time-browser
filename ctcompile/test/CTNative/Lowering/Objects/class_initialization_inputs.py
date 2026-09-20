@@ -16,6 +16,15 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-optional-key-tags": (2353, 2353),
+    "class-map-optional-key-missing": (711171, 711171),
+    "class-map-optional-key-booleans": (23574, 23574),
+    "class-map-optional-key-nan": (791113, 791113),
+    "class-map-optional-key-signed-zero": (79100, 79100),
+    "class-map-inherited-optional-key-helper": (29952, 29952),
+    "class-map-optional-key-mixed-string": (352, 352),
+    "class-map-optional-key-object": (352, 352),
+    "class-map-optional-key-snapshot": (3517, 3517),
     "class-map-helper-excess-arguments": (85, 85),
     "class-map-helper-method-name": (8, None),
     "class-map-helper-static": (8, 8),
@@ -489,6 +498,17 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-optional-key-tags",
+    "class-map-optional-key-missing",
+    "class-map-optional-key-booleans",
+    "class-map-optional-key-nan",
+    "class-map-optional-key-signed-zero",
+    "class-map-inherited-optional-key-helper",
+    "class-map-nested-holder",
+    "class-map-helper-numeric-key",
+    "class-map-inherited",
+    "class-map-direct",
+    "class-map-distinct",
     "class-map-helper-constructor",
     "class-map-helper-holder",
     "class-map-helper-shared-callers",
@@ -658,11 +678,8 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
-    "class-map-nested-holder",
-    "class-map-helper-numeric-key",
-    "class-map-inherited",
-    "class-map-direct",
-    "class-map-distinct",
+    "class-map-optional-key-mixed-string",
+    "class-map-optional-key-object",
     "inherited-own-fields-iterate-borrow-mixed-literal",
     "inherited-own-fields-iterate-borrow-missing-argument",
     "captured-holder-unused",
