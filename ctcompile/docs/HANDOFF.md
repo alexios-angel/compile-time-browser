@@ -22,6 +22,33 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Own static methods and unary indices, 2026-09-20 UTC
+
+**1bd7e508** proves immutable own static method slots and exact-constructor calls,
+reusing existing capture/getter proofs. Four positives add **32 native executions**;
+original target frames and roots survive. Complete unused bodies retain strict
+source checks. Three DOM controls cover shared helpers and both declaration
+orders. **6f34888c** independently proves bounded unary plus/minus array indices.
+
+Focused arrays **1/1**, escape lit **4/4**, host **1/1**, class initialization **1/1**
+and corrected DOM lit **1/1** passed. Class: **258 observations / 724 main executions /
+516 unprepared and 281 preparation refusals**. DOM: **632 / eight / 4,922**.
+Unary oracle: **63 sites / nine sound / 9 of 14 confined precision**, zero violations,
+partial, pending or unclaimed sites. All 13 tested source hashes match. Formatter
+retains 20 diagnostics in six unchanged files; changed formatting passes. The first
+DOM run failed a new diagnostic assertion; its source was preserved and the
+corrected case passed. Full suites and broad matrices were skipped.
+
+**Next measured boundary:** unchanged Bootstrap W/B gets past static-slot collection
+and refuses `class receiver escapes or observes a prototype/descriptor`. Source
+inspection points to B.dispose's `Object.getOwnPropertyNames(this)` and `this[t]`
+clearing loop. Prove own-field enumeration/clearing without allowing arbitrary
+receiver escape. Full static bodies, `this.getInstance`/`new this`, inherited
+per-leaf getter/DOM proof, H/config/selectors/events/Popper, broader ownership and
+the application driver remain. No browser/runtime changes or push.
+
+[Exact changes, checks and next boundary](handoff/2026-09-20-static-methods.md).
+
 ## Nested helper captures and negative divisors, 2026-09-20 UTC
 
 **c5cd6e4f** proves bounded immutable nested helper captures using the existing
