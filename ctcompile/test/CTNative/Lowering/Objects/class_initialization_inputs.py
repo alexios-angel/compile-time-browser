@@ -16,6 +16,18 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-super-nearest": (102, 102),
+    "inherited-super-receiver": (15, 15),
+    "inherited-super-chain": (83, 83),
+    "inherited-super-order": (112123, 112123),
+    "inherited-super-missing": (7, 7),
+    "inherited-super-replaced": (9, 9),
+    "inherited-super-identity": (1, 1),
+    "inherited-super-home": (7, 7),
+    "inherited-super-capture": (7, 7),
+    "inherited-super-dynamic": (7, 7),
+    "inherited-super-foreign": (9, 9),
+    "inherited-super-target-cfg": (7, 7),
     "inherited-post-super-method": (7, 7),
     "inherited-post-super-override": (10, 10),
     "inherited-post-super-order": (11212, 11212),
@@ -220,6 +232,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-dispatch",
+    "inherited-super-nearest",
+    "inherited-super-receiver",
+    "inherited-super-chain",
+    "inherited-super-order",
     "inherited-post-super-method",
     "inherited-post-super-override",
     "inherited-post-super-order",
@@ -483,6 +500,34 @@ def check_super_inputs(args, source, manifest):
     return len(cases) + 3
 
 
+def check_super_roots(args, source, manifest, diagnostic):
+    count = 0
+
+    def rooted(match):
+        nonlocal count
+        count += 1
+        return (
+            f"{match[1]}%super_root{count} = ctjs.constant #ctjs.undefined\n"
+            f"{match[1]}ctjs.root %super_root{count} in {match[2]}\n" + match[0]
+        )
+
+    text, roots = re.subn(
+        r'(^[ \t]*)"ctjs.frame_exit"\((%\w+)\)', rooted, source.read_text(), flags=re.M
+    )
+    if not roots:
+        raise RuntimeError("super target control lost its original frame exits")
+    path = args.work / "super-rooted-target.mlir"
+    path.write_text(text)
+    prepare(
+        args,
+        "super-rooted-target",
+        path,
+        dict(manifest, module_sha256=host.fingerprint(args.opt, path)),
+        success=False,
+        diagnostic=diagnostic,
+    )
+
+
 def check_proof_inputs(args, source, manifest, prepared, name):
     text = source.read_text()
     nested = args.work / "nested.mlir"
@@ -538,6 +583,10 @@ def check_proof_inputs(args, source, manifest, prepared, name):
     if output.read_text() != prepared.read_text():
         raise RuntimeError("supplied native annotations survived successful live reanalysis")
 
+    return check_proof_budget(args, source, manifest, prepared, name)
+
+
+def check_proof_budget(args, source, manifest, prepared, name):
     # Find and pin the exact first complete census. Each unsuccessful limit
     # must withhold the entire rewrite; successful limits produce identical IR.
     low, high = 0, 100000

@@ -95,6 +95,9 @@ struct classInitialization {
     bool normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp base, const HostContract & contract,
                         const llvm::StringSet<> & methodKeys);
 
+    bool normalizeSuperMethods(ctjs::FuncOp function,
+                               llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions);
+
     bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry);
 
     bool prove(const HostContract & contract, bool domEntry = false);

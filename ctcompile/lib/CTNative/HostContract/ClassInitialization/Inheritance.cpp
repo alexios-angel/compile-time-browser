@@ -83,8 +83,9 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
     for (auto fn : {function, base}) {
         const auto census = fn.walk([&](mlir::Operation * op) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp>(op)) {
-                refuse("super constructor declarations and global writes remain unsupported");
+            if (llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp, ctjs::RootOp>(op)) {
+                refuse(
+                    "super constructor declarations, roots and global writes remain unsupported");
                 return mlir::WalkResult::interrupt();
             }
             return mlir::WalkResult::advance();
@@ -370,6 +371,91 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
     return true;
 }
 
+bool classInitialization::normalizeSuperMethods(
+    ctjs::FuncOp function, llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions) {
+    llvm::SmallVector<ctjs::CallOp> invocations;
+    auto walked = function.walk([&](ctjs::CallOp call) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        invocations.push_back(call);
+        return mlir::WalkResult::advance();
+    });
+    if (walked.wasInterrupted()) { return false; }
+    for (ctjs::CallOp call : invocations) {
+        auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        auto proto = read ? read.getObject().getDefiningOp<ctjs::GetProtoOp>() : ctjs::GetProtoOp{};
+        auto home =
+            proto ? proto.getObject().getDefiningOp<ctjs::LoadHomeOp>() : ctjs::LoadHomeOp{};
+        if (!home) { continue; }
+        if (!step() || !home.getResult().hasOneUse() || !proto.getResult().hasOneUse() ||
+            !read.getResult().hasOneUse() || !ctjs::ordinaryKey(read.getKey()) ||
+            call.getReceiver() != function.getBody().front().getArgument(ctjs::arg_receiver)) {
+            return refuse("super method requires an unobserved lexical lookup and exact receiver");
+        }
+        ctjs::FuncOp selected;
+        // Definitions are nearest-first, including shadowed ancestors. A
+        // lexical lookup starts at the declaring home's immediate base,
+        // independently of the final receiver's ordinary method table.
+        for (ctjs::SetPropertyOp definition : baseDefinitions) {
+            if (!step()) { return false; }
+            if (ctjs::constantKey(definition.getKey()) == ctjs::constantKey(read.getKey())) {
+                selected = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+                break;
+            }
+        }
+        if (!selected || !methods.contains(selected) || selected.getUpvalueCount() != 0 ||
+            !llvm::hasSingleElement(selected.getBody())) {
+            return refuse("super method requires a proved capture-free linear base target");
+        }
+        auto & body = selected.getBody().front();
+        auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
+        if (!returned || !body.getArgument(ctjs::arg_callee).use_empty() ||
+            !body.getArgument(ctjs::arg_new_target).use_empty() ||
+            call.getArgs().size() + ctjs::implicit_arguments > body.getNumArguments()) {
+            return refuse("super method observes its identity, completion or excess arguments");
+        }
+        // ponytail: expand linear targets at their calls; target CFG/captures
+        // need a receiver-preserving direct-call proof in closure lifting.
+        for (mlir::Operation & op : body) {
+            const uint64_t cost = uint64_t(1) + op.getNumOperands() + op.getNumResults();
+            if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
+            remaining -= static_cast<unsigned>(cost);
+            if (op.getNumRegions() ||
+                llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp, ctjs::LoadHomeOp,
+                          ctjs::RootOp>(op) ||
+                (op.hasTrait<mlir::OpTrait::IsTerminator>() && &op != returned.getOperation())) {
+                return refuse("super method target has unsupported control flow, roots or "
+                              "declarations");
+            }
+        }
+        mlir::OpBuilder at(call);
+        auto absent = ctjs::ConstantOp::create(at, call.getLoc(),
+                                               ctjs::UndefinedAttr::get(module.getContext()));
+        mlir::IRMapping mapping;
+        mapping.map(body.getArgument(ctjs::arg_receiver), call.getReceiver());
+        mapping.map(body.getArgument(ctjs::arg_new_target), absent);
+        mapping.map(body.getArgument(ctjs::arg_callee), absent);
+        for (auto [i, formal] :
+             llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
+            if (!step()) { return false; }
+            mapping.map(formal, i < call.getArgs().size() ? call.getArgs()[i] : absent.getResult());
+        }
+        // Argument effects already precede the original call. Preserve every
+        // target operation there and keep the original body for the complete
+        // source census; fieldsOnly will recheck the expanded leaf receiver.
+        for (mlir::Operation & op : body) {
+            if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
+                at.clone(op, mapping);
+            }
+        }
+        call.getResult().replaceAllUsesWith(mapping.lookupOrDefault(returned.getValue()));
+        call.erase();
+        read.erase();
+        proto.erase();
+        home.erase();
+    }
+    return true;
+}
+
 bool classInitialization::examine(ctjs::CallOp call, const HostContract & contract, bool domEntry) {
     if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
         !call.getResult().use_empty()) {
@@ -522,6 +608,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         auto & block = fn.getBody().front();
         if (domEntry && !proveCells(fn)) { return false; }
         if (!methodHome || !block.getArgument(ctjs::arg_new_target).use_empty() ||
+            !normalizeSuperMethods(fn, baseDefinitions) ||
             !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
             return refuse("class method observes its identity, home or an unproved receiver");
         }
@@ -549,8 +636,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         // Recheck inherited receiver uses against the final method table:
         // a base field write must not shadow a method added by the leaf.
-        // ponytail: DOM and receiver-selected getters need per-leaf body
-        // proofs; lexical super remains a separate boundary.
+        // ponytail: DOM and receiver-selected getters need per-leaf body proofs.
         if (domEntry && !methodKeys.empty()) {
             return refuse("inherited DOM methods require per-leaf body proof");
         }

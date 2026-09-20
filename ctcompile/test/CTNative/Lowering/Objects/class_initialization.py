@@ -155,7 +155,6 @@ def main():
         diagnostic = {
             "inherited": "derived class requires receiver-preserving super normalization",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
-            "inherited-dispatch": "class receiver escapes or observes a prototype/descriptor",
             "override-ambient": "unknown call, binding or reflective effect",
             "override-shadowed-receiver": "class method is observed or shadowed",
             "override-hidden-ancestor": "class method is observed or shadowed",
@@ -197,6 +196,13 @@ def main():
         if name == "inherited-explicit":
             preparation_refusals += check_ancestry_inputs(args, structured, manifest)
             preparation_refusals += check_super_inputs(args, structured, manifest)
+            check_super_roots(
+                args,
+                structured,
+                manifest,
+                "super constructor declarations, roots and global writes remain unsupported",
+            )
+            preparation_refusals += 1
         if name == "inherited-method":
             # A fresh leaf prototype may precede the base's method producers.
             # Preparation must insert inherited slots after those definitions.
@@ -319,6 +325,15 @@ def main():
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
+        if name == "inherited-super-order":
+            check_super_roots(
+                args,
+                structured,
+                manifest,
+                "super method target has unsupported control flow, roots or declarations",
+            )
+            cutoffs[name] = check_proof_budget(args, structured, manifest, prepared, name)
+            preparation_refusals += 2
         for optimize in (False, True):
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
             run(

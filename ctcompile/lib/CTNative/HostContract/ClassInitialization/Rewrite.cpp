@@ -79,7 +79,19 @@ void classInitialization::rewrite() {
     // ordinary method lowering still proves every call and borrowed receiver.
     // Base completion precedes heritage, so every inherited key and closure
     // dominates this point even if the leaf prototype was allocated earlier.
+    llvm::StringSet<> readKeys;
+    bool dynamicRead = false;
+    module.walk([&](ctjs::GetPropertyOp read) {
+        auto key = ctjs::constantKey(read.getKey());
+        dynamicRead |= key.empty();
+        readKeys.insert(key);
+    });
     for (auto [inherited, definition] : inheritedSlots) {
+        // A lexical call may have consumed the only lookup. All original
+        // bodies passed the source census; retain slots for ordinary reads.
+        if (!dynamicRead && !readKeys.contains(ctjs::constantKey(definition.getKey()))) {
+            continue;
+        }
         mlir::OpBuilder at(inherited);
         ctjs::SetPropertyOp::create(at, definition.getLoc(), inherited.getArgs()[2],
                                     definition.getKey(), definition.getValue());
