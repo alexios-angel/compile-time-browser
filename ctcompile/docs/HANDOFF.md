@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Fixed own-field snapshots and BitNot indices, 2026-09-20 UTC
+
+**674b985c** folds fixed own-field snapshot length/index observations to constants,
+including exact indexed clearing. Five new positives add **40 native executions**.
+Constructor field presence/order and all receiver writes are checked; original
+method bodies and frames remain. Replacement returns and cached boxed-local
+producers have dedicated regressions. **89f987bd** independently proves bounded
+BitNot indices, rejecting signed-i32 wraparound and preserving reload/alias guards.
+
+Focused arrays **1/1**, escape lit **3/3**, host **1/1** and class initialization/DOM
+lit **2/2 (399.41s)** passed. Class: **276 observations / 764 main executions /
+552 unprepared and 299 preparation refusals**. DOM remains **632 / eight / 4,922**.
+BitNot oracle: **60 sites / nine sound / 9 of 14 confined precision**; the preserved
+unary source now measures **63 / ten / 10 of 14**. Zero violations, partial,
+pending or unclaimed sites. Twelve tested hashes match; changed formatting passes.
+Required formatter retains 20 diagnostics in six unchanged files. Full suites and
+broad matrices were skipped; no browser/runtime change or push.
+
+**Next measured boundary:** original Bootstrap W/B now refuses
+`class own-key snapshot requires fixed constructor fields`. The current proof
+rejects inheritance; B also conditionally initializes its fields. The preserved
+standalone own-key for-of clearing control still refuses snapshot consumption.
+Prove inherited/conditional field presence and iterator consumption while retaining
+all dispose effects. Static `this.getInstance`/`new this`, inherited DOM/getters,
+H/config/selectors/events/Popper, broader ownership and the driver remain.
+
+[Exact changes, checks and next boundary](handoff/2026-09-20-own-fields.md).
+
 ## Own static methods and unary indices, 2026-09-20 UTC
 
 **1bd7e508** proves immutable own static method slots and exact-constructor calls,
