@@ -55,9 +55,15 @@ chooses concatenation only when an actual operand is String; numeric arithmetic,
 truthiness, `typeof` and String concatenation consume that result without losing
 its tag. See [the focused addition handoff](handoff/2026-09-20-native-generic-addition.md).
 
-Optional Number/String source values, including changing-global reads, still
-need distinct null/undefined transport. Global `std::optional<number_string>`
-only guards missing initialization; it is not the source optional carrier.
-Equality/ordering of Number/String unions, broader unions and mixed scalar Map
+Optional Number/String source values now use `ctnative::nullable_number_string`,
+exactly `std::variant<undefined_t, js_null_t, js_num, js_string>`. It carries
+parameters, explicit returns, branch/loop edges, early global reads and saved
+copies without collapsing absence. Global storage starts as undefined, and
+proved definite observations retain checked extraction. The old optional-storage
+helper remains a compatibility overload. The new source fixture checks 53
+observations in eight native modes; see [the optional transport handoff](handoff/2026-09-20-native-optional-number-string.md).
+
+Boolean/String signatures/globals, equality/ordering of Number/String unions,
+broader unions and mixed scalar Map
 keys/payloads or array storage retain their existing refusal boundaries. This
 does not implement arbitrary `std::variant` lowering.

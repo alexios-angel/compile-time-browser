@@ -21,8 +21,10 @@ numbers. Optional String arithmetic retains null/undefined tags until numeric
 conversion. Closed local Boolean/String unions support numeric arithmetic and
 concatenation with an exact String. These operations reuse public Core conversion/
 formatting. Generic primitive addition now returns a proved closed String/Number
-carrier, retaining its tags through calls, joins, loops and global stores. Object/
-Array prototypes and document views remain planned. This is the user's revised direction for the
+carrier, retaining its tags through calls, joins, loops and global stores. Its
+optional form now preserves undefined, null, Number and String through source
+global reads, calls and coercions. Object/Array prototypes and document views
+remain planned. This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
 
@@ -338,14 +340,24 @@ existing `auto`/template deduction.
    `std::variant<js_num, js_string>`. It reuses the typed Number/String operations
    and existing finite optional/Boolean-String carriers. Number/String parameters,
    returns, conditional/loop edges, truthiness, `typeof`, later numeric conversion
-   and global stores preserve the selected tag. Global storage uses
-   `std::optional<number_string>` solely to detect an uninitialized store;
-   that optional is not a source null/undefined representation.
-   Next implement optional Number/String transport, beginning with the preserved
-   `generic-addition.test` changing-global read/copy/reassign refusal. Represent
-   source null and undefined separately, including early reads, before admitting
-   those paths. Boolean/String signatures, wider unions and mixed container
-   payloads remain separate; never stringify both sides unconditionally.
+   and global stores preserve the selected tag. The optional source carrier is
+   `nullable_number_string`, exactly
+   `std::variant<undefined_t, js_null_t, js_num, js_string>`. It preserves all four
+   alternatives through parameters, explicit returns, branches, loops, global
+   reads/writes, numeric conversion, `typeof`, truthiness and concatenation.
+   Globals with Number/String contents use this carrier, initially undefined;
+   definite observations retain their checked present-value extraction. The old
+   `std::optional<number_string>` extraction helper remains for compatibility.
+   The complete former changing-global refusal now runs unchanged in
+   `optional-number-string.test`, whose 53 observations include early reads and
+   saved copies across later writes. Eight native modes, four refusal controls
+   and two mutations pass.
+   Next carry closed Boolean/String values through parameters, returns and
+   globals, beginning with the preserved `boolean-string-parameter.js` and
+   `boolean-string-return.js` refusals in `generic-addition.test`. Use the typed
+   String carrier and retain absence distinctions when globals add null/undefined.
+   Wider unions and mixed container payloads remain separate; never stringify
+   both sides unconditionally.
    Keep numeric relational conversion separate from String lexicographic ordering
    and loose equality. Object conversion hooks remain refused; an overload or class
    method does not establish their source proof.

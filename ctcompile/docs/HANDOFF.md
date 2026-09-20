@@ -22,6 +22,31 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Optional Number/String transport, 2026-09-20 UTC
+
+Continued clean **61b688c3**, resuming the preserved changing-global refusal.
+**1ff01365** adds `nullable_number_string`, exactly
+`std::variant<undefined_t, js_null_t, js_num, js_string>`. **7ac81d52** carries
+those values through source global reads/writes, parameters, explicit returns,
+branches, loops and primitive coercions. Global storage starts as undefined;
+saved String values remain owning copies. Definite observations retain checked
+extraction. The former optional-global program now runs unchanged in native C++.
+
+Focused checks pass: runtime CTest **1/1** twice and **six distinct lit cases**.
+The new fixture checks **53 Node/VM/native observations** across eight native
+modes, four refusals and two mutations. All **14** final code/test hashes match
+the devbox. Scoped formatting and whitespace pass; global formatting retains
+16 pre-existing diagnostics. Full suites were skipped.
+[Exact checks and the corrected initial build](handoff/2026-09-20-native-optional-number-string.md).
+
+**Next:** closed Boolean/String parameters, returns and globals, starting with
+`boolean-string-parameter.js` and `boolean-string-return.js` in
+`generic-addition.test`. Keep typed String storage and distinct absence tags.
+Wider unions, mixed containers, equality/ordering, object hooks, Core parser gaps
+and UTF-16 alignment remain separate. Collections/document views,
+`Symbol.hasInstance`, indexed Bootstrap `R.find` and the application driver remain
+unfinished. No browser or VM implementation changed in this slice.
+
 ## Generic primitive addition, 2026-09-20 UTC
 
 Continued clean **a7abf61b**, resuming its documented generic-`+` boundary.
