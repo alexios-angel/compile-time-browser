@@ -624,11 +624,13 @@ struct closureLifter {
     // One immutable symbol census, consumed only before the first lift.
     llvm::StringMap<llvm::SmallVector<mlir::Operation *, 2>> objectArgumentSymbolUsers;
     llvm::StringMap<ctjs::CreateClosureOp> objectArgumentDeclarations;
+    llvm::DenseSet<mlir::Operation *> directObjectArgumentFunctions;
     bool completeObjectArgumentSymbols = false;
     llvm::SmallVector<closureCall> objectArgumentCalls(ctjs::CreateClosureOp c);
+    mlir::Operation * objectArgumentCallee(mlir::Operation * call);
     bool slotIsACandidate(ctjs::CreateClosureOp c, unsigned j);
 
-    bool slotCarriesAnObject(ctjs::CreateClosureOp c, unsigned j) const;
+    bool slotCarriesAnObject(mlir::Operation * callable, unsigned j) const;
 
     void argumentCensus();
 

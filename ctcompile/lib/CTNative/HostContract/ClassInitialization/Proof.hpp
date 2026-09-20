@@ -85,6 +85,8 @@ struct classInitialization {
     ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool entryAliases = false,
                                         bool domEntry = false);
     bool unusedReceiver(ctjs::FuncOp fn);
+    bool borrowedHelperReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
+                             llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads);
     bool clearOwnFieldLoop(ctjs::CallOp snapshot, llvm::ArrayRef<llvm::StringRef> fields,
                            const HostContract & contract);
     bool ownFieldSnapshots(ctjs::CreateClosureOp constructor,

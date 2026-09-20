@@ -16,6 +16,25 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-own-fields-iterate-borrow-direct": (7911, 7911),
+    "inherited-own-fields-iterate-borrow-captured": (7911, 7911),
+    "inherited-own-fields-iterate-borrow-holder": (7911, 7911),
+    "inherited-own-fields-iterate-borrow-two-arguments": (14711, 14711),
+    "inherited-own-fields-iterate-borrow-inherited": (241108011, 241108011),
+    "inherited-own-fields-iterate-borrow-arguments": (121137511, 121137511),
+    "inherited-own-fields-iterate-borrow-missing": (321107111, 321107111),
+    "inherited-own-fields-iterate-borrow-store": (77111, 77111),
+    "inherited-own-fields-iterate-borrow-return": (7711, 7711),
+    "inherited-own-fields-iterate-borrow-write": (8811, 8811),
+    "inherited-own-fields-iterate-borrow-forward": (7711, 7711),
+    "inherited-own-fields-iterate-borrow-incompatible": (771111, 771111),
+    "inherited-own-fields-iterate-borrow-slot-replaced": (8011, 8011),
+    "inherited-own-fields-iterate-borrow-unused-effects": (7911, 7911),
+    "inherited-own-fields-iterate-borrow-constructor": (8011, 8011),
+    "inherited-own-fields-iterate-borrow-method": (7911, 7911),
+    "inherited-own-fields-iterate-borrow-mixed-primitive": (77111, 77111),
+    "inherited-own-fields-iterate-borrow-mixed-literal": (77111, 77111),
+    "inherited-own-fields-iterate-borrow-missing-argument": (None, None),
     "inherited-own-fields-iterate-getter-direct": (7211, 7211),
     "inherited-own-fields-iterate-getter-method": (8211, 8211),
     "inherited-own-fields-iterate-getter-nested": (8311, 8311),
@@ -405,6 +424,12 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-own-fields-iterate-borrow-direct",
+    "inherited-own-fields-iterate-borrow-captured",
+    "inherited-own-fields-iterate-borrow-holder",
+    "inherited-own-fields-iterate-borrow-two-arguments",
+    "inherited-own-fields-iterate-borrow-inherited",
+    "inherited-own-fields-iterate-borrow-arguments",
     "inherited-own-fields-iterate-getter-direct",
     "inherited-own-fields-iterate-getter-method",
     "inherited-own-fields-iterate-getter-nested",
@@ -543,6 +568,8 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "inherited-own-fields-iterate-borrow-mixed-literal",
+    "inherited-own-fields-iterate-borrow-missing-argument",
     "captured-holder-unused",
     "inherited-helper-order",
     "override-different-leaves",

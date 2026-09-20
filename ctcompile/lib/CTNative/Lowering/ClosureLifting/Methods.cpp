@@ -78,7 +78,7 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
             // `ctn_x *`. `argumentCensus` decided that before anything was
             // rewritten, so this is a map lookup and not a second proof.
             if (use.getOperandNumber() >= 2) {
-                auto made = closureCalledBy(call);
+                auto * made = objectArgumentCallee(call);
                 if (made && slotCarriesAnObject(made, use.getOperandNumber() - 2)) { continue; }
             }
             return false;
@@ -90,7 +90,7 @@ bool closureLifter::usesCloseTheShape(mlir::Value object) {
         // OPEN shape, and the object-argument lift lost it.
         if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
             if (use.getOperandNumber() >= 3) {
-                auto made = closureCalledBy(direct);
+                auto * made = objectArgumentCallee(direct);
                 if (made && slotCarriesAnObject(made, use.getOperandNumber() - 3)) { continue; }
             }
             return false;
@@ -224,9 +224,17 @@ bool closureLifter::slotIsACandidate(ctjs::CreateClosureOp c, unsigned j) {
 // Is JS parameter `j` of this closure's target one this rewrite will hand a
 // pointer? Read by `closedAfterLift`, so it must answer from the map and
 // never recompute - the map IS the fixpoint's result.
-bool closureLifter::slotCarriesAnObject(ctjs::CreateClosureOp c, unsigned j) const {
-    const auto at = objectSlotsOf.find(c.getOperation());
+bool closureLifter::slotCarriesAnObject(mlir::Operation * callable, unsigned j) const {
+    const auto at = objectSlotsOf.find(callable);
     return at != objectSlotsOf.end() && llvm::is_contained(at->second, j);
+}
+
+mlir::Operation * closureLifter::objectArgumentCallee(mlir::Operation * call) {
+    if (auto closure = closureCalledBy(call)) { return closure; }
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(call);
+    auto function = direct ? direct.getTarget() : ctjs::FuncOp{};
+    return function && directObjectArgumentFunctions.contains(function) ? function.getOperation()
+                                                                        : nullptr;
 }
 
 void closureLifter::argumentCensus() {
@@ -271,18 +279,84 @@ void closureLifter::argumentCensus() {
         }
         if (!slots.empty()) { objectSlotsOf[c.getOperation()] = std::move(slots); }
     }
+    // Class preparation can consume an inert helper closure while retaining its
+    // private function. Prove all current symbol uses before borrowing parameters;
+    // neither old proof annotations nor one favorable call establishes a carrier.
+    llvm::DenseSet<mlir::Operation *> closureTargets;
+    for (ctjs::CreateClosureOp closure : closures) { closureTargets.insert(targetOf(closure)); }
+    llvm::MapVector<mlir::Operation *, llvm::SmallVector<closureCall>> directCalls;
+    const auto moduleUses = mlir::SymbolTable::getSymbolUses(module.getOperation());
+    llvm::DenseSet<mlir::Operation *> moduleReferences;
+    if (moduleUses) {
+        for (const auto & use : *moduleUses) {
+            if (auto function = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                    use.getUser(), use.getSymbolRef())) {
+                moduleReferences.insert(function);
+            }
+        }
+    }
+    if (completeObjectArgumentSymbols && moduleUses) {
+        for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
+            if (!function.isPrivate() || function.getUpvalueCount() != 0 ||
+                closureTargets.contains(function) || moduleReferences.contains(function) ||
+                function.getBody().empty()) {
+                continue;
+            }
+            auto & body = function.getBody().front();
+            if (body.getNumArguments() < ctjs::implicit_arguments ||
+                llvm::any_of(body.getArguments().take_front(ctjs::implicit_arguments),
+                             [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
+                continue;
+            }
+            llvm::SmallVector<closureCall> sites;
+            bool closed = true;
+            for (auto * user : objectArgumentSymbolUsers.lookup(function.getSymName())) {
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                if (!call || call.getTarget() != function ||
+                    !isUndefinedConstant(call.getCalleeValue()) ||
+                    !isUndefinedConstant(call.getReceiver()) ||
+                    !isUndefinedConstant(call.getNewTarget()) ||
+                    call.getArgs().size() + ctjs::implicit_arguments != body.getNumArguments()) {
+                    closed = false;
+                    break;
+                }
+                sites.push_back({call, call.getArgs(), call.getReceiver()});
+            }
+            if (!closed || sites.empty()) { continue; }
+            directObjectArgumentFunctions.insert(function);
+            directCalls[function] = std::move(sites);
+            auto & slots = objectSlotsOf[function];
+            for (auto argument : body.getArguments().drop_front(ctjs::implicit_arguments)) {
+                if (!argument.use_empty()) {
+                    slots.push_back(argument.getArgNumber() - ctjs::implicit_arguments);
+                }
+            }
+        }
+    }
     const auto closedArgument = [&](mlir::Value value) {
         if (closedAfterLift(value)) { return true; }
         auto parameter = llvm::dyn_cast<mlir::BlockArgument>(value);
         if (!parameter || !parameter.getOwner()->isEntryBlock() ||
-            parameter.getArgNumber() < ctjs::implicit_arguments) {
+            (parameter.getArgNumber() < ctjs::implicit_arguments &&
+             parameter.getArgNumber() != ctjs::arg_receiver)) {
             return false;
         }
         auto owner = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+        if (parameter.getArgNumber() >= ctjs::implicit_arguments &&
+            directObjectArgumentFunctions.contains(owner)) {
+            return slotCarriesAnObject(owner,
+                                       parameter.getArgNumber() - ctjs::implicit_arguments) &&
+                   usesCloseTheShape(value);
+        }
         bool found = false;
         for (ctjs::CreateClosureOp made : closures) {
             if (targetOf(made) != owner) { continue; }
-            if (!slotCarriesAnObject(made, parameter.getArgNumber() - ctjs::implicit_arguments)) {
+            // Constructor setup proves every origin before method resolution.
+            // Final admission still proves its complete receiver and methods.
+            if (parameter.getArgNumber() == ctjs::arg_receiver
+                    ? !constructorClosures.contains(made) || whyConstructorSetupDoesNotLift(made)
+                    : !slotCarriesAnObject(made,
+                                           parameter.getArgNumber() - ctjs::implicit_arguments)) {
                 return false;
             }
             found = true;
@@ -293,15 +367,24 @@ void closureLifter::argumentCensus() {
     // be open is not a slot, and dropping it can open another literal that
     // was relying on it - so this repeats until nothing moves. It
     // terminates because `objectSlotsOf` never grows here.
+    llvm::SmallVector<mlir::Operation *> candidates;
+    for (ctjs::CreateClosureOp closure : closures) { candidates.push_back(closure); }
+    for (const auto & [function, sites] : directCalls) {
+        (void)sites;
+        candidates.push_back(function);
+    }
     for (bool changed = true; changed;) {
         changed = false;
-        for (ctjs::CreateClosureOp c : closures) {
-            const auto at = objectSlotsOf.find(c.getOperation());
+        for (mlir::Operation * callable : candidates) {
+            const auto at = objectSlotsOf.find(callable);
             if (at == objectSlotsOf.end()) { continue; }
+            auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(callable);
+            auto function = closure ? targetOf(closure) : llvm::cast<ctjs::FuncOp>(callable);
+            const auto calls =
+                closure ? objectArgumentCalls(closure) : directCalls.lookup(callable);
             llvm::SmallVector<unsigned, 2> kept;
             for (unsigned j : at->second) {
-                const auto parameter = targetOf(c).getBody().front().getArgument(3 + j);
-                const auto calls = objectArgumentCalls(c);
+                const auto parameter = function.getBody().front().getArgument(3 + j);
                 bool ok = !calls.empty() && usesCloseTheShape(parameter);
                 for (const closureCall & site : calls) {
                     if (j >= site.args.size() || !closedArgument(site.args[j])) { ok = false; }
@@ -311,11 +394,21 @@ void closureLifter::argumentCensus() {
             if (kept.size() == at->second.size()) { continue; }
             changed = true;
             if (kept.empty()) {
-                objectSlotsOf.erase(c.getOperation());
+                objectSlotsOf.erase(callable);
             } else {
-                objectSlotsOf[c.getOperation()] = std::move(kept);
+                objectSlotsOf[callable] = std::move(kept);
             }
         }
+    }
+    for (const auto & [function, sites] : directCalls) {
+        llvm::SmallVector<int32_t> indices;
+        for (unsigned slot : objectSlotsOf.lookup(function)) {
+            indices.push_back(static_cast<int32_t>(ctjs::implicit_arguments + slot));
+        }
+        if (indices.empty()) { continue; }
+        auto attribute = mlir::Builder(context).getDenseI32ArrayAttr(indices);
+        function->setAttr("ctnative.object_args", attribute);
+        for (const auto & site : sites) { site.op->setAttr("ctnative.object_args", attribute); }
     }
     // Declarations are already direct and need no closure rewrite. Give their
     // proved borrows the same caller/callee carrier as lifted local helpers.
@@ -565,8 +658,23 @@ void closureLifter::methodCensus() {
 // "it is returned" is.
 std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
     mlir::Block & entry = target.getBody().front();
+    const auto constructor = uniqueClosureByTarget.lookup(target);
+    const bool constructed = constructor && constructorClosures.contains(constructor);
     for (mlir::OpOperand & use : entry.getArgument(0).getUses()) {
         mlir::Operation * user = use.getOwner();
+        if (constructed) {
+            // Reuse the settled argument census: only an exact borrowed slot
+            // transports this caller-owned receiver into another function.
+            const bool direct = llvm::isa<ctjs::CallDirectOp>(user);
+            if ((direct || llvm::isa<ctjs::CallOp>(user)) &&
+                use.getOperandNumber() >= (direct ? 3u : 2u)) {
+                auto * callee = objectArgumentCallee(user);
+                if (callee &&
+                    slotCarriesAnObject(callee, use.getOperandNumber() - (direct ? 3u : 2u))) {
+                    continue;
+                }
+            }
+        }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
             if (use.getOperandNumber() == 0 && !ctjs::constantKey(get.getKey()).empty()) {
                 continue;

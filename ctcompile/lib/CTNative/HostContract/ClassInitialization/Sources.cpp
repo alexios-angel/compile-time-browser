@@ -452,6 +452,51 @@ bool classInitialization::unusedReceiver(ctjs::FuncOp fn) {
     return true;
 }
 
+bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
+                                              const llvm::StringSet<> & methodKeys,
+                                              llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads) {
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    if ((!direct && !call) || use.getOperandNumber() < (direct ? 3u : 2u)) { return false; }
+    if (!step()) { return false; }
+    const auto callee = direct ? direct.getCalleeValue() : call.getCallee();
+    auto fn = callableCaptures.lookup(callee.getDefiningOp());
+    if (!fn) { fn = target(sourceClosure(callee)); }
+    if (!fn || !unusedReceiver(fn) ||
+        !fn.getBody().front().getArgument(ctjs::arg_new_target).use_empty()) {
+        return false;
+    }
+    if (direct) {
+        if (direct.getTarget() != fn || !undefined(direct.getReceiver()) ||
+            !undefined(direct.getNewTarget())) {
+            return false;
+        }
+    } else if (!undefined(call.getReceiver())) {
+        auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
+        if (!read || call.getReceiver() != read.getObject()) { return false; }
+    }
+    const unsigned index = use.getOperandNumber() + (direct ? 0u : 1u);
+    auto & body = fn.getBody().front();
+    if (index >= body.getNumArguments()) { return false; }
+    // ponytail: read-only named fields. Writes, forwarding and method/getter
+    // dispatch need their own construction-point and shared-receiver proofs.
+    for (mlir::OpOperand * selected : sourceUses(body.getArgument(index))) {
+        if (!step()) { return false; }
+        if (llvm::isa<ctjs::RootOp>(selected->getOwner())) { continue; }
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(selected->getOwner());
+        const auto key = read ? ctjs::constantKey(read.getKey()) : llvm::StringRef{};
+        if (!read || selected->getOperandNumber() != 0 || !ctjs::ordinaryKey(key) ||
+            key == "constructor" || methodKeys.contains(key)) {
+            return false;
+        }
+        reads.push_back(read);
+    }
+    if (!reason.empty()) { return false; }
+    helpers.insert(fn);
+    helperCalls.insert(use.getOwner());
+    return true;
+}
+
 bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                                             llvm::ArrayRef<ctjs::ConstructOp> instances,
                                             llvm::ArrayRef<ctjs::SetPropertyOp> definitions,
@@ -521,6 +566,17 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
         }
         return false;
     };
+    const auto borrowedFields = [&](mlir::OpOperand & use,
+                                    llvm::ArrayRef<llvm::StringRef> ordered) {
+        llvm::SmallVector<ctjs::GetPropertyOp> reads;
+        if (!borrowedHelperReads(use, methodKeys, reads)) { return false; }
+        for (ctjs::GetPropertyOp read : reads) {
+            if (!step() || !hasField(ordered, ctjs::constantKey(read.getKey()))) {
+                return refuse("class construction helper requires an existing own field");
+            }
+        }
+        return true;
+    };
     // A construction-time call keeps its body and arguments. Only its receiver
     // uses need a stricter proof here: the eventual field shape is not present yet.
     const auto inspectMethod = [&](auto && visit, ctjs::FuncOp fn,
@@ -539,6 +595,9 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             if (!step()) { return false; }
             auto * op = use->getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op) && borrowedFields(*use, ordered)) {
+                continue;
+            }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 auto callee = read ? selectedMethods.lookup(ctjs::constantKey(read.getKey()))
@@ -645,11 +704,10 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                     continue;
                 }
                 // Retain helper computations for the complete callable/body
-                // census. They cannot observe a partially initialized receiver,
-                // including through a method that snapshots its current fields.
-                for (mlir::Value operand : op.getOperands()) {
+                // census. Receiver arguments may read only fields present here.
+                for (mlir::OpOperand & operand : op.getOpOperands()) {
                     if (!step()) { return false; }
-                    if (sourceValue(operand) == self) {
+                    if (sourceValue(operand.get()) == self && !borrowedFields(operand, ordered)) {
                         return refuse("class own-key snapshot constructor observes its receiver");
                     }
                 }
@@ -800,6 +858,10 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
         if (!step()) { return false; }
         auto * op = use.getOwner();
         if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+        if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op)) {
+            llvm::SmallVector<ctjs::GetPropertyOp> reads;
+            if (borrowedHelperReads(use, methodKeys, reads)) { continue; }
+        }
         if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
             closure && use.getOperandNumber() == 1 && helpers.contains(target(closure)) &&
             target(closure).getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {

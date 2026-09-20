@@ -82,6 +82,31 @@ def check_nested_helper_root(args, source, manifest, name="nested-helper-root"):
     return prepared
 
 
+def check_borrowed_helper_inputs(args, prepared):
+    text = prepared.read_text()
+    symbol = re.search(r"ctjs.func private @(fn\$\d+)\(", text)[1]
+    call = re.search(rf"(?m)^(\s*)%\w+ = ctjs.call_direct @{re.escape(symbol)}\(([^\n]+)\)$", text)
+    if not call:
+        raise RuntimeError("borrowed helper lost its private direct call")
+    operands = call[2].split(", ")
+    operands[3] = operands[0]  # An additional caller passes undefined, not an object.
+    extra = f"{call[1]}%borrow_bad = ctjs.call_direct @{symbol}({', '.join(operands)})"
+    variants = {
+        "module-reference": text.replace(
+            "module attributes {", f"module attributes {{test.borrow_ref = @{symbol}, ", 1
+        ),
+        "public-helper": text.replace(f"ctjs.func private @{symbol}(", f"ctjs.func @{symbol}(", 1),
+        "mixed-helper-call": text[: call.end()] + "\n" + extra + text[call.end() :],
+    }
+    for label, changed in variants.items():
+        source = args.work / f"borrow-{label}.mlir"
+        source.write_text(changed)
+        output = args.work / f"borrow-{label}.native.mlir"
+        run([args.opt, str(source), "--ctnative-lower-to-emitc=optimize=false", "-o", str(output)])
+        check_refusal(label, output.read_text(), len(FUNCTION.findall(changed)))
+    return len(variants)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "node", "reference"):
@@ -280,6 +305,8 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "inherited-own-fields-iterate-borrow-missing": "class construction helper requires an existing own field",
+            "inherited-own-fields-iterate-borrow-incompatible": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-method-missing": "class construction method requires an existing own field",
             "inherited-own-fields-iterate-method-add-field": "class construction method requires an existing own field",
             "inherited-own-fields-iterate-method-override-missing": "class construction method requires an existing own field",
@@ -350,7 +377,7 @@ def main():
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
             "bootstrap-base": "class own-key snapshot constructor observes its receiver",
-            "bootstrap-base-data": "class own-key snapshot constructor observes its receiver",
+            "bootstrap-base-data": "class method capture is not its constructor or an inert sibling helper",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -481,7 +508,7 @@ def main():
                 preparation_refusals += 1
         if name in PREPARED_ONLY | GLOBAL_HOLDERS:
             before, after = structured.read_text(), prepared.read_text()
-            if name in (
+            if name.startswith("inherited-own-fields-iterate-borrow-") or name in (
                 "override-different-leaves",
                 "inherited-helper-order",
                 "captured-holder-unused",
@@ -538,6 +565,8 @@ def main():
             preparation_refusals += 1
         if name == "static-chain":
             preparation_refusals += check_getter_parent(args, structured, manifest, prepared)
+        if name == "inherited-own-fields-iterate-borrow-captured":
+            prepared_refusals += check_borrowed_helper_inputs(args, prepared)
         if name == "method-captured-class-name":
             preparation_refusals += check_class_capture_inputs(args, structured, manifest)
         if name == "empty":
@@ -578,6 +607,9 @@ def main():
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         if name in (
+            "inherited-own-fields-iterate-borrow-direct",
+            "inherited-own-fields-iterate-borrow-captured",
+            "inherited-own-fields-iterate-borrow-holder",
             "inherited-own-fields-iterate-getter-direct",
             "inherited-own-fields-iterate-getter-chain",
             "inherited-own-fields-iterate-getter-fresh-empty",
@@ -589,6 +621,7 @@ def main():
             cutoffs[name] = check_proof_budget(args, structured, manifest, prepared, name)
             preparation_refusals += 1
         if name in (
+            "inherited-own-fields-iterate-borrow-inherited",
             "inherited-own-fields-iterate-method-nearest",
             "inherited-own-fields-iterate-helper-distinct",
             "inherited-post-super-holder-chain",
