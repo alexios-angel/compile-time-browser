@@ -875,36 +875,53 @@ inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::element_ref e
     if (bad) { throw std::invalid_argument("DOM selector is invalid"); }
     return parsed;
 }
-template <class Style>
-bool matches(ctbrowser::element_ref element, Style & style, std::string_view selector) {
-    const auto parsed = parse_selector(element, selector);
-    return style.element_matches(element.owner->read(), element.id, parsed.selectors);
-}
-template <class Style>
-ctbrowser::element_ref closest(ctbrowser::element_ref element, Style & style,
-                               std::string_view selector) {
-    const auto parsed = parse_selector(element, selector);
-    const auto found = style.closest(element.owner->read(), element.id, parsed.selectors);
-    return found ? ctbrowser::element_ref{element.owner, found} : ctbrowser::element_ref{};
-}
-template <class Style>
-ctbrowser::element_ref query_selector(ctbrowser::element_ref element, Style & style,
-                                      std::string_view selector) {
-    const auto parsed = parse_selector(element, selector);
-    const auto found = style.select(element.owner->read(), element.id, parsed.selectors, true);
-    return found.empty() ? ctbrowser::element_ref{}
-                         : ctbrowser::element_ref{element.owner, found.front()};
-}
-template <class Style>
-std::vector<ctbrowser::element_ref> query_selector_all(ctbrowser::element_ref element,
-                                                       Style & style, std::string_view selector) {
-    const auto parsed = parse_selector(element, selector);
-    const auto found = style.select(element.owner->read(), element.id, parsed.selectors, false);
-    std::vector<ctbrowser::element_ref> snapshot;
-    snapshot.reserve(found.size());
-    for (const auto id : found) { snapshot.push_back({element.owner, id}); }
-    return snapshot;
-}
+// Named method objects keep generated calls close to their source spelling.
+// They hold no state: each call borrows its explicit element and Style engine.
+struct matches_method {
+    template <class Style>
+    bool call(ctbrowser::element_ref element, Style & style, std::string_view selector) const {
+        const auto parsed = parse_selector(element, selector);
+        return style.element_matches(element.owner->read(), element.id, parsed.selectors);
+    }
+};
+inline constexpr matches_method matches{};
+
+struct closest_method {
+    template <class Style>
+    ctbrowser::element_ref call(ctbrowser::element_ref element, Style & style,
+                                std::string_view selector) const {
+        const auto parsed = parse_selector(element, selector);
+        const auto found = style.closest(element.owner->read(), element.id, parsed.selectors);
+        return found ? ctbrowser::element_ref{element.owner, found} : ctbrowser::element_ref{};
+    }
+};
+inline constexpr closest_method closest{};
+
+struct query_selector_method {
+    template <class Style>
+    ctbrowser::element_ref call(ctbrowser::element_ref element, Style & style,
+                                std::string_view selector) const {
+        const auto parsed = parse_selector(element, selector);
+        const auto found = style.select(element.owner->read(), element.id, parsed.selectors, true);
+        return found.empty() ? ctbrowser::element_ref{}
+                             : ctbrowser::element_ref{element.owner, found.front()};
+    }
+};
+inline constexpr query_selector_method querySelector{};
+
+struct query_selector_all_method {
+    template <class Style>
+    std::vector<ctbrowser::element_ref> call(ctbrowser::element_ref element, Style & style,
+                                             std::string_view selector) const {
+        const auto parsed = parse_selector(element, selector);
+        const auto found = style.select(element.owner->read(), element.id, parsed.selectors, false);
+        std::vector<ctbrowser::element_ref> snapshot;
+        snapshot.reserve(found.size());
+        for (const auto id : found) { snapshot.push_back({element.owner, id}); }
+        return snapshot;
+    }
+};
+inline constexpr query_selector_all_method querySelectorAll{};
 // Comparison never resolves either borrowed owner; both slot and generation
 // belong to identity.
 template <> struct map_key_less<ctbrowser::element_ref> {

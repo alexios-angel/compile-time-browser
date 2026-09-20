@@ -522,10 +522,10 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::hasAttribute: callee = "ctnative::has_attribute"; break;
     case HostDOMMethod::removeAttribute: callee = "ctnative::remove_attribute"; break;
     case HostDOMMethod::contains: callee = "ctnative::contains"; break;
-    case HostDOMMethod::matches: callee = "ctnative::matches"; break;
-    case HostDOMMethod::closest: callee = "ctnative::closest"; break;
-    case HostDOMMethod::querySelector: callee = "ctnative::query_selector"; break;
-    case HostDOMMethod::querySelectorAll: callee = "ctnative::query_selector_all"; break;
+    case HostDOMMethod::matches: callee = "ctnative::matches.call"; break;
+    case HostDOMMethod::closest: callee = "ctnative::closest.call"; break;
+    case HostDOMMethod::querySelector: callee = "ctnative::querySelector.call"; break;
+    case HostDOMMethod::querySelectorAll: callee = "ctnative::querySelectorAll.call"; break;
     case HostDOMMethod::number:
         callee = arguments.front().getType() == optionalString ? "ctnative::dom_number"
                                                                : "ctbrowser::string_to_number";

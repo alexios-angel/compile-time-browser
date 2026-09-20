@@ -180,7 +180,11 @@ def main():
                 cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
                 if dom.VM.search(cpp) or "nullable_scalar" in cpp:
                     raise RuntimeError("closest introduced a VM or scalar value carrier")
-                for call in ("ctnative::closest", "ctnative::matches", "ctnative::toggle_class"):
+                for call in (
+                    "ctnative::closest.call(",
+                    "ctnative::matches.call(",
+                    "ctnative::toggle_class(",
+                ):
                     if call not in cpp:
                         raise RuntimeError("closest bypassed the public browser helpers")
                 setup = OWNED if owned else BORROWED

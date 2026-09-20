@@ -117,8 +117,8 @@ def main():
         for optimize in (False, True):
             name = f"query-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            if '"ctnative::query_selector"' not in native.read_text():
-                raise RuntimeError("querySelector bypassed the public selector wrapper")
+            if '"ctnative::querySelector.call"' not in native.read_text():
+                raise RuntimeError("querySelector bypassed its native method object")
             checks = CHECKS + (OWNED_CHECKS if owned else "")
             dom.standalone(args, native, name, checks, compilers, includes, libraries)
     refusals = (

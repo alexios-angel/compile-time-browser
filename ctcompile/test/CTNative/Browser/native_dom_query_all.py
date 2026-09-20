@@ -204,8 +204,8 @@ def main():
         for optimize in (False, True):
             name = f"query-all-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            if '"ctnative::query_selector_all"' not in native.read_text():
-                raise RuntimeError("querySelectorAll bypassed the public selector wrapper")
+            if '"ctnative::querySelectorAll.call"' not in native.read_text():
+                raise RuntimeError("querySelectorAll bypassed its native method object")
             dom.standalone(
                 args,
                 native,
