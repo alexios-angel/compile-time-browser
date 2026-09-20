@@ -76,7 +76,8 @@ struct classInitialization {
     bool helperCallback(mlir::OpOperand & use);
     bool helperCallbacks(ctjs::FuncOp helper);
     bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
-                        llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry);
+                        llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry,
+                        unsigned depth = 0);
     ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool domEntry = false);
     bool unusedReceiver(ctjs::FuncOp fn);
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,

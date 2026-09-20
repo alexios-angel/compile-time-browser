@@ -184,7 +184,10 @@ bool classInitialization::helperCallbacks(ctjs::FuncOp helper) {
 bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
                                          ctjs::CreateClosureOp constructor,
                                          llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads,
-                                         bool domEntry) {
+                                         bool domEntry, unsigned depth) {
+    if (!step()) { return false; }
+    // ponytail: bound the proof stack; use an explicit worklist for deeper chains.
+    if (depth >= 64) { return refuse("class helper capture nesting limit exceeded"); }
     auto fn = target(method);
     const auto constructorValue = constructor ? constructor.getResult() : mlir::Value{};
     if (fn.getUpvalueCount() != static_cast<int64_t>(method.getUpvalues().size()) ||
@@ -218,12 +221,21 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         }
         auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
         auto helper = target(closure);
-        if (!helper || !closure.getUpvalues().empty() || helper.getUpvalueCount() != 0 ||
-            closure->getBlock() != method->getBlock() || !closure->isBeforeInBlock(method)) {
+        if (!helper || closure->getBlock() != method->getBlock() ||
+            !closure->isBeforeInBlock(method)) {
             return refuse("class method capture is not its constructor or an inert sibling helper");
         }
+        // Every edge keeps its fixed cell and source order. Shared helpers
+        // record their reads once, only after their entire capture proof succeeds.
+        if (capturedHelpers.contains(closure)) { continue; }
         auto & body = helper.getBody().front();
-        if (!helperCallbacks(helper)) { return false; }
+        if (closure.getUpvalues().empty()) {
+            if (helper.getUpvalueCount() != 0 || !helperCallbacks(helper)) { return false; }
+        } else {
+            // A nested helper receives no constructor or holder authority.
+            llvm::SmallVector<ctjs::GetPropertyOp> unusedReads;
+            if (!methodCaptures(closure, {}, unusedReads, domEntry, depth + 1)) { return false; }
+        }
         if (!unusedReceiver(helper) || !body.getArgument(ctjs::arg_new_target).use_empty()) {
             return refuse("captured helper observes its implicit receiver or new.target");
         }

@@ -16,6 +16,22 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "nested-helper-constructor": (8, 8),
+    "inherited-nested-helper-distinct": (80, 80),
+    "nested-helper-method": (16, 16),
+    "nested-helper-chain": (83, 83),
+    "nested-helper-shared": (38, 38),
+    "nested-helper-diamond": (36, 36),
+    "nested-helper-order": (1022, 1022),
+    "nested-helper-changing": (9, 9),
+    "nested-helper-writer": (8, 8),
+    "nested-helper-identity": (8, 8),
+    "nested-helper-excess": (8, 8),
+    "nested-helper-primitive": (8, 8),
+    "nested-helper-receiver": (7, 7),
+    "nested-helper-effect": (7, 7),
+    "nested-helper-newtarget": (8, 8),
+    "nested-helper-recursive": (7, 7),
     "inherited-helper-distinct": (80, 80),
     "inherited-helper-chain": (83, 83),
     "inherited-helper-siblings": (30104, 30104),
@@ -255,6 +271,13 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "nested-helper-constructor",
+    "inherited-nested-helper-distinct",
+    "nested-helper-method",
+    "nested-helper-chain",
+    "nested-helper-shared",
+    "nested-helper-diamond",
+    "nested-helper-order",
     "inherited-helper-distinct",
     "inherited-helper-chain",
     "inherited-helper-siblings",

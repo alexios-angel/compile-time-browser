@@ -4,6 +4,50 @@
 from CTNative.Lowering.Objects.class_initialization_inputs import *
 
 
+def check_nested_helper_root(args, source, manifest):
+    # Ordinary helpers retain their frames across direct-call conversion.
+    # Root only the captured wrapper, leaving every constructor frame untouched.
+    functions = re.compile(r"^  ctjs.func\b[^\n]*\n.*?^  }\n", re.M | re.S)
+    text = source.read_text()
+    helpers = [
+        body
+        for body in functions.findall(text)
+        if "ctjs.load_upvalue " in body and "ctjs.set_property " not in body
+    ]
+    if len(helpers) != 1:
+        raise RuntimeError("nested root control lost its unique captured wrapper")
+    helper = helpers[0]
+    symbol = re.search(r"ctjs.func\s+@([^\s(]+)", helper)[1]
+    rooted, count = re.subn(
+        r"(^[ \t]*)ctjs.frame_exit (%\w+)",
+        r"\1%helper_root = ctjs.constant #ctjs.undefined\n"
+        r"\1ctjs.root %helper_root in \2\n\g<0>",
+        helper,
+        flags=re.M,
+    )
+    if count != 1:
+        raise RuntimeError("nested root control lost its single helper frame exit")
+    path = args.work / "nested-helper-root.mlir"
+    path.write_text(text.replace(helper, rooted, 1))
+    prepared = prepare(
+        args,
+        "nested-helper-root",
+        path,
+        dict(manifest, module_sha256=host.fingerprint(args.opt, path)),
+        success=True,
+    )
+    after = prepared.read_text()
+    retained = [body for body in functions.findall(after) if f"@{symbol}(" in body.splitlines()[0]]
+    if len(retained) != 1 or f"ctjs.call_direct @{symbol}(" not in after:
+        raise RuntimeError("nested root control lost its direct helper identity")
+    if any(
+        retained[0].count(operation) != rooted.count(operation)
+        for operation in ("ctjs.frame_enter", "ctjs.frame_exit", "ctjs.root ")
+    ):
+        raise RuntimeError("nested helper preparation discarded its live frame or root")
+    return prepared
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "node", "reference"):
@@ -153,6 +197,14 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "nested-helper-changing": "class local cell has changing writes",
+            "nested-helper-identity": "captured helper escapes its ordinary local call",
+            "nested-helper-excess": "captured helper escapes its ordinary local call",
+            "nested-helper-primitive": "class method capture is not its constructor or an inert sibling helper",
+            "nested-helper-receiver": "captured helper observes its implicit receiver or new.target",
+            "nested-helper-effect": "unknown call, binding or reflective effect",
+            "nested-helper-newtarget": "captured helper observes its implicit receiver or new.target",
+            "nested-helper-recursive": "class local cell is observed before initialization",
             "inherited-helper-changing": "class local cell has changing writes",
             "inherited-helper-identity": "captured helper escapes its ordinary local call",
             "inherited-helper-effect": "unknown call, binding or reflective effect",
@@ -177,7 +229,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class method capture is not its constructor or an inert sibling helper",
+            "bootstrap-base": "class methods, static fields or repeated setup remain unsupported",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -205,6 +257,8 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "nested-helper-constructor":
+            prepared = check_nested_helper_root(args, structured, manifest)
         if name == "inherited-explicit":
             preparation_refusals += check_ancestry_inputs(args, structured, manifest)
             preparation_refusals += check_super_inputs(args, structured, manifest)
@@ -316,6 +370,7 @@ def main():
                 prepare(args, label, structured, control, success=False, options=options)
                 preparation_refusals += 1
         if name in (
+            "nested-helper-chain",
             "captured-helper-constructor",
             "empty",
             "method",
@@ -338,14 +393,18 @@ def main():
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
-        if name in ("inherited-super-order", "inherited-helper-distinct"):
+        if name in (
+            "inherited-super-order",
+            "inherited-helper-distinct",
+            "inherited-nested-helper-distinct",
+        ):
             check_super_roots(
                 args,
                 structured,
                 manifest,
                 (
                     "super constructor declarations, roots and global writes remain unsupported"
-                    if name == "inherited-helper-distinct"
+                    if name in ("inherited-helper-distinct", "inherited-nested-helper-distinct")
                     else "super method target has unsupported control flow, roots or declarations"
                 ),
             )
