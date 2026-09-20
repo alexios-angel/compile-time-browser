@@ -132,12 +132,12 @@ void InductionCases::overwritesAndTransport() {
         reject("OR/XOR bounds cannot miss a store beyond the guard array",
                replace(bitwise, "[%one, %x]", "[%one, %x, %zero]"));
         reject("OR/XOR require one invariant operand", replace(bitwise, "%i, %one", "%i, %i"));
-        reject("OR/XOR refuse negative varying input bands",
+        reject("OR/XOR refuse varying inputs crossing converted zero",
                replace(bitwise, "%position = ctjs.binary_static " + kind + " %i, %one",
                        "%negative = ctjs.unary neg %i\n"
                        "  %position = ctjs.binary_static " +
                            kind + " %negative, %one"));
-        reject("OR/XOR refuse unsigned varying input bands",
+        reject("OR/XOR refuse varying inputs crossing a signed conversion boundary",
                replace(bitwise, "%position = ctjs.binary_static " + kind + " %i, %one",
                        "%maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
                        "  %large = ctjs.binary add %maximum, %i\n"
@@ -147,11 +147,58 @@ void InductionCases::overwritesAndTransport() {
              {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
               "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
               "#ctjs.bigint<\"1\">"}) {
-            reject("OR/XOR masks require nonnegative signed-i32 integer Numbers",
+            reject("OR/XOR require integer Number masks and nonnegative final keys",
                    replace(replace(bitwise, "  %a =",
                                    "  %mask = ctjs.constant " + std::string(value) + "\n  %a ="),
                            "%i, %one", "%i, %mask"));
         }
+    }
+    const auto signedBits = replace(masked, "  %a =",
+                                    "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                                    "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"
+                                    "  %negativeSign = ctjs.unary neg %sign\n"
+                                    "  %negativeOne = ctjs.unary neg %one\n"
+                                    "  %low = ctjs.constant #ctjs.number<13974669643726454784>\n"
+                                    "  %a =");
+    for (const auto & expression :
+         {"%high = ctjs.binary sub %maximum, %i\n"
+          "  %position = ctjs.binary_static bitxor %high, %maximum",
+          "%high = ctjs.binary add %sign, %i\n"
+          "  %position = ctjs.binary_static bitxor %high, %sign",
+          "%negative = ctjs.unary bitnot %i\n"
+          "  %position = ctjs.binary_static bitxor %negative, %negativeOne",
+          "%negative = ctjs.unary bitnot %i\n"
+          "  %position = ctjs.binary_static bitxor %negativeOne, %negative",
+          "%high = ctjs.binary add %low, %i\n"
+          "  %position = ctjs.binary_static bitxor %high, %two",
+          "%negative = ctjs.binary_static bitor %i, %negativeSign\n"
+          "  %position = ctjs.binary add %negative, %sign",
+          "%negative = ctjs.binary_static bitor %sign, %i\n"
+          "  %position = ctjs.binary add %negative, %sign",
+          "%high = ctjs.binary add %sign, %i\n"
+          "  %negative = ctjs.binary_static bitor %high, %zero\n"
+          "  %position = ctjs.binary add %negative, %sign"}) {
+        run({.what = "signed OR/XOR bands preserve exact indices through composition",
+             .body =
+                 replace(signedBits, "%position = ctjs.binary_static bitand %i, %one", expression),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    reject("OR/XOR cannot cross converted zero before a compensating offset",
+           replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                   "%part = ctjs.binary sub %i, %one\n"
+                   "  %bits = ctjs.binary_static bitor %part, %zero\n"
+                   "  %position = ctjs.binary add %bits, %one"));
+    for (const auto & input :
+         {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
+        reject("a final mask cannot hide an inner OR/XOR conversion discontinuity",
+               replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                       "%part = " + std::string(input) +
+                           "\n"
+                           "  %bits = ctjs.binary_static bitxor %part, %maximum\n"
+                           "  %position = ctjs.binary_static bitand %bits, %one"));
     }
     const auto orReload = replace(replace(masked, "[%one, %x]", "[%one, %x, %zero, %zero]"),
                                   "%position = ctjs.binary_static bitand %i, %one",
@@ -168,6 +215,27 @@ void InductionCases::overwritesAndTransport() {
            replace(orReload, "bitor", "bitxor"));
     reject("a later write invalidates an earlier OR reload",
            replace(orReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    const auto signedReload = replace(
+        replace(replace(orReload, "  %a =",
+                        "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"
+                        "  %negativeMask = ctjs.constant #ctjs.number<13970166044099084288> "
+                        "{storage_test_id = \"mask\"}\n  %a ="),
+                "[%one, %x, %zero, %zero]", "[%negativeMask, %x, %zero, %zero]"),
+        "%position = ctjs.binary_static bitor %i, %mask",
+        "%negative = ctjs.binary_static bitor %i, %mask\n"
+        "  %position = ctjs.binary add %negative, %sign");
+    run({.what = "signed OR mask bounds preserve disjoint lower reloads",
+         .body = signedReload,
+         .arrays = "a:[mask,zero,zero,zero]",
+         .reads = "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
+                  "a[0]=mask; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("signed XOR cannot borrow OR's disjoint reload proof",
+           replace(signedReload, "bitor", "bitxor"));
+    reject(
+        "signed masks retain the complete later-store census",
+        replace(signedReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
     const auto xorReload = replace(maskedReload, "%position = ctjs.binary_static bitand %i, %mask",
                                    "%part = ctjs.binary_static bitand %i, %one\n"
                                    "  %position = ctjs.binary_static bitxor %part, %mask");

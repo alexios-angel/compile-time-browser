@@ -57,6 +57,47 @@ void StructuredCases::reloads() {
         reject("structured OR/XOR require an invariant mask",
                replace(bitwise, "%i, %one", "%i, %i"));
     }
+    const auto signedBits = replace(masked, "  %a =",
+                                    "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                                    "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"
+                                    "  %negativeSign = ctjs.unary neg %sign\n"
+                                    "  %negativeOne = ctjs.unary neg %one\n"
+                                    "  %low = ctjs.constant #ctjs.number<13974669643726454784>\n"
+                                    "  %two = ctjs.binary add %one, %one\n"
+                                    "  %a =");
+    for (const auto & expression :
+         {"%high = ctjs.binary sub %maximum, %i\n"
+          "    %position = ctjs.binary_static bitxor %high, %maximum",
+          "%high = ctjs.binary add %sign, %i\n"
+          "    %position = ctjs.binary_static bitxor %high, %sign",
+          "%negative = ctjs.unary bitnot %i\n"
+          "    %position = ctjs.binary_static bitxor %negative, %negativeOne",
+          "%high = ctjs.binary add %low, %i\n"
+          "    %position = ctjs.binary_static bitxor %high, %two",
+          "%negative = ctjs.binary_static bitor %i, %negativeSign\n"
+          "    %position = ctjs.binary add %negative, %sign",
+          "%negative = ctjs.binary_static bitor %sign, %i\n"
+          "    %position = ctjs.binary add %negative, %sign",
+          "%high = ctjs.binary add %sign, %i\n"
+          "    %negative = ctjs.binary_static bitor %high, %zero\n"
+          "    %position = ctjs.binary add %negative, %sign"}) {
+        rows.push_back(
+            {.what = "structured signed OR/XOR enclosures preserve exact writes",
+             .body =
+                 replace(signedBits, "%position = ctjs.binary_static bitand %i, %one", expression),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"});
+    }
+    for (const auto & input : {"ctjs.binary sub %i, %one", "ctjs.binary add %maximum, %i",
+                               "ctjs.binary sub %negativeSign, %i"}) {
+        reject("structured OR/XOR retain conversion and sign-half guards through composition",
+               replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                       "%part = " + std::string(input) +
+                           "\n"
+                           "    %bits = ctjs.binary_static bitxor %part, %maximum\n"
+                           "    %position = ctjs.binary_static bitand %bits, %one"));
+    }
     const auto orReload = replace(replace(replace(masked, "[%x]", "[%one, %y, %zero, %zero]"),
                                           "  ctjs.append %y to %a\n", ""),
                                   "%position = ctjs.binary_static bitand %i, %one",
@@ -73,6 +114,26 @@ void StructuredCases::reloads() {
     reject(
         "later structured stores invalidate earlier OR mask reloads",
         replace(orReload, "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
+    const auto signedReload = replace(
+        replace(replace(orReload, "  %a =",
+                        "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"
+                        "  %negativeMask = ctjs.constant #ctjs.number<13970166044099084288> "
+                        "{storage_test_id = \"mask\"}\n  %a ="),
+                "[%one, %y, %zero, %zero]", "[%negativeMask, %y, %zero, %zero]"),
+        "%position = ctjs.binary_static bitor %i, %mask",
+        "%negative = ctjs.binary_static bitor %i, %mask\n"
+        "    %position = ctjs.binary add %negative, %sign");
+    rows.push_back({.what = "structured signed masks preserve lower disjoint reloads",
+                    .body = signedReload,
+                    .arrays = "a:[mask,zero,zero,zero]",
+                    .reads = "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
+                             "a[0]=mask; a[3]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured signed XOR cannot borrow OR's disjoint reload proof",
+           replace(signedReload, "bitor", "bitxor"));
+    reject("structured signed masks retain the complete later-store census",
+           replace(signedReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
     reloaded =
         replace(replace(replace(original, "[%x]", "[%one]"),
                         "    %step =", "    %unit = ctjs.get_property %base[%zero]\n    %step ="),

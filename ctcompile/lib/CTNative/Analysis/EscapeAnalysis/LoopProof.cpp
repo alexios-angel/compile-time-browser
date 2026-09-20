@@ -215,6 +215,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                    ? -1
                    : 0;
     };
+    const auto numberBits = [](const ContentsValue & endpoint) {
+        return endpoint.integerNumber
+                   ? static_cast<std::uint32_t>(*endpoint.integerNumber)
+                   : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
+    };
     const auto indexRange = [&](auto && self, mlir::Value operand,
                                 unsigned depth) -> std::optional<IndexRange> {
         if (!spend()) {
@@ -302,27 +307,44 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            const auto mask = boundedConvertedNumber(*offset);
-            if (!mask || *mask > 2147483647ULL) { return std::nullopt; }
-            std::size_t first = 0, last = *mask;
+            const auto positive = boundedConvertedNumber(*offset);
+            const auto negative = boundedConvertedNumber(*offset, true);
+            if ((!positive && !negative) || (bitAnd && (!positive || *positive > 2147483647ULL))) {
+                return std::nullopt;
+            }
+            const auto mask = positive ? static_cast<std::uint32_t>(*positive)
+                                       : 0U - static_cast<std::uint32_t>(*negative);
+            std::uint32_t first = 0, last = mask;
             if (!bitAnd) {
-                if (!range->first.integerNumber || !range->last.integerNumber ||
-                    *range->last.integerNumber > 2147483647ULL) {
+                if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
+                const auto lower = numberBits(range->first);
+                const auto upper = numberBits(range->last);
+                // All bits above the highest differing bit are fixed throughout
+                // this unsigned interval. Enclose the lower bits densely: endpoint
+                // OR/XOR results alone miss interior extrema.
+                const auto varying = static_cast<std::uint32_t>(
+                    std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
+                if (varying > 2147483647U) {
+                    // ponytail: one converted sign half; crossing zero or the
+                    // sign bit needs a union of ranges before composition.
                     return std::nullopt;
                 }
-                // OR/XOR need both inputs below the sign bit. Enclose every
-                // possible input bit; endpoint results alone miss interior extrema.
-                first = bitOr ? *mask : 0;
-                last |= static_cast<std::size_t>(
-                    std::bit_ceil(static_cast<std::uint64_t>(*range->last.integerNumber) + 1) - 1);
+                first = bitOr ? (lower & ~varying) | mask : (lower ^ mask) & ~varying;
+                last = first | varying;
             }
             // Clearing the sign bit bounds every ToInt32 input, including
             // conversions across a signed boundary for AND.
             // ponytail: a dense enclosure; sparse mask facts could admit more
             // disjoint reloads. Replay still records only the actual writes.
-            return IndexRange{{operand, ContentsKind::NonBigInt, first},
-                              {operand, ContentsKind::NonBigInt, last},
-                              1};
+            IndexRange result{
+                {operand, ContentsKind::NonBigInt}, {operand, ContentsKind::NonBigInt}, 1};
+            boundedNumberBitwise({operand, ContentsKind::NonBigInt, first},
+                                 {operand, ContentsKind::NonBigInt, 0}, ctjs::BinaryKind::BitOr,
+                                 result.first);
+            boundedNumberBitwise({operand, ContentsKind::NonBigInt, last},
+                                 {operand, ContentsKind::NonBigInt, 0}, ctjs::BinaryKind::BitOr,
+                                 result.last);
+            return result;
         }
         bool descending = subtract && offsetOperand == 0;
         if (shift) {
@@ -352,17 +374,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (leftShift) {
                 // Within one input and output conversion band, left shift
                 // stays affine. The i32 endpoints times at most 2^31 fit i64.
-                const auto converted = [](const ContentsValue & endpoint) {
-                    const auto bits =
-                        endpoint.integerNumber
-                            ? static_cast<std::uint32_t>(*endpoint.integerNumber)
-                            : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
-                    return static_cast<std::int32_t>(bits);
-                };
                 const auto scale = static_cast<std::int64_t>(factor);
                 const auto outputBand = [&](const ContentsValue & endpoint) {
                     const auto biased =
-                        static_cast<std::int64_t>(converted(endpoint)) * scale + 2147483648LL;
+                        static_cast<std::int64_t>(static_cast<std::int32_t>(numberBits(endpoint))) *
+                            scale +
+                        2147483648LL;
                     // Floor division also handles negative products below INT32_MIN.
                     return biased / 4294967296LL - (biased < 0 && biased % 4294967296LL != 0);
                 };
