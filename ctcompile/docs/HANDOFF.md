@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor helpers and uneven shift footprints, 2026-09-20 UTC
+
+**e88230b1** retains receiver-independent constructor helper computations for
+complete callable/source proofs before folding fixed own-field snapshots and
+clearing loops. Five new positives add **40 native executions**; partial receiver
+observations, unused ambient effects, replaced holders and variable fields refuse.
+**1f9b600f** proves uneven right-shift index footprints with a conservative dense
+range; exact replay preserves children at unwritten positions.
+
+Final focused class probe: **33 observations / 88 main native executions / 66
+unprepared and 40 preparation refusals**. Exact host **1/1**, arrays **1/1** and
+escape lit **3/3** pass. Right shift: **162 sites / 34 sound / 34 of 40 confined
+precision**, zero violations, partial, pending or unclaimed sites. All eight
+tested hashes match. Changed formatting passes; the required formatter retains
+20 diagnostics in six unchanged files. Full suites, whole class lit, DOM replay
+and broad matrices were skipped.
+
+**Next:** both original Bootstrap B and Data+B now refuse `class own-key snapshot
+constructor observes its receiver`. Source inspection identifies `_getConfig`
+before `e.set` registration. Prove the instance method's complete effects at the
+actual construction point, including what fields exist then; do not substitute
+its eventual shape. Variable field presence, shared Map/stored-receiver ownership
+and registration remain unproved. Preserve all `e.remove`/`P.off` disposal effects.
+Inherited DOM/getters, static construction, full Bootstrap and the application
+driver remain. No browser/runtime changes or push.
+
+[Exact changes, focused checks and boundary](handoff/2026-09-20-constructor-helpers.md).
+
 ## Own-key clearing loops and signed-shift bands, 2026-09-20 UTC
 
 **9f367dc5** proves original own-key for-of null clearing for fixed class
