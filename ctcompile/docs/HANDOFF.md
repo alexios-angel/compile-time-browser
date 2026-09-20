@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## String value carrier, 2026-09-20 UTC
+
+Continued clean **2bc6cc6d**. **8cc0cf6e** introduces owning
+`js_basic_string<char>` / `js_string`, exact const methods and String exceptions.
+**ac3cdaa2** carries String literals, concatenation, calls/captures and fields in
+that class; generated prefix calls use `.startsWith(...)`. Map/vector/nullable/
+JSON storage and public browser operations retain explicit raw text adapters.
+**98786531** updates owning C++ clients and restores pinned formatting.
+No source admission or browser/VM behavior changed.
+
+Measured focused checks: runtime CTest **1/1**, **17 distinct lit cases**, and
+**eight admitted ownership cases** passed across corrected runs. Six selected
+class cases passed **24 Node/interpreter observations, eight native executions
+and 118 refusals**. A dynamic nested Map control remains refused, with two source
+observations and six distinguishing mutations. All **43** code/test hashes match
+the devbox; scoped formatting/syntax passes. Global formatting retains 16
+pre-existing diagnostics. Full suites and wtfjs replay were skipped.
+[Exact changes, checks and intermediate failures](handoff/2026-09-20-native-string-carrier.md).
+
+**Next:** proved primitive String numeric conversion and mixed String/Number
+addition, beginning with runtime `baNaNa` and negative controls. General String
+length still uses bytes (ND-1); existing admitted DOM UTF-16/casing paths retain
+their separately recorded VM differences. Resolve that alignment separately.
+Raw Number alias retirement, collections/document views and the planned
+`Symbol.hasInstance` wrapper remain. Indexed Bootstrap `R.find` still needs the
+NodeList >1,000,000 undefined-slot boundary resolved, preserving the independent
+2^24 spread cap. Full Bootstrap and the application driver remain unfinished.
+
 ## Number value carrier and semantic edge-case plan, 2026-09-20 UTC
 
 Continued clean **5d084ecf**. **dbc82d9a** preserves typed Number values through

@@ -9,8 +9,11 @@ conditions and numbers. `js_basic_num<double>` now supplies the `js_num` class
 for Number literals, arithmetic, comparisons, calls, fields, captures, conversions
 and browser counts. Raw Map/vector/JSON storage uses explicit adapters.
 `js_nan_t` explicitly constructs Number NaN values and native binary64 NaN
-literals. String classes,
-Object/Array prototypes and document views remain planned. This is the user's
+literals. `js_basic_string<char>` now supplies `js_string` for String literals,
+concatenation, calls, fields, captures and exceptions, with explicit raw storage
+and browser adapters. Its first instance method is the already-proved ASCII-prefix
+`startsWith`. Broader primitive coercions, Object/Array prototypes and document
+views remain planned. This is the user's
 revised direction for the native C++ interface and supersedes conflicting
 raw-carrier prescriptions in master-plan part 24. Historical measurements retain
 their original scope.
@@ -224,8 +227,9 @@ flat names retained as constant reference aliases. Distinct absence tokens now
 construct the existing nullable scalar, and `js_boolean_t` carries Boolean
 values. `Number.hpp` supplies `js_basic_num<double>` and its `js_num` alias;
 proved Number values and signatures use this class throughout lowering.
-`js_nan_t` supplies explicit NaN construction. String and Object/Array intrinsic
-prototype classes are not implemented yet.
+`js_nan_t` supplies explicit NaN construction. `String.hpp` now supplies
+`js_basic_string<char>` and `js_string`. Object/Array intrinsic prototype classes
+are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
 behind Script and needs extraction before native use.
 
@@ -275,10 +279,26 @@ existing `auto`/template deduction.
    typed carrier. The global raw `js_num` alias remains for raw f64 printer/storage
    compatibility and existing clients; generated JS signatures use the qualified
    class name. Remove that alias only with its remaining raw clients/printer.
-   Next introduce `js_basic_string<char>` and `js_string` with their first
-   admitted String operation group. Update
-   literal creation, conversion, optional/union joins,
-   calls/returns, print helpers and deduced-type assertions with each batch.
+   `js_basic_string<char>` now supplies the owning `js_string` carrier. Explicit
+   construction preserves exact bytes, including embedded NULs and lone
+   surrogates; `.value()` extracts storage without an implicit conversion.
+   Same-type concatenation calls public Core `join_surrogates`; the old raw
+   helper forwards to that implementation. Literals, strict equality, truthiness,
+   calls/returns, captures, fields and exceptions use the class. The first
+   instance method, `startsWith`, retains its existing constant ASCII-prefix
+   source proof. Map/vector/nullable/Boolean-String-union/JSON storage remains
+   raw `std::string` with explicit adapters; callback parameters and results
+   cross that boundary too. Printing and deduced-type pins retain exact types.
+   General String length still counts stored bytes (ND-1), as does the current
+   VM. Existing admitted DOM `charAt(0)`, `slice(1)` and isolated-unit lowercase
+   keep their separate public Core UTF-16 operations and recorded VM differences.
+   The class has no general length/index/casing API yet. Do not normalize all
+   constructor bytes or silently broaden the ASCII-prefix admission.
+   Next implement proved primitive String numeric conversions and mixed
+   String/Number addition, with the runtime `baNaNa` witness and refusal controls.
+   Resolve general UTF-16 length/index/comparison/casing alignment as a separate
+   runtime/compiler change. Update literal creation, joins, calls/returns,
+   print helpers and deduced-type assertions with each admitted operation.
    Keep MLIR's semantic types and proof authority; C++ classes do not replace
    inference. Extract type-specific headers only as their implementation grows,
    retaining `ctnative.hpp` as the generated-code include.
