@@ -16,6 +16,18 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "static-call-arguments": (1022, 1022),
+    "static-call-capture": (16, 16),
+    "static-call-getter": (107, 107),
+    "static-call-unused": (7, 7),
+    "static-call-ambient": (7, 7),
+    "static-call-duplicate": (9, 9),
+    "static-call-accessor": (9, 8),
+    "static-call-replaced": (9, 9),
+    "static-call-detached": (7, 7),
+    "static-call-new-this": (7, 7),
+    "static-call-reserved": (7, 7),
+    "inherited-static-call": (7, 7),
     "nested-helper-constructor": (8, 8),
     "inherited-nested-helper-distinct": (80, 80),
     "nested-helper-method": (16, 16),
@@ -271,6 +283,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "static-call-arguments",
+    "static-call-capture",
+    "static-call-getter",
+    "static-call-unused",
     "nested-helper-constructor",
     "inherited-nested-helper-distinct",
     "nested-helper-method",

@@ -51,6 +51,8 @@ struct classInitialization {
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
     llvm::SmallVector<ctjs::FuncOp> getterOrder;
     llvm::SmallVector<ctjs::CreateClosureOp> getterClosures;
+    llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> staticMethodReads;
+    llvm::SmallVector<ctjs::CreateClosureOp> staticMethodClosures;
     llvm::MapVector<mlir::Value, mlir::Value> cells;
     llvm::DenseSet<mlir::Operation *> cellOperations;
     llvm::SmallVector<ctjs::CellGetOp> cellReads;

@@ -4,7 +4,7 @@
 from CTNative.Lowering.Objects.class_initialization_inputs import *
 
 
-def check_nested_helper_root(args, source, manifest):
+def check_nested_helper_root(args, source, manifest, name="nested-helper-root"):
     # Ordinary helpers retain their frames across direct-call conversion.
     # Root only the captured wrapper, leaving every constructor frame untouched.
     functions = re.compile(r"^  ctjs.func\b[^\n]*\n.*?^  }\n", re.M | re.S)
@@ -27,11 +27,11 @@ def check_nested_helper_root(args, source, manifest):
     )
     if count != 1:
         raise RuntimeError("nested root control lost its single helper frame exit")
-    path = args.work / "nested-helper-root.mlir"
+    path = args.work / f"{name}.mlir"
     path.write_text(text.replace(helper, rooted, 1))
     prepared = prepare(
         args,
-        "nested-helper-root",
+        name,
         path,
         dict(manifest, module_sha256=host.fingerprint(args.opt, path)),
         success=True,
@@ -229,7 +229,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class methods, static fields or repeated setup remain unsupported",
+            "bootstrap-base": "class receiver escapes or observes a prototype/descriptor",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -257,6 +257,10 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "static-call-capture":
+            cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
+            preparation_refusals += 4
+            prepared = check_nested_helper_root(args, structured, manifest, "static-method-root")
         if name == "nested-helper-constructor":
             prepared = check_nested_helper_root(args, structured, manifest)
         if name == "inherited-explicit":

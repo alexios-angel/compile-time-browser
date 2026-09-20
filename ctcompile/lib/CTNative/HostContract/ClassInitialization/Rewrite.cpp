@@ -113,6 +113,27 @@ void classInitialization::rewrite() {
         closure.removeEnclosingIndicesAttr();
     }
     expandHolders();
+    for (auto [read, function] : staticMethodReads) {
+        for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
+            auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+            if (!call) { continue; }
+            mlir::OpBuilder at(call);
+            auto absent = ctjs::ConstantOp::create(at, call.getLoc(),
+                                                   ctjs::UndefinedAttr::get(module.getContext()));
+            llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+            arguments.resize(
+                function.getBody().front().getNumArguments() - ctjs::implicit_arguments, absent);
+            // Getter/capture expansion removes the proved implicit uses.
+            // Keep the original body and frame rather than cloning its code.
+            auto direct =
+                ctjs::CallDirectOp::create(at, call.getLoc(), call.getType(),
+                                           mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()),
+                                           absent, absent, absent, arguments, nullptr, nullptr);
+            call.getResult().replaceAllUsesWith(direct.getResult());
+            call.erase();
+        }
+        eraseRooted(read);
+    }
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
     for (auto [read, target] : getterReads) { reads[target].push_back(read); }
     for (ctjs::FuncOp target : getterOrder) {
@@ -244,6 +265,15 @@ void classInitialization::rewrite() {
     }
     for (ctjs::CallOp call : calls) { call.erase(); }
     for (mlir::Operation * op : setup) { op->erase(); }
+    for (ctjs::CreateClosureOp closure : staticMethodClosures) {
+        auto function = target(closure);
+        mlir::SymbolTable::setSymbolVisibility(function, mlir::SymbolTable::Visibility::Private);
+        eraseRooted(closure);
+        if (mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
+            mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
+            function.erase();
+        }
+    }
     for (ctjs::CreateClosureOp closure : getterClosures) {
         for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
             root->erase(); // Only inert roots remain after descriptor removal.

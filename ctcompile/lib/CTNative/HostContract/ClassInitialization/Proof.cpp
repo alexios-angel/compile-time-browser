@@ -176,6 +176,40 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     if (walked.wasInterrupted() || !reason.empty()) { return false; }
     walked = module.walk([&](ctjs::CallDirectOp call) { return recordHelper(call); });
     if (walked.wasInterrupted() || !reason.empty()) { return false; }
+    if (domEntry && !domEntryHelpers.empty()) {
+        // A helper shared with an instance method must not grant an uncalled
+        // static body DOM authority. Check after all captures/calls are known,
+        // independent of which class or helper was encountered first.
+        llvm::SetVector<mlir::Operation *> pending;
+        for (ctjs::CreateClosureOp closure : staticMethodClosures) {
+            if (!step()) { return false; }
+            pending.insert(target(closure));
+        }
+        for (size_t i = 0; i < pending.size(); ++i) {
+            auto function = llvm::cast<ctjs::FuncOp>(pending[i]);
+            if (!step()) { return false; }
+            if (domEntryHelpers.contains(function)) {
+                return refuse("static method reaches a helper requiring DOM body proof");
+            }
+            auto scanned = function.walk([&](mlir::Operation * op) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (!helperCalls.contains(op)) { return mlir::WalkResult::advance(); }
+                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+                auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                auto callee = direct ? direct.getCalleeValue() : call.getCallee();
+                auto fn =
+                    direct ? direct.getTarget() : callableCaptures.lookup(callee.getDefiningOp());
+                if (!fn) { fn = target(sourceClosure(callee)); }
+                if (!fn) {
+                    refuse("static method helper lacks a closed target");
+                    return mlir::WalkResult::interrupt();
+                }
+                pending.insert(fn);
+                return mlir::WalkResult::advance();
+            });
+            if (scanned.wasInterrupted() || !reason.empty()) { return false; }
+        }
+    }
     for (auto [read, object] : holderCaptures) {
         (void)read;
         if (!step() || !localDOMHolders.contains(object.getDefiningOp())) {
@@ -577,6 +611,13 @@ bool classInitialization::normalizeMethods() {
             }
         }
         for (ctjs::GetPropertyOp & read : constructorReads) {
+            if (!step()) { return false; }
+            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
+                read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+            }
+        }
+        for (auto & [read, target] : staticMethodReads) {
+            (void)target;
             if (!step()) { return false; }
             if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
                 read = llvm::cast<ctjs::GetPropertyOp>(mapped);

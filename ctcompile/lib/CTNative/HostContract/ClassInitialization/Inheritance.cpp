@@ -513,6 +513,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     ctjs::SetPropertyOp attachment, home, backedge;
     llvm::SmallVector<ctjs::ConstructOp> instances;
     llvm::StringMap<ctjs::DefineAccessorOp> staticDefinitions;
+    llvm::StringMap<ctjs::SetPropertyOp> staticMethods;
+    llvm::SmallVector<ctjs::CallOp> staticInvocations;
     llvm::SmallVector<ctjs::GetPropertyOp> staticReads;
     llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
     // Prove original slots once, before super expansion mixes base and leaf
@@ -527,6 +529,15 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         if (op == call && use.getOperandNumber() == 2) { continue; }
         if (llvm::isa<ctjs::RootOp>(op)) { continue; }
         if (heritageUse(use, closure.getResult())) { continue; }
+        if (auto invocation = llvm::dyn_cast<ctjs::CallOp>(op)) {
+            auto read = invocation.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (use.getOperandNumber() == 1 && read &&
+                sourceValue(read.getObject()) == closure.getResult() &&
+                invocation->getBlock() == call->getBlock() && call->isBeforeInBlock(invocation)) {
+                staticInvocations.push_back(invocation); // Exact slot checked after collection.
+                continue;
+            }
+        }
         if (auto definition = llvm::dyn_cast<ctjs::DefineAccessorOp>(op)) {
             if (use.getOperandNumber() != 0 || definition->getBlock() != call->getBlock() ||
                 !definition->isBeforeInBlock(call) ||
@@ -573,6 +584,11 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             backedge = write;
         } else if (use.getOperandNumber() == 2 && key == "__home") {
             getterHomes.push_back(write); // Rechecked against exact getters below.
+        } else if (use.getOperandNumber() == 0 && ctjs::ordinaryKey(write.getKey())) {
+            if (key == "name" || key == "length" || key == "__home" || key == "caller" ||
+                key == "arguments" || !staticMethods.try_emplace(key, write).second) {
+                return refuse("static method shadows closure metadata or repeats a slot");
+            }
         } else {
             return refuse("class methods, static fields or repeated setup remain unsupported");
         }
@@ -630,14 +646,23 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     llvm::DenseSet<mlir::Operation *> methodHomes;
-    for (ctjs::SetPropertyOp definition : definitions) {
+    llvm::SmallVector<ctjs::SetPropertyOp> allMethods(definitions);
+    for (const auto & [key, definition] : staticMethods) {
+        if (!step()) { return false; }
+        if (staticDefinitions.contains(key)) {
+            return refuse("static method conflicts with an accessor");
+        }
+        allMethods.push_back(definition);
+    }
+    for (ctjs::SetPropertyOp definition : allMethods) {
+        const bool isStatic = definition.getObject() == closure.getResult();
         auto method = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(method);
         if (!step() || !fn || method->getBlock() != call->getBlock() ||
             !method->isBeforeInBlock(definition) || !undefined(method.getEnclosingThis())) {
             return refuse("class method needs a local ordinary closure");
         }
-        if (!methodCaptures(method, closure, staticReads, domEntry)) { return false; }
+        if (!methodCaptures(method, closure, staticReads, domEntry && !isStatic)) { return false; }
         ctjs::SetPropertyOp methodHome;
         for (mlir::OpOperand & use : method.getResult().getUses()) {
             if (!step()) { return false; }
@@ -647,20 +672,42 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
             if (methodHome || !write || use.getOperandNumber() != 0 ||
                 ctjs::constantKey(write.getKey()) != "__home" ||
-                write.getValue() != prototype.getResult() ||
-                write->getBlock() != call->getBlock() || !write->isBeforeInBlock(call)) {
+                write.getValue() != (isStatic ? closure.getResult() : prototype.getResult()) ||
+                write->getBlock() != call->getBlock() || !method->isBeforeInBlock(write) ||
+                !write->isBeforeInBlock(call)) {
                 return refuse("class method identity or lexical home escapes initialization");
             }
             methodHome = write;
         }
         auto & block = fn.getBody().front();
-        if (domEntry && !proveCells(fn)) { return false; }
+        if (domEntry && !isStatic && !proveCells(fn)) { return false; }
         if (!methodHome || !block.getArgument(ctjs::arg_new_target).use_empty() ||
-            !normalizeSuperMethods(fn, baseDefinitions) ||
-            !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
+            (!isStatic &&
+             (!normalizeSuperMethods(fn, baseDefinitions) ||
+              !fieldsOnly(block.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)))) {
             return refuse("class method observes its identity, home or an unproved receiver");
         }
-        methods.insert(fn);
+        if (isStatic) {
+            // ponytail: own getter reads only; inherited receivers, static
+            // dispatch and new this need separate constructor-identity proofs.
+            for (mlir::OpOperand & use : block.getArgument(ctjs::arg_receiver).getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+                if (use.getOperandNumber() != 0 || !read ||
+                    !staticDefinitions.contains(ctjs::constantKey(read.getKey()))) {
+                    return refuse("static method receiver requires an exact own getter read");
+                }
+                staticReads.push_back(read);
+            }
+            // Static bodies retain the strict complete helper census, even
+            // for DOM entries. Instance method probes grant them no authority.
+            helpers.insert(fn);
+            staticMethodClosures.push_back(method);
+            setup.insert(definition);
+        } else {
+            methods.insert(fn);
+        }
         methodHomes.insert(methodHome);
         setup.insert(methodHome);
     }
@@ -722,7 +769,43 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
         return refuse("class constructor observes new.target, lexical home or receiver identity");
     }
-    if (!staticGetters(staticDefinitions, staticReads, call)) { return false; }
+    llvm::SmallVector<ctjs::GetPropertyOp> getterOnlyReads;
+    for (ctjs::GetPropertyOp read : staticReads) {
+        if (!step()) { return false; }
+        auto definition = staticMethods.lookup(ctjs::constantKey(read.getKey()));
+        if (!definition) {
+            getterOnlyReads.push_back(read);
+            continue;
+        }
+        if (sourceValue(read.getObject()) != closure.getResult()) {
+            return refuse("static method read requires its exact local constructor");
+        }
+        auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
+        for (mlir::OpOperand & use : read.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto invocation = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            if (!invocation || use.getOperandNumber() != 0 ||
+                sourceValue(invocation.getReceiver()) != closure.getResult() ||
+                invocation->getBlock() != call->getBlock() || !call->isBeforeInBlock(invocation) ||
+                invocation.getArgs().size() + ctjs::implicit_arguments >
+                    fn.getBody().front().getNumArguments()) {
+                return refuse("static method escapes its exact local call");
+            }
+            for (auto i = invocation.getArgs().size() + ctjs::implicit_arguments;
+                 i < fn.getBody().front().getNumArguments(); ++i) {
+                if (!step()) { return false; }
+            }
+            helperCalls.insert(invocation);
+        }
+        staticMethodReads.emplace_back(read, fn);
+    }
+    for (ctjs::CallOp invocation : staticInvocations) {
+        if (!step() || !helperCalls.contains(invocation)) {
+            return refuse("constructor receiver call lacks an exact own static method");
+        }
+    }
+    if (!staticGetters(staticDefinitions, getterOnlyReads, call)) { return false; }
     for (ctjs::SetPropertyOp write : getterHomes) {
         if (!step()) { return false; }
         if (!setup.contains(write)) {
