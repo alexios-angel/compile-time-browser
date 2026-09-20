@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional field branches and right-shift indices, 2026-09-20 UTC
+
+**e38407aa** preserves conditional constructor branches after super and
+proves own-field snapshots when every branch leaves the same ordered fields.
+Original source branches and nested inherited helper captures remain checked;
+seven new positives and one preserved promotion add **64 native executions**.
+**4a5ef7b2** independently proves bounded right-shift indices with exact conversion
+and reload guards.
+
+Focused arrays **1/1**, escape lit **3/3**, host **1/1** and DOM lit **1/1**
+passed. Class probes passed **36 observations / 104 main executions**,
+including the 64 new executions. Whole class-lit attempts exposed stale refusal
+expectations; the final OWN_FIELDS group and promoted constructor were checked
+directly after correction. **No full class-lit pass is claimed this session.**
+DOM remains **632 observations / eight executions / 4,922 refusals**. Right shift:
+**63 sites / ten sound / 10 of 15 confined precision**, zero violations, partial,
+pending or unclaimed sites. Twelve tested hashes match. Changed formatting passes;
+the required formatter retains 20 diagnostics in six unchanged files. Exact
+failures and corrected focused checks are recorded below. Full suites and broad
+matrices were skipped; no browser/runtime changes or push.
+
+**Next measured boundary:** unchanged Bootstrap W/B now refuses
+`super initialization contains an unproved call`; source inspection identifies
+B's `e.set` registration. Prove authentic Data/config/receiver-getter effects,
+variable per-instance fields and the original own-key for-of clearing loop,
+retaining dispose's `e.remove`/`P.off`. Static construction, inherited DOM,
+H/config/selectors/events/Popper, broader ownership and the driver remain.
+
+[Exact changes, focused validation and next boundary](handoff/2026-09-20-conditional-fields.md).
+
 ## Inherited own-field snapshots and complement bands, 2026-09-20 UTC
 
 **117783b6** proves fixed inherited own-field snapshots. Shared inherited methods
