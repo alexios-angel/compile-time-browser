@@ -68,7 +68,10 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
     }
     for (auto & use : original.getArgument(ctjs::arg_callee).getUses()) {
         if (!step()) { return false; }
-        if (use.getOperandNumber() != 0 || !callableCaptures.contains(use.getOwner())) {
+        auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+        if (use.getOperandNumber() != 0 ||
+            (!callableCaptures.contains(use.getOwner()) &&
+             (!read || !holderCaptures.contains(read.getResult())))) {
             return refuse("derived class requires receiver-preserving super normalization");
         }
     }
@@ -135,6 +138,7 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
     auto absent = ctjs::ConstantOp::create(at, function.getLoc(),
                                            ctjs::UndefinedAttr::get(module.getContext()));
     llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, ctjs::FuncOp>> copiedCaptures;
+    llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, mlir::Value>> copiedHolders;
     llvm::SmallVector<mlir::Operation *> copiedHelperCalls;
     const auto clone = [&](mlir::Operation & op, mlir::IRMapping & values) {
         const auto counted = op.walk([&](mlir::Operation * source) {
@@ -149,11 +153,16 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
         if (counted.wasInterrupted()) { return false; }
         at.clone(op, values);
         // A base's slot number belongs to its original closure, never the
-        // leaf's environment. Carry the proved callable identity with each copy.
+        // leaf's environment. Carry the proved helper/holder identity with each copy.
         op.walk([&](mlir::Operation * source) {
             auto * copied = values.lookupOrNull(source);
             if (auto helper = callableCaptures.lookup(source)) {
                 copiedCaptures.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), helper);
+            }
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(source)) {
+                if (auto object = holderCaptures.lookup(read.getResult())) {
+                    copiedHolders.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), object);
+                }
             }
             if (helperCalls.contains(source)) { copiedHelperCalls.push_back(copied); }
         });
@@ -456,6 +465,7 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
         if (!step()) { return false; }
         if (read->getParentOfType<ctjs::FuncOp>() != function) { return false; }
         callableCaptures.erase(read);
+        holderCaptures.erase(read.getResult());
         return true;
     });
     auto removed = function.walk([&](mlir::Operation * op) {
@@ -468,6 +478,11 @@ bool classInitialization::normalizeSuper(ctjs::FuncOp function, ctjs::FuncOp bas
         if (!step()) { return false; }
         captureReads.push_back(read);
         callableCaptures[read] = helper;
+    }
+    for (auto [read, object] : copiedHolders) {
+        if (!step()) { return false; }
+        captureReads.push_back(read);
+        holderCaptures[read.getResult()] = object;
     }
     helperCalls.insert(copiedHelperCalls.begin(), copiedHelperCalls.end());
     function.getBody().takeBody(copy->getBody());
@@ -579,7 +594,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
     // Prove original slots once, before super expansion mixes base and leaf
     // operations. The copied reads retain these exact helper identities.
-    if (!closure.getUpvalues().empty() && !methodCaptures(closure, {}, staticReads, domEntry)) {
+    if (!closure.getUpvalues().empty() &&
+        !methodCaptures(closure, closure, staticReads, domEntry)) {
         return false;
     }
     for (mlir::OpOperand * sourceUse : sourceUses(closure.getResult())) {

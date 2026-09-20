@@ -129,8 +129,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         if (!direct && !method) { return mlir::WalkResult::advance(); }
         if (!step()) { return mlir::WalkResult::interrupt(); }
         auto callee = direct ? direct.getCalleeValue() : method.getCallee();
-        auto closure =
-            sourceClosure(callee, domEntry && op->getParentOfType<ctjs::FuncOp>() == entry);
+        auto closure = sourceClosure(
+            callee, domEntry && op->getParentOfType<ctjs::FuncOp>() == entry, domEntry);
         auto fn = target(closure);
         if (!fn || constructors.contains(fn) || methods.contains(fn) || getters.contains(fn)) {
             return mlir::WalkResult::advance();
@@ -212,7 +212,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     }
     for (auto [read, object] : holderCaptures) {
         (void)read;
-        if (!step() || !localDOMHolders.contains(object.getDefiningOp())) {
+        if (!step() || !localHolders.contains(object.getDefiningOp())) {
             return refuse("captured holder lacks a complete local callable proof");
         }
     }
@@ -675,7 +675,7 @@ bool classInitialization::normalizeMethods() {
                 }
             }
         }
-        for (auto & [object, holder] : localDOMHolders) {
+        for (auto & [object, holder] : localHolders) {
             (void)object;
             for (auto & [read, closure] : holder.reads) {
                 (void)closure;

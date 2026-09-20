@@ -417,7 +417,11 @@ def main():
                 preparation_refusals += 1
         if name in PREPARED_ONLY | GLOBAL_HOLDERS:
             before, after = structured.read_text(), prepared.read_text()
-            if name in ("override-different-leaves", "inherited-helper-order"):
+            if name in (
+                "override-different-leaves",
+                "inherited-helper-order",
+                "captured-holder-unused",
+            ):
                 operations = ()
             elif name in GLOBAL_HOLDERS:
                 operations = ()
@@ -485,6 +489,8 @@ def main():
             "own-fields-order",
             "nested-helper-chain",
             "captured-helper-constructor",
+            "captured-holder-sibling",
+            "captured-holder-unused-capture",
             "empty",
             "method",
             "method-chain-order",
@@ -509,6 +515,8 @@ def main():
         if name in (
             "inherited-post-super-holder-chain",
             "inherited-post-super-holder-order",
+            "inherited-captured-holder-shared",
+            "inherited-captured-holder-order",
             "inherited-own-fields-shared",
             "inherited-own-fields-branch-arguments",
             "inherited-branch-helper",
@@ -564,6 +572,10 @@ def main():
                         not in native_text
                     ):
                         raise RuntimeError("helper mutation lost its argument ownership refusal")
+                    if name == "captured-holder-unused" and (
+                        "a method field: nothing calls it" not in native_text
+                    ):
+                        raise RuntimeError("unused holder method lost its invocation refusal")
                     if len(re.findall(r"^\s*ctjs.throw ", native_text, re.M)) != len(
                         re.findall(r"^\s*ctjs.throw ", prepared.read_text(), re.M)
                     ):

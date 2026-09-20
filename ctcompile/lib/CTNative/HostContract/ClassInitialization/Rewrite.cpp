@@ -12,7 +12,7 @@ void classInitialization::eraseRooted(mlir::Operation * operation) {
     operation->erase();
 }
 
-void classInitialization::expandHolders() {
+llvm::SmallVector<ctjs::FuncOp> classInitialization::expandHolders() {
     // Every alias and implicit-argument use was checked before mutation.
     // Local DOM slots remain as functions until the complete invocation/type
     // proof; no unused body may disappear merely because its holder does.
@@ -58,16 +58,8 @@ void classInitialization::expandHolders() {
         }
     };
     for (auto & [publication, holder] : globalHolders) { expand(publication, holder); }
-    for (auto & [object, holder] : localDOMHolders) { expand(object, holder); }
-    // Only strict source-census slots may disappear here. DOM slots still
-    // need original calls, including complete argument and effect proof.
-    for (ctjs::FuncOp function : targets) {
-        if (!domEntryHelpers.contains(function) &&
-            mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
-            mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
-            function.erase();
-        }
-    }
+    for (auto & [object, holder] : localHolders) { expand(object, holder); }
+    return targets;
 }
 
 void classInitialization::rewrite() {
@@ -112,7 +104,7 @@ void classInitialization::rewrite() {
         closure.getUpvaluesMutable().clear();
         closure.removeEnclosingIndicesAttr();
     }
-    expandHolders();
+    const auto holderTargets = expandHolders();
     for (auto [read, function] : staticMethodReads) {
         for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
             auto call = llvm::dyn_cast<ctjs::CallOp>(user);
@@ -221,7 +213,7 @@ void classInitialization::rewrite() {
     }
     // Captured holders remain alive until all proved cell/capture transport
     // is gone. Slot calls and closures were removed by expandHolders.
-    for (auto & [object, holder] : localDOMHolders) {
+    for (auto & [object, holder] : localHolders) {
         (void)holder;
         eraseRooted(object);
     }
@@ -262,6 +254,15 @@ void classInitialization::rewrite() {
             root->erase();
         }
         closure.erase();
+    }
+    // Captured reads have now been rewritten, including in unused slots.
+    // DOM slots still need the complete typed invocation/effect proof.
+    for (ctjs::FuncOp function : holderTargets) {
+        if (!domEntryHelpers.contains(function) &&
+            mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
+            mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion())) {
+            function.erase();
+        }
     }
     for (ctjs::CallOp call : calls) { call.erase(); }
     for (mlir::Operation * op : setup) { op->erase(); }

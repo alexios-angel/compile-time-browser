@@ -205,8 +205,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         }
         auto value = sourceValue(cells.lookup(capture));
         if (value == constructorValue) { continue; }
-        if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>();
-            domEntry && constructor && object) {
+        if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>(); constructor && object) {
             if (object->getBlock() != method->getBlock() || !object->isBeforeInBlock(method)) {
                 return refuse("captured holder lacks ordered local initialization");
             }
@@ -219,7 +218,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
                     return refuse("captured holder slot changes after capture");
                 }
             }
-            needsDOMMethodProof = true;
+            needsDOMMethodProof |= domEntry;
             continue;
         }
         auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
@@ -306,22 +305,23 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
     return true;
 }
 
-ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool domEntry) {
+ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool entryAliases,
+                                                         bool domEntry) {
     if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
     if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
         if (auto closure = holderReads.lookup(value)) { return closure; }
-        const bool localAliases = domEntry || holderCaptures.count(read.getObject());
+        const bool localAliases = entryAliases || holderCaptures.count(read.getObject());
         auto object = (localAliases ? sourceValue(read.getObject()) : read.getObject())
                           .getDefiningOp<ctjs::CreateObjectOp>();
         auto load = read.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
         auto publication = load ? globals.lookup(load.getName()) : ctjs::StoreGlobalOp{};
         if (!object && !publication) { return {}; }
-        const bool domLocal = object && localAliases;
-        auto proof = domLocal ? analyzeLocalCallableObject(
-                                    object, [&] { return step(); },
-                                    [&](mlir::Value value) { return sourceUses(value); })
-                     : object ? analyzeLocalCallableObject(object, [&] { return step(); })
-                              : analyzeGlobalCallableObject(publication, [&] { return step(); });
+        const bool localHolder = object && localAliases;
+        auto proof = localHolder ? analyzeLocalCallableObject(
+                                       object, [&] { return step(); },
+                                       [&](mlir::Value value) { return sourceUses(value); })
+                     : object    ? analyzeLocalCallableObject(object, [&] { return step(); })
+                                 : analyzeGlobalCallableObject(publication, [&] { return step(); });
         if (!proof) {
             llvm::consumeError(proof.takeError());
             return {};
@@ -332,14 +332,14 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
             auto fn = target(closure);
             if (!fn) { return {}; }
             auto & block = fn.getBody().front();
-            if (domLocal) {
+            if (localHolder) {
                 if (closure.getUpvalues().empty()) {
                     if (fn.getUpvalueCount() != 0 || !helperCallbacks(fn)) { return {}; }
                 } else {
                     // Reuse the exact sibling-function proof. A holder has
                     // no constructor identity or authority for object captures.
                     llvm::SmallVector<ctjs::GetPropertyOp> unusedReads;
-                    if (!methodCaptures(closure, {}, unusedReads, true)) { return {}; }
+                    if (!methodCaptures(closure, {}, unusedReads, domEntry)) { return {}; }
                 }
                 if (!unusedReceiver(fn) || !block.getArgument(ctjs::arg_new_target).use_empty()) {
                     return {};
@@ -376,7 +376,7 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
                     call.getReceiver() != loaded.getObject()) {
                     return {};
                 }
-                if (publication || domLocal) {
+                if (publication || localHolder) {
                     const auto parameters = target(closure).getBody().front().getNumArguments() -
                                             ctjs::implicit_arguments;
                     if (call.getArgs().size() > parameters) { return {}; }
@@ -387,13 +387,13 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
             }
             if (loaded == read) { selected = closure; }
         }
-        // Identity and receiver proof only. Local DOM slots remain intact
-        // for the invocation/type census; other holders keep the source
-        // effect census below, including every unused slot.
+        // Identity and receiver proof only. DOM slots retain the typed body
+        // proof; ordinary holders keep the strict source effect census,
+        // including every unused slot.
         for (ctjs::SetPropertyOp store : proof->stores) {
             auto fn = target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             helpers.insert(fn);
-            if (domLocal) {
+            if (localHolder && domEntry) {
                 // Keep every original local slot for DOM helper expansion.
                 // That proof refuses a slot without a source invocation;
                 // only actual calls can supply its argument authority.
@@ -401,7 +401,7 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
                 needsDOMMethodProof = true;
             }
         }
-        if (publication || domLocal) {
+        if (publication || localHolder) {
             for (auto [loaded, closure] : proof->reads) {
                 holderReads[loaded.getResult()] = closure;
             }
@@ -409,8 +409,8 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
         if (publication) {
             for (ctjs::LoadGlobalOp loaded : proof->loads) { globalHolderLoads.insert(loaded); }
             globalHolders.try_emplace(publication, std::move(*proof));
-        } else if (domLocal) {
-            localDOMHolders.try_emplace(object, std::move(*proof));
+        } else if (localHolder) {
+            localHolders.try_emplace(object, std::move(*proof));
         }
         return selected;
     }

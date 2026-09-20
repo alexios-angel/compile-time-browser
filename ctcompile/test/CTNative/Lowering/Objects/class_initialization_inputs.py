@@ -16,6 +16,23 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "captured-holder-method": (8, 8),
+    "captured-holder-sibling": (16, 16),
+    "inherited-captured-holder-shared": (380, 380),
+    "inherited-captured-holder-order": (23135646, 23135646),
+    "inherited-captured-holder-distinct": (380, 380),
+    "inherited-captured-holder-chain": (3083, 3083),
+    "captured-holder-shared": (308, 308),
+    "captured-holder-unused": (8, 8),
+    "captured-holder-unused-capture": (8, 8),
+    "captured-holder-replaced": (9, 9),
+    "captured-holder-mutable-cell": (9, 9),
+    "captured-holder-late-alias": (9, 9),
+    "captured-holder-receiver": (8, 8),
+    "captured-holder-unused-ambient": (8, 8),
+    "captured-holder-receiver-escape": (8, 8),
+    "captured-holder-surplus": (8, 8),
+    "captured-holder-map": (8, 8),
     "inherited-post-super-holder": (8, 8),
     "inherited-post-super-holder-shared": (380, 380),
     "inherited-post-super-holder-chain": (3083, 3083),
@@ -327,6 +344,14 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "captured-holder-method",
+    "captured-holder-sibling",
+    "inherited-captured-holder-shared",
+    "inherited-captured-holder-order",
+    "inherited-captured-holder-distinct",
+    "inherited-captured-holder-chain",
+    "captured-holder-shared",
+    "captured-holder-unused-capture",
     "inherited-post-super-holder",
     "inherited-post-super-holder-shared",
     "inherited-post-super-holder-chain",
@@ -434,6 +459,7 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "captured-holder-unused",
     "inherited-helper-order",
     "override-different-leaves",
     "bootstrap-r",

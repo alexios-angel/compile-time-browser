@@ -28,7 +28,7 @@ struct classInitialization {
     llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> holderReads;
     llvm::DenseSet<mlir::Operation *> globalHolderLoads;
     llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
-    llvm::MapVector<mlir::Operation *, CallableObject> localDOMHolders;
+    llvm::MapVector<mlir::Operation *, CallableObject> localHolders;
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::DenseMap<mlir::Value, ctjs::CallOp> heritage;
     llvm::DenseSet<mlir::Value> baseClasses;
@@ -81,7 +81,8 @@ struct classInitialization {
     bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
                         llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads, bool domEntry,
                         unsigned depth = 0);
-    ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool domEntry = false);
+    ctjs::CreateClosureOp sourceClosure(mlir::Value value, bool entryAliases = false,
+                                        bool domEntry = false);
     bool unusedReceiver(ctjs::FuncOp fn);
     bool ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                            llvm::ArrayRef<ctjs::ConstructOp> instances,
@@ -114,7 +115,7 @@ struct classInitialization {
     bool normalizeMethods();
 
     static void eraseRooted(mlir::Operation * operation);
-    void expandHolders();
+    llvm::SmallVector<ctjs::FuncOp> expandHolders();
 
     void rewrite();
 };
