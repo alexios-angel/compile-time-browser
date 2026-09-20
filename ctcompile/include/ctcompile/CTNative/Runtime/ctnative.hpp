@@ -223,7 +223,7 @@ inline void print_string(const char * name, const std::string & value) {
     for (const char raw : value) {
         const auto c = static_cast<unsigned char>(raw);
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '.' || c == '_' || c == '~') {
+            std::string_view("-._~").contains(raw)) {
             std::putchar(c);
         } else {
             std::putchar('%');
