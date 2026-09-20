@@ -463,9 +463,15 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     }
     auto closure = call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
     auto function = target(closure);
-    if (!function || !undefined(closure.getEnclosingThis()) || !closure.getUpvalues().empty() ||
+    if (!function || !undefined(closure.getEnclosingThis()) ||
         closure->getBlock() != call->getBlock() || !closure->isBeforeInBlock(call)) {
         return refuse("class constructor lacks a local ordinary closure identity");
+    }
+    // ponytail: super expansion replaces bodies and copies base operations;
+    // captured constructors need their capture records remapped before widening.
+    if (!closure.getUpvalues().empty() &&
+        (heritage.count(closure.getResult()) || baseClasses.contains(closure.getResult()))) {
+        return refuse("inherited constructor captures require receiver-preserving normalization");
     }
     ctjs::SetPropertyOp attachment, home, backedge;
     llvm::SmallVector<ctjs::ConstructOp> instances;
@@ -669,8 +675,11 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     auto & entry = function.getBody().front();
+    if (!closure.getUpvalues().empty() && !methodCaptures(closure, {}, staticReads, domEntry)) {
+        return false;
+    }
     if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
-        !entry.getArgument(ctjs::arg_callee).use_empty() ||
+        (closure.getUpvalues().empty() && !entry.getArgument(ctjs::arg_callee).use_empty()) ||
         !fieldsOnly(entry.getArgument(ctjs::arg_receiver), methodKeys, staticReads, true)) {
         return refuse("class constructor observes new.target, lexical home or receiver identity");
     }

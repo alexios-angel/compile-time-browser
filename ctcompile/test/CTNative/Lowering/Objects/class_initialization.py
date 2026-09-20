@@ -153,6 +153,14 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "captured-helper-replaced": "class local cell has changing writes",
+            "inherited-helper-ambient": "unknown call, binding or reflective effect",
+            "captured-helper-identity": "captured helper escapes its ordinary local call",
+            "captured-helper-receiver": "captured helper observes its implicit receiver or new.target",
+            "captured-helper-excess": "captured helper escapes its ordinary local call",
+            "captured-helper-nested": "class method capture is not its constructor or an inert sibling helper",
+            "inherited-helper-constructor": "inherited constructor captures require receiver-preserving normalization",
+            "inherited-super-helper": "super method requires a proved capture-free linear base target",
             "inherited": "derived class requires receiver-preserving super normalization",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
             "override-ambient": "unknown call, binding or reflective effect",
@@ -165,7 +173,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class method capture is not its constructor or an inert sibling helper",
+            "bootstrap-base": "inherited constructor captures require receiver-preserving normalization",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -304,6 +312,7 @@ def main():
                 prepare(args, label, structured, control, success=False, options=options)
                 preparation_refusals += 1
         if name in (
+            "captured-helper-constructor",
             "empty",
             "method",
             "method-chain-order",

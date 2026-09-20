@@ -218,8 +218,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         }
         auto closure = value.getDefiningOp<ctjs::CreateClosureOp>();
         auto helper = target(closure);
-        if (!domEntry || !helper || !closure.getUpvalues().empty() ||
-            helper.getUpvalueCount() != 0 || !undefined(closure.getEnclosingThis()) ||
+        if (!helper || !closure.getUpvalues().empty() || helper.getUpvalueCount() != 0 ||
             closure->getBlock() != method->getBlock() || !closure->isBeforeInBlock(method)) {
             return refuse("class method capture is not its constructor or an inert sibling helper");
         }
@@ -229,9 +228,13 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
             return refuse("captured helper observes its implicit receiver or new.target");
         }
         helpers.insert(helper);
-        domEntryHelpers.insert(helper);
         capturedHelpers.insert(closure);
-        needsDOMMethodProof = true;
+        // Closed-source helpers retain the complete strict effect census.
+        // Only the DOM provider can defer their bodies to its typed proof.
+        if (domEntry) {
+            domEntryHelpers.insert(helper);
+            needsDOMMethodProof = true;
+        }
     }
     for (mlir::OpOperand & use : fn.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
         if (!step()) { return false; }
