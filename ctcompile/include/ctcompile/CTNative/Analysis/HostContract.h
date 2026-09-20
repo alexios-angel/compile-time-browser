@@ -71,7 +71,10 @@ struct HostContract {
     // Object.keys, JSON.parse, Array.prototype.filter, String.prototype.startsWith
     // and the default Array constructor/species chain. Array also promises
     // original Array iteration, including its Symbol.iterator/values method
-    // and iterator-prototype chain, with no custom next or return hooks. DOM
+    // and iterator-prototype chain, with no custom next or return hooks. Element
+    // promises its original own prototype and querySelector/querySelectorAll
+    // methods. Function additionally promises those methods' original prototype
+    // chains and Function.prototype.call, without own call shadows or accessors. DOM
     // iteration additionally requires the original __ctbrowser_for_of_open,
     // __ctbrowser_iter_next and __ctbrowser_iter_close source-helper bindings. Source
     // replacement/escape and external script reentry still refuse the complete live proof.
@@ -136,6 +139,8 @@ struct HostDOMCall {
     // Browser receiver, or the original scalar input for number/numberToString.
     mlir::Value element;
     ctjs::FuncOp callback{};
+    // Function.prototype.call supplies the browser receiver as argument zero.
+    bool explicitReceiver = false;
     [[nodiscard]] bool returnsElement() const {
         return kind == HostDOMMethod::closest || kind == HostDOMMethod::querySelector;
     }
@@ -205,6 +210,7 @@ public:
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
     [[nodiscard]] bool isDataset(mlir::Value value) const;
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
+    [[nodiscard]] bool isElementPrototype(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isElementVectorLength(ctjs::GetPropertyOp read) const;
@@ -253,6 +259,8 @@ private:
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;
     llvm::DenseSet<ctjs::GetPropertyOp> elementVectorLengths, elementVectorIndices;
+    llvm::DenseSet<ctjs::GetPropertyOp> elementPrototypes;
+    llvm::DenseSet<ctjs::LoadGlobalOp> elementIntrinsics;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> datasetValues;
     std::vector<ctjs::CallOp> stringPrefixRegExps;
     std::vector<mlir::BlockArgument> datasetElements;

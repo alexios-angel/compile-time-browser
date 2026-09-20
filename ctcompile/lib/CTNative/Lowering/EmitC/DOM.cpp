@@ -58,8 +58,8 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (auto element = entry.datasetValueElement(read)) {
                 domDatasetValues.try_emplace(read, element);
             }
-            if (entry.method(read) || entry.isTokenList(read.getResult()) ||
-                entry.isDataset(read.getResult())) {
+            if (entry.method(read) || entry.isElementPrototype(read) ||
+                entry.isTokenList(read.getResult()) || entry.isDataset(read.getResult())) {
                 domReads.insert(read);
             }
         });
@@ -493,7 +493,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     } else {
         // Earlier selector replacements update operands and erase the original
         // producer. Read the live receiver instead of its cached source value.
-        mlir::Value element = call.getReceiver();
+        mlir::Value element = edge.explicitReceiver ? call.getArgs().front() : call.getReceiver();
         if (edge.kind == HostDOMMethod::toggleClass || edge.kind == HostDOMMethod::containsClass ||
             edge.kind == HostDOMMethod::addClass || edge.kind == HostDOMMethod::removeClass) {
             element = element.getDefiningOp<ctjs::GetPropertyOp>().getObject();
@@ -503,7 +503,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         arguments.push_back(element);
         if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(element)); }
         if (edge.kind != HostDOMMethod::datasetKeys) {
-            llvm::append_range(arguments, call.getArgs());
+            llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
     }
     llvm::StringRef callee;

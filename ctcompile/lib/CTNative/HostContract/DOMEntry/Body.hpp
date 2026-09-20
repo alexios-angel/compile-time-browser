@@ -25,6 +25,10 @@ enum class Kind {
     nullableElement,
     tokenList,
     dataset,
+    elementIntrinsic,
+    elementPrototype,
+    prototypeSelector,
+    selectorCall,
     objectIntrinsic,
     objectKeys,
     stringVector,
@@ -93,6 +97,8 @@ struct Body {
     const bool & suppliedArray;
     const bool & suppliedString;
     const bool & suppliedRegExp;
+    const bool & suppliedElement;
+    const bool & suppliedFunction;
     bool & provedUndefinedReturn;
     llvm::DenseMap<mlir::Value, Kind> & values;
     llvm::DenseSet<mlir::Value> & increasingIndices;
@@ -116,6 +122,8 @@ struct Body {
     std::vector<ctjs::GetPropertyOp> & provedStringVectorIndices;
     llvm::DenseSet<ctjs::GetPropertyOp> & provedElementVectorLengths;
     llvm::DenseSet<ctjs::GetPropertyOp> & provedElementVectorIndices;
+    llvm::DenseSet<ctjs::GetPropertyOp> & provedElementPrototypes;
+    llvm::DenseSet<ctjs::LoadGlobalOp> & provedElementIntrinsics;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> & provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> & provedNumberIntrinsics;
     std::vector<ctjs::LoadGlobalOp> & provedURIIntrinsics;

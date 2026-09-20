@@ -51,14 +51,15 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 11 ||
+        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 13 ||
         llvm::any_of(
             contract.initialIntrinsics,
             [&](const auto & name) {
                 return (name != "Object" && name != "Number" && name != "decodeURIComponent" &&
                         name != "JSON" && name != "Array" && name != "String" && name != "RegExp" &&
-                        name != "__ctbrowser_regexp" && name != "__ctbrowser_for_of_open" &&
-                        name != "__ctbrowser_iter_next" && name != "__ctbrowser_iter_close") ||
+                        name != "Element" && name != "Function" && name != "__ctbrowser_regexp" &&
+                        name != "__ctbrowser_for_of_open" && name != "__ctbrowser_iter_next" &&
+                        name != "__ctbrowser_iter_close") ||
                        !intrinsicNames.insert(name).second;
             }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
@@ -149,6 +150,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
         provedStringVectorIndices;
     llvm::DenseSet<ctjs::GetPropertyOp> provedElementVectorLengths, provedElementVectorIndices;
+    llvm::DenseSet<ctjs::GetPropertyOp> provedElementPrototypes;
+    llvm::DenseSet<ctjs::LoadGlobalOp> provedElementIntrinsics;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
         provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
@@ -180,6 +183,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     const bool suppliedJSON = llvm::is_contained(contract.initialIntrinsics, "JSON");
     const bool suppliedArray = llvm::is_contained(contract.initialIntrinsics, "Array");
     const bool suppliedString = llvm::is_contained(contract.initialIntrinsics, "String");
+    const bool suppliedElement = llvm::is_contained(contract.initialIntrinsics, "Element");
+    const bool suppliedFunction = llvm::is_contained(contract.initialIntrinsics, "Function");
     const bool suppliedRegExp =
         llvm::is_contained(contract.initialIntrinsics, "RegExp") &&
         llvm::is_contained(contract.initialIntrinsics, "__ctbrowser_regexp");
@@ -259,6 +264,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        suppliedArray,
                                        suppliedString,
                                        suppliedRegExp,
+                                       suppliedElement,
+                                       suppliedFunction,
                                        provedUndefinedReturn,
                                        values,
                                        increasingIndices,
@@ -282,6 +289,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        provedStringVectorIndices,
                                        provedElementVectorLengths,
                                        provedElementVectorIndices,
+                                       provedElementPrototypes,
+                                       provedElementIntrinsics,
                                        provedDatasetValues,
                                        provedNumberIntrinsics,
                                        provedURIIntrinsics,
@@ -398,6 +407,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     stringVectorIndices = std::move(provedStringVectorIndices);
     elementVectorLengths = std::move(provedElementVectorLengths);
     elementVectorIndices = std::move(provedElementVectorIndices);
+    elementPrototypes = std::move(provedElementPrototypes);
+    elementIntrinsics = std::move(provedElementIntrinsics);
     datasetValues = std::move(provedDatasetValues);
     stringPrefixRegExps = std::move(provedPrefixRegExps);
     datasetElements = std::move(provedDatasetElements);
@@ -454,6 +465,10 @@ bool DOMEntryAnalysis::isDatasetElement(mlir::Value value) const {
     return llvm::is_contained(datasetElements, value);
 }
 
+bool DOMEntryAnalysis::isElementPrototype(ctjs::GetPropertyOp read) const {
+    return elementPrototypes.contains(read);
+}
+
 bool DOMEntryAnalysis::isStringVectorLength(ctjs::GetPropertyOp read) const {
     return llvm::is_contained(stringVectorLengths, read);
 }
@@ -485,7 +500,7 @@ bool DOMEntryAnalysis::isNumberIntrinsic(ctjs::LoadGlobalOp load) const {
 bool DOMEntryAnalysis::isInitialIntrinsic(ctjs::LoadGlobalOp load) const {
     return isNumberIntrinsic(load) || llvm::is_contained(uriIntrinsics, load) ||
            llvm::is_contained(jsonIntrinsics, load) || llvm::is_contained(objectIntrinsics, load) ||
-           llvm::is_contained(regexpIntrinsics, load);
+           llvm::is_contained(regexpIntrinsics, load) || elementIntrinsics.contains(load);
 }
 
 bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {

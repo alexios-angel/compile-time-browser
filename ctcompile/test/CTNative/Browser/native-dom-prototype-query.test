@@ -1,0 +1,2 @@
+# Original prototype methods preserve their explicit element receiver and intrinsic identities.
+# RUN: python3 %S/native_dom_prototype_query.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm

@@ -40,6 +40,11 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[load.getResult()] = Kind::undefined;
             return true;
         }
+        if (suppliedElement && load.getName() == "Element") {
+            values[load.getResult()] = Kind::elementIntrinsic;
+            provedElementIntrinsics.insert(load);
+            return true;
+        }
         if (suppliedString && suppliedRegExp && load.getName() == "__ctbrowser_regexp") {
             values[load.getResult()] = Kind::regexpFactory;
             provedRegExpIntrinsics.push_back(load);
@@ -68,6 +73,31 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
         const auto key = ctjs::constantKey(read.getKey());
+        if (hasKind(read.getObject(), Kind::elementIntrinsic) && key == "prototype") {
+            values[read.getResult()] = Kind::elementPrototype;
+            provedElementPrototypes.insert(read);
+            return true;
+        }
+        if (hasKind(read.getObject(), Kind::elementPrototype) && key.size() <= 16) {
+            auto method = elementMethods.find(key);
+            if (method != elementMethods.end() &&
+                (method->second.second == HostDOMMethod::querySelector ||
+                 method->second.second == HostDOMMethod::querySelectorAll)) {
+                values[read.getResult()] = Kind::prototypeSelector;
+                provedMethods.try_emplace(read, method->second.second);
+                return true;
+            }
+        }
+        if (suppliedFunction && hasKind(read.getObject(), Kind::prototypeSelector) &&
+            key == "call") {
+            auto selector = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
+            const auto method = provedMethods.find(selector);
+            if (method != provedMethods.end()) {
+                values[read.getResult()] = Kind::selectorCall;
+                provedMethods.try_emplace(read, method->second);
+                return true;
+            }
+        }
         const bool elements = hasKind(read.getObject(), Kind::elementVector);
         if ((elements || hasKind(read.getObject(), Kind::stringVector)) && key == "length") {
             values[read.getResult()] = Kind::number;
@@ -286,6 +316,19 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (!method || method.getObject() != invoke.getReceiver()) {
             refusal = "DOM call does not preserve its proved method receiver";
             return false;
+        }
+        if (hasKind(invoke.getCallee(), Kind::selectorCall)) {
+            if (arguments.size() != 2 || !hasKind(arguments[0], Kind::element) ||
+                !hasKind(arguments[1], Kind::string)) {
+                refusal = "DOM prototype selector call requires an explicit Element and String";
+                return false;
+            }
+            const auto kind = provedMethods.find(method)->second;
+            provedCalls.push_back({invoke, kind, arguments[0], {}, true});
+            values[invoke.getResult()] = kind == HostDOMMethod::querySelectorAll
+                                             ? Kind::elementVector
+                                             : Kind::nullableElement;
+            return true;
         }
         if (hasKind(invoke.getCallee(), Kind::charAt) || hasKind(invoke.getCallee(), Kind::slice)) {
             const bool first = hasKind(invoke.getCallee(), Kind::charAt);

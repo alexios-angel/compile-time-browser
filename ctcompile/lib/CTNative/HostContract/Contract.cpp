@@ -151,8 +151,9 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                         }
                         return name != "Object" && name != "Number" &&
                                name != "decodeURIComponent" && name != "JSON" && name != "Array" &&
-                               name != "String" && name != "RegExp" &&
-                               name != "__ctbrowser_regexp" && name != "__ctbrowser_for_of_open" &&
+                               name != "String" && name != "RegExp" && name != "Element" &&
+                               name != "Function" && name != "__ctbrowser_regexp" &&
+                               name != "__ctbrowser_for_of_open" &&
                                name != "__ctbrowser_iter_next" && name != "__ctbrowser_iter_close";
                     })) {
                     return error("unsupported DOM initial intrinsic identity");

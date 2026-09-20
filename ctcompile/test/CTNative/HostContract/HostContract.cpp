@@ -13,6 +13,7 @@
 #include "DOMJSON.h"
 #include "DOMNullable.h"
 #include "DOMNumbers.h"
+#include "DOMPrototypeQuery.h"
 #include "DOMURI.h"
 #include "Fingerprint.h"
 
@@ -884,6 +885,7 @@ int main() {
     checkDOMURI(context);
     checkDOMJSON(context);
     checkDOMNullable(context);
+    checkDOMPrototypeQuery(context);
     checkSessionProvider(context);
     if (ctbrowser_test_failures == 0) { std::puts("host contract live proof queries passed"); }
     return ctbrowser_test_failures == 0 ? 0 : 1;
