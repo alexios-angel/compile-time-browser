@@ -124,6 +124,36 @@ void StructuredCases::mutationRefusals() {
                                       "    %part = ctjs.binary div %i, %factor")}) {
         reject("structured compositions preserve integrality, bounds and invariance", body);
     }
+    const auto negativeQuotient = replace(
+        replace(replace(composedIndex, "  %a =", "  %negative = ctjs.unary neg %two\n  %a ="),
+                "div %i, %two", "div %i, %negative"),
+        "add %part, %one", "add %part, %two");
+    rows.push_back({.what = "structured negative quotients retain descending own positions",
+                    .body = negativeQuotient,
+                    .arrays = "a:[one,zero,zero,one]",
+                    .reads = "a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "structured negative quotients retain signed intermediate endpoints",
+         .body = replace(replace(negativeQuotient, "%part = ctjs.binary div %i, %negative",
+                                 "%signed = ctjs.binary sub %i, %two\n"
+                                 "    %part = ctjs.binary div %signed, %negative"),
+                         "add %part, %two", "add %part, %one"),
+         .arrays = "a:[one,zero,zero,one]",
+         .reads = "a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "two negative divisions restore the ascending footprint",
+         .body = replace(
+             replace(negativeQuotient, "  %a =", "  %negativeOne = ctjs.unary neg %one\n  %a ="),
+             "ctjs.binary add %part, %two", "ctjs.binary div %part, %negativeOne"),
+         .arrays = "a:[zero,zero,y,one]",
+         .reads = "a[0]=zero; a[2]=y",
+         .exit = "a -> {a,y}"});
+    reject("structured negative divisors cannot conceal fractional intermediate positions",
+           replace(negativeQuotient, "add %i, %two", "add %i, %one"));
+    reject("structured negative divisors cannot conceal negative own positions",
+           replace(negativeQuotient, "add %part, %two", "add %part, %zero"));
     const auto reverseIndex = replace(scaledIndex, "mul %i, %one", "sub %one, %i");
     rows.push_back({.what = "structured reverse subtraction releases descending own children",
                     .body = reverseIndex,

@@ -306,6 +306,62 @@ void InductionCases::overwritesAndTransport() {
              .body = body,
              .failure = ArrayContentsFailure::UnsupportedControlFlow});
     }
+    const auto negativeQuotient = replace(
+        replace(replace(quotientIndex, "[%x, %x, %one, %one]", "[%one, %x, %x, %one]"), "  %a =",
+                "  %negative = ctjs.unary neg %two {storage_test_id = \"negative\"}\n  %a ="),
+        "%position = ctjs.binary div %i, %two",
+        "%part = ctjs.binary div %i, %negative\n"
+        "  %position = ctjs.binary add %part, %two");
+    run({.what = "negative divisors reverse exact quotient positions with a positive stride",
+         .body = negativeQuotient,
+         .arrays = "a:[one,zero,zero,one]",
+         .reads = "a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative divisors preserve signed intermediate endpoints",
+         .body = replace(replace(negativeQuotient, "%part = ctjs.binary div %i, %negative",
+                                 "%signed = ctjs.binary sub %i, %two\n"
+                                 "  %part = ctjs.binary div %signed, %negative"),
+                         "add %part, %two", "add %part, %one"),
+         .arrays = "a:[one,zero,zero,one]",
+         .reads = "a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a negative divisor preserves a single signed-zero own key",
+         .body = replace(replace(negativeQuotient, "[%one, %x, %x, %one]", "[%x, %one]"),
+                         "add %part, %two", "add %part, %zero"),
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto negativeDivisorGap =
+        replace(replace(replace(replace(negativeQuotient, "[%one, %x, %x, %one]",
+                                        "[%one, %x, %negative, %x, %one]"),
+                                "  %a =", "  %four = ctjs.binary add %two, %two\n  %a ="),
+                        "add %i, %two\n  cf.br", "add %i, %four\n  cf.br"),
+                "%part = ctjs.binary div %i, %negative\n"
+                "  %position = ctjs.binary add %part, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "  %part = ctjs.binary div %i, %divisor\n"
+                "  %position = ctjs.binary add %part, %three");
+    run({.what = "negative divisor reloads remain invariant in descending quotient gaps",
+         .body = negativeDivisorGap,
+         .arrays = "a:[one,zero,negative,zero,one]",
+         .reads = "a[2]=negative; a[0]=one; a[2]=negative; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body :
+         {replace(negativeQuotient, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+          replace(negativeQuotient, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+          replace(negativeQuotient, "add %part, %two", "add %part, %zero"),
+          replace(replace(negativeDivisorGap, "[%one, %x, %negative, %x, %one]",
+                          "[%one, %x, %one, %negative, %one]"),
+                  "%divisor = ctjs.get_property %base[%two]",
+                  "%divisor = ctjs.get_property %base[%three]"),
+          replace(negativeDivisorGap,
+                  "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step =")}) {
+        reject("negative quotient stores retain integrality, bounds and reload exclusions", body);
+    }
     const auto scaledIndex =
         replace(replace(savedChild, "  %read =",
                         "  %position = ctjs.binary mul %i, %one\n"

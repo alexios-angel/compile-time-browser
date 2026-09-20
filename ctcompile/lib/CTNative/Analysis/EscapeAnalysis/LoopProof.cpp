@@ -252,10 +252,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            const auto divisor = boundedConvertedNumber(*offset);
+            auto divisor = boundedConvertedNumber(*offset);
+            descending = !divisor.has_value();
+            if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
             const auto first = range->first.integerNumber ? range->first.integerNumber
                                                           : range->first.negativeIntegerNumber;
-            // Integral endpoints alone miss fractional intermediate positions.
+            // Divide the positive stride magnitude; divisor sign only reverses
+            // endpoint order. Integral endpoints can miss fractional positions.
             if (!divisor || *divisor == 0 || *first % *divisor != 0 ||
                 range->stride % *divisor != 0) {
                 return std::nullopt;
