@@ -22,6 +22,7 @@
 #pragma once
 
 #include "ctcompile/CTNative/Runtime/Number.hpp"
+#include "ctcompile/CTNative/Runtime/String.hpp"
 
 #include <ctbrowser/core/algorithms.hpp>
 
@@ -66,9 +67,7 @@ using js_num = double;
 namespace ctnative {
 
 inline std::string string_concat(std::string left, std::string_view right) {
-    left += right;
-    ctbrowser::join_surrogates(left);
-    return left;
+    return (js_string{std::move(left)} + js_string{right}).value();
 }
 
 // --- exceptions --------------------------------------------------------------

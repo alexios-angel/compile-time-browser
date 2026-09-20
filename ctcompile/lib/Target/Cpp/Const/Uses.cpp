@@ -22,10 +22,22 @@ bool readsBinding(mlir::OpOperand & operand) {
     if (llvm::isa<ec::AssignOp>(op)) { return operand.getOperandNumber() == 1; }
     if (auto call = llvm::dyn_cast<ec::MemberCallOpaqueOp>(op)) {
         const auto receiver = llvm::dyn_cast<ec::OpaqueType>(call.getReceiver().getType());
-        return receiver && receiver.getValue() == "ctnative::js_num" &&
-               call.getCallee() == "value" && call.getArgOperands().empty() && !call.getArgs() &&
-               !call.getTemplateArgs() && call.getNumResults() == 1 &&
-               call.getResult(0).getType().isF64();
+        if (!receiver || call.getArgs() || call.getTemplateArgs() || call.getNumResults() != 1) {
+            return false;
+        }
+        const auto result = call.getResult(0).getType();
+        if (call.getCallee() == "value" && call.getArgOperands().empty()) {
+            if (receiver.getValue() == "ctnative::js_num") { return result.isF64(); }
+            const auto storage = llvm::dyn_cast<ec::OpaqueType>(result);
+            return receiver.getValue() == "ctnative::js_string" && storage &&
+                   storage.getValue() == "std::string";
+        }
+        if (receiver.getValue() != "ctnative::js_string" || call.getCallee() != "startsWith" ||
+            call.getArgOperands().size() != 1 || !result.isInteger(1)) {
+            return false;
+        }
+        const auto argument = llvm::dyn_cast<ec::OpaqueType>(call.getArgOperands()[0].getType());
+        return argument && argument.getValue() == "ctnative::js_string";
     }
     if (auto call = llvm::dyn_cast<ec::CallOpaqueOp>(op)) {
         // This describes the C++ operand ABI, never purity or heap effects.

@@ -19,6 +19,7 @@ bool supportsConstBinding(mlir::Type type) {
     const auto name = opaque.getValue();
     static const llvm::StringSet<> copyableCarriers{"std::string",
                                                     "ctnative::js_num",
+                                                    "ctnative::js_string",
                                                     "ctnative::nullable_scalar",
                                                     "ctnative::nullable_string",
                                                     "ctnative::object_value",
