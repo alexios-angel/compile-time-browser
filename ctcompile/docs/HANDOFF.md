@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## C++ selector method objects, 2026-09-20 UTC
+
+**63b9c4d2** implements the requested object-oriented selector interface in
+`Runtime/ctnative.hpp`. `matches`, `closest`, `querySelector` and
+`querySelectorAll` are `inline constexpr` instances of stateless classes with
+`const` templated `call` members. Generated C++ now spells, for example,
+`ctnative::querySelector.call(element, styles, selector)`. The original public
+Style calls moved into those methods; ownership, validation, exception order
+and source proofs are unchanged. There is no callable table, virtual dispatch,
+VM context or GC handle. Regenerate older emitted selector sources for the
+new runtime helper spelling.
+
+Focused devbox checks passed on the first gate: native runtime CTest **1/1**
+(0.02s total), selector lit **3/3** (54.28s), comprising **48 native executions /
+84 refusals** across both providers/policies/layouts and GCC/Clang. The existing
+tests now require the `.call` spelling; generated clients retain the Script/AOT
+symbol checks. All **five** final code/test hashes match the devbox.
+
+Commands under `/tmp/ctbrowser-devbox-build.lock`, with helper/SSH stdin from
+`/dev/null`:
+
+```sh
+# Local helper:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-runtime
+# On devbox, from projects/compile-time-browser:
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_native_runtime$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: CTNative/Browser/native-dom-(closest|query|query-all)[.]test$'
+```
+
+Required formatting still reports **20** pre-existing diagnostics in six
+untouched files; changed C++/Python, syntax and whitespace checks pass. Full
+CTest/compiler lit, broad corpus/matrix, WPT/test262 and sanitizers were skipped.
+No browser/oracle changes or push. **Next:** prove original Bootstrap's
+JavaScript `Element.prototype.querySelector(All).call` identities; the readable
+C++ member spelling does not grant that source proof. NodeList spread, document
+roots, constructor publication/nested Map lifetimes and the application driver
+remain as recorded below.
+
 ## Element query snapshots and indexed DOM loops, 2026-09-20 UTC
 
 **c5bcd3de** adds `Element.querySelectorAll(String)` through public

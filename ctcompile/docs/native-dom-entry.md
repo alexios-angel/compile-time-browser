@@ -17,6 +17,19 @@ matches the page. Every element and engine atom-table association is checked
 before source effects. The engine, document and their atom table must remain
 alive throughout the synchronous call.
 
+Generated selector calls use stateless C++ method objects from `ctnative.hpp`:
+
+```cpp
+auto button = ctnative::querySelector.call(element, styles, "button");
+auto buttons = ctnative::querySelectorAll.call(element, styles, "button");
+```
+
+`matches` and `closest` have the same `.call` interface. Each object is
+`inline constexpr`; its `const` member calls the public Style implementation
+with explicit borrowed inputs. This C++ spelling introduces no callable table
+or virtual dispatch. JavaScript `Element.prototype.querySelector.call(...)`
+still needs a separate source identity proof.
+
 This is an action entry, not native Bootstrap initialization. For example:
 
 ```javascript
