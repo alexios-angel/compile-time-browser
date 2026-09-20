@@ -17,10 +17,8 @@
 //   emit no `unary_minus` at all. If this file ever stops showing
 //   `unary_minus`, the constraint has gone silent.
 //
-// The importer has no CTJS operation for op::to_number, so `+x` never reaches
-// this pass from real JavaScript yet - test/linkable.js says so at the other
-// end of the pipeline. Hand-written IR is the only way to exercise it, exactly
-// as test/Lowering/EmitC/operators.mlir does for the boxed tier.
+// The importer maps op::to_number to unary plus. string-coercions.test covers
+// source String conversion; this IR fixture isolates the numeric identity rule.
 //
 // THE `$0` AND `$1` ARE NOT DECORATION. cIdentifier() maps `$` to `_`, and
 // without the suffix the emitted `emitc.func` takes the SAME symbol name as

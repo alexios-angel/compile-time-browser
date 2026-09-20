@@ -26,6 +26,11 @@ bool readsBinding(mlir::OpOperand & operand) {
             return false;
         }
         const auto result = call.getResult(0).getType();
+        if (receiver.getValue() == "ctnative::js_string" && call.getCallee() == "to_number" &&
+            call.getArgOperands().empty()) {
+            const auto number = llvm::dyn_cast<ec::OpaqueType>(result);
+            return number && number.getValue() == "ctnative::js_num";
+        }
         if (call.getCallee() == "value" && call.getArgOperands().empty()) {
             if (receiver.getValue() == "ctnative::js_num") { return result.isF64(); }
             const auto storage = llvm::dyn_cast<ec::OpaqueType>(result);

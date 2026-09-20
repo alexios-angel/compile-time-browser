@@ -8,9 +8,9 @@ namespace {
 // soundness lives, not in the match: `+x` in general is ToNumber, which can
 // re-enter user code through valueOf and can produce a different value ("1"
 // becomes 1). It is the identity only on a value already proved numeric, which
-// admission::op()'s Plus arm establishes for every function lowering::lower()
-// is called on - applyDeclarativeRules() seeds the driver with exactly those
-// unaries. The rewrite is type-preserving (`!ctjs.value` for `!ctjs.value`),
+// applyDeclarativeRules() checks the operand's NumType before seeding the
+// driver. Admitted Boolean, nullable and String operands retain their explicit
+// conversions. The rewrite is type-preserving (`!ctjs.value` for `!ctjs.value`),
 // which is why it must run before retype(). If it ever stops firing,
 // replace()'s Plus arm reports a fatal error naming it.
 struct UnaryPlusIsIdentity : mlir::OpRewritePattern<ctjs::UnaryOp> {

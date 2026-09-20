@@ -28,8 +28,14 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         (binary.getKind() == ctjs::BinaryKind::Add ||
          binary.getKind() == ctjs::BinaryKind::Concat) &&
         binary.getResult().getType() == string) {
-        swap(ec::AddOp::create(b, where, string, convertScalar(b, where, binary.getLhs(), string),
-                               convertScalar(b, where, binary.getRhs(), string)));
+        const auto operand = [&](mlir::Value value) {
+            // Exact String/Number pairs select their typed addition overload.
+            // Existing optional String concatenation still materializes its text.
+            return isNumberCarrier(value.getType()) ? value
+                                                    : convertScalar(b, where, value, string);
+        };
+        swap(ec::AddOp::create(b, where, string, operand(binary.getLhs()),
+                               operand(binary.getRhs())));
         return true;
     }
     llvm::StringRef helper;

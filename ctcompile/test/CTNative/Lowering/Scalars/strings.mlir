@@ -15,8 +15,9 @@
 // NATIVE: emitc.func @main() -> i32
 // NATIVE: emitc.func @placements_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // NATIVE: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
-// COERCION: ctjs.func private @add$1
-// COERCION-SAME: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
+// COERCION: emitc.func @add_1({{.*}}!emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
+// COERCION: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_string">
+// COERCION-NOT: ctnative.not_native
 // EQUALITY: ctjs.func private @compare$1
 // EQUALITY-SAME: ctnative.not_native = "equality operand is !ctnative.str<utf8>, not a number"
 // ORDERING: ctjs.func private @compare$1
@@ -41,9 +42,7 @@
 // SHARED-MIXED-SAME: ctnative.not_native = "shared capture 0 is !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>, which has no native carrier yet"
 
 //--- coercion.js
-// A discarded call needs no top-level ternary or global coercion. Those
-// can obscure the operation this test means to refuse with a resolver or
-// global-printing limitation before the string rule is reached.
+// Keep a runtime String/Number addition even when its result is discarded.
 function add(value) { return value + 1; }
 add("3");
 

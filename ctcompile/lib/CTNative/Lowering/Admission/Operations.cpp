@@ -584,6 +584,12 @@ bool admission::op(mlir::Operation * o) {
         switch (b.getKind()) {
         case BinaryKind::Add:
             if (stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs()))) { return true; }
+            if ((carrierOf(typeOf(b.getLhs())) == carrier::string &&
+                 carrierOf(typeOf(b.getRhs())) == carrier::number) ||
+                (carrierOf(typeOf(b.getRhs())) == carrier::string &&
+                 carrierOf(typeOf(b.getLhs())) == carrier::number)) {
+                return true;
+            }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
         case BinaryKind::Concat:
             return stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs())) ||
@@ -606,7 +612,9 @@ bool admission::op(mlir::Operation * o) {
     if (auto u = llvm::dyn_cast<UnaryOp>(o)) {
         switch (u.getKind()) {
         case UnaryKind::Neg:
-        case UnaryKind::Plus: return numeric(u.getOperand(), "unary");
+        case UnaryKind::Plus:
+            return carrierOf(typeOf(u.getOperand())) == carrier::string ||
+                   numeric(u.getOperand(), "unary");
         case UnaryKind::TypeOf:
             return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    isObjectCarrier(carrierOf(typeOf(u.getOperand()))) ||

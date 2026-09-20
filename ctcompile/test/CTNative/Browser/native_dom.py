@@ -550,7 +550,7 @@ def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=N
     return text
 
 
-def link_options(args, *, selectors=False):
+def link_options(args, *, selectors=False, core_only=False):
     cache = dict(
         re.findall(
             r"^([A-Za-z0-9_]+):[^=\n]+=(.*)$", (args.build / "CMakeCache.txt").read_text(), re.M
@@ -561,10 +561,9 @@ def link_options(args, *, selectors=False):
         value = cache.get(name, "")
         if value and not value.endswith("-NOTFOUND"):
             includes += ["-isystem", value]
-    libraries = [
-        args.build / "lib/DOM/libctbrowser-dom.a",
-        args.build / "lib/Core/libctbrowser-core.a",
-    ]
+    libraries = [args.build / "lib/Core/libctbrowser-core.a"]
+    if not core_only:
+        libraries.insert(0, args.build / "lib/DOM/libctbrowser-dom.a")
     if selectors:
         libraries.insert(0, args.build / "lib/Style/libctbrowser-style.a")
     for name in ("CTBROWSER_SIMDUTF", "CTBROWSER_MIMALLOC"):

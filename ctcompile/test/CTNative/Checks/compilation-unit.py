@@ -11,7 +11,7 @@ ONE EmitC module and the JavaScript program it is the lowering of:
       which -Wall -Werror rejects; native functions are single-block and do
       not need it)
   (b) that C++ is compiled by the configured compiler STANDALONE: public headers only,
-      no library on the link line, -Wall -Wextra -Werror
+      only the optional public Core library on the link line, -Wall -Wextra -Werror
       -pedantic, and -ffp-contract=off because JavaScript has no fused
       multiply-add and the interpreter's separate opcodes never fuse one
   (c) `nm -C` on the binary shows no `ctbrowser::script::` symbol (nor a
@@ -140,6 +140,7 @@ def main():
     parser.add_argument("--mutate")
     parser.add_argument("--mutate-as", default="number")
     parser.add_argument("--prebuilt")
+    parser.add_argument("--core-build", type=Path)
     args = parser.parse_args()
     name = args.name
 
@@ -172,10 +173,18 @@ def main():
         src = work / "unit.cpp"
         src.write_text(cpp)
         exe = str(work / "unit")
-        # Public Core algorithms are header-only. No browser library is linked;
-        # the symbol gate below still rejects Script and boxed AOT dependencies.
+        # String numeric conversion/formatting uses public Core. Other fixtures
+        # retain their header-only link; both reject Script and boxed AOT symbols.
         runtime_include = "-I" + str(Path(__file__).resolve().parents[3] / "include")
-        core_include = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
+        core_headers = Path(__file__).resolve().parents[4] / "ctbrowser/include"
+        core_include = "-I" + str(core_headers)
+        libraries = []
+        if args.core_build:
+            from CTNative.Browser.native_dom import link_options
+
+            _, libraries = link_options(
+                argparse.Namespace(build=args.core_build, include=core_headers), core_only=True
+            )
         compiled = run(
             [
                 args.cxx,
@@ -188,6 +197,7 @@ def main():
                 "-Werror",
             ]
             + ["-pedantic", "-Wconversion", "-ffp-contract=off", "-o", exe, str(src)]
+            + libraries
         )
         if compiled.returncode != 0:
             fail(

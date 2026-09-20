@@ -1,0 +1,124 @@
+# Primitive conversion stays on the owning String/Number classes and calls
+# public Core formatting/parsing. Parameterized functions keep the operation
+# present when precomputation is disabled; Node checks distinguish NaN, -0,
+# value and type before the native/interpreter differential gate runs.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
+# RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name string_runtime --core-build %build
+# RUN: %compilation_unit --module %t/runtime.mlir --js %t/values.js --work %t --name string_runtime_clang --cxx %dom_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name string_runtime_deduced_gcc --core-build %build
+# RUN: %compilation_unit --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name string_runtime_deduced --cxx %dom_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name string_optimized_gcc --core-build %build
+# RUN: %compilation_unit --module %t/optimized.mlir --js %t/values.js --work %t --name string_optimized --cxx %dom_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name string_optimized_deduced --core-build %build
+# RUN: %compilation_unit --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name string_optimized_deduced_clang --cxx %dom_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name string_mutation --mutate banana --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# RUNTIME-DAG: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::js_string">, () -> !emitc.opaque<"ctnative::js_num">
+# RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_string">
+# RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
+# CPP: .to_number()
+# MUTATION: global 'banana' differs
+# REFUSED: ctjs.func private @convert$1
+# REFUSED-SAME: ctnative.not_native =
+
+#--- values.js
+function toNumber(text) { return +text; }
+function negate(text) { return -text; }
+function append(text, number) { return text + number; }
+function prepend(number, text) { return number + text; }
+function makeBanana(letter, invalid) { return "b" + letter + +invalid + letter; }
+
+var concat = append("3", 1);
+var arithmetic = toNumber("3") + 1;
+var prefix = prepend(2, "3");
+var banana = makeBanana("a", "a");
+var negativeZero = toNumber("-0");
+var positiveZero = negate("-0");
+var empty = toNumber("");
+var whitespace = toNumber("\u00a0 \t\r\n");
+var hex = toNumber("0x10");
+var infinity = toNumber("+Infinity");
+var negativeInfinity = negate("Infinity");
+var nul = toNumber("1\u0000");
+var invalid = toNumber("a");
+var small = append("", 0.000001);
+var smaller = append("", 0.0000001);
+var large = prepend(1e21, "");
+var belowLarge = prepend(1e20, "");
+var signedZeroText = append("", -0);
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    concat: "31",
+    arithmetic: 4,
+    prefix: "23",
+    banana: "baNaNa",
+    negativeZero: -0,
+    positiveZero: 0,
+    empty: 0,
+    whitespace: 0,
+    hex: 16,
+    infinity: Infinity,
+    negativeInfinity: -Infinity,
+    nul: NaN,
+    invalid: NaN,
+    small: "0.000001",
+    smaller: "1e-7",
+    large: "1e+21",
+    belowLarge: "100000000000000000000",
+    signedZeroText: "0"
+};
+assert.equal(Object.keys(expected).length, 18);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("18 primitive String observations agree with their expected JavaScript values");
+
+#--- object-number.js
+function convert(value) { return +value; }
+convert({number: 3});
+
+#--- object-add.js
+function convert(value) { return "3" + value; }
+convert({number: 3});
+
+#--- optional-number.js
+function convert(mode) {
+    let value;
+    if (mode) { value = "3"; }
+    return +value;
+}
+convert(true);
+convert(false);
+
+#--- boolean-add.js
+function convert(value) { return value + true; }
+convert("3");
+
+#--- equality.js
+function convert(left, right) { return left == right; }
+convert("3", 3);
+
+#--- ordering.js
+function convert(left, right) { return left < right; }
+convert("a", "b");
