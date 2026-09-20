@@ -48,7 +48,7 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
     }
     // Only exact input SSA identities seed truthiness. In particular, nullable
     // closest results, cells, joins and loop-carried values acquire no facts.
-    llvm::SmallVector<std::pair<ctjs::UnaryOp, bool>> negations;
+    llvm::SmallVector<std::pair<mlir::Operation *, bool>> booleans;
     llvm::SmallVector<std::pair<ctjs::TruthyOp, bool>> queries;
     llvm::SmallVector<std::pair<mlir::scf::IfOp, bool>> branches;
     const auto scan = entry.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * operation) {
@@ -58,12 +58,27 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
             }
         }
+        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+            compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+            const auto elementAndUndefined = [&](mlir::Value element, mlir::Value other) {
+                auto argument = llvm::dyn_cast<mlir::BlockArgument>(element);
+                auto constant = other.getDefiningOp<ctjs::ConstantOp>();
+                return argument && argument.getOwner() == &entry.getBody().front() &&
+                       argument.getArgNumber() >= ctjs::implicit_arguments && constant &&
+                       llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+            };
+            if (elementAndUndefined(compare.getLhs(), compare.getRhs()) ||
+                elementAndUndefined(compare.getRhs(), compare.getLhs())) {
+                truth[compare.getResult()] = false;
+                booleans.emplace_back(operation, false);
+            }
+        }
         if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
             unary && unary.getKind() == ctjs::UnaryKind::Not) {
             if (auto found = truth.find(unary.getOperand()); found != truth.end()) {
                 const bool value = !found->second;
                 truth[unary.getResult()] = value;
-                negations.emplace_back(unary, value);
+                booleans.emplace_back(operation, value);
             }
         }
         if (auto query = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
@@ -93,12 +108,12 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
     }
     // All work and replacements are known before mutation. The caller owns this
     // private clone and must still reprove the complete live DOM entry.
-    for (auto [unary, value] : negations) {
-        mlir::OpBuilder at(unary);
+    for (auto [operation, value] : booleans) {
+        mlir::OpBuilder at(operation);
         auto constant = ctjs::ConstantOp::create(
-            at, unary.getLoc(), ctjs::BooleanAttr::get(candidate.getContext(), value));
-        unary.getResult().replaceAllUsesWith(constant.getResult());
-        unary.erase();
+            at, operation->getLoc(), ctjs::BooleanAttr::get(candidate.getContext(), value));
+        operation->getResult(0).replaceAllUsesWith(constant.getResult());
+        operation->erase();
     }
     for (auto [query, value] : queries) {
         mlir::OpBuilder at(query);

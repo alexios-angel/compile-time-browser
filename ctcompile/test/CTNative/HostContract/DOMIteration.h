@@ -571,6 +571,10 @@ module {
     %Object =)MLIR"),
                  "    ctjs.return %loop#2",
                  "      scf.yield %loop#2 : !ctjs.value\n    }\n    ctjs.return %guarded");
+    const std::string undefinedGuard =
+        replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
+    %undefined = ctjs.constant #ctjs.undefined
+    %absent = ctjs.compare strict_eq %element, %undefined)MLIR");
     const std::string truthyGuard = replaced(replaced(valueSource, "    %Object =", R"MLIR(
     %testElement = ctjs.truthy %element
     %guarded = scf.if %testElement -> (!ctjs.value) {
@@ -604,7 +608,10 @@ module {
       scf.yield %innerEmpty : !ctjs.value
     }
       scf.yield %inner : !ctjs.value)MLIR");
-    for (const auto & admitted : {guarded, truthyGuard, nestedDiscarded, nestedSelected,
+    for (const auto & admitted : {guarded, undefinedGuard,
+                                  replaced(undefinedGuard, "strict_eq %element, %undefined",
+                                           "strict_eq %undefined, %element"),
+                                  truthyGuard, nestedDiscarded, nestedSelected,
                                   replaced(truthyGuard, "    %testElement = ctjs.truthy %element",
                                            "    %once = ctjs.unary not %element\n"
                                            "    %twice = ctjs.unary not %once\n"
@@ -638,29 +645,44 @@ module {
                   "only the impossible entry arm disappears; the guarded member loop remains");
         }
     }
-    bool completedGuardBudget = false;
-    for (unsigned budget = 0; budget < 4096; ++budget) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
-        check(static_cast<bool>(input), "guard budget fixture parses");
-        if (!input) { break; }
-        auto request = contract;
-        request.moduleSha256 = hostContractFingerprint(*input);
-        auto error = normalizeDOMElementGuards(*input, request, budget);
-        if (!error) {
-            completedGuardBudget = true;
+    for (const auto & budgetSource : {guarded, undefinedGuard}) {
+        bool completedGuardBudget = false;
+        for (unsigned budget = 0; budget < 4096; ++budget) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
+            check(static_cast<bool>(input), "guard budget fixture parses");
+            if (!input) { break; }
+            auto request = contract;
             request.moduleSha256 = hostContractFingerprint(*input);
-            check(DOMEntryAnalysis(*input, request).proved(),
-                  "the first complete guard budget preserves the live loop proof");
-            break;
+            auto error = normalizeDOMElementGuards(*input, request, budget);
+            if (!error) {
+                completedGuardBudget = true;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                check(DOMEntryAnalysis(*input, request).proved(),
+                      "the first complete guard budget preserves the live loop proof");
+                break;
+            }
+            const auto reason = llvm::toString(std::move(error));
+            check(reason.find("budget") != std::string::npos &&
+                      request.moduleSha256 == hostContractFingerprint(*input),
+                  "every incomplete guard budget preserves all original source operations");
         }
-        const auto reason = llvm::toString(std::move(error));
-        check(reason.find("budget") != std::string::npos &&
-                  request.moduleSha256 == hostContractFingerprint(*input),
-              "every incomplete guard budget preserves all original source operations");
+        check(completedGuardBudget, "the guarded loop completes within the test work limit");
     }
-    check(completedGuardBudget, "the guarded loop completes within the test work limit");
     for (const auto & unproved :
-         {replaced(guarded, "ctjs.unary not %element", "ctjs.unary not %this"),
+         {replaced(undefinedGuard, "strict_eq %element, %undefined", "strict_eq %this, %undefined"),
+          replaced(undefinedGuard, "    %absent = ctjs.compare strict_eq %element, %undefined",
+                   R"MLIR(
+    %cell = ctjs.create_cell %element
+    %saved = ctjs.cell_get %cell
+    %absent = ctjs.compare strict_eq %saved, %undefined)MLIR"),
+          replaced(undefinedGuard, "    %absent = ctjs.compare strict_eq %element, %undefined",
+                   R"MLIR(
+    %closestName = ctjs.constant #ctjs.string<"closest">
+    %closest = ctjs.get_property %element[%closestName]
+    %selector = ctjs.constant #ctjs.string<".missing">
+    %nullable = ctjs.call %closest(%element, %selector)
+    %absent = ctjs.compare strict_eq %nullable, %undefined)MLIR"),
+          replaced(guarded, "ctjs.unary not %element", "ctjs.unary not %this"),
           replaced(guarded, "    %absent = ctjs.unary not %element", R"MLIR(
     %cell = ctjs.create_cell %element
     %saved = ctjs.cell_get %cell
@@ -719,22 +741,29 @@ module {
         check(request.moduleSha256 == hostContractFingerprint(*input),
               "invalid element declarations preserve the complete guarded source");
     }
-    auto staleGuard = mlir::parseSourceString<mlir::ModuleOp>(guarded, &context);
-    check(static_cast<bool>(staleGuard), "guard fingerprint fixture parses");
-    if (staleGuard) {
-        auto request = contract;
-        request.moduleSha256 = hostContractFingerprint(*staleGuard);
-        auto entry = staleGuard->lookupSymbol<ctjs::FuncOp>(request.entry);
-        entry.walk([&](ctjs::UnaryOp unary) {
-            unary->setOperand(0, entry.getBody().front().getArgument(0));
-        });
-        const auto fingerprint = hostContractFingerprint(*staleGuard);
-        auto error = normalizeDOMElementGuards(*staleGuard, request, 100000);
-        const bool refused = static_cast<bool>(error);
-        const auto reason = refused ? llvm::toString(std::move(error)) : std::string{};
-        check(refused && reason.find("fingerprint") != std::string::npos &&
-                  fingerprint == hostContractFingerprint(*staleGuard),
-              "changed guard operands refuse without changing the source");
+    for (const auto & staleSource : {guarded, undefinedGuard}) {
+        auto staleGuard = mlir::parseSourceString<mlir::ModuleOp>(staleSource, &context);
+        check(static_cast<bool>(staleGuard), "guard fingerprint fixture parses");
+        if (staleGuard) {
+            auto request = contract;
+            request.moduleSha256 = hostContractFingerprint(*staleGuard);
+            auto entry = staleGuard->lookupSymbol<ctjs::FuncOp>(request.entry);
+            entry.walk([&](ctjs::UnaryOp unary) {
+                unary->setOperand(0, entry.getBody().front().getArgument(0));
+            });
+            entry.walk([&](ctjs::CompareOp compare) {
+                if (compare.getKind() == ctjs::CompareKind::StrictEq) {
+                    compare->setOperand(0, entry.getBody().front().getArgument(0));
+                }
+            });
+            const auto fingerprint = hostContractFingerprint(*staleGuard);
+            auto error = normalizeDOMElementGuards(*staleGuard, request, 100000);
+            const bool refused = static_cast<bool>(error);
+            const auto reason = refused ? llvm::toString(std::move(error)) : std::string{};
+            check(refused && reason.find("fingerprint") != std::string::npos &&
+                      fingerprint == hostContractFingerprint(*staleGuard),
+                  "changed guard operands refuse without changing the source");
+        }
     }
     auto liveGuard = mlir::parseSourceString<mlir::ModuleOp>(
         replaced(guarded,
