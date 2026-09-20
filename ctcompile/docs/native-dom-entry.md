@@ -570,11 +570,12 @@ checks for teardown and dangling foreign pointers. This provider still refuses
 handle returns, retention in Data or properties, and browser callbacks. It does
 not reinterpret source-created ordinary objects as DOM elements.
 
-## Data input provenance
+## Owned Data sessions
 
-`ctbrowser-dom-data-session-v1` is currently an **analysis-only** contract. It uses
-the closed-source contract fields (`roots`, `observations`, initial bindings and
-intrinsics) plus the same ordered, nonempty `element_parameters` declaration.
+`ctbrowser-dom-data-session-v1` emits a nonmovable session owning its document
+and private Data storage. It uses the closed-source contract fields (`roots`,
+`observations`, initial bindings and intrinsics) plus the same ordered, nonempty
+`element_parameters` declaration.
 `--ctnative-host-contract` checks the actual input arguments across the complete
 Data method family. The entry must be unreferenced by source code, uncaptured,
 and declare every explicit parameter as an original JavaScript value.
@@ -595,23 +596,38 @@ aliases, arbitrary properties and extracted callables refuse. Reports expose
 Entry-order Map facts preserve these exact input origins without inventing fresh
 objects. A set followed by a get with the same input retains its scalar value;
 using a different input retains the possibility of either a match or a miss.
-This is provenance evidence, not proof of a document domain or a retained lifetime.
-Native lowering and `OwnedGlobalRoots` still refuse with
-`DOM Data requires storage confined to its document owner`; source-prefix
-specialization also refuses this provider.
+`OwnedGlobalRoots` revalidates the complete source/input family before native
+typing and emission. Preparation uses a fingerprinted private clone and removes
+only the proved inert declaration. Source-prefix specialization still refuses
+this provider.
 
-Next, attach private Data storage to the nonmovable DOM owner. It must destroy
-Data before the document, then the borrowed atom table. The current shared
-table/global carriers and `capture_map()` accessor do not establish that lifetime.
-Revalidate the complete input family before typing/emission, preserve document plus
-node identity, and check every document domain before dereferencing any input or
-performing effects. Gate a source without Map snapshots too: its associative Map
-needs an element-key comparator, whereas Data's child snapshot selects ordered
-storage and hides that path. Preserve source allocation timing: the imported
-`dataEntry` fixture constructs a new root, Map and method table on every invocation.
-Reusing that Map across invocations would change its observable behavior; a separate
-initialization/action split needs its own source proof. Retained native DOM keys
-remain unimplemented.
+Source functions, roots, tables, Maps and observations become private session
+members. Tables and roots use private borrowed pointers; no callable or
+DOM-bearing table escapes. Member order destroys Data before the document and
+the document before its atom table. `document()` exposes the owned document,
+`invoke(element_ref, ...)` checks every document domain before validating any
+node or performing source effects, and `observe_*()` returns scalar copies.
+Map keys preserve document plus complete node identity without dereferencing an
+owner. Detached nodes retain that identity.
 
-Original Button/BaseComponent construction, prototype/static getters, disposal,
-retained callbacks and the native application driver follow this ownership step.
+Source allocation timing is preserved: the `dataEntry` fixture creates a new
+root, Map and method table on every invocation, so the generated code resets
+their storage at those source operations. A persistent initialization/action
+split still requires its own source proof. The focused
+`native-dom-data-session.test` retains both `has` and `get` cases, including
+associative storage without snapshots; its separate snapshot source still
+refuses for lack of a complete getter proof.
+
+Historical validation on 2026-09-14 (`523e631d`) compiled the pinned **3,218-byte
+Bootstrap Data program** with only its three synthetic probe keys adapted to
+DOM inputs: **7/7 functions, 23 direct Data calls and 19 observations** agreed
+with Node and the interpreter across **five alias partitions**. The
+`native-bootstrap-dom-data-session.test` gate covers both optimization policies,
+printing layouts and GCC/Clang, plus isolation, repeated invocation, detached
+keys, invalid/foreign handles, private-access and missing-reset controls, and
+generated-client ASan/UBSan. These are prior measurements, not a fresh replay.
+
+Original Button/BaseComponent constructor publication through Data, retained
+DOM/config payloads, disposal, retained callbacks and the native application
+driver remain separate work; the Data session does not establish full native
+Bootstrap initialization.
