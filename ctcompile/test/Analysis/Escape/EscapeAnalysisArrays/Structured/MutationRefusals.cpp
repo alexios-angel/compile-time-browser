@@ -124,6 +124,28 @@ void StructuredCases::mutationRefusals() {
                                       "    %part = ctjs.binary div %i, %factor")}) {
         reject("structured compositions preserve integrality, bounds and invariance", body);
     }
+    const auto reverseIndex = replace(scaledIndex, "mul %i, %one", "sub %one, %i");
+    rows.push_back({.what = "structured reverse subtraction releases descending own children",
+                    .body = reverseIndex,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured nested reversals preserve source subtraction order",
+                    .body = replace(reverseIndex, "%position = ctjs.binary sub %one, %i",
+                                    "%part = ctjs.binary sub %one, %i\n"
+                                    "    %position = ctjs.binary sub %one, %part"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured reversed quotients preserve the descending footprint",
+                    .body = replace(composedIndex, "add %part, %one", "sub %two, %part"),
+                    .arrays = "a:[one,zero,zero,one]",
+                    .reads = "a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured reverse indices cannot visit negative own positions",
+           replace(reverseIndex, "sub %one, %i", "sub %zero, %i"));
+    reject("structured reverse indices cannot depend on two varying operands",
+           replace(reverseIndex, "sub %one, %i", "sub %i, %i"));
     const std::string fixedOverwrite =
         replace(original, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
     rows.push_back({.what = "structured invariant own-index overwrites precede later reads",

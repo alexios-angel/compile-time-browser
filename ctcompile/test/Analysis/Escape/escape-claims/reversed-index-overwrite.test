@@ -1,0 +1,124 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name reversed-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-reversed-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function endMinusIndex() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(a.length - 1) - i] = 0;
+    return a;
+}
+function descendingStride() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[3 - i] = 0;
+    return a;
+}
+function doubleReverse() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 - (1 - i)] = 0;
+    return a;
+}
+function quotientAfterReverse() {
+    var child = {}, a = [child, child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(4 - i) / 2] = 0;
+    return a;
+}
+function reverseAfterQuotient() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[1 - i / 2] = 0;
+    return a;
+}
+function signedIntermediate() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(1 - i) + 2] = 0;
+    return a;
+}
+function reloadGap() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 0; i < a.length; i += 2) a[a[2] - i] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [0, child, 0, child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[3 - i] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[3 - i] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child];
+    for (var i = 1; i < a.length; i++) a[0 - i] = 0;
+    return a;
+}
+function overlappingReload() {
+    var child = {}, a = [0, child, 0, 3];
+    for (var i = 0; i < a.length; i += 2) a[a[3] - i] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[a[2] - i] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function negativePosition() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[0 - i] = 0;
+    return a;
+}
+function roundedIntermediate() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(9007199254740992 - i) - 9007199254740992] = 0;
+    return a;
+}
+function fractionalIntermediate() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[((2 - i) / 2) * 2] = 0;
+    return a;
+}
+function twoVaryingOperands() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i - i] = 0;
+    return a;
+}
+function stringOffset() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a["1" - i] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[1 - i] = a;
+        a[1 - i] = 0;
+    }
+    return a;
+}
+endMinusIndex(); descendingStride(); doubleReverse(); quotientAfterReverse();
+reverseAfterQuotient(); signedIntermediate(); reloadGap(); saved(); remaining(); zeroTrip();
+overlappingReload(); laterOverlap(); negativePosition(); roundedIntermediate();
+fractionalIntermediate(); twoVaryingOperands(); stringOffset(); cycle();

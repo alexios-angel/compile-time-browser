@@ -480,6 +480,49 @@ void InductionCases::overwritesAndTransport() {
     reject("composed index depth is bounded even when every operation adds zero",
            replace(scaledIndex, "  %position = ctjs.binary mul %i, %one\n",
                    deepIndex + "  %position = ctjs.binary add %part64, %zero\n"));
+    const auto reverseIndex =
+        replace(offsetIndex, "ctjs.binary add %i, %one", "ctjs.binary sub %three, %i");
+    run({.what = "reversed subtraction overwrites only descending visited own positions",
+         .body = reverseIndex,
+         .arrays = "a:[one,zero,one,zero]",
+         .reads = "a[0]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "descending compositions preserve exact signed intermediate Numbers",
+         .body = replace(reverseIndex, "%position = ctjs.binary sub %three, %i",
+                         "%part = ctjs.binary sub %one, %i\n"
+                         "  %position = ctjs.binary add %part, %two"),
+         .arrays = "a:[one,zero,one,zero]",
+         .reads = "a[0]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "descending integral quotients keep their translated stride",
+         .body = replace(composedIndex, "add %part, %one", "sub %two, %part"),
+         .arrays = "a:[one,zero,zero,one]",
+         .reads = "a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto reverseReload =
+        replace(replace(reverseIndex, "[%one, %x, %one, %x]", "[%one, %x, %three, %x]"),
+                "  %position = ctjs.binary sub %three, %i",
+                "  %offset = ctjs.get_property %base[%two]\n"
+                "  %position = ctjs.binary sub %offset, %i");
+    run({.what = "reloads in descending stride gaps stay invariant",
+         .body = reverseReload,
+         .arrays = "a:[one,zero,three,zero]",
+         .reads = "a[2]=three; a[0]=one; a[2]=three; a[2]=three",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body :
+         {replace(reverseIndex, "sub %three, %i", "sub %zero, %i"),
+          replace(reverseIndex, "sub %three, %i", "sub %i, %i"),
+          replace(replace(reverseReload, "[%one, %x, %three, %x]", "[%one, %x, %one, %three]"),
+                  "%offset = ctjs.get_property %base[%two]",
+                  "%offset = ctjs.get_property %base[%three]"),
+          replace(reverseReload,
+                  "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step =")}) {
+        reject("descending footprints retain own bounds and complete reload exclusions", body);
+    }
     reversed = replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",
          .body = reversed,

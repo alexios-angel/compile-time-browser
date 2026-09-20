@@ -233,7 +233,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1);
-        if (!range && !subtract && !divide && invariantFailure != ArrayContentsFailure::WorkLimit) {
+        if (!range && !divide && invariantFailure != ArrayContentsFailure::WorkLimit) {
             range = self(self, expression->getOperand(1), depth + 1);
             offsetOperand = 0;
         }
@@ -284,13 +284,20 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             } else if (multiply) {
                 boundedNumberProduct(*endpoint, *offset, result);
             } else if (subtract) {
-                boundedNumberDifference(*endpoint, *offset, result);
+                if (offsetOperand == 0) {
+                    boundedNumberDifference(*offset, *endpoint, result);
+                } else {
+                    boundedNumberDifference(*endpoint, *offset, result);
+                }
             } else {
                 boundedNumberSum(*endpoint, *offset, result);
             }
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             *endpoint = result;
         }
+        // Keep the set of visited positions ordered even when the source
+        // visits them backwards. The positive stride magnitude is unchanged.
+        if (subtract && offsetOperand == 0) { std::swap(range->first, range->last); }
         return range;
     };
     for (mlir::Block * block : {header, body}) {
