@@ -308,7 +308,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const bool negativeBand = unsignedShift && range->first.negativeIntegerNumber &&
                                       range->last.negativeIntegerNumber;
             if ((!positive && !negative) ||
-                (signedShift && signedBand(range->first) != signedBand(range->last)) ||
+                ((signedShift || leftShift) &&
+                 signedBand(range->first) != signedBand(range->last)) ||
                 (unsignedShift && !negativeBand &&
                  (!range->first.integerNumber || !range->last.integerNumber ||
                   *range->last.integerNumber > 4294967295ULL))) {
@@ -318,11 +319,18 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                         : 0U - static_cast<std::uint32_t>(*negative);
             const auto factor = std::size_t{1} << (count & 31U);
             if (leftShift) {
-                // Multiplication is monotone across zero while both results
-                // stay signed-i32. The asymmetric bounds include INT32_MIN.
-                // ponytail: wrapping conversion bands need a separate range proof.
-                if (range->first.negativeIntegerNumber.value_or(0) > 2147483648ULL / factor ||
-                    range->last.integerNumber.value_or(0) > 2147483647ULL / factor ||
+                // ToInt32 preserves order within the proved band. Bound the
+                // converted endpoints before scaling, including INT32_MIN.
+                const auto converted = [](const ContentsValue & endpoint) {
+                    const auto bits =
+                        endpoint.integerNumber
+                            ? static_cast<std::uint32_t>(*endpoint.integerNumber)
+                            : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
+                    return static_cast<std::int32_t>(bits);
+                };
+                const auto scale = static_cast<std::int64_t>(factor);
+                if (converted(range->first) < -2147483648LL / scale ||
+                    converted(range->last) > 2147483647LL / scale ||
                     range->stride > 4294967295ULL / factor) {
                     return std::nullopt;
                 }

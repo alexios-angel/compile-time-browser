@@ -410,13 +410,65 @@ void InductionCases::overwritesAndTransport() {
         "x");
     reject("signed left shifts refuse output underflow below INT32_MIN",
            replace(minimumLeftShift, "4742290407621132288", "4742290407625326592"));
-    reject("signed left shifts refuse wrapping input bands even with count zero",
+    reject("signed left shifts refuse crossing an input conversion boundary with count zero",
            replace(replace(replace(minimumLeftShift, "4742290407621132288", "4746794007250599936"),
                            "ctjs.binary mul %half, %two", "ctjs.unary plus %half"),
                    "shl %input, %one", "shl %input, %zero"));
     reject("signed left shifts retain the complete later-store reload census",
            replace(negativeLeftReload,
                    "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    const auto positiveLeftBand = replace(
+        replace(minimumLeftShift, "  %a =", "  %upper = ctjs.binary add %maximum, %half\n  %a ="),
+        "sub %part, %half", "add %part, %upper");
+    const auto negativeLeftBand = replace(
+        replace(leftShiftIndex,
+                "  %a =", "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
+        "%position = ctjs.binary_static shl %part, %one",
+        "%input = ctjs.binary sub %part, %maximum\n"
+        "  %shifted = ctjs.binary_static shl %input, %one\n"
+        "  %position = ctjs.binary sub %shifted, %two");
+    const auto zeroLeftBand = replace(
+        replace(replace(positiveLeftBand, "binary add %maximum, %half", "unary plus %maximum"),
+                "add %part, %upper", "add %i, %upper"),
+        "shl %input, %one", "shl %input, %zero");
+    const auto reversedLeftBand =
+        replace(positiveLeftBand, "%position = ctjs.binary add %shifted, %maximum",
+                "%forward = ctjs.binary add %shifted, %maximum\n"
+                "  %position = ctjs.binary sub %two, %forward");
+    for (const auto & body : {positiveLeftBand, negativeLeftBand, zeroLeftBand}) {
+        run({.what = "left shifts preserve each ToInt32 band before bounded multiplication",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "left-shift conversion bands preserve reversed write order",
+         .body = reversedLeftBand,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto bandLeftReload =
+        replace(negativeLeftBand, "%shifted = ctjs.binary_static shl %input, %one",
+                "%count = ctjs.get_property %base[%one]\n"
+                "  %shifted = ctjs.binary_static shl %input, %count");
+    run({.what = "left-shift conversion bands preserve scaled reload gaps",
+         .body = bandLeftReload,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "left-shift conversion bands retain the complete reload census",
+        replace(bandLeftReload, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("positive left-shift input bands still refuse signed output underflow",
+           replace(positiveLeftBand, "add %part, %upper", "sub %upper, %part"));
+    reject("negative left-shift input bands still refuse signed output overflow",
+           replace(negativeLeftBand, "4751297606873776128", "4749045807064285184"));
+    reject("left-shift count zero still requires a single positive ToInt32 band",
+           replace(zeroLeftBand, "%upper = ctjs.unary plus %maximum",
+                   "%upper = ctjs.binary sub %maximum, %one"));
     for (const auto & body :
          {replace(leftShiftReload, "%count = ctjs.get_property %base[%one]",
                   "%count = ctjs.get_property %base[%two]"),

@@ -17,7 +17,7 @@
 // CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
@@ -32,6 +32,16 @@
 // CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
 
 //--- source.js
 function quotientShift() {
@@ -192,9 +202,65 @@ function signedLaterOverlap() {
     }
     return a;
 }
+function positiveBandNonzero() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((3221225472 + i / 2) << 1) + 2147483648] = 0;
+    return a;
+}
+function negativeBandNonzero() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 4294967295) << 1) - 2] = 0;
+    return a;
+}
+function positiveBandReversed() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[2 - (((3221225472 + i / 2) << 1) + 2147483648)] = 0;
+    return a;
+}
+function negativeBandReload() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 4294967295) << a[1]) - 2] = 0;
+    return a;
+}
+function positiveBandRemaining() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((3221225472 + i / 2) << 1) + 2147483648] = 0;
+    return a;
+}
+function negativeBandLaterOverlap() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i / 2 - 4294967295) << a[1]) - 2] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function positiveBandUnderflow() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[-2147483648 - ((3221225472 - i) << 1)] = 0;
+    return a;
+}
+function negativeBandOverflow() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 3221225473) << 1) - 2147483646] = 0;
+    return a;
+}
+function positiveBandInputBoundary() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) << 0) - 2147483647] = 0;
+    return a;
+}
+function negativeBandZeroCount() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 4294967295) << 32) - 1] = 0;
+    return a;
+}
 quotientShift(); shiftQuotient(); modulo32(); negativeCount(); reloadGap(); signedBoundary();
 highbitZero(); savedCount(); reversedShift(); saved(); remaining(); zeroTrip(); overlappingCount();
 laterOverlap(); outputDiscontinuity(); inputWrap(); negativeInput(); stringCount(); varyingCount();
 strideOverflow(); fractionalInput(); cycle();
 signedZeroCrossing(); signedMinimum(); signedMinimumZeroCount(); signedReloadGap();
 signedRemaining(); signedOutputUnderflow(); signedInputWrap(); signedLaterOverlap();
+positiveBandNonzero(); negativeBandNonzero(); positiveBandReversed(); negativeBandReload();
+positiveBandRemaining(); negativeBandLaterOverlap(); positiveBandUnderflow(); negativeBandOverflow();
+positiveBandInputBoundary(); negativeBandZeroCount();

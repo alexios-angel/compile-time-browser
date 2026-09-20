@@ -276,6 +276,39 @@ void StructuredCases::reloads() {
     reject("structured signed left shifts retain the complete reload census",
            replace(negativeLeftReload,
                    "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    const auto positiveLeftBand = replace(
+        replace(minimumLeftShift, "  %a =", "  %upper = ctjs.binary add %maximum, %half\n  %a ="),
+        "sub %part, %half", "add %part, %upper");
+    const auto negativeLeftBand = replace(
+        replace(leftShiftIndex,
+                "  %a =", "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
+        "%position = ctjs.binary_static shl %part, %one",
+        "%input = ctjs.binary sub %part, %maximum\n"
+        "    %shifted = ctjs.binary_static shl %input, %one\n"
+        "    %position = ctjs.binary sub %shifted, %two");
+    for (const auto & body : {positiveLeftBand, negativeLeftBand}) {
+        rows.push_back({.what = "structured left shifts preserve bounded ToInt32 conversion bands",
+                        .body = body,
+                        .arrays = "a:[zero,one,zero,one]",
+                        .reads = "a[0]=zero; a[2]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto bandLeftReload =
+        replace(negativeLeftBand, "%shifted = ctjs.binary_static shl %input, %one",
+                "%count = ctjs.get_property %base[%one]\n"
+                "    %shifted = ctjs.binary_static shl %input, %count");
+    rows.push_back({.what = "structured left-shift conversion bands retain scaled reload gaps",
+                    .body = bandLeftReload,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[1]=one; a[0]=zero; a[1]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured left-shift conversion bands retain the complete reload census",
+           replace(bandLeftReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    reject("structured positive left-shift bands still refuse output underflow",
+           replace(positiveLeftBand, "add %part, %upper", "sub %upper, %part"));
+    reject("structured negative left-shift bands still refuse output overflow",
+           replace(negativeLeftBand, "4751297606873776128", "4749045807064285184"));
     reject("structured left-shift counts cannot overlap a later store",
            replace(leftShiftReload,
                    "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
