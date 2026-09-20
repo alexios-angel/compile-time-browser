@@ -1,0 +1,136 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name bitnot-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-bitnot-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function doubleComplement() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[~~i] = 0;
+    return a;
+}
+function negativeComplement() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[~(-i - 1)] = 0;
+    return a;
+}
+function reversedComplement() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(~i) + 4] = 0;
+    return a;
+}
+function reloadGap() {
+    var child = {}, a = [0, child, 4, child];
+    for (var i = 0; i < a.length; i += 2) a[(~i) + a[2]] = 0;
+    return a;
+}
+function upperBoundary() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~(2147483647 - i)) + 2147483648] = 0;
+    return a;
+}
+function lowerBoundary() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[2147483647 - (~(i - 2147483648))] = 0;
+    return a;
+}
+function signedZero() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i++) a[-(~(-i - 1))] = 0;
+    return a;
+}
+function quotientComplement() {
+    var child = {}, a = [child, child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~(i / 2)) + 3] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[~~i] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(~i) + 4] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child];
+    for (var i = 1; i < a.length; i++) a[~~i] = 0;
+    return a;
+}
+function positiveWrap() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[2147483647 - (~(i + 2147483648))] = 0;
+    return a;
+}
+function negativeWrap() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~(-2147483649 - i)) + 2147483648] = 0;
+    return a;
+}
+function positiveDiscontinuity() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~(2147483647 + i)) + 2147483648] = 0;
+    return a;
+}
+function negativeDiscontinuity() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~(i - 2147483649)) + 2147483648] = 0;
+    return a;
+}
+function fractionalIntermediate() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(~~(i / 2)) * 2] = 0;
+    return a;
+}
+function overlappingReload() {
+    var child = {}, a = [0, child, 0, 4];
+    for (var i = 0; i < a.length; i += 2) a[(~i) + a[3]] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [0, child, 4, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[(~i) + a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function stringConversion() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[~~(i + "")] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[~~i] = a;
+        a[~~i] = 0;
+    }
+    return a;
+}
+doubleComplement(); negativeComplement(); reversedComplement(); reloadGap();
+upperBoundary(); lowerBoundary(); signedZero(); quotientComplement(); saved(); remaining();
+zeroTrip(); positiveWrap(); negativeWrap(); positiveDiscontinuity(); negativeDiscontinuity();
+fractionalIntermediate(); overlappingReload(); laterOverlap(); stringConversion(); cycle();

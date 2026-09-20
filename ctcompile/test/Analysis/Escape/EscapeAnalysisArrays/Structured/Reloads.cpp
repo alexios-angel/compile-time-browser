@@ -98,6 +98,41 @@ void StructuredCases::reloads() {
         replace(replace(replace(offsetIndex, "[%one, %y, %one, %y]", "[%y, %one, %y, %one]"),
                         "%index = %zero", "%index = %one"),
                 "ctjs.binary add %i, %one", "ctjs.binary sub %i, %one");
+    const auto complementIndex =
+        replace(replace(offsetIndex, "[%one, %y, %one, %y]", "[%y, %one, %y, %one]"),
+                "%position = ctjs.binary add %i, %one",
+                "%negative = ctjs.unary bitnot %i\n"
+                "    %position = ctjs.unary bitnot %negative");
+    rows.push_back({.what = "structured double complements preserve bounded positions and stride",
+                    .body = complementIndex,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[0]=zero; a[2]=zero",
+                    .exit = "zero -> {}"});
+    const auto negativeComplement = replace(complementIndex, "%negative = ctjs.unary bitnot %i",
+                                            "%part = ctjs.binary sub %zero, %i\n"
+                                            "    %negative = ctjs.binary sub %part, %one");
+    rows.push_back({.what = "structured negative complements preserve exact nonnegative indices",
+                    .body = negativeComplement,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[0]=zero; a[2]=zero",
+                    .exit = "zero -> {}"});
+    const auto signedBoundary =
+        replace(replace(complementIndex, "  %a =",
+                        "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                        "  %minimumMagnitude = ctjs.binary add %maximum, %one\n  %a ="),
+                "%negative = ctjs.unary bitnot %i\n    %position = ctjs.unary bitnot %negative",
+                "%part = ctjs.binary sub %maximum, %i\n"
+                "    %negative = ctjs.unary bitnot %part\n"
+                "    %position = ctjs.binary add %negative, %minimumMagnitude");
+    rows.push_back({.what = "structured complements include signed i32 boundary values",
+                    .body = signedBoundary,
+                    .arrays = "a:[zero,one,zero,one]",
+                    .reads = "a[0]=zero; a[2]=zero",
+                    .exit = "zero -> {}"});
+    for (const auto & body : {replace(signedBoundary, "sub %maximum, %i", "add %maximum, %i"),
+                              replace(negativeComplement, "sub %part, %one", "sub %part, %zero")}) {
+        reject("structured complement indices reject signed wrap and negative own positions", body);
+    }
     rows.push_back({.what = "structured subtracted offsets retain a nonzero start",
                     .body = previousIndex,
                     .arrays = "a:[zero,one,zero,one]",

@@ -222,7 +222,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         auto * expression = operand.getDefiningOp();
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression)) {
             if (unary->getBlock() != body || (unary.getKind() != ctjs::UnaryKind::Plus &&
-                                              unary.getKind() != ctjs::UnaryKind::Neg)) {
+                                              unary.getKind() != ctjs::UnaryKind::Neg &&
+                                              unary.getKind() != ctjs::UnaryKind::BitNot)) {
                 return std::nullopt;
             }
             auto range = self(self, unary.getOperand(), depth + 1);
@@ -235,11 +236,27 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     return std::nullopt;
                 }
                 endpoint->original = operand;
-                if (unary.getKind() == ctjs::UnaryKind::Neg && endpoint->integerNumber != 0) {
+                if (unary.getKind() == ctjs::UnaryKind::BitNot) {
+                    // Within signed i32, ~x = -x - 1 preserves the stride.
+                    // Reject ToInt32 wrap rather than infer an affine footprint
+                    // from endpoints on opposite sides of its discontinuity.
+                    if ((endpoint->integerNumber && *endpoint->integerNumber > 2147483647ULL) ||
+                        (endpoint->negativeIntegerNumber &&
+                         *endpoint->negativeIntegerNumber > 2147483648ULL)) {
+                        return std::nullopt;
+                    }
+                    ContentsValue result{operand, ContentsKind::NonBigInt};
+                    boundedNumberComplement(*endpoint, result);
+                    if (!result.integerNumber && !result.negativeIntegerNumber) {
+                        return std::nullopt;
+                    }
+                    *endpoint = result;
+                } else if (unary.getKind() == ctjs::UnaryKind::Neg &&
+                           endpoint->integerNumber != 0) {
                     std::swap(endpoint->integerNumber, endpoint->negativeIntegerNumber);
                 }
             }
-            if (unary.getKind() == ctjs::UnaryKind::Neg) { std::swap(range->first, range->last); }
+            if (unary.getKind() != ctjs::UnaryKind::Plus) { std::swap(range->first, range->last); }
             return range;
         }
         auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);

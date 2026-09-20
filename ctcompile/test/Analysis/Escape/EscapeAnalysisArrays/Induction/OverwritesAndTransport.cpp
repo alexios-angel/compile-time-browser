@@ -174,6 +174,47 @@ void InductionCases::overwritesAndTransport() {
         replace(replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%x, %one, %x, %one]"),
                         "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
                 "ctjs.binary add %i, %one", "ctjs.binary sub %i, %one");
+    const auto complementIndex =
+        replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%x, %one, %x, %one]"),
+                "%position = ctjs.binary add %i, %one",
+                "%negative = ctjs.unary bitnot %i\n"
+                "  %position = ctjs.unary bitnot %negative");
+    run({.what = "double complement preserves exact bounded own positions and stride",
+         .body = complementIndex,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto negativeComplement = replace(complementIndex, "%negative = ctjs.unary bitnot %i",
+                                            "%part = ctjs.binary sub %zero, %i\n"
+                                            "  %negative = ctjs.binary sub %part, %one");
+    run({.what = "complement of bounded negative indices preserves zero and positive positions",
+         .body = negativeComplement,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto signedBoundary =
+        replace(replace(complementIndex, "  %a =",
+                        "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                        "  %minimumMagnitude = ctjs.binary add %maximum, %one\n  %a ="),
+                "%negative = ctjs.unary bitnot %i\n  %position = ctjs.unary bitnot %negative",
+                "%part = ctjs.binary sub %maximum, %i\n"
+                "  %negative = ctjs.unary bitnot %part\n"
+                "  %position = ctjs.binary add %negative, %minimumMagnitude");
+    run({.what = "complement includes the signed i32 endpoints without wrapping",
+         .body = signedBoundary,
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body :
+         {replace(signedBoundary, "sub %maximum, %i", "add %maximum, %i"),
+          replace(replace(signedBoundary, "sub %maximum, %i", "add %minimumMagnitude, %i"),
+                  "add %negative, %minimumMagnitude", "sub %maximum, %negative"),
+          replace(negativeComplement, "sub %part, %one", "sub %part, %zero")}) {
+        reject("complement indices reject ToInt32 wrapping and negative own positions", body);
+    }
     run({.what = "subtracted Number offsets stay relative to a nonzero start",
          .body = previousIndex,
          .arrays = "a:[zero,one,zero,one]",
