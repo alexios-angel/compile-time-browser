@@ -8,7 +8,7 @@
 // RUN: ctjs-opt %s "--pass-pipeline=builtin.module(ctnative-lower-to-emitc{optimize=false}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" | ctjs-translate --mlir-to-cpp > %t.cpp
 // RUN: %cxx_exe -Wall -Wextra -Werror -Wconversion %t.cpp -o %t.exe && %t.exe
 
-// CHECK-LABEL: emitc.func @if_poison_0() -> !emitc.opaque<"std::string">
+// CHECK-LABEL: emitc.func @if_poison_0() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @if_poison$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
                        %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -24,7 +24,7 @@ ctjs.func @if_poison$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %pair#0
 }
 
-// CHECK-LABEL: emitc.func @for_initial_1() -> !emitc.opaque<"std::string">
+// CHECK-LABEL: emitc.func @for_initial_1() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @for_initial$1(%receiver: !ctjs.value, %new_target: !ctjs.value,
                          %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -41,7 +41,7 @@ ctjs.func @for_initial$1(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %result
 }
 
-// CHECK-LABEL: emitc.func @for_backedge_2() -> !emitc.opaque<"std::string">
+// CHECK-LABEL: emitc.func @for_backedge_2() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @for_backedge$2(%receiver: !ctjs.value, %new_target: !ctjs.value,
                           %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -58,7 +58,7 @@ ctjs.func @for_backedge$2(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %result
 }
 
-// CHECK-LABEL: emitc.func @while_backedge_3() -> !emitc.opaque<"std::string">
+// CHECK-LABEL: emitc.func @while_backedge_3() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @while_backedge$3(%receiver: !ctjs.value, %new_target: !ctjs.value,
                             %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -77,7 +77,7 @@ ctjs.func @while_backedge$3(%receiver: !ctjs.value, %new_target: !ctjs.value,
 
 // Use the SAME SSA string as a field key and returned data. Two source-level
 // literals could import as separate constants and miss the erasure defect.
-// CHECK-LABEL: emitc.func @key_data_5() -> !emitc.opaque<"std::string">
+// CHECK-LABEL: emitc.func @key_data_5() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @key_data$5(%receiver: !ctjs.value, %new_target: !ctjs.value,
                       %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -98,7 +98,7 @@ ctjs.func @key_data$5(%receiver: !ctjs.value, %new_target: !ctjs.value,
 }
 
 // The full pipeline's compile-clean check must remove unused truthiness.
-// CHECK-LABEL: emitc.func @discarded_truth_6() -> !emitc.opaque<"std::string">
+// CHECK-LABEL: emitc.func @discarded_truth_6() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @discarded_truth$6(%receiver: !ctjs.value, %new_target: !ctjs.value,
                              %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
@@ -107,7 +107,7 @@ ctjs.func @discarded_truth$6(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %string
 }
 
-// CHECK-LABEL: emitc.func @while_initial_4() -> !emitc.opaque<"std::string">
+// CHECK-LABEL: emitc.func @while_initial_4() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @while_initial$4(%receiver: !ctjs.value, %new_target: !ctjs.value,
                            %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {

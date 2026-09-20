@@ -16,7 +16,9 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         // ND-1: the engine's String length counts its stored UTF-8 bytes.
         auto size = callWithConstValueOperands(
             b, where, mlir::TypeRange{ec::OpaqueType::get(context, "std::size_t")},
-            b.getStringAttr("std::size"), mlir::ValueRange{read.getObject()});
+            b.getStringAttr("std::size"),
+            mlir::ValueRange{convertScalar(b, where, read.getObject(),
+                                           ec::OpaqueType::get(context, kRawStringType))});
         auto count = ec::CastOp::create(b, where, b.getF64Type(), size.getResult(0));
         swap(convertScalar(b, where, count, carrierType(context, carrier::number)));
         return true;
@@ -26,11 +28,8 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         (binary.getKind() == ctjs::BinaryKind::Add ||
          binary.getKind() == ctjs::BinaryKind::Concat) &&
         binary.getResult().getType() == string) {
-        swap(callWithConstValueOperands(
-                 b, where, mlir::TypeRange{string}, b.getStringAttr("ctnative::string_concat"),
-                 mlir::ValueRange{convertScalar(b, where, binary.getLhs(), string),
-                                  convertScalar(b, where, binary.getRhs(), string)})
-                 .getResult(0));
+        swap(ec::AddOp::create(b, where, string, convertScalar(b, where, binary.getLhs(), string),
+                               convertScalar(b, where, binary.getRhs(), string)));
         return true;
     }
     llvm::StringRef helper;
@@ -41,7 +40,7 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         isNullableStringCarrier(unary.getOperand().getType())) {
         helper = "ctnative::string_typeof";
         operands.push_back(unary.getOperand());
-        result = string;
+        result = ec::OpaqueType::get(context, kRawStringType);
     } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
                compare &&
                (compare.getKind() == ctjs::CompareKind::Eq ||
@@ -59,9 +58,10 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     } else {
         return false;
     }
-    swap(callWithConstValueOperands(b, where, mlir::TypeRange{result}, b.getStringAttr(helper),
-                                    operands)
-             .getResult(0));
+    auto value = callWithConstValueOperands(b, where, mlir::TypeRange{result},
+                                            b.getStringAttr(helper), operands)
+                     .getResult(0);
+    swap(convertScalar(b, where, value, op->getResult(0).getType()));
     return true;
 }
 

@@ -64,7 +64,9 @@ bool lowering::replaceMap(mlir::Operation * o) {
             const auto scalar = tag == "string" ? carrier::string
                                 : tag == "bool" ? carrier::boolean
                                                 : carrier::number;
-            const auto type = carrierType(context, scalar);
+            const auto type = scalar == carrier::string
+                                  ? ec::OpaqueType::get(context, kRawStringType)
+                                  : carrierType(context, scalar);
             if (isBooleanStringCarrier(value.getType())) {
                 const auto helper =
                     tag == "string" ? "std::get<std::string>" : "std::get<ctnative::js_boolean_t>";
@@ -80,7 +82,11 @@ bool lowering::replaceMap(mlir::Operation * o) {
             return value;
         };
         const auto convertAlternative = [&](mlir::Value value, mlir::Type type, bool key = false) {
-            // Maps retain their proved raw binary64 key/payload storage.
+            // Maps retain their proved raw String/binary64 key/payload storage.
+            if (value.getType() == carrierType(context, carrier::string)) {
+                value =
+                    convertScalar(b, where, value, ec::OpaqueType::get(context, kRawStringType));
+            }
             if (isNumberCarrier(value.getType())) {
                 value = convertScalar(b, where, value, b.getF64Type());
             }
@@ -168,9 +174,11 @@ bool lowering::replaceMap(mlir::Operation * o) {
             swap(local);
         } else {
             const auto resultType = o->getResult(0).getType();
-            const auto storageType = action == "get" && isNumberCarrier(resultType)
-                                         ? mlir::Type(b.getF64Type())
-                                         : resultType;
+            const auto storageType =
+                action == "get" && isNumberCarrier(resultType) ? mlir::Type(b.getF64Type())
+                : action == "get" && resultType == carrierType(context, carrier::string)
+                    ? mlir::Type(ec::OpaqueType::get(context, kRawStringType))
+                    : resultType;
             auto value =
                 callWithConstValueOperands(b, where, mlir::TypeRange{storageType}, name, args)
                     .getResult(0);

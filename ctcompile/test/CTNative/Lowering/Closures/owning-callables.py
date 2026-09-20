@@ -84,9 +84,9 @@ def main():
                 assert "static_cast<void>(capture_0)" not in cpp, cpp
                 assert "static_cast<void>(argument_0)" not in cpp, cpp
             elif fixture == "scalar-string":
-                assert "std::function<std::string(std::string)>" in cpp, cpp
+                assert "std::function<ctnative::js_string(ctnative::js_string)>" in cpp, cpp
                 assert re.search(r"capture_0 = v\d+", cpp), cpp
-                assert "ctnative::js_num const argument_0" in cpp, cpp
+                assert "ctnative::js_string const argument_0" in cpp, cpp
             decisions.append(lambdas)
             source = args.work / f"{fixture}-{label}.cpp"
             source.write_text(cpp)

@@ -21,6 +21,23 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         value = ec::LoadOp::create(b, where, lvalue.getValueType(), value);
     }
     if (value.getType() == target) { return value; }
+    const auto string = carrierType(context, carrier::string);
+    const auto rawString = ec::OpaqueType::get(context, kRawStringType);
+    if (value.getType() == rawString && target == string) {
+        return ec::CastOp::create(b, where, target, value);
+    }
+    if (value.getType() == string && target == rawString) {
+        return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{rawString}, value,
+                                              b.getStringAttr("value"), mlir::ArrayAttr{},
+                                              mlir::ArrayAttr{}, mlir::ValueRange{})
+            .getResult(0);
+    }
+    if (value.getType() == string &&
+        (target == ec::OpaqueType::get(context, kDOMOptionalStringType) ||
+         target == ec::OpaqueType::get(context, kDOMJSONType) || isNullableStringCarrier(target) ||
+         isBooleanStringCarrier(target))) {
+        value = convertScalar(b, where, value, rawString);
+    }
     if (target.isF64() &&
         (isBooleanCarrier(value.getType()) || isNullableCarrier(value.getType()))) {
         return convertScalar(b, where, number(b, where, value), target);
@@ -49,12 +66,12 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     }
     llvm::StringRef helper;
     if (target == ec::OpaqueType::get(context, kDOMOptionalStringType) &&
-        value.getType() == carrierType(context, carrier::string)) {
+        value.getType() == rawString) {
         helper = kDOMOptionalStringType;
     } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
-               (value.getType() == carrierType(context, carrier::string) ||
-                value.getType().isF64() || isNumberCarrier(value.getType()) ||
-                value.getType().isInteger(1) || isBooleanCarrier(value.getType()))) {
+               (value.getType() == rawString || value.getType().isF64() ||
+                isNumberCarrier(value.getType()) || value.getType().isInteger(1) ||
+                isBooleanCarrier(value.getType()))) {
         // Primitive arms keep their exact alternatives in the owning tree.
         if (isBooleanCarrier(value.getType())) {
             value = ec::CastOp::create(b, where, b.getI1Type(), value);
@@ -75,9 +92,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
             inside.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
             mlir::ValueRange{});
         auto text = ec::MemberCallOpaqueOp::create(
-            inside, where, mlir::TypeRange{carrierType(context, carrier::string)}, optional,
-            inside.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{});
+            inside, where, mlir::TypeRange{rawString}, optional, inside.getStringAttr("value"),
+            mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
         auto string = ec::CallOpaqueOp::create(inside, where, mlir::TypeRange{target},
                                                inside.getStringAttr(kDOMJSONType),
                                                mlir::ValueRange{text.getResult(0)});
@@ -93,7 +109,7 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else if (isNullableStringCarrier(target)) {
         helper = "ctnative::to_nullable_string";
     } else if (isNullableStringCarrier(value.getType())) {
-        if (target == carrierType(context, carrier::string)) {
+        if (target == string || target == rawString) {
             helper = "ctnative::string_text";
         } else if (llvm::isa<mlir::IntegerType>(target)) {
             helper = "ctnative::string_truthy";
@@ -119,9 +135,11 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else {
         llvm::report_fatal_error("native scalar boundary has incompatible proved carriers");
     }
-    return callWithConstValueOperands(b, where, mlir::TypeRange{target}, b.getStringAttr(helper),
-                                      mlir::ValueRange{value})
-        .getResult(0);
+    const mlir::Type resultType = target == string ? mlir::Type(rawString) : target;
+    auto result = callWithConstValueOperands(b, where, mlir::TypeRange{resultType},
+                                             b.getStringAttr(helper), mlir::ValueRange{value})
+                      .getResult(0);
+    return resultType == target ? result : convertScalar(b, where, result, target);
 }
 
 mlir::Type lowering::joinedReturnType(ctjs::FuncOp fn) const {

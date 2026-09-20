@@ -415,19 +415,25 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         case UnaryKind::TypeOf:
             if (isObjectValueCarrier(u.getOperand().getType())) {
                 needsObjectValue = true;
-                swap(callWithConstValueOperands(
-                         b, where, mlir::TypeRange{carrierType(context, carrier::string)},
-                         b.getStringAttr("ctnative::object_typeof"),
-                         mlir::ValueRange{u.getOperand()})
-                         .getResult(0));
+                swap(convertScalar(
+                    b, where,
+                    callWithConstValueOperands(
+                        b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
+                        b.getStringAttr("ctnative::object_typeof"),
+                        mlir::ValueRange{u.getOperand()})
+                        .getResult(0),
+                    carrierType(context, carrier::string)));
             } else if (isIdentityCarrier(u.getOperand().getType())) {
                 swap(stringConstant(b, where, "object"));
             } else if (isNullableCarrier(u.getOperand().getType())) {
-                swap(callWithConstValueOperands(
-                         b, where, mlir::TypeRange{carrierType(context, carrier::string)},
-                         b.getStringAttr("ctnative::scalar_typeof"),
-                         mlir::ValueRange{u.getOperand()})
-                         .getResult(0));
+                swap(convertScalar(
+                    b, where,
+                    callWithConstValueOperands(
+                        b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
+                        b.getStringAttr("ctnative::scalar_typeof"),
+                        mlir::ValueRange{u.getOperand()})
+                        .getResult(0),
+                    carrierType(context, carrier::string)));
             } else {
                 swap(stringConstant(b, where,
                                     u.getOperand().getType() == numeric          ? "number"
@@ -583,7 +589,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                                        globalStorageType(name));
                     mlir::Value current =
                         callWithConstValueOperands(
-                            b, where, mlir::TypeRange{carrierType(context, carrier::string)},
+                            b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
                             b.getStringAttr("ctnative::global_string"), mlir::ValueRange{loaded})
                             .getResult(0);
                     mlir::Value label = ec::LiteralOp::create(

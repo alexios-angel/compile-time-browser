@@ -284,8 +284,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
         llvm::report_fatal_error("method table carrier needs its proved schema");
     case carrier::boolean: return ec::OpaqueType::get(c, kBooleanType);
     case carrier::number: return ec::OpaqueType::get(c, kNumberType);
-    case carrier::string:
-        return ec::OpaqueType::get(c, StrType::get(c, StrEncoding::UTF8).cppCarrier());
+    case carrier::string: return ec::OpaqueType::get(c, kStringType);
     case carrier::structure:
     case carrier::closure:
     case carrier::map:

@@ -15,13 +15,13 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ADD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 
-// NATIVE: emitc.func @diagnostic_1
+// NATIVE: emitc.func @diagnostic_1({{.*}}!emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // NATIVE: call_opaque "ctnative::map_keys"
 // NATIVE: !emitc.opaque<"std::vector<std::string>">
 // NATIVE: call_opaque "ctnative::vec_at"
 // NATIVE: !emitc.opaque<"ctnative::nullable_string">
 // NATIVE: call_opaque "ctnative::string_text"
-// NATIVE: emitc.func @stringFlags_
+// NATIVE: emitc.func @stringFlags_{{[0-9]+}}({{.*}}) -> !emitc.opaque<"ctnative::js_num">
 // NATIVE-DAG: call_opaque "ctnative::string_strict_equal"
 // NATIVE-DAG: call_opaque "ctnative::string_equal"
 // NATIVE-DAG: call_opaque "ctnative::string_truthy"

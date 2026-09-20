@@ -1,19 +1,20 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/concat.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/concat.mlir
 // RUN: %compilation_unit --module %t/concat.mlir --js %t/concat.js --work %t/concat --name optional_concat
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Scalars/string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/coercion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=COERCION
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EQUALITY
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ORDERING
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OPTIONAL
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=GLOBAL
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FIELD
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SHARED-MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Scalars/string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/coercion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=COERCION
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=EQUALITY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=ORDERING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=OPTIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=GLOBAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=FIELD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=SHARED-MIXED
 
 // NATIVE: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // NATIVE: emitc.func @main() -> i32
-// NATIVE: emitc.func @placements_{{[0-9]+}}({{.*}}!emitc.opaque<"std::string">{{.*}}) -> !emitc.opaque<"std::string">
+// NATIVE: emitc.func @placements_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
+// NATIVE: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
 // COERCION: ctjs.func private @add$1
 // COERCION-SAME: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
 // EQUALITY: ctjs.func private @compare$1
@@ -27,7 +28,7 @@
 // GLOBAL: call_opaque "ctnative::global_string"
 // GLOBAL: call_opaque "ctnative::print_string"
 // GLOBAL-NOT: ctnative.not_native
-// FIELD: emitc.field @direction : !emitc.opaque<"std::string">
+// FIELD: emitc.field @direction : !emitc.opaque<"ctnative::js_string">
 // FIELD: emitc.func @main()
 // FIELD-NOT: ctnative.not_native
 // FIELD-NOT: ctjs.func

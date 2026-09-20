@@ -529,6 +529,7 @@ def client(symbol, owned, name):
         "dataset_truthy_count",
         "dataset_guard_alias_count",
     )
+    observed_call = f"{call}.value()" if number or name in LOOP_SOURCES else call
     saved_type = (
         "double"
         if number
@@ -553,7 +554,7 @@ def client(symbol, owned, name):
             if (doc.read().has_attribute(node, doc.atoms().intern("data-bs-z"))) {{
                 assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern("data-bs-z"), "second"));
             }}
-            updated = {call};
+            updated = {observed_call};
         """
         if name in VALUE_SOURCES
         else ""
@@ -580,7 +581,7 @@ def client(symbol, owned, name):
             }}
             assert(doc.set_attribute_ns(node, doc.atoms().intern("urn:ignored"), doc.atoms().intern("data-hidden"), "x"));
             assert(doc.set_attribute_ns(node, {{}}, doc.atoms().intern("data-Upper"), "x"));
-            saved = {call};
+            saved = {observed_call};
             {repeat}
             {mutations}
             assert(doc.set_attribute(node, doc.atoms().intern("data-after"), "x"));
@@ -679,7 +680,7 @@ def main():
                     assert "ctnative::dataset_keys" in cpp and not dom.VM.search(cpp), cpp
                     assert "__ctbrowser_" not in cpp, cpp
                     if name in PREFIX_SOURCES:
-                        assert ".starts_with(" in cpp and ".substr(" in cpp, cpp
+                        assert ".startsWith(" in cpp and ".substr(" in cpp, cpp
                         assert not re.search(r"regex|RegExp", cpp), cpp
                     if name in VALUE_SOURCES and name != "dataset_normalized_attribute":
                         assert "ctnative::dataset_value(" in cpp and ".at(" in cpp, cpp

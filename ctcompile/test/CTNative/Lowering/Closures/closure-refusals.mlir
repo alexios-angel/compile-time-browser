@@ -146,7 +146,7 @@
 // A mutable string binding now has an owning carrier and a lifted pointer.
 // The mixed-carrier refusal is covered by native-strings.mlir's SHARED-MIXED.
 // SHAREDSTRING: emitc.func @tag_1() -> !emitc.opaque<"ctnative::js_num">
-// SHAREDSTRING: emitc.func @grow_2({{.*}}!emitc.ptr<!emitc.opaque<"std::string">>) -> !emitc.opaque<"ctnative::js_num">
+// SHAREDSTRING: emitc.func @grow_2({{.*}}!emitc.ptr<!emitc.opaque<"ctnative::js_string">>) -> !emitc.opaque<"ctnative::js_num">
 // SHAREDSTRING-NOT: ctnative.not_native
 
 // --- CONDITION 3 ACROSS FUNCTIONS: A METHOD CALLED FROM ANOTHER METHOD -----

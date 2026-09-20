@@ -344,15 +344,19 @@ def client(name, entry, owned):
     result_type = {
         "json_number_not": "ctnative::js_boolean_t",
         "json_not_element": "ctnative::js_boolean_t",
-        "json_attribute_typeof": "std::string",
+        "json_attribute_typeof": "ctnative::js_string",
         "json_config_typeof_direct": "ctnative::js_boolean_t",
         "json_config_typeof": "ctnative::js_boolean_t",
-        "json_spread_typeof": "std::string",
+        "json_spread_typeof": "ctnative::js_string",
     }.get(name, "json_value")
     stored = (
         "static_cast<bool>(result)"
         if result_type == "ctnative::js_boolean_t"
-        else "std::move(result)"
+        else (
+            "std::move(result).value()"
+            if result_type == "ctnative::js_string"
+            else "std::move(result)"
+        )
     )
     return f"""
     {{

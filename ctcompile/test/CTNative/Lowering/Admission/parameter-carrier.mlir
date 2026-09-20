@@ -5,7 +5,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROVED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unproved.js 2>/dev/null | ctjs-opt --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=UNPROVED
 
-// PROVED: emitc.func @tag_1({{.*}}!emitc.opaque<"std::string">) -> !emitc.opaque<"std::string">
+// PROVED: emitc.func @tag_1({{.*}}!emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
 // PROVED-NOT: ctnative.not_native
 
 // --- AND THE ONE NOTHING PROVED, WHICH IS STILL 62½-A -----------------------

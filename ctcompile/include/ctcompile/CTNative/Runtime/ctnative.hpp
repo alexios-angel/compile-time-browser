@@ -124,9 +124,7 @@ inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;
 }
 inline js_num to_number(nullable_scalar value) {
-    if (value.tag == nullable_scalar::kind::undefined) {
-        return js_num{js_nan_t{}};
-    }
+    if (value.tag == nullable_scalar::kind::undefined) { return js_num{js_nan_t{}}; }
     if (value.tag == nullable_scalar::kind::null) { return js_num{}; }
     return js_num{value.value};
 }
@@ -209,6 +207,9 @@ struct nullable_string {
 };
 inline nullable_string to_nullable_string(const std::string & value) {
     return value;
+}
+inline nullable_string to_nullable_string(const js_string & value) {
+    return value.value();
 }
 inline nullable_string to_nullable_string(const nullable_string & value) {
     return value;
@@ -795,22 +796,24 @@ inline void require_dataset_element(ctbrowser::element_ref element) {
 }
 // The source proof fixes /[A-Z]/g and the complete callback. ASCII matches
 // occupy one byte even in WTF-8; every unmatched byte is preserved unchanged.
-template <auto Replacement> std::string replace_uppercase(const std::string & text) {
+template <auto Replacement> js_string replace_uppercase(const js_string & text) {
     std::string result;
-    for (char c : text) {
+    for (char c : text.value()) {
         if (c >= 'A' && c <= 'Z') {
-            result += Replacement(std::string(1, c));
+            result += Replacement(js_string{std::string(1, c)}).value();
         } else {
             result += c;
         }
     }
-    return result;
+    return js_string{std::move(result)};
 }
 
 template <auto Predicate>
 std::vector<std::string> filter_strings(const std::vector<std::string> & values) {
     std::vector<std::string> selected;
-    std::copy_if(values.begin(), values.end(), std::back_inserter(selected), Predicate);
+    std::copy_if(
+        values.begin(), values.end(), std::back_inserter(selected),
+        [](const std::string & value) { return static_cast<bool>(Predicate(js_string{value})); });
     return selected;
 }
 

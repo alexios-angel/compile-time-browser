@@ -17,7 +17,7 @@
 // SAVED-DAG: nullable_string field)
 // SAVED-DAG: call_opaque "ctnative::object_get_field_76616c7565"
 // SAVED-DAG: call_opaque "ctnative::object_set_field_76616c7565"
-// SAVED-DAG: emitc.func @saved_1({{.*}}) -> !emitc.opaque<"std::string">
+// SAVED-DAG: emitc.func @saved_1({{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // NULLABLE-DAG: nullable_string field_76616c7565;
 // NULLABLE-DAG: nullable_scalar field_636f756e74;
 // NULLABLE-DAG: emitc.func @nullable_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
@@ -26,7 +26,7 @@
 // MISSING-DAG: nullable_string field_76616c7565;
 // MISSING-DAG: emitc.func @missing_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
 // COMPATIBLE-DAG: nullable_string field_76616c7565;
-// COMPATIBLE-DAG: emitc.func @text_1({{.*}}) -> !emitc.opaque<"std::string">
+// COMPATIBLE-DAG: emitc.func @text_1({{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // COMPATIBLE-DAG: emitc.func @empty_2(
 // ABSENT: nullable_string field_76616c7565;
 // ABSENT-LABEL: emitc.func @nullField_2(

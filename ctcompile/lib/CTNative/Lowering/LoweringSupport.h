@@ -65,6 +65,8 @@ enum class carrier {
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
+inline constexpr llvm::StringLiteral kStringType = "ctnative::js_string";
+inline constexpr llvm::StringLiteral kRawStringType = "std::string";
 inline constexpr llvm::StringLiteral kNumberType = "ctnative::js_num";
 inline constexpr llvm::StringLiteral kBooleanType = "ctnative::js_boolean_t";
 inline constexpr llvm::StringLiteral kBooleanStringType =

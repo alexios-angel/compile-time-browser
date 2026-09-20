@@ -25,8 +25,9 @@ mlir::Value lowering::boolConstant(mlir::OpBuilder & b, mlir::Location where, bo
 mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location where,
                                      llvm::StringRef value) {
     const std::string initializer =
-        "std::string(" + cpp::c_string_literal(std::string_view(value.data(), value.size())) +
-        ", " + std::to_string(value.size()) + ")";
+        "ctnative::js_string(" +
+        cpp::c_string_literal(std::string_view(value.data(), value.size())) + ", " +
+        std::to_string(value.size()) + ")";
     return ec::ConstantOp::create(builder, where, carrierType(context, carrier::string),
                                   ec::OpaqueAttr::get(context, initializer));
 }
