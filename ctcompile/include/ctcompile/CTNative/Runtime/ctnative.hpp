@@ -670,6 +670,87 @@ number_string add(const L & left, const R & right) {
     return number(left) + number(right);
 }
 
+template <class T>
+concept primitive_equality_operand =
+    std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t> || std::is_same_v<T, js_string> ||
+    std::is_same_v<T, nullable_scalar> || std::is_same_v<T, nullable_string> ||
+    std::is_same_v<T, number_string> || std::is_same_v<T, nullable_number_string> ||
+    std::is_same_v<T, boolean_string> || std::is_same_v<T, nullable_boolean_string> ||
+    std::is_same_v<T, undefined_t> || std::is_same_v<T, js_null_t>;
+
+namespace detail {
+// Borrow String storage only for this comparison; other leaves retain the
+// existing scalar tags. No combined value carrier or String copy is needed.
+template <primitive_equality_operand T, class F>
+js_boolean_t visit_equality_operand(const T & value, F && visitor) {
+    if constexpr (std::is_same_v<T, js_string>) {
+        return visitor(value.value());
+    } else if constexpr (std::is_same_v<T, nullable_string>) {
+        switch (value.tag) {
+        case nullable_string::kind::undefined: return visitor(nullable_scalar{});
+        case nullable_string::kind::null_value: return visitor(nullable_scalar::null());
+        case nullable_string::kind::string: return visitor(value.value);
+        }
+        std::terminate();
+    } else if constexpr (std::is_same_v<T, number_string> ||
+                         std::is_same_v<T, nullable_number_string> ||
+                         std::is_same_v<T, boolean_string> ||
+                         std::is_same_v<T, nullable_boolean_string>) {
+        return std::visit(
+            [&](const auto & alternative) { return visit_equality_operand(alternative, visitor); },
+            value);
+    } else {
+        return visitor(nullable_scalar{value});
+    }
+}
+} // namespace detail
+
+template <primitive_equality_operand L, primitive_equality_operand R>
+js_boolean_t primitive_strict_equal(const L & left, const R & right) {
+    return detail::visit_equality_operand(left, [&](const auto & a) {
+        return detail::visit_equality_operand(right, [&](const auto & b) {
+            using A = std::decay_t<decltype(a)>;
+            using B = std::decay_t<decltype(b)>;
+            if constexpr (!std::is_same_v<A, B>) {
+                return js_boolean_t{false};
+            } else if constexpr (std::is_same_v<A, std::string>) {
+                return js_boolean_t{a == b};
+            } else {
+                return scalar_strict_equal(a, b);
+            }
+        });
+    });
+}
+
+template <primitive_equality_operand L, primitive_equality_operand R>
+js_boolean_t primitive_equal(const L & left, const R & right) {
+    return detail::visit_equality_operand(left, [&](const auto & a) {
+        return detail::visit_equality_operand(right, [&](const auto & b) {
+            constexpr bool leftString = std::is_same_v<std::decay_t<decltype(a)>, std::string>;
+            constexpr bool rightString = std::is_same_v<std::decay_t<decltype(b)>, std::string>;
+            if constexpr (leftString && rightString) {
+                return js_boolean_t{a == b};
+            } else if constexpr (!leftString && !rightString) {
+                return scalar_equal(a, b);
+            } else {
+                const auto numericTextEqual = [](const std::string & text, nullable_scalar scalar) {
+                    if (scalar.tag == nullable_scalar::kind::undefined ||
+                        scalar.tag == nullable_scalar::kind::null) {
+                        return js_boolean_t{false};
+                    }
+                    return js_boolean_t{ctbrowser::string_to_number(text) ==
+                                        to_number(scalar).value()};
+                };
+                if constexpr (leftString) {
+                    return numericTextEqual(a, b);
+                } else {
+                    return numericTextEqual(b, a);
+                }
+            }
+        });
+    });
+}
+
 // --- dense arrays - part 24 Phase 57A ----------------------------------------
 //
 // THREE OF THEM AND NO MORE. `push` and `size` are what the plan's rule names;

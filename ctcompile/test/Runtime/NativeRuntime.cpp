@@ -30,6 +30,13 @@ concept primitive_addable = requires(ctnative::number_string result, const T & v
     ctnative::add(result, value);
     ctnative::add(value, result);
 };
+template <class T>
+concept primitive_equality_comparable = requires(ctnative::js_string text, const T & value) {
+    ctnative::primitive_equal(text, value);
+    ctnative::primitive_equal(value, text);
+    ctnative::primitive_strict_equal(text, value);
+    ctnative::primitive_strict_equal(value, text);
+};
 struct convertible_number {
     operator double() const { return 3.0; }
 };
@@ -577,5 +584,92 @@ int main() {
     CHECK(global_string(copiedBoolean) == std::string("a\0b", 3));
     changingBoolean = undefined_t{};
     CHECK(std::holds_alternative<undefined_t>(changingBoolean));
+
+    static_assert(std::is_same_v<decltype(primitive_equal(one, js_string{"1"})), js_boolean_t>);
+    static_assert(std::is_same_v<decltype(primitive_strict_equal(one, one)), js_boolean_t>);
+    static_assert(!primitive_equality_comparable<double> && !primitive_equality_comparable<bool>);
+    static_assert(!primitive_equality_comparable<std::string>);
+    static_assert(!primitive_equality_comparable<const char *>);
+    static_assert(!primitive_equality_comparable<convertible_number>);
+    static_assert(!primitive_equality_comparable<unrelated_number>);
+    static_assert(!primitive_equality_comparable<object_value>);
+    static_assert(!primitive_equality_comparable<std::variant<js_boolean_t, std::string>>);
+    static_assert(!primitive_equality_comparable<std::optional<number_string>>);
+    const auto sameNumbers =
+        std::tuple{one, nullable_scalar{one}, number_string{one}, nullable_number_string{one}};
+    const auto sameBooleans = std::tuple{enabled, nullable_scalar{enabled}, boolean_string{enabled},
+                                         nullable_boolean_string{enabled}};
+    const auto sameStrings = std::tuple{js_string{"1"},
+                                        nullable_string{std::string{"1"}},
+                                        number_string{js_string{"1"}},
+                                        nullable_number_string{js_string{"1"}},
+                                        boolean_string{js_string{"1"}},
+                                        nullable_boolean_string{js_string{"1"}}};
+    const auto sameUndefined = std::tuple{undefined_t{}, nullable_scalar{}, nullable_string{},
+                                          nullable_number_string{}, nullable_boolean_string{}};
+    const auto sameNull =
+        std::tuple{js_null_t{}, null, nullText, nullable_number_string{js_null_t{}},
+                   nullable_boolean_string{js_null_t{}}};
+    const auto nanValues =
+        std::tuple{notANumber, nullable_scalar{notANumber}, number_string{notANumber},
+                   nullable_number_string{notANumber}};
+    // Equivalent values traverse every finite carrier pair; strict equality
+    // keeps their JS kinds even when loose equality gives the same answer.
+    const auto checkEqualities = [](const auto & leftValues, const auto & rightValues, bool loose,
+                                    bool strict) {
+        std::apply(
+            [&](const auto &... left) {
+                const auto checkLeft = [&](const auto & a) {
+                    const auto checkPair = [&](const auto & b) {
+                        CHECK(primitive_equal(a, b) == js_boolean_t{loose});
+                        CHECK(primitive_equal(b, a) == js_boolean_t{loose});
+                        CHECK(primitive_strict_equal(a, b) == js_boolean_t{strict});
+                        CHECK(primitive_strict_equal(b, a) == js_boolean_t{strict});
+                    };
+                    std::apply([&](const auto &... right) { (checkPair(right), ...); },
+                               rightValues);
+                };
+                (checkLeft(left), ...);
+            },
+            leftValues);
+    };
+    checkEqualities(sameNumbers, sameNumbers, true, true);
+    checkEqualities(sameBooleans, sameBooleans, true, true);
+    checkEqualities(sameStrings, sameStrings, true, true);
+    checkEqualities(sameNumbers, sameBooleans, true, false);
+    checkEqualities(sameNumbers, sameStrings, true, false);
+    checkEqualities(sameBooleans, sameStrings, true, false);
+    checkEqualities(sameUndefined, sameUndefined, true, true);
+    checkEqualities(sameNull, sameNull, true, true);
+    checkEqualities(sameNull, sameUndefined, true, false);
+    checkEqualities(sameNull, sameNumbers, false, false);
+    checkEqualities(sameUndefined, sameStrings, false, false);
+    checkEqualities(nanValues, nanValues, false, false);
+    CHECK(primitive_strict_equal(nullable_number_string{negativeZero}, nullable_scalar{zero}));
+    CHECK(primitive_equal(unionFalse, negativeZero));
+    CHECK(!primitive_strict_equal(unionFalse, negativeZero));
+    for (const auto & text : {js_string{}, js_string{"0"}, js_string{"-0"}, js_string{" \t\n"}}) {
+        CHECK(primitive_equal(disabled, text) && primitive_equal(text, disabled));
+        CHECK(primitive_equal(zero, text) && primitive_equal(text, zero));
+        CHECK(!primitive_strict_equal(text, disabled) && !primitive_strict_equal(text, zero));
+    }
+    CHECK(!primitive_equal(unionFalse, unionFalseText));
+    CHECK(!primitive_equal(js_string{"true"}, enabled));
+    CHECK(!primitive_equal(js_string{"0"}, js_string{}));
+    CHECK(!primitive_equal(js_string{" 1 "}, js_string{"1"}));
+    CHECK(primitive_equal(js_string{" 1 "}, one));
+    CHECK(!primitive_equal(optionalBooleanNull, zero));
+    CHECK(!primitive_equal(optionalUndefined, disabled));
+    CHECK(!primitive_equal(optionalNull, js_string{}));
+    CHECK(!primitive_equal(js_string{"null"}, optionalNull));
+    CHECK(!primitive_equal(js_string{"undefined"}, optionalUndefined));
+    CHECK(!primitive_equal(number_string{notANumber}, js_string{"NaN"}));
+    CHECK(primitive_equal(js_string{"NaN"}, boolean_string{js_string{"NaN"}}));
+    CHECK(primitive_strict_equal(optionalText, boolean_string{js_string{"a\0b"}}));
+    CHECK(primitive_equal(optionalBooleanText, js_string{"a\0b"}));
+    CHECK(!primitive_equal(optionalBooleanText, js_string{"a"}));
+    CHECK(!primitive_equal(one, nullable_string{std::string{"1\0", 2}}));
+    CHECK(primitive_strict_equal(js_string{high}, nullable_boolean_string{js_string{high}}));
+    CHECK(!primitive_equal(highUnit, lowUnit));
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
