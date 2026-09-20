@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Number.hpp"
+
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/core/number_format.hpp>
 
 #include <cstddef>
 #include <string>
@@ -27,6 +30,7 @@ public:
     explicit operator bool() const { return !text.empty(); }
     const std::string & value() const & { return text; }
     std::string value() && { return std::move(text); }
+    js_num to_number() const { return js_num{ctbrowser::string_to_number(text)}; }
 
     // Admission proves an ASCII prefix, where byte and UTF-16 searches agree.
     bool startsWith(const js_basic_string & prefix) const { return text.starts_with(prefix.text); }
@@ -35,6 +39,12 @@ public:
         left.text += right.text;
         ctbrowser::join_surrogates(left.text);
         return left;
+    }
+    friend js_basic_string operator+(js_basic_string left, js_num right) {
+        return std::move(left) + js_basic_string{ctbrowser::number_to_string(right.value())};
+    }
+    friend js_basic_string operator+(js_num left, const js_basic_string & right) {
+        return js_basic_string{ctbrowser::number_to_string(left.value())} + right;
     }
 };
 

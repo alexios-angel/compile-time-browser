@@ -106,6 +106,18 @@ int main() {
     static_assert(std::is_same_v<decltype(std::declval<js_string &&>().value()), std::string>);
     static_assert(std::is_same_v<decltype(js_string{} == js_string{}), bool>);
     static_assert(std::is_same_v<decltype(js_string{} + js_string{}), js_string>);
+    static_assert(std::is_same_v<decltype(js_string{}.to_number()), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(js_string{} + two), js_string>);
+    static_assert(std::is_same_v<decltype(two + js_string{}), js_string>);
+    CHECK(js_string{"  0x10\n"}.to_number() == ctnative::js_num{16.0});
+    CHECK(js_string{}.to_number() == ctnative::js_num{0.0});
+    CHECK(std::signbit(js_string{"-0"}.to_number().value()));
+    CHECK(std::isnan(js_string{"1\0"}.to_number().value()));
+    CHECK(std::isnan(js_string{high}.to_number().value()));
+    CHECK((js_string{"b"} + js_string{"a"} + js_string{"a"}.to_number() + js_string{"a"}) ==
+          js_string{"baNaNa"});
+    CHECK((js_string{"x"} + negativeZero) == js_string{"x0"});
+    CHECK((two + js_string{"\0x"}) == js_string{"2\0x"});
     CHECK(!js_string{} && js_string{"false"} && js_string{"\0"});
     CHECK(js_string{"a\0b"}.value() == std::string("a\0b", 3));
     CHECK((js_string{"a\0b", 3} == js_string{"a\0b"}));
