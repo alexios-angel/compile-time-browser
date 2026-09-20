@@ -13,7 +13,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OBJECT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OPTIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=OPTIONAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EQUALITY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=KEYS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/snapshot-write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
