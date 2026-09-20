@@ -246,6 +246,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
              !boundedNumber(offset->origin()) && !boundedNumber(offset->origin(), true))) {
             return std::nullopt;
         }
+        bool descending = subtract && offsetOperand == 0;
         if (divide) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
@@ -267,8 +268,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             ContentsValue product;
             boundedNumberProduct({index, ContentsKind::NonBigInt, range->stride}, *offset, product);
-            if (!product.integerNumber || *product.integerNumber == 0) { return std::nullopt; }
-            range->stride = *product.integerNumber;
+            const auto magnitude =
+                product.integerNumber ? product.integerNumber : product.negativeIntegerNumber;
+            if (!magnitude || *magnitude == 0) { return std::nullopt; }
+            range->stride = *magnitude;
+            descending = product.negativeIntegerNumber.has_value();
         }
         // Preserve each source operation: reassociating (i + large) - large
         // could hide an inexact intermediate. Signed bounded intermediates are
@@ -296,8 +300,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             *endpoint = result;
         }
         // Keep the set of visited positions ordered even when the source
-        // visits them backwards. The positive stride magnitude is unchanged.
-        if (subtract && offsetOperand == 0) { std::swap(range->first, range->last); }
+        // visits them backwards. The stride keeps its positive magnitude.
+        if (descending) { std::swap(range->first, range->last); }
         return range;
     };
     for (mlir::Block * block : {header, body}) {

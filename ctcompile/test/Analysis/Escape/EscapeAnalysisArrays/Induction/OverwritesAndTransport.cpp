@@ -362,13 +362,19 @@ void InductionCases::overwritesAndTransport() {
          .body = replace(scaledVisit, "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
          .arrays = "a:[x,one]",
          .exit = "a -> {a,x}"});
+    run({.what = "negative scaling preserves a single visit to the signed-zero own key",
+         .body =
+             replace(replace(scaledVisit, "  %a =", "  %negative = ctjs.unary neg %two\n  %a ="),
+                     "mul %i, %two", "mul %i, %negative"),
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
     for (const auto & body :
          {replace(scaledVisit, "add %i, %two", "add %i, %one"),
           replace(scaledStart, "[%one, %one, %x]", "[%one, %x]"),
           replace(scaledVisit, "mul %i, %two", "mul %i, %zero"),
           replace(scaledVisit, "mul %i, %two", "mul %i, %s"),
-          replace(replace(scaledVisit, "  %a =", "  %negative = ctjs.unary neg %two\n  %a ="),
-                  "mul %i, %two", "mul %i, %negative"),
           replace(
               replace(scaledVisit, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
               "mul %i, %two", "mul %i, %text"),
@@ -522,6 +528,50 @@ void InductionCases::overwritesAndTransport() {
           replace(reverseReload,
                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step =")}) {
         reject("descending footprints retain own bounds and complete reload exclusions", body);
+    }
+    const auto negativeScale = replace(
+        replace(reverseIndex, "  %a =",
+                "  %negative = ctjs.unary neg %one {storage_test_id = \"negative\"}\n  %a ="),
+        "%position = ctjs.binary sub %three, %i",
+        "%part = ctjs.binary mul %i, %negative\n"
+        "  %position = ctjs.binary add %part, %three");
+    for (const auto & expression : {"mul %i, %negative", "mul %negative, %i"}) {
+        run({.what = "negative factors reverse the exact visited own positions",
+             .body = replace(negativeScale, "mul %i, %negative", expression),
+             .arrays = "a:[one,zero,one,zero]",
+             .reads = "a[0]=one; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "negative nonunit factors preserve quotient and stride magnitudes",
+         .body = replace(replace(negativeScale, "neg %one", "neg %two"),
+                         "%part = ctjs.binary mul %i, %negative",
+                         "%half = ctjs.binary div %i, %two\n"
+                         "  %part = ctjs.binary mul %half, %negative"),
+         .arrays = "a:[one,zero,one,zero]",
+         .reads = "a[0]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto negativeReload =
+        replace(replace(negativeScale, "[%one, %x, %one, %x]", "[%one, %x, %negative, %x]"),
+                "%part = ctjs.binary mul %i, %negative",
+                "%factor = ctjs.get_property %base[%two]\n"
+                "  %part = ctjs.binary mul %i, %factor");
+    run({.what = "negative factor reloads remain invariant in the scaled stride gaps",
+         .body = negativeReload,
+         .arrays = "a:[one,zero,negative,zero]",
+         .reads = "a[2]=negative; a[0]=one; a[2]=negative; a[2]=negative",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body : {replace(negativeScale, "add %part, %three", "add %part, %zero"),
+                              replace(negativeScale, "add %part, %three", "sub %three, %part"),
+                              replace(replace(negativeReload, "[%one, %x, %negative, %x]",
+                                              "[%one, %x, %one, %negative]"),
+                                      "%factor = ctjs.get_property %base[%two]",
+                                      "%factor = ctjs.get_property %base[%three]"),
+                              replace(negativeReload, "  %step =",
+                                      "  ctjs.set_property %base[%two], %zero\n  %step =")}) {
+        reject("negative scaling retains own bounds and complete reload exclusions", body);
     }
     reversed = replace(savedChild, "compare lt %index, %length", "compare gt %length, %index");
     run({.what = "reversed strict length guards retain the original returned child",

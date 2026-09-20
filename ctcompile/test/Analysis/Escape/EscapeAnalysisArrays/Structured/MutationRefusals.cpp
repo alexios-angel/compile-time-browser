@@ -146,6 +146,31 @@ void StructuredCases::mutationRefusals() {
            replace(reverseIndex, "sub %one, %i", "sub %zero, %i"));
     reject("structured reverse indices cannot depend on two varying operands",
            replace(reverseIndex, "sub %one, %i", "sub %i, %i"));
+    const auto negativeScale =
+        replace(replace(reverseIndex, "  %a =", "  %negative = ctjs.unary neg %one\n  %a ="),
+                "%position = ctjs.binary sub %one, %i",
+                "%part = ctjs.binary mul %i, %negative\n"
+                "    %position = ctjs.binary add %part, %one");
+    for (const auto & expression : {"mul %i, %negative", "mul %negative, %i"}) {
+        rows.push_back({.what = "structured negative scaling reverses exact own writes",
+                        .body = replace(negativeScale, "mul %i, %negative", expression),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=x; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    rows.push_back({.what = "structured negative factors reverse signed intermediate ranges",
+                    .body = replace(negativeScale,
+                                    "%part = ctjs.binary mul %i, %negative\n"
+                                    "    %position = ctjs.binary add %part, %one",
+                                    "%part = ctjs.binary sub %i, %one\n"
+                                    "    %position = ctjs.binary mul %part, %negative"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured negative products cannot conceal negative own positions",
+           replace(negativeScale, "add %part, %one", "add %part, %zero"));
+    reject("structured negative products cannot conceal array growth",
+           replace(negativeScale, "add %part, %one", "sub %one, %part"));
     const std::string fixedOverwrite =
         replace(original, "    %read =", "    ctjs.set_property %base[%one], %zero\n    %read =");
     rows.push_back({.what = "structured invariant own-index overwrites precede later reads",
