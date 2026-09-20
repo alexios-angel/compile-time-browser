@@ -71,10 +71,11 @@ reads held `/tmp/ctbrowser-devbox-build.lock`.
   unchanged paths**: ctdrive.cpp, PrefixAnalysis.cpp, ProviderCallbacks.cpp,
   ProviderPaths.h, Heap.h and Facts.cpp. Whole-repository formatting does not pass.
 
-The first native probe executed all five positives before two new negative
-fixtures hit an out-of-range snapshot-index refusal ahead of the intended field
-mutation check. Their extra index read was removed; the mutation, alias and
-snapshot remain. The final probe checks the intended exact diagnostics.
+The first native probe executed all five positives before a new negative fixture
+hit an out-of-range snapshot-index refusal ahead of the intended field mutation
+check. That extra index read was removed from both new field-addition controls;
+their mutation, alias and snapshot remain. The final probe checks the intended
+exact diagnostics.
 
 Skipped: full CTest/compiler lit, whole class-initialization lit, broad native
 matrices/corpus, DOM replay, full Bootstrap, WPT/test262, Windows and sanitizers.
