@@ -30,18 +30,33 @@ collector, universal value box or reference-counted object graph is introduced.
 
 ## Target type vocabulary
 
-All names below belong to `ctnative`. Prefer composition over public inheritance
-from standard containers. Add a method when an admitted source operation needs
-it, with its semantic test; do not implement every prototype up front.
+All names below belong to `ctnative`. Number and String use basic class templates
+with aliases for their default representations:
+
+```cpp
+namespace ctnative {
+template<class T> class js_basic_num;
+using js_num = js_basic_num<double>;
+template<class T> class js_basic_string;
+using js_string = js_basic_string<char>;
+}
+```
+
+Prefer `ctnative::js_num` and `ctnative::js_string` in ordinary generated code.
+Spell the basic templates explicitly only for an alternative representation
+whose range, operations or encoding have been proved equivalent. Prefer
+composition over public inheritance from standard containers. Add a method
+when an admitted source operation needs it, with its semantic test; do not
+implement every prototype up front.
 
 | Target type | Meaning and implementation obligations |
 |---|---|
-| `js_string<char>` | Owning JavaScript String with byte/WTF-8 storage. Exposes String methods and admitted operators; `char` describes storage, not JavaScript indexing. Reuse public Core Unicode operations. |
-| `js_string<char16_t>` | The same String domain with UTF-16 storage where the encoding and conversion proof permits it. Storage choice must not silently change observable answers. |
+| `js_string` (`js_basic_string<char>`) | Owning JavaScript String with byte/WTF-8 storage. Exposes String methods and admitted operators; `char` describes storage, not JavaScript indexing. Reuse public Core Unicode operations. |
+| `js_basic_string<char16_t>` | The same String domain with UTF-16 storage where the encoding and conversion proof permits it. Storage choice must not silently change observable answers. |
 | `undefined_t` | The distinct undefined value. No numeric, null, empty-string or invalid-handle sentinel substitution. |
 | `js_null_t` | The distinct null value. Keep it separate from undefined at unions, calls, returns, fields and comparisons. |
-| `js_num<double>` | JavaScript Number backed by binary64, including NaN, infinities and signed zero. Arithmetic and conversions use the existing semantic helpers where C++ differs. |
-| `js_num<Rep>` | Narrowed Number representation only when range and operation proofs establish equivalence; an integer storage parameter does not authorize C++ integer division or overflow. |
+| `js_num` (`js_basic_num<double>`) | JavaScript Number backed by binary64, including NaN, infinities and signed zero. Arithmetic and conversions use the existing semantic helpers where C++ differs. |
+| `js_basic_num<T>` | Narrowed Number representation only when range and operation proofs establish equivalence; an integer storage parameter does not authorize C++ integer division or overflow. |
 | `js_boolean_t` | The Boolean value with explicit contextual conversion to C++ `bool`. Numeric conversion is an admitted JavaScript operation, not an accidental implicit C++ promotion. |
 | `js_vector<T>` | Owning dense native sequence/snapshot storage, normally backed by `std::vector<T>`. It does not by itself claim JavaScript Array identity, holes, prototype or species semantics. |
 | `js_array_t<T>` | The interface for an admitted JavaScript Array, with `length()`, indexed operations and methods such as `push`, `pop` and `filter`. Use dense storage only under the existing density/content proof. Preserve reference identity, presence, mutation and eager evaluation. |
@@ -128,15 +143,15 @@ closed-shape object:
 
 ```cpp
 ctnative::js_document_t document{dom, styles}; // Explicit borrowed resources.
-ctnative::js_string<char> selector{".selected"};
+ctnative::js_string selector{".selected"};
 auto match = document.querySelector(selector);
 auto nodes = ctnative::Element.prototype.querySelectorAll.call(element, selector);
-ctnative::js_num<double> count = nodes.length();
+ctnative::js_num count = nodes.length();
 
-ctnative::js_array_t<ctnative::js_num<double>> values;
-auto length = ctnative::Array.prototype.push.call(values, ctnative::js_num<double>{1.0});
+ctnative::js_array_t<ctnative::js_num> values;
+auto length = ctnative::Array.prototype.push.call(values, ctnative::js_num{1.0});
 auto own = ctnative::Object.prototype.hasOwnProperty.call(
-    options, ctnative::js_string<char>{"enabled"});
+    options, ctnative::js_string{"enabled"});
 ```
 
 The first implemented step reuses the four stateless selector method
@@ -195,12 +210,13 @@ intrinsic prototypes are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
 behind Script and needs extraction before native use.
 
-Use `ctnative::js_num<double>` as the new canonical name. The current global
-`js_num` alias and a class template cannot share the same declaration name in
-the same scope. Migrate one admitted group of operations and all its type pins,
-signatures and clients together; any temporary compatibility alias lives at the
-old global name and is explicitly retired after its callers migrate. No regex-only
-rename or sudden reinterpretation of existing `auto`/template deduction.
+Use `ctnative::js_basic_num<T>` and `ctnative::js_basic_string<T>` for the class
+templates, with `ctnative::js_num` and `ctnative::js_string` as the canonical
+default aliases declared above. The existing global `js_num = double` remains a
+separate compatibility spelling until its callers migrate. Migrate one admitted
+group of operations and all its type pins, signatures and clients together, then
+retire that global alias. No regex-only rename or sudden reinterpretation of
+existing `auto`/template deduction.
 
 1. **Element prototype composition implemented.** `Element.prototype` reuses
    the four selector method types; the proven EmitC callees and emitted-code
