@@ -349,8 +349,8 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "class construction method requires an existing own field",
-            "bootstrap-base-data": "class construction method requires an existing own field",
+            "bootstrap-base": "class own-key snapshot constructor observes its receiver",
+            "bootstrap-base-data": "class own-key snapshot constructor observes its receiver",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -578,6 +578,9 @@ def main():
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
         if name in (
+            "inherited-own-fields-iterate-getter-direct",
+            "inherited-own-fields-iterate-getter-chain",
+            "inherited-own-fields-iterate-getter-fresh-empty",
             "inherited-own-fields-iterate-helper-captured",
             "inherited-own-fields-iterate-helper-nested",
             "inherited-own-fields-iterate-method-read",

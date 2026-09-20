@@ -553,6 +553,12 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
             mlir::Value key;
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
                 key = read.getKey();
+                // The fresh prototype's constructor backedge exists before
+                // any own field. fieldsOnly/staticGetters still prove every
+                // use and exact target; inherited target changes remain refused.
+                if (use->getOperandNumber() == 0 && ctjs::constantKey(key) == "constructor") {
+                    continue;
+                }
                 if (selectedMethods.count(ctjs::constantKey(key)) && read.getResult().hasOneUse()) {
                     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
                     if (call && call.getCallee() == read.getResult() &&
@@ -622,7 +628,8 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
                           ctjs::GetPropertyOp, ctjs::CallOp, ctjs::CallDirectOp>(op)) {
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
                     read && sourceValue(read.getObject()) == self &&
-                    (selectedMethods.count(ctjs::constantKey(read.getKey())) ||
+                    (ctjs::constantKey(read.getKey()) == "constructor" ||
+                     selectedMethods.count(ctjs::constantKey(read.getKey())) ||
                      hasField(ordered, ctjs::constantKey(read.getKey())))) {
                     continue;
                 }

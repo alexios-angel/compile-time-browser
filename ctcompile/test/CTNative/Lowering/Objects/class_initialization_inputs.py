@@ -16,6 +16,24 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "inherited-own-fields-iterate-getter-direct": (7211, 7211),
+    "inherited-own-fields-iterate-getter-method": (8211, 8211),
+    "inherited-own-fields-iterate-getter-nested": (8311, 8311),
+    "inherited-own-fields-iterate-getter-chain": (8511, 8511),
+    "inherited-own-fields-iterate-getter-arguments": (151137811, 151137811),
+    "inherited-own-fields-iterate-getter-fresh": (7611, 7611),
+    "inherited-own-fields-iterate-getter-fresh-empty": (7611, 7611),
+    "inherited-own-fields-iterate-getter-inherited": (251108011, 251108011),
+    "inherited-own-fields-iterate-getter-leaf": (8011, 8011),
+    "inherited-own-fields-iterate-getter-nearest": (8211, 8211),
+    "inherited-own-fields-iterate-getter-distinct": (231136114911, 231136114911),
+    "inherited-own-fields-iterate-getter-shadow": (79111, 79111),
+    "inherited-own-fields-iterate-getter-overwrite": (7311, 7311),
+    "inherited-own-fields-iterate-getter-prototype": (7911, 7911),
+    "inherited-own-fields-iterate-getter-effects": (80111, 80111),
+    "inherited-own-fields-iterate-getter-receiver": (7911, 7911),
+    "inherited-own-fields-iterate-getter-missing": (749111, 749111),
+    "inherited-own-fields-iterate-getter-snapshot": (7411, 7411),
     "inherited-own-fields-iterate-method-inherited-early-snapshot": (27111, 27111),
     "inherited-own-fields-iterate-method-super-early-snapshot": (27111, 27111),
     "inherited-own-fields-iterate-method-read": (7911, 7911),
@@ -387,6 +405,12 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "inherited-own-fields-iterate-getter-direct",
+    "inherited-own-fields-iterate-getter-method",
+    "inherited-own-fields-iterate-getter-nested",
+    "inherited-own-fields-iterate-getter-chain",
+    "inherited-own-fields-iterate-getter-arguments",
+    "inherited-own-fields-iterate-getter-fresh-empty",
     "inherited-own-fields-iterate-method-read",
     "inherited-own-fields-iterate-method-update",
     "inherited-own-fields-iterate-method-primitive",
