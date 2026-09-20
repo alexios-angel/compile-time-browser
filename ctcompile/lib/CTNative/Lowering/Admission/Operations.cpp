@@ -585,9 +585,9 @@ bool admission::op(mlir::Operation * o) {
         case BinaryKind::Add:
             if (stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs()))) { return true; }
             if ((carrierOf(typeOf(b.getLhs())) == carrier::string &&
-                 carrierOf(typeOf(b.getRhs())) == carrier::number) ||
+                 isScalarCarrier(carrierOf(typeOf(b.getRhs())))) ||
                 (carrierOf(typeOf(b.getRhs())) == carrier::string &&
-                 carrierOf(typeOf(b.getLhs())) == carrier::number)) {
+                 isScalarCarrier(carrierOf(typeOf(b.getLhs()))))) {
                 return true;
             }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
@@ -598,7 +598,11 @@ bool admission::op(mlir::Operation * o) {
         case BinaryKind::Mul:
         case BinaryKind::Div:
         case BinaryKind::Mod:
-        case BinaryKind::Pow: return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
+        case BinaryKind::Pow:
+            return (carrierOf(typeOf(b.getLhs())) == carrier::string ||
+                    numeric(b.getLhs(), "binary")) &&
+                   (carrierOf(typeOf(b.getRhs())) == carrier::string ||
+                    numeric(b.getRhs(), "binary"));
         // (`**` is not std::pow; exponentiate() below is why.)
         default: return refuse("a bitwise or string operator is not native yet");
         }

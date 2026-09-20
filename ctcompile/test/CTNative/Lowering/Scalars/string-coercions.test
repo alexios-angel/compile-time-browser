@@ -112,8 +112,11 @@ convert(true);
 convert(false);
 
 #--- boolean-add.js
+// A mixed String/Number parameter still has no native carrier. Exact Boolean
+// concatenation is covered by string-arithmetic.test.
 function convert(value) { return value + true; }
 convert("3");
+convert(3);
 
 #--- equality.js
 function convert(left, right) { return left == right; }

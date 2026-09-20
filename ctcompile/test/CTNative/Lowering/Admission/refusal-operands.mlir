@@ -24,7 +24,7 @@
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/binary.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=BINARY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/store.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
@@ -42,22 +42,24 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DYNKEY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/looparray.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=LOOPARRAY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tilde.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=TILDE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bits.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=BITS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/frameslot.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=FRAMESLOT
 
 // --- numeric(), where = "binary" --------------------------------------------
 //
+// Exact String subtraction is native. An optional String still has no numeric
+// conversion, preserving the diagnostic's operation and offending operand type.
 // BINARY: ctjs.func {{.*}}@badd$1
-// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
+// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.opt<!ctnative.str<utf8>>, not a number"
 
 // --- a formerly refused Boolean global ------------------------------------
 //
@@ -140,7 +142,7 @@
 // FRAMESLOT-SAME: ctnative.not_native = "an array literal created inside a branch or a loop - its storage has to be one frame slot (obligation O-4)"
 
 //--- binary.js
-function badd(n) { var u = "text"; return u - n; }
+function badd(n) { var u; if (n > 0) { u = "text"; } return u - n; }
 var r = badd(1);
 
 //--- store.js

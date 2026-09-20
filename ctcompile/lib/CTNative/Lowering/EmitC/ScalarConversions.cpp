@@ -23,6 +23,12 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     if (value.getType() == target) { return value; }
     const auto string = carrierType(context, carrier::string);
     const auto rawString = ec::OpaqueType::get(context, kRawStringType);
+    if (isNullableCarrier(value.getType()) && target == string) {
+        return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, value,
+                                              b.getStringAttr("to_string"), mlir::ArrayAttr{},
+                                              mlir::ArrayAttr{}, mlir::ValueRange{})
+            .getResult(0);
+    }
     if (value.getType() == string && isNumberCarrier(target)) {
         return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, value,
                                               b.getStringAttr("to_number"), mlir::ArrayAttr{},

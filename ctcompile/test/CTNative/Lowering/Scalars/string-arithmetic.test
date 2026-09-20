@@ -1,0 +1,145 @@
+# Proved primitive arithmetic uses the existing Number operations after String
+# conversion. String concatenation preserves Boolean and absence text. Keep
+# runtime and optimized paths, both printers and both C++ compilers observable.
+# Uninitialized locals supply undefined without requiring a global binding proof.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
+# RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name arithmetic_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name arithmetic_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name arithmetic_runtime_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name arithmetic_runtime_deduced_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name arithmetic_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name arithmetic_optimized_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name arithmetic_optimized_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name arithmetic_optimized_deduced_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name arithmetic_mutation --mutate product --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-arithmetic.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-arithmetic.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# RUNTIME-DAG: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::js_string">, () -> !emitc.opaque<"ctnative::js_num">
+# RUNTIME-DAG: sub {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+# RUNTIME-DAG: mul {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+# RUNTIME-DAG: div {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
+# RUNTIME-DAG: call_opaque "std::fmod"
+# RUNTIME-DAG: call_opaque "std::pow"
+# RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_boolean_t">) -> !emitc.opaque<"ctnative::js_string">
+# RUNTIME-DAG: add {{.*}} : (!emitc.opaque<"ctnative::js_boolean_t">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
+# RUNTIME-DAG: member_call_opaque {{.*}} "to_string"() : !emitc.opaque<"ctnative::nullable_scalar">, () -> !emitc.opaque<"ctnative::js_string">
+# CPP: .to_number()
+# MUTATION: global 'product' differs
+# REFUSED: ctjs.func private @convert$1
+# REFUSED-SAME: ctnative.not_native =
+
+#--- values.js
+function subtract(text, number) { return text - number; }
+function multiply(text, number) { return text * number; }
+function divide(number, text) { return number / text; }
+function remainder(left, right) { return left % right; }
+function power(base, exponent) { return base ** exponent; }
+function subtractBoolean(text, value) { return text - value; }
+function appendBoolean(text, value) { return text + value; }
+function prependBoolean(value, text) { return value + text; }
+function appendNull(text) { return text + null; }
+function prependNull(text) { return null + text; }
+function appendUndefined(text) { let value; return text + value; }
+function prependUndefined(text) { let value; return value + text; }
+function missingValue() { let value; return value; }
+function decorate(value) { return "v" + value + ":" + (value + "v"); }
+
+var difference = subtract("12", 5);
+var product = multiply("3", 4);
+var quotient = divide(7, "2");
+var negativeRemainder = remainder("-7", "2");
+var exponent = power("2", "3");
+var negativeZero = multiply("-0", 2);
+var empty = subtract("", 0);
+var invalid = remainder("a", "2");
+var unitInfinity = power("1", "Infinity");
+var nanZero = power("a", "0");
+var booleanDifference = subtractBoolean("3", true);
+var zeroDivisor = divide(1, "0");
+var appendedTrue = appendBoolean("v", true);
+var appendedFalse = appendBoolean("v", false);
+var prependedTrue = prependBoolean(true, "v");
+var prependedFalse = prependBoolean(false, "v");
+var appendedNull = appendNull("v");
+var prependedNull = prependNull("v");
+var appendedUndefined = appendUndefined("v");
+var prependedUndefined = prependUndefined("v");
+var scalarNumber = decorate(2);
+var scalarBoolean = decorate(false);
+var scalarNull = decorate(null);
+var scalarUndefined = decorate(missingValue());
+var scalarNaN = decorate(0 / 0);
+var scalarNegativeZero = decorate(-0);
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    difference: 7,
+    product: 12,
+    quotient: 3.5,
+    negativeRemainder: -1,
+    exponent: 8,
+    negativeZero: -0,
+    empty: 0,
+    invalid: NaN,
+    unitInfinity: NaN,
+    nanZero: 1,
+    booleanDifference: 2,
+    zeroDivisor: Infinity,
+    appendedTrue: "vtrue",
+    appendedFalse: "vfalse",
+    prependedTrue: "truev",
+    prependedFalse: "falsev",
+    appendedNull: "vnull",
+    prependedNull: "nullv",
+    appendedUndefined: "vundefined",
+    prependedUndefined: "undefinedv",
+    scalarNumber: "v2:2v",
+    scalarBoolean: "vfalse:falsev",
+    scalarNull: "vnull:nullv",
+    scalarUndefined: "vundefined:undefinedv",
+    scalarNaN: "vNaN:NaNv",
+    scalarNegativeZero: "v0:0v"
+};
+assert.equal(Object.keys(expected).length, 26);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("26 String arithmetic and primitive concatenation observations agree with JavaScript");
+
+#--- object-arithmetic.js
+function convert(value) { return "3" - value; }
+convert({number: 1});
+
+#--- optional-arithmetic.js
+function convert(mode) {
+    let value;
+    if (mode) { value = "3"; }
+    return value * 2;
+}
+convert(true);
+convert(false);
+
+#--- equality.js
+function convert(left, right) { return left == right; }
+convert("3", 3);
+
+#--- ordering.js
+function convert(left, right) { return left < right; }
+convert("a", "b");

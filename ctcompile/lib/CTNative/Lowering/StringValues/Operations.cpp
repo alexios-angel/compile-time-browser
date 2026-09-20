@@ -29,10 +29,11 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
          binary.getKind() == ctjs::BinaryKind::Concat) &&
         binary.getResult().getType() == string) {
         const auto operand = [&](mlir::Value value) {
-            // Exact String/Number pairs select their typed addition overload.
-            // Existing optional String concatenation still materializes its text.
-            return isNumberCarrier(value.getType()) ? value
-                                                    : convertScalar(b, where, value, string);
+            // Exact primitives select their typed addition overload. Tagged
+            // scalar/optional String concatenation first materializes its text.
+            return isNumberCarrier(value.getType()) || isBooleanCarrier(value.getType())
+                       ? value
+                       : convertScalar(b, where, value, string);
         };
         swap(ec::AddOp::create(b, where, string, operand(binary.getLhs()),
                                operand(binary.getRhs())));

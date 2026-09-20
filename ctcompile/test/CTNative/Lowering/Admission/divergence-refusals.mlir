@@ -60,7 +60,11 @@
 //
 // BITWISE: ctnative.not_native = "a static bitwise operator is not native yet"
 
-// CONCAT: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
+// Exact Number/String concatenation uses the typed String overload and public
+// Core formatting; string-coercions.test checks the executable results.
+// CONCAT: emitc.func @concat_1({{.*}}!emitc.opaque<"ctnative::js_num">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
+// CONCAT: add {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
+// CONCAT-NOT: ctnative.not_native
 
 // The unchanged global String load returns through its owning optional carrier.
 // Its actual String tag survives the call and is printed without narrowing.
