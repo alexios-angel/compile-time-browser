@@ -294,7 +294,11 @@ def main():
                     ["--mlir-print-op-generic"]
                     if name.startswith(("inherited-", "override-", "bootstrap-base"))
                     or name.startswith("class-map-inherited")
-                    or name == "class-map-record-alias-method-inherited"
+                    or name
+                    in (
+                        "class-map-record-alias-method-inherited",
+                        "class-map-record-alias-snapshot-inherited",
+                    )
                     else []
                 ),
                 "-o",
@@ -324,25 +328,29 @@ def main():
                 raise RuntimeError("own-field scalar snapshot lost its boxed local producer")
         if (
             name in OWN_FIELDS
-            or name == "class-map-record-alias-snapshot-write"
+            or name.startswith("class-map-record-alias-snapshot-")
             or name == "class-map-inherited-early-snapshot"
             or name.startswith("own-fields-branch-")
             or name.startswith("inherited-own-fields-")
             or name.startswith("bootstrap-base")
         ):
             manifest["initial_intrinsics"].append("Object")
-        if name in ("own-fields-loop", "inherited-own-fields-loop") or name.startswith(
-            "inherited-own-fields-iterate-"
-        ):
+        if name in (
+            "own-fields-loop",
+            "inherited-own-fields-loop",
+            "class-map-record-alias-snapshot-dispose",
+        ) or name.startswith("inherited-own-fields-iterate-"):
             manifest["initial_intrinsics"] += [
                 "Array",
                 "__ctbrowser_for_of_open",
                 "__ctbrowser_iter_next",
                 "__ctbrowser_iter_close",
             ]
-        if (
-            name.startswith(("inherited", "override-", "bootstrap-base", "class-map-inherited"))
-            or name == "class-map-record-alias-method-inherited"
+        if name.startswith(
+            ("inherited", "override-", "bootstrap-base", "class-map-inherited")
+        ) or name in (
+            "class-map-record-alias-method-inherited",
+            "class-map-record-alias-snapshot-inherited",
         ):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
@@ -394,7 +402,11 @@ def main():
             "class-map-record-alias-constructor": "class retained Map alias requires data field reads",
             "class-map-record-alias-shadow": "class method is observed or shadowed",
             "class-map-record-alias-constructor-write": "class retained Map alias requires data field reads",
-            "class-map-record-alias-snapshot-write": "class retained Map aliases require an own-field snapshot proof",
+            "class-map-record-alias-snapshot-write": "class own-key snapshot field set changes",
+            "class-map-record-alias-snapshot-added": "class own-key snapshot field set changes",
+            "class-map-record-alias-snapshot-method-added": "class own-key snapshot field set changes",
+            "class-map-record-alias-snapshot-deleted": "class receiver escapes or observes a prototype/descriptor",
+            "class-map-record-alias-snapshot-constructor-publication": "class own-key snapshot constructor observes its receiver",
             "inherited-own-fields-iterate-forward-missing": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-forward-recursive": "class construction helper proof exceeds its depth bound",
             "inherited-own-fields-iterate-forward-unused-effects": "unknown call, binding or reflective effect",
@@ -503,7 +515,11 @@ def main():
             # the inherited source still constructs its Map and leaf record.
             constructions = (
                 2
-                if name == "class-map-record-alias-method-inherited"
+                if name
+                in (
+                    "class-map-record-alias-method-inherited",
+                    "class-map-record-alias-snapshot-inherited",
+                )
                 else text.count("ctjs.construct")
             )
             if constructions != prepared.read_text().count("ctjs.construct"):
@@ -520,6 +536,21 @@ def main():
                     ],
                 ),
                 success=False,
+            )
+            preparation_refusals += 1
+        if name.startswith("class-map-record-alias-snapshot-") and name in POSITIVES:
+            prepare(
+                args,
+                name + "-no-object-identity",
+                structured,
+                dict(
+                    manifest,
+                    initial_intrinsics=[
+                        item for item in manifest["initial_intrinsics"] if item != "Object"
+                    ],
+                ),
+                success=False,
+                diagnostic="class own-key snapshot needs declared Object identity",
             )
             preparation_refusals += 1
         if name == "own-fields-loop":
@@ -750,6 +781,7 @@ def main():
             "static-defaults-chain",
             "static-throw-chain",
             "class-map-record-overwrite",
+            "class-map-record-alias-snapshot-overwrite-delete",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

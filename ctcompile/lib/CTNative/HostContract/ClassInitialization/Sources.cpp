@@ -579,8 +579,20 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     auto inherited = heritage.lookup(constructor.getResult());
     const auto base = inherited ? sourceValue(inherited.getArgs()[1]) : mlir::Value{};
     auto required = snapshotFields.find(base);
-    llvm::SmallVector<mlir::Value> receivers;
-    for (ctjs::ConstructOp made : instances) { receivers.push_back(made.getResult()); }
+    llvm::SetVector<mlir::Value> receivers;
+    for (ctjs::ConstructOp made : instances) {
+        receivers.insert(made.getResult());
+        // Saved Map reads retain the same records across replacement/deletion.
+        // Include all their snapshots and writes before folding any own keys.
+        for (mlir::OpOperand * use : sourceUses(made.getResult())) {
+            if (!step()) { return false; }
+            llvm::SmallVector<mlir::Value> aliases;
+            if (retainedMapAliases(*use, aliases)) {
+                receivers.insert(aliases.begin(), aliases.end());
+            }
+            if (!reason.empty()) { return false; }
+        }
+    }
     llvm::SmallVector<ctjs::SetPropertyOp> allDefinitions(definitions);
     if (inherited) { allDefinitions.append(inheritedMethods.lookup(base)); }
     llvm::StringMap<ctjs::FuncOp> selectedMethods;
@@ -588,7 +600,7 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
         if (!step()) { return false; }
         auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
         if (fn) {
-            receivers.push_back(fn.getBody().front().getArgument(ctjs::arg_receiver));
+            receivers.insert(fn.getBody().front().getArgument(ctjs::arg_receiver));
             selectedMethods.try_emplace(ctjs::constantKey(definition.getKey()), fn);
         }
     }
@@ -924,9 +936,8 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     return true;
 }
 
-bool classInitialization::retainedMapReads(
-    mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
-    llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads) {
+bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
+                                             llvm::SmallVectorImpl<mlir::Value> & reads) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     auto owner = sourceValue(use.get()).getDefiningOp<ctjs::ConstructOp>();
     if (!call || use.getOperandNumber() != 3 || !owner || !maps.contains(call.getReceiver())) {
@@ -938,11 +949,6 @@ bool classInitialization::retainedMapReads(
         owner->getBlock() != &function.getBody().front() || call->getBlock() != owner->getBlock() ||
         !owner->isBeforeInBlock(call)) {
         return refuse("class retained Map requires completed entry-block record owners");
-    }
-    // Snapshot folding ran before this census and did not see saved Map
-    // aliases. Their field writes need to join that proof before admission.
-    if (snapshotFields.contains(sourceValue(owner.getCallee()))) {
-        return refuse("class retained Map aliases require an own-field snapshot proof");
     }
     if (!proveMaps()) { return false; }
     // Keep the existing full Map identity/use proof. This narrower source proof
@@ -958,7 +964,6 @@ bool classInitialization::retainedMapReads(
     // ponytail: literal string keys in one block; branch/capture transport
     // needs the shared native Map presence and owner proof before widening.
     llvm::StringMap<mlir::Value> entries;
-    llvm::SmallVector<mlir::Value> reads;
     for (mlir::Operation & op : *map->getBlock()) {
         if (!step()) { return false; }
         auto operation = llvm::dyn_cast<ctjs::CallOp>(op);
@@ -993,6 +998,14 @@ bool classInitialization::retainedMapReads(
             reads.push_back(operation.getResult());
         }
     }
+    return reason.empty();
+}
+
+bool classInitialization::retainedMapReads(
+    mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
+    llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads) {
+    llvm::SmallVector<mlir::Value> reads;
+    if (!retainedMapAliases(use, reads)) { return false; }
     // Recheck saved aliases for every receiver census: inherited method keys
     // can change. The native stage still owes the typed carrier/lifetime proof.
     for (mlir::Value read : reads) {

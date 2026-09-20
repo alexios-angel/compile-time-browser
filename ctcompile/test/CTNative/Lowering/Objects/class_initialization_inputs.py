@@ -16,6 +16,15 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-alias-snapshot-order": (2126, 2126),
+    "class-map-record-alias-snapshot-method": (21707, 21707),
+    "class-map-record-alias-snapshot-dispose": (2111, 2111),
+    "class-map-record-alias-snapshot-overwrite-delete": (22124, 22124),
+    "class-map-record-alias-snapshot-inherited": (21609, 21609),
+    "class-map-record-alias-snapshot-added": (209, 209),
+    "class-map-record-alias-snapshot-method-added": (209, 209),
+    "class-map-record-alias-snapshot-deleted": (119, 119),
+    "class-map-record-alias-snapshot-constructor-publication": (207, 207),
     "class-map-record-alias-method-read": (807, 807),
     "class-map-record-alias-method-write": (888, 888),
     "class-map-record-alias-method-overwrite-delete": (51161, 51161),
@@ -547,6 +556,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-alias-snapshot-order",
+    "class-map-record-alias-snapshot-method",
+    "class-map-record-alias-snapshot-dispose",
+    "class-map-record-alias-snapshot-overwrite-delete",
+    "class-map-record-alias-snapshot-inherited",
     "class-map-record-alias-method-read",
     "class-map-record-alias-method-write",
     "class-map-record-alias-method-overwrite-delete",
