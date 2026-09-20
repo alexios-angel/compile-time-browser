@@ -10,9 +10,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutate-original.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ITERATOR
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutate-copy.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/numeric-coercion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NUMERIC
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ADD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/numeric-coercion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=NUMERIC --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=ADD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 
 // NATIVE: emitc.func @diagnostic_1({{.*}}!emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
@@ -22,8 +22,8 @@
 // NATIVE: !emitc.opaque<"ctnative::nullable_string">
 // NATIVE: call_opaque "ctnative::string_text"
 // NATIVE: emitc.func @stringFlags_{{[0-9]+}}({{.*}}) -> !emitc.opaque<"ctnative::js_num">
-// NATIVE-DAG: call_opaque "ctnative::string_strict_equal"
-// NATIVE-DAG: call_opaque "ctnative::string_equal"
+// NATIVE-DAG: call_opaque "ctnative::primitive_strict_equal"
+// NATIVE-DAG: call_opaque "ctnative::primitive_equal"
 // NATIVE-DAG: call_opaque "ctnative::string_truthy"
 // NATIVE-DAG: call_opaque "ctnative::string_typeof"
 // ASSIGNED: ctjs.func private @probe$1
@@ -42,12 +42,12 @@
 // ITERATOR-SAME: ctnative.not_native = "native Map iterator requires one immediate Array.from consumption"
 // SNAPSHOT: ctjs.func private @probe$1
 // SNAPSHOT-SAME: ctnative.not_native = "native Map snapshot requires confined numeric or string elements"
-// NUMERIC: ctjs.func private @probe$1
-// NUMERIC-SAME: ctnative.not_native = "unary operand is !ctnative.opt<!ctnative.str<utf8>>, not a number"
-// MIXED: ctjs.func private @probe$1
-// MIXED-SAME: ctnative.not_native = "equality operand is !ctnative.opt<!ctnative.str<utf8>>, not a number"
-// ADD: ctjs.func private @probe$1
-// ADD-SAME: ctnative.not_native = "binary operand is !ctnative.opt<!ctnative.str<utf8>>, not a number"
+// NUMERIC: emitc.func @probe_1
+// NUMERIC: member_call_opaque {{.*}} "to_number"()
+// MIXED: emitc.func @probe_1
+// MIXED: call_opaque "ctnative::primitive_equal"
+// ADD: emitc.func @probe_1
+// ADD: call_opaque "ctnative::add"
 
 //--- assigned.js
 function probe() { const map = new Map(); map.set("bs.modal", 1); return Array.from(map.keys())[0]; }

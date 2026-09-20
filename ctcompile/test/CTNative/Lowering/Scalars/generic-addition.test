@@ -26,7 +26,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-string-parameter.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=BOOLEAN-STRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-string-return.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=BOOLEAN-STRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=EQUALITY --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=GLOBAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
@@ -39,6 +39,7 @@
 # NUMERIC-MUTATION: global 'numericText' differs
 # STRING-MUTATION: global 'decoratedNumber' differs
 # REFUSED: ctnative.not_native =
+# EQUALITY: call_opaque "ctnative::primitive_equal"
 # GLOBAL: !emitc.opaque<"ctnative::nullable_number_string">
 # BOOLEAN-STRING: !emitc.opaque<"ctnative::boolean_string">
 

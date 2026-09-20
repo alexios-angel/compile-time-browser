@@ -73,16 +73,27 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     llvm::StringRef helper;
     llvm::SmallVector<mlir::Value> operands;
     mlir::Type result;
+    const auto hasStringAlternative = [](mlir::Type type) {
+        if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
+        const auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+        static const llvm::StringSet<> carriers{kStringType,        kNullableStringType,
+                                                kBooleanStringType, kNullableBooleanStringType,
+                                                kNumberStringType,  kNullableNumberStringType};
+        return opaque && carriers.contains(opaque.getValue());
+    };
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
         compare &&
         (compare.getKind() == ctjs::CompareKind::Eq ||
          compare.getKind() == ctjs::CompareKind::StrictEq) &&
-        ((isNullableStringCarrier(compare.getLhs().getType()) ||
-          isNullableStringCarrier(compare.getRhs().getType())) ||
-         (compare.getLhs().getType() == string && isNullableCarrier(compare.getRhs().getType())) ||
-         (compare.getRhs().getType() == string && isNullableCarrier(compare.getLhs().getType())))) {
-        helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::string_equal"
-                                                            : "ctnative::string_strict_equal";
+        (hasStringAlternative(compare.getLhs().getType()) ||
+         hasStringAlternative(compare.getRhs().getType()))) {
+        // Exact String pairs keep their direct C++ comparison. Every mixed or
+        // optional pair retains its original tags until the selected JS rule.
+        if (compare.getLhs().getType() == string && compare.getRhs().getType() == string) {
+            return false;
+        }
+        helper = compare.getKind() == ctjs::CompareKind::Eq ? "ctnative::primitive_equal"
+                                                            : "ctnative::primitive_strict_equal";
         operands = {compare.getLhs(), compare.getRhs()};
         result = carrierType(context, carrier::boolean);
     } else {

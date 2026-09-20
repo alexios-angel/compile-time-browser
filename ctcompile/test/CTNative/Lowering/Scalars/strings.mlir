@@ -3,12 +3,12 @@
 // RUN: %compilation_unit --module %t/concat.mlir --js %t/concat.js --work %t/concat --name optional_concat
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Scalars/string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/coercion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=COERCION
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=EQUALITY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=EQUALITY --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=ORDERING
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=OPTIONAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=GLOBAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=FIELD
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=SHARED-MIXED
 
 // NATIVE: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
@@ -18,8 +18,8 @@
 // COERCION: emitc.func @add_1({{.*}}!emitc.opaque<"ctnative::js_string">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // COERCION: add {{.*}} : (!emitc.opaque<"ctnative::js_string">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_string">
 // COERCION-NOT: ctnative.not_native
-// EQUALITY: ctjs.func private @compare$1
-// EQUALITY-SAME: ctnative.not_native = "equality operand is !ctnative.str<utf8>, not a number"
+// EQUALITY: emitc.func @compare_1
+// EQUALITY: call_opaque "ctnative::primitive_equal"
 // ORDERING: ctjs.func private @compare$1
 // ORDERING-SAME: ctnative.not_native = "compare operand is !ctnative.str<utf8>, not a number"
 // OPTIONAL: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
@@ -33,13 +33,14 @@
 // FIELD: emitc.func @main()
 // FIELD-NOT: ctnative.not_native
 // FIELD-NOT: ctjs.func
-// MIXED: ctjs.func private @choose$1
-// MIXED-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
+// MIXED: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::number_string">
+// The union now has a scalar carrier; shared-cell assignments still require
+// a proved widening rule. Preserve the original before/call/after source.
 // SHARED-MIXED: ctjs.func private @mixedShared$1
-// SHARED-MIXED-SAME: ctnative.not_native = "a shared binding of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>, which has no native carrier
+// SHARED-MIXED-SAME: ctnative.not_native = "an assignment of !ctnative.str<utf8> to a shared binding of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>"
 // SHARED-MIXED: ctjs.func private @change$2
 // SHARED-MIXED-SAME: ctnative.cell_args = array<i32: 3>
-// SHARED-MIXED-SAME: ctnative.not_native = "shared capture 0 is !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>, which has no native carrier yet"
+// SHARED-MIXED-SAME: ctnative.not_native = "an assignment of !ctnative.num<i32> to a shared binding of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>"
 
 //--- coercion.js
 // Keep a runtime String/Number addition even when its result is discarded.

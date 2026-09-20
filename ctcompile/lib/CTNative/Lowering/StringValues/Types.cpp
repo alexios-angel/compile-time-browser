@@ -27,8 +27,10 @@ bool stringConcatenation(mlir::Type left, mlir::Type right) {
 
 bool stringEquality(mlir::Type left, mlir::Type right) {
     const auto a = carrierOf(left), b = carrierOf(right);
-    return (isStringCarrier(a) && (isStringCarrier(b) || onlyAbsent(right))) ||
-           (isStringCarrier(b) && onlyAbsent(left));
+    // Equality may convert primitives, but cannot invoke an unproved object hook.
+    return isPrimitiveCarrier(a) && isPrimitiveCarrier(b) &&
+           (isStringCarrier(a) || isStringUnionCarrier(a) || isStringCarrier(b) ||
+            isStringUnionCarrier(b));
 }
 
 } // namespace ctcompile::ctnative::lowering_detail
