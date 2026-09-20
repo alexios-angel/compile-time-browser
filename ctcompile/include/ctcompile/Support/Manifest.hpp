@@ -19,11 +19,8 @@
 // own answers is a manifest that can disagree with the artifact it describes -
 // and then it is worse than nothing, because it is believed.
 //
-// NOT llvm::json, WHICH THE PLAN ASKS FOR, and the reason is one the plan gives
-// itself: LLVM sits behind CTCOMPILE_ENABLE_MLIR, which is OFF until Phase 7,
-// because a compiler that needs a 2 GB dependency to write a JSON file is one a
-// runtime-only machine cannot build. The emitter below is forty lines and its
-// escaping has its own tests. When Phase 7 turns MLIR on, switching is one file.
+// The manifest library stays independent of LLVM. Only the compiler tools
+// link LLVM for their command lines; this emitter has its own escaping tests.
 namespace ctcompile {
 
 struct manifest_script {

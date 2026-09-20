@@ -190,8 +190,7 @@ endif()
 # CTCOMPILE_ENABLE_MLIR=OFF configuration where most of this file does not.
 
 # BOOST.JSON AND BOOST.REGEX, WHICH THE ENGINE DOES NOT ALREADY ASK FOR.
-# ctbrowser/cmake/dependencies.cmake requests COMPONENTS url and ctcompile's own
-# CMakeLists requests program_options; neither of those pulls in json or regex,
+# ctbrowser/cmake/dependencies.cmake requests COMPONENTS url, which does not pull in json or regex,
 # and both are COMPILED libraries rather than header-only. They are needed HERE
 # because the divergences this test pins are divergences OF Boost - a refusal
 # asserted without running the thing being refused is a refusal nobody checked.

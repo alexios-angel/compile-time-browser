@@ -31,8 +31,12 @@
 
 #include <ctbrowser.hpp>
 
-#include <boost/program_options.hpp>
+#include "llvm/Option/ArgList.h"
+#include "llvm/Option/OptTable.h"
+#include "llvm/Support/Allocator.h"
+#include "llvm/Support/raw_ostream.h"
 
+#include <bitset>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -43,7 +47,40 @@
 #include <utility>
 #include <vector>
 
-namespace po = boost::program_options;
+namespace {
+
+using llvm::opt::DefaultVis;
+using llvm::opt::HelpHidden;
+
+enum OptionID {
+    OPT_INVALID,
+#define OPTION(...) LLVM_MAKE_OPT_ID(__VA_ARGS__),
+#include "Options.inc"
+#undef OPTION
+    OPT_LAST
+};
+
+#define OPTTABLE_STR_TABLE_CODE
+#define OPTTABLE_PREFIXES_TABLE_CODE
+#include "Options.inc"
+#undef OPTTABLE_PREFIXES_TABLE_CODE
+#undef OPTTABLE_STR_TABLE_CODE
+
+constexpr llvm::opt::OptTable::Info option_info[] = {
+#define OPTION(...) LLVM_CONSTRUCT_OPT_INFO(__VA_ARGS__),
+#include "Options.inc"
+#undef OPTION
+};
+
+class Options : public llvm::opt::GenericOptTable {
+public:
+    Options() : GenericOptTable(OptionStrTable, OptionPrefixesTable, option_info) {
+        setGroupedShortOptions(true);
+        setDashDashParsing(true);
+    }
+};
+
+} // namespace
 
 // A string's bytes, as a bundle entry stores them.
 std::vector<std::byte> bytes_of(std::string_view text) {
@@ -66,73 +103,57 @@ bool write_file(const std::filesystem::path & path, std::span<const std::byte> b
 }
 
 int main(int argc, char ** argv) try {
-    // VISIBLE and HIDDEN, which is what makes `--help` readable: the positional
-    // application directory is documented in the usage line rather than listed
-    // as an option nobody would pass by name.
-    po::options_description visible{
-        "ctcompile - ahead-of-time compiler for ctbrowser applications"};
-    visible.add_options()                                        //
-        ("help,h", "show this message")                          //
-        ("version,v", "report the compiler and engine versions") //
-        ("output,o", po::value<std::string>()->value_name("FILE"),
-         "where to write the application executable") //
-        ("entry", po::value<std::string>()->value_name("FILE"),
-         "the page to package, relative to the application directory (default index.html)") //
-        ("bundle", po::bool_switch(),
-         "write the .ctapp bundle alone instead of an executable") //
-        ("launcher", po::value<std::string>()->value_name("FILE"),
-         "the launcher to build the executable from (default: ctrun beside this compiler)") //
-        ("manifest", po::value<std::string>()->value_name("FILE"),
-         "also write the application manifest here, as JSON") //
-        ("fonts", po::value<std::string>()->value_name("DIR"),
-         "where the vendored faces are (default $CTBROWSER_FONT_PATH, else `fonts`)") //
-        ("verbose", po::bool_switch(), "report each stage as it runs");
-
-    po::options_description hidden;
-    hidden.add_options()("application", po::value<std::string>()->value_name("DIR"),
-                         "the application directory to compile");
-
-    po::options_description all;
-    all.add(visible).add(hidden);
-    po::positional_options_description positional;
-    positional.add("application", 1);
-
-    po::variables_map options;
-    po::store(po::command_line_parser{argc, argv}.options(all).positional(positional).run(),
-              options);
-    po::notify(options);
-
-    const auto usage = [&](std::ostream & out) -> std::ostream & {
-        out << "usage: ctcompile [options] <application-directory>\n\n" << visible;
-        return out;
-    };
-
-    if (options.count("help") != 0) {
-        usage(std::cout) << "\nPackages an application into a .ctapp its launcher can run.\n";
+    Options table;
+    llvm::BumpPtrAllocator allocator;
+    llvm::StringSaver saver{allocator};
+    bool invalid = false;
+    auto options = table.parseArgs(argc, argv, OPT_UNKNOWN, saver, [&](llvm::StringRef message) {
+        llvm::errs() << "ctcompile: " << message << '\n';
+        invalid = true;
+    });
+    if (invalid) {
+        std::cerr << "try `ctcompile --help`\n";
+        return 2;
+    }
+    std::bitset<OPT_LAST> seen;
+    for (const auto * argument : options) {
+        unsigned id = argument->getOption().getID();
+        if (id == OPT_application) { id = OPT_INPUT; }
+        if (seen.test(id)) {
+            llvm::errs() << "ctcompile: " << argument->getSpelling()
+                         << " may only be specified once\ntry `ctcompile --help`\n";
+            return 2;
+        }
+        seen.set(id);
+    }
+    if (options.hasArg(OPT_help)) {
+        table.printHelp(llvm::outs(), "ctcompile [options] <application-directory>",
+                        "ctcompile - ahead-of-time compiler for ctbrowser applications");
+        llvm::outs() << "\nPackages an application into a .ctapp its launcher can run.\n";
         return 0;
     }
-    if (options.count("version") != 0) {
+    if (options.hasArg(OPT_version)) {
         std::cout << "ctcompile " << ctcompile::version_string() << " ("
                   << ctcompile::engine_summary() << ")\n";
         return 0;
     }
-    if (options.count("application") == 0) {
-        usage(std::cerr);
+    const auto * application_arg = options.getLastArg(OPT_INPUT, OPT_application);
+    if (!application_arg) {
+        table.printHelp(llvm::errs(), "ctcompile [options] <application-directory>",
+                        "ctcompile - ahead-of-time compiler for ctbrowser applications");
         return 2;
     }
 
     // A directory that is not there is worth saying so about now, rather than
     // in whichever phase first opens it.
-    const std::filesystem::path application{options["application"].as<std::string>()};
+    const std::filesystem::path application{application_arg->getValue()};
     if (!std::filesystem::is_directory(application)) {
         std::cerr << "ctcompile: " << application << " is not a directory\n";
         return 2;
     }
-    const bool verbose = options["verbose"].as<bool>();
-
-    const std::filesystem::path entry = options.count("entry") != 0
-                                            ? application / options["entry"].as<std::string>()
-                                            : application / "index.html";
+    const bool verbose = options.hasArg(OPT_verbose);
+    const std::filesystem::path entry =
+        application / options.getLastArgValue(OPT_entry, "index.html").str();
     if (!std::filesystem::is_regular_file(entry)) {
         std::cerr << "ctcompile: " << entry << " is not a file - name the page with --entry\n";
         return 2;
@@ -181,8 +202,8 @@ int main(int argc, char ** argv) try {
         // The DIRECTORY is recorded in the bundle because it is part of the
         // name: the registry key is "<dir>/Tinos-Regular.ttf", so a run that
         // resolved a different directory would ask for a name nothing carries.
-        font_directory = options.count("fonts") != 0 ? options["fonts"].as<std::string>()
-                                                     : ctbrowser::browser::default_font_directory();
+        font_directory = options.hasArg(OPT_fonts) ? options.getLastArgValue(OPT_fonts).str()
+                                                   : ctbrowser::browser::default_font_directory();
         real_fonts = probe.use_real_fonts(font_directory);
 
         probe.load_html(html);
@@ -379,18 +400,15 @@ int main(int argc, char ** argv) try {
     // and a trailer saying where that starts. A linked ELF does not care what
     // follows its last section - so the machine that RUNS the result needs no
     // toolchain, and this needs no linker.
-    const bool bundle_only = options["bundle"].as<bool>();
+    const bool bundle_only = options.hasArg(OPT_bundle);
     const std::filesystem::path out =
-        options.count("output") != 0
-            ? std::filesystem::path{options["output"].as<std::string>()}
+        options.hasArg(OPT_output)
+            ? std::filesystem::path{options.getLastArgValue(OPT_output).str()}
             : std::filesystem::path{entry.stem().string() + (bundle_only ? ".ctapp" : "")};
 
     std::vector<std::byte> written = bytes;
     if (!bundle_only) {
-        std::filesystem::path launcher =
-            options.count("launcher") != 0
-                ? std::filesystem::path{options["launcher"].as<std::string>()}
-                : std::filesystem::path{};
+        std::filesystem::path launcher{options.getLastArgValue(OPT_launcher).str()};
         if (launcher.empty()) {
             // BESIDE THIS COMPILER, which is where a build puts them both, and
             // found through /proc/self/exe rather than argv[0] so it still works
@@ -426,9 +444,9 @@ int main(int argc, char ** argv) try {
     // here, because it is the size of the file that was just written and the
     // copy inside the bundle cannot know it - writing the manifest is what
     // changes it.
-    if (options.count("manifest") != 0) {
+    if (options.hasArg(OPT_manifest)) {
         record.bundle_bytes = written.size();
-        const std::filesystem::path where{options["manifest"].as<std::string>()};
+        const std::filesystem::path where{options.getLastArgValue(OPT_manifest).str()};
         const std::string manifest = ctcompile::to_json(record);
         if (!write_file(where, std::as_bytes(std::span{manifest}))) { return 1; }
     }
@@ -447,10 +465,6 @@ int main(int argc, char ** argv) try {
               << (assets_packed == 1 ? "" : "s") << ", " << written.size() << " bytes"
               << (bundle_only ? " (bundle)" : " (executable)") << '\n';
     return 0;
-} catch (const po::error & bad) {
-    // Boost's own message names the offending option, which is the useful half.
-    std::cerr << "ctcompile: " << bad.what() << "\ntry `ctcompile --help`\n";
-    return 2;
 } catch (const std::exception & failed) {
     std::cerr << "ctcompile: " << failed.what() << '\n';
     return 1;

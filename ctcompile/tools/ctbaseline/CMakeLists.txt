@@ -4,7 +4,7 @@
 # reports a number about code that is gone. See ctcompile/tools/CMakeLists.txt
 # for the three times that has happened here.
 add_executable(ctcompile-tool-ctbaseline ctbaseline.cpp)
-target_link_libraries(ctcompile-tool-ctbaseline PRIVATE ctcompile::support ctcompile::css
+target_link_libraries(ctcompile-tool-ctbaseline PRIVATE LLVMSupport ctcompile::support ctcompile::css
                                                         ctcompile::javascript ctbrowser::dom)
 ctcompile_target(ctcompile-tool-ctbaseline)
 set_target_properties(ctcompile-tool-ctbaseline PROPERTIES OUTPUT_NAME ctbaseline)

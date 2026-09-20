@@ -49,19 +49,6 @@ else()
   message(STATUS "ctcompile: building beside ctbrowser in the monorepo")
 endif()
 
-# BOOST.PROGRAM_OPTIONS, for the command line. A COMPILED Boost library, which
-# is allowed here: the header-only rule was lifted on 2026-07-31 when Boost.URL
-# turned compiled-only, and the engine already links one.
-#
-# Why not llvm::cl, which the dependency order would otherwise prefer: LLVM is
-# behind CTCOMPILE_ENABLE_MLIR and OFF until Phase 7, so a command line built on
-# llvm::cl would make the stub require a 2 GB dependency to parse `--version`.
-# If that trade changes when the MLIR pipeline lands, the switch is one file.
-#
-# No Windows consequence: ctcompile is devbox-and-Linux only for the
-# foreseeable future, and the `windows` preset builds the engine alone.
-find_package(Boost 1.80 REQUIRED CONFIG COMPONENTS program_options)
-
 # ctcompile's own warning set, kept SEPARATE from the engine's on purpose.
 #
 # The engine builds with -Werror -Wconversion and that bar does not move.
@@ -98,12 +85,8 @@ function(ctcompile_target name)
     $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
 endfunction()
 
-# MLIR, and it is OFF until Phase 7 has something to do with it.
-#
-# Deliberately not "on when MLIR is found": a stub that silently starts
-# requiring a 2 GB dependency because it happened to be installed is how a
-# runtime-only machine stops being able to build. When it goes ON, the version
-# guard runs first and fails with a sentence rather than a template error.
+# LLVM Option/Support supply command-line parsing even without the MLIR pipeline.
+# Find MLIR first when enabled so LLVM comes from the same installation.
 option(CTCOMPILE_ENABLE_MLIR "Build the MLIR-based compiler pipeline (Phase 7 onwards)" OFF)
 if(CTCOMPILE_ENABLE_MLIR)
   # MLIR FIRST, THEN LLVM, and the order is not arbitrary: MLIRConfig.cmake
@@ -111,7 +94,22 @@ if(CTCOMPILE_ENABLE_MLIR)
   # first can bind a DIFFERENT installation and the two then disagree about
   # everything from the ABI to the TableGen syntax.
   find_package(MLIR CONFIG REQUIRED)
-  find_package(LLVM CONFIG REQUIRED)
+endif()
+find_package(LLVM CONFIG REQUIRED)
+include_directories(BEFORE SYSTEM ${LLVM_INCLUDE_DIRS})
+
+# Pin the option-table generator/API as well as the optional MLIR pipeline.
+# An LLVM upgrade is its own change: ctcompile/docs/LLVMUpgrade.md.
+set(CTCOMPILE_REQUIRED_LLVM_MAJOR 23)
+set(CTCOMPILE_TESTED_LLVM_VERSION "23.1.0")
+if(NOT LLVM_VERSION_MAJOR EQUAL CTCOMPILE_REQUIRED_LLVM_MAJOR)
+  message(FATAL_ERROR
+    "ctcompile needs LLVM ${CTCOMPILE_REQUIRED_LLVM_MAJOR} "
+    "(tested at ${CTCOMPILE_TESTED_LLVM_VERSION}), found ${LLVM_PACKAGE_VERSION} at "
+    "${LLVM_DIR}. Upgrading LLVM is its own change - see ctcompile/docs/LLVMUpgrade.md.")
+endif()
+
+if(CTCOMPILE_ENABLE_MLIR)
   # THE FOUND HEADERS COME FIRST. Brew links a formula's headers into
   # <prefix>/include, which other dependencies put on the search path as a
   # plain -I - and -I is searched before -isystem, so whatever llvm brew has
@@ -123,19 +121,6 @@ if(CTCOMPILE_ENABLE_MLIR)
   # keeps the engine's bar where it is.
   include_directories(BEFORE SYSTEM ${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
 
-  # THE LLVM/MLIR PIN, checked at configure time - a pin, not a floor. ODS,
-  # PDLL and pass-generation syntax move between releases, so an upgrade is its
-  # own change (ctcompile/docs/LLVMUpgrade.md) rather than a surprise inside
-  # mlir-tblgen, whose diagnostic names a template and never a version. 23 is
-  # what the devbox can have: apt ships MLIR 18 and brew ships 23.
-  set(CTCOMPILE_REQUIRED_LLVM_MAJOR 23)
-  set(CTCOMPILE_TESTED_LLVM_VERSION "23.1.0")
-  if(NOT LLVM_VERSION_MAJOR EQUAL CTCOMPILE_REQUIRED_LLVM_MAJOR)
-    message(FATAL_ERROR
-      "ctcompile needs LLVM/MLIR ${CTCOMPILE_REQUIRED_LLVM_MAJOR} "
-      "(tested at ${CTCOMPILE_TESTED_LLVM_VERSION}), found ${LLVM_PACKAGE_VERSION} at "
-      "${LLVM_DIR}. Upgrading LLVM is its own change - see ctcompile/docs/LLVMUpgrade.md.")
-  endif()
   message(STATUS "ctcompile: MLIR ${LLVM_PACKAGE_VERSION} at ${MLIR_DIR}")
 
   # WHERE GENERATED DOCUMENTATION GOES. add_mlir_doc writes under
