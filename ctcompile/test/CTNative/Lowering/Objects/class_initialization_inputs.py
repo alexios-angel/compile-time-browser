@@ -16,6 +16,27 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-direct": (707, 707),
+    "class-map-record-overwrite": (997, 997),
+    "class-map-record-delete": (552, 552),
+    "class-map-record-clear": (460, 460),
+    "class-map-record-payloads": (272, 272),
+    "class-map-record-alias-write": (888, 888),
+    "class-map-record-region-owner": (7, 7),
+    "class-map-record-missing": (107, 107),
+    "class-map-record-mixed-constructors": (207, 207),
+    "class-map-record-mixed-scalar": (703, 703),
+    "class-map-record-map-escaped": (7, 7),
+    "class-map-record-alias-escaped": (7, 7),
+    "class-map-record-prototype-replaced": (9, 9),
+    "class-map-record-constructor-publication": (707, 707),
+    "class-map-record-read-after-delete": (107, 107),
+    "class-map-record-computed-key": (7, 7),
+    "class-map-record-alias-constructor": (7, 7),
+    "class-map-record-alias-method": (7, 7),
+    "class-map-record-alias-shadow": (7, 7),
+    "class-map-record-alias-constructor-write": (9, 9),
+    "class-map-record-alias-snapshot-write": (2, 2),
     "class-map-optional-key-tags": (2353, 2353),
     "class-map-optional-key-missing": (711171, 711171),
     "class-map-optional-key-booleans": (23574, 23574),
@@ -702,6 +723,12 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "class-map-record-direct",
+    "class-map-record-overwrite",
+    "class-map-record-delete",
+    "class-map-record-clear",
+    "class-map-record-payloads",
+    "class-map-record-alias-write",
     "class-map-optional-key-mixed-string",
     "class-map-optional-key-object",
     "inherited-own-fields-iterate-borrow-mixed-literal",

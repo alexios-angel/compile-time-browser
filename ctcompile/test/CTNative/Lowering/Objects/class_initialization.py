@@ -251,6 +251,7 @@ def main():
                 raise RuntimeError("own-field scalar snapshot lost its boxed local producer")
         if (
             name in OWN_FIELDS
+            or name == "class-map-record-alias-snapshot-write"
             or name == "class-map-inherited-early-snapshot"
             or name.startswith("own-fields-branch-")
             or name.startswith("inherited-own-fields-")
@@ -311,6 +312,16 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "class-map-record-missing": "class retained Map get requires a present record",
+            "class-map-record-read-after-delete": "class retained Map get requires a present record",
+            "class-map-record-mixed-scalar": "class retained Map requires one completed constructor family",
+            "class-map-record-mixed-constructors": "class retained Map requires one completed constructor family",
+            "class-map-record-computed-key": "class retained Map requires literal string keys",
+            "class-map-record-alias-constructor": "class retained Map alias requires data field reads",
+            "class-map-record-alias-method": "class retained Map alias requires data field reads",
+            "class-map-record-alias-shadow": "class retained Map alias requires data field reads",
+            "class-map-record-alias-constructor-write": "class retained Map alias requires data field reads",
+            "class-map-record-alias-snapshot-write": "class retained Map aliases require an own-field snapshot proof",
             "inherited-own-fields-iterate-forward-missing": "class construction helper requires an existing own field",
             "inherited-own-fields-iterate-forward-recursive": "class construction helper proof exceeds its depth bound",
             "inherited-own-fields-iterate-forward-unused-effects": "unknown call, binding or reflective effect",
@@ -558,6 +569,10 @@ def main():
             elif name == "class-map-inherited":
                 # Super guard Error constructions disappear during normalization.
                 operations = ("ctjs.load_upvalue",)
+            elif name.startswith("class-map-record-"):
+                operations = ("ctjs.construct",)
+                if before.count("ctjs.call ") != after.count("ctjs.call ") + 1:
+                    raise RuntimeError("record Map preparation changed a source Map call")
             elif name.startswith("class-map-"):
                 operations = ("ctjs.construct", "ctjs.load_upvalue")
             elif name in GLOBAL_HOLDERS:
@@ -649,6 +664,7 @@ def main():
             "static-forward-chain",
             "static-defaults-chain",
             "static-throw-chain",
+            "class-map-record-overwrite",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",
@@ -747,9 +763,14 @@ def main():
                     )
                     if (
                         name.startswith("class-map-")
+                        and not name.startswith("class-map-record-")
                         and f"!ctnative.map<{key_type}" not in native_text
                     ):
                         raise RuntimeError("class Map lost its key representation refusal")
+                    if name.startswith("class-map-record-") and (
+                        "the instance `new` makes does not have a closed shape" not in native_text
+                    ):
+                        raise RuntimeError("record Map lost its retained receiver proof boundary")
                     if name == "inherited-helper-order" and (
                         "an object literal passed to a direct call as an argument"
                         not in native_text

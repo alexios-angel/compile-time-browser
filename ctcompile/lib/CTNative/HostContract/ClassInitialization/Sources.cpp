@@ -924,6 +924,97 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     return true;
 }
 
+bool classInitialization::retainedMapReads(
+    mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
+    llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads) {
+    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    auto owner = sourceValue(use.get()).getDefiningOp<ctjs::ConstructOp>();
+    if (!call || use.getOperandNumber() != 3 || !owner || !maps.contains(call.getReceiver())) {
+        return false;
+    }
+    auto map = call.getReceiver().getDefiningOp<ctjs::ConstructOp>();
+    auto function = owner->getParentOfType<ctjs::FuncOp>();
+    if (!map || !function || map->getBlock() != owner->getBlock() ||
+        owner->getBlock() != &function.getBody().front() || call->getBlock() != owner->getBlock() ||
+        !owner->isBeforeInBlock(call)) {
+        return refuse("class retained Map requires completed entry-block record owners");
+    }
+    // Snapshot folding ran before this census and did not see saved Map
+    // aliases. Their field writes need to join that proof before admission.
+    if (snapshotFields.contains(sourceValue(owner.getCallee()))) {
+        return refuse("class retained Map aliases require an own-field snapshot proof");
+    }
+    if (!proveMaps()) { return false; }
+    // Keep the existing full Map identity/use proof. This narrower source proof
+    // cannot capture or transport the Map, so every operation shares its owner.
+    for (mlir::OpOperand & selected : map.getResult().getUses()) {
+        if (!step()) { return false; }
+        auto * op = selected.getOwner();
+        if (op->getBlock() != map->getBlock() ||
+            (!llvm::isa<ctjs::RootOp>(op) && !mapOperations.contains(op))) {
+            return refuse("class retained Map requires direct entry-block operations");
+        }
+    }
+    // ponytail: literal string keys in one block; branch/capture transport
+    // needs the shared native Map presence and owner proof before widening.
+    llvm::StringMap<mlir::Value> entries;
+    llvm::SmallVector<mlir::Value> reads;
+    for (mlir::Operation & op : *map->getBlock()) {
+        if (!step()) { return false; }
+        auto operation = llvm::dyn_cast<ctjs::CallOp>(op);
+        if (!operation || operation.getReceiver() != map.getResult()) { continue; }
+        auto method = operation.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        if (!method || !mapOperations.contains(operation)) {
+            return refuse("class retained Map has an unproved invocation");
+        }
+        const auto action = ctjs::constantKey(method.getKey());
+        if (action == "clear") {
+            entries.clear();
+            continue;
+        }
+        auto key = operation.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
+        auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+        if (!text) { return refuse("class retained Map requires literal string keys"); }
+        if (action == "set") {
+            auto record = sourceValue(operation.getArgs()[1]).getDefiningOp<ctjs::ConstructOp>();
+            if (!record || record->getBlock() != map->getBlock() ||
+                !record->isBeforeInBlock(operation) ||
+                sourceValue(record.getCallee()) != sourceValue(owner.getCallee()) ||
+                sourceValue(record.getNewTarget()) != sourceValue(owner.getNewTarget())) {
+                return refuse("class retained Map requires one completed constructor family");
+            }
+            entries[text.getValue()] = record.getResult();
+        } else if (action == "delete") {
+            entries.erase(text.getValue());
+        } else if (action == "get") {
+            if (!entries.count(text.getValue())) {
+                return refuse("class retained Map get requires a present record");
+            }
+            reads.push_back(operation.getResult());
+        }
+    }
+    // Recheck saved aliases for every receiver census: inherited method keys
+    // can change. The native stage still owes the typed carrier/lifetime proof.
+    for (mlir::Value read : reads) {
+        for (mlir::OpOperand * selected : sourceUses(read)) {
+            if (!step()) { return false; }
+            mlir::Value key;
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(selected->getOwner())) {
+                key = get.getKey();
+            }
+            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(selected->getOwner())) {
+                key = set.getKey();
+            }
+            if (key && (ctjs::constantKey(key) == "constructor" ||
+                        methodKeys.contains(ctjs::constantKey(key)))) {
+                return refuse("class retained Map alias requires data field reads");
+            }
+        }
+        if (!step() || !fieldsOnly(read, methodKeys, staticReads)) { return false; }
+    }
+    return reason.empty();
+}
+
 bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                                      llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                                      bool methodsAvailable) {
@@ -932,6 +1023,7 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
         if (!step()) { return false; }
         auto * op = use.getOwner();
         if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+        if (retainedMapReads(use, methodKeys, staticReads)) { continue; }
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op)) {
             llvm::SmallVector<ctjs::GetPropertyOp> reads;
             if (borrowedHelperReads(use, methodKeys, reads)) { continue; }

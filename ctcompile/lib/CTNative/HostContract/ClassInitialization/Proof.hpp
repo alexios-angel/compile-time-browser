@@ -105,6 +105,8 @@ struct classInitialization {
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                     bool methodsAvailable = false);
+    bool retainedMapReads(mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
+                          llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads);
 
     bool staticGetters(const llvm::StringMap<ctjs::DefineAccessorOp> & definitions,
                        llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper);
