@@ -191,7 +191,7 @@ std::string number_to_string(double value) {
     // the rule below reduces to "print the digits". Pages print far more small
     // integers than anything else - a score, a frame count, an array index -
     // and this is measurably the common case.
-    if (value == static_cast<double>(static_cast<std::int64_t>(value)) && std::fabs(value) < 1e15) {
+    if (std::fabs(value) < 1e15 && value == static_cast<double>(static_cast<std::int64_t>(value))) {
         std::array<char, 24> whole{};
         const auto [stop, err] = std::to_chars(whole.data(), whole.data() + whole.size(),
                                                static_cast<std::int64_t>(value));
