@@ -1014,6 +1014,11 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
         auto definition = item.second;
         auto closure = definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(closure);
+        // An inherited environment contains the exact already-proved
+        // definitions. Its source bodies and dependency targets stay unchanged.
+        if (setup.contains(definition) && getters.contains(fn) && getterExpansion.contains(fn)) {
+            continue;
+        }
         if (!step() || !fn || !ctjs::ordinaryKey(item.first()) ||
             !undefined(definition.getSetter()) || closure->getBlock() != helper->getBlock() ||
             !closure->isBeforeInBlock(definition) || !undefined(closure.getEnclosingThis()) ||
@@ -1082,10 +1087,9 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
         getterClosures.push_back(closure);
         setup.insert(definition);
     }
-    // ponytail: bounded fixpoint over local getters; inherited/dynamic
-    // receivers need a separate provenance proof before widening.
+    // ponytail: bounded fixpoint over fixed getter environments; overrides
+    // require separate receiver-specific bodies before widening.
     llvm::DenseSet<mlir::Operation *> completed;
-    llvm::DenseMap<mlir::Operation *, unsigned> expansion;
     while (completed.size() != dependencies.size()) {
         const auto before = completed.size();
         for (const auto & [fn, required] : dependencies) {
@@ -1094,7 +1098,7 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
             bool ready = true;
             for (mlir::Operation * callee : required) {
                 if (!step()) { return false; }
-                ready &= completed.contains(callee);
+                ready &= getterExpansion.contains(callee);
             }
             if (!ready) { continue; }
             // A dependency call uses this function's closure argument.
@@ -1112,7 +1116,7 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
                     continue;
                 }
                 auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-                const unsigned added = read ? expansion.lookup(resolve(read)) : 1;
+                const unsigned added = read ? getterExpansion.lookup(resolve(read)) : 1;
                 if (cost > remaining || added > remaining - cost) {
                     return refuse("class initialization work budget exhausted");
                 }
@@ -1124,7 +1128,7 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
                     return refuse("class initialization work budget exhausted");
                 }
             }
-            expansion[fn] = cost;
+            getterExpansion[fn] = cost;
             completed.insert(fn);
             getterOrder.push_back(llvm::cast<ctjs::FuncOp>(fn));
         }
@@ -1139,7 +1143,7 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
     // Charge every clone before any mutation, including repeated reads and
     // the transitive expansion copied from already-expanded getter bodies.
     for (const auto & item : llvm::drop_begin(getterReads, firstRead)) {
-        const unsigned cost = expansion.lookup(item.second);
+        const unsigned cost = getterExpansion.lookup(item.second);
         if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
         remaining -= cost;
     }

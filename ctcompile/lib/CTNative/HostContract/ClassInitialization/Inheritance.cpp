@@ -766,6 +766,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         definitions.push_back(write);
     }
+    const bool hasOwnStaticGetters = !staticDefinitions.empty();
     llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions, selectedBaseDefinitions;
     if (auto inherited = heritage.lookup(closure.getResult())) {
         auto base = inheritedMethods.find(sourceValue(inherited.getArgs()[1]));
@@ -780,6 +781,15 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             // body stays in baseDefinitions for the receiver/source census.
             if (methodKeys.insert(ctjs::constantKey(definition.getKey())).second) {
                 selectedBaseDefinitions.push_back(definition);
+            }
+        }
+        // One shared method/getter body has one selected target. Reuse the
+        // complete base getter environment, including transitive dependencies.
+        // Overrides need separate bodies for the actual most-derived receiver.
+        if (!hasOwnStaticGetters) {
+            for (const auto & item : inheritedGetters[sourceValue(inherited.getArgs()[1])]) {
+                if (!step()) { return false; }
+                staticDefinitions.try_emplace(item.first(), item.second);
             }
         }
     }
@@ -868,26 +878,23 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     if (auto inherited = heritage.lookup(closure.getResult())) {
-        if (!staticDefinitions.empty() || !staticReads.empty()) {
+        if (hasOwnStaticGetters) {
             return refuse("derived class requires receiver-preserving super normalization");
         }
         // Recheck inherited receiver uses against the final method table:
         // a base field write must not shadow a method added by the leaf.
-        // ponytail: DOM and receiver-selected getters need per-leaf body proofs.
+        // ponytail: inherited DOM still needs per-leaf body proofs.
         if (domEntry && !methodKeys.empty()) {
             return refuse("inherited DOM methods require per-leaf body proof");
         }
         for (ctjs::SetPropertyOp definition : baseDefinitions) {
             auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             llvm::SmallVector<ctjs::GetPropertyOp> receiverReads;
-            const auto before = constructorReads.size();
             if (!step() || !fieldsOnly(fn.getBody().front().getArgument(ctjs::arg_receiver),
                                        methodKeys, receiverReads, true)) {
                 return false;
             }
-            if (!receiverReads.empty() || constructorReads.size() != before) {
-                return refuse("inherited receiver getters require per-leaf target proof");
-            }
+            staticReads.append(receiverReads);
         }
         auto baseClosure =
             sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>();
@@ -976,6 +983,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     auto & allDefinitions = inheritedMethods[closure.getResult()];
     allDefinitions = definitions;
     allDefinitions.append(baseDefinitions);
+    inheritedGetters[closure.getResult()] = std::move(staticDefinitions);
     return true;
 }
 

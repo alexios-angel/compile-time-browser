@@ -33,6 +33,7 @@ struct classInitialization {
     llvm::DenseMap<mlir::Value, ctjs::CallOp> heritage;
     llvm::DenseSet<mlir::Value> baseClasses;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::SetPropertyOp>> inheritedMethods;
+    llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::DefineAccessorOp>> inheritedGetters;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<llvm::StringRef>> snapshotFields;
     llvm::DenseSet<mlir::Operation *> snapshotMethods;
     llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::SetPropertyOp>> inheritedSlots;
@@ -52,6 +53,7 @@ struct classInitialization {
     llvm::SmallVector<ctjs::GetPropertyOp> constructorReads;
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> getterReads;
     llvm::SmallVector<ctjs::FuncOp> getterOrder;
+    llvm::DenseMap<mlir::Operation *, unsigned> getterExpansion;
     llvm::SmallVector<ctjs::CreateClosureOp> getterClosures;
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> staticMethodReads;
     llvm::SmallVector<ctjs::CreateClosureOp> staticMethodClosures;

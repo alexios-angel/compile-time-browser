@@ -355,7 +355,10 @@ void classInitialization::rewrite() {
         eraseRooted(read);
     }
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
-    for (auto [read, target] : getterReads) { reads[target].push_back(read); }
+    llvm::DenseSet<mlir::Operation *> seenReads;
+    for (auto [read, target] : getterReads) {
+        if (seenReads.insert(read).second) { reads[target].push_back(read); }
+    }
     for (ctjs::FuncOp target : getterOrder) {
         for (ctjs::GetPropertyOp read : reads[target]) {
             mlir::OpBuilder at(read);
@@ -398,6 +401,7 @@ void classInitialization::rewrite() {
         }
     }
     for (ctjs::GetPropertyOp read : constructorReads) {
+        if (!seenReads.insert(read).second) { continue; }
         for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
             root->erase(); // Only inert roots remain after getter expansion.
         }
