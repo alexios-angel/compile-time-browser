@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Construction-point methods and signed left shifts, 2026-09-20 UTC
+
+**e6cfaede** proves instance-method receiver uses against the fields already
+present at each constructor call. Existing-field reads/updates, nested calls,
+nearest inherited overrides and argument order add **48 native executions**.
+Early snapshots, missing/new fields and receiver escape still refuse. Snapshot
+provenance survives inherited `super` expansion. **306af499** proves bounded
+signed left-shift intermediates, including zero crossing and `INT32_MIN`.
+
+Final focused class probe: **58 observations / 160 main native executions / 116
+unprepared and 62 preparation refusals**. Exact host **1/1**, arrays **1/1** and
+escape lit **3/3** pass. Left shift: **90 sites / 15 sound / 15 of 21 confined
+precision**, zero violations, partial, pending or unclaimed sites. All ten
+tested hashes match. Changed formatting passes; the required formatter retains
+20 diagnostics in six unchanged files. Full suites, whole class lit, DOM replay
+and broad matrices were skipped.
+
+**Next:** original Bootstrap B and Data+B now refuse `class construction method
+requires an existing own field`. `_getConfig` reaches inherited
+`this.constructor` getter reads in `_mergeConfigObj`/`_typeCheckConfig`.
+Prove the actual most-derived constructor/getter identity at that construction
+point; it is not an own field. Variable field presence and shared Map/stored
+receiver ownership remain separate obligations. Preserve `e.set`, `e.remove`,
+`P.off` and all original config/disposal bodies. Inherited DOM, static
+construction, full Bootstrap and the application driver remain unfinished.
+No browser/runtime changes or push.
+
+[Exact changes, focused checks and boundary](handoff/2026-09-20-construction-methods.md).
+
 ## Constructor helpers and uneven shift footprints, 2026-09-20 UTC
 
 **e88230b1** retains receiver-independent constructor helper computations for
