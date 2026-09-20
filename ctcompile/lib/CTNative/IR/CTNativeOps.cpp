@@ -6,6 +6,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSet.h"
 
 #define GET_OP_CLASSES
 #include "ctcompile/CTNative/IR/CTNativeOps.cpp.inc"
@@ -16,7 +17,9 @@ namespace {
 bool isExceptionPayload(mlir::Type type) {
     if (type.isF64() || type.isSignlessInteger(1)) { return true; }
     auto opaque = llvm::dyn_cast<mlir::emitc::OpaqueType>(type);
-    return opaque && opaque.getValue() == "std::string";
+    static const llvm::StringSet<> carriers{"std::string", "ctnative::js_num",
+                                            "ctnative::js_boolean_t"};
+    return opaque && opaque.getValue().size() <= 22 && carriers.contains(opaque.getValue());
 }
 
 // A throw in a catch body belongs to an enclosing handler, never to the
@@ -113,7 +116,8 @@ mlir::LogicalResult CppTryOp::verify() {
     }
     mlir::Block & handler = getCatchBody().front();
     if (handler.getNumArguments() != 1 || !isExceptionPayload(handler.getArgument(0).getType())) {
-        return emitOpError("requires exactly one f64, i1 or owning std::string catch argument");
+        return emitOpError("requires exactly one f64, i1 or owning std::string catch argument "
+                           "(including typed Number/Boolean)");
     }
     for (mlir::Region * region : {&getBody(), &getCatchBody()}) {
         mlir::Block & block = region->front();
@@ -131,7 +135,8 @@ mlir::LogicalResult CppTryOp::verify() {
 
 mlir::LogicalResult CppThrowOp::verify() {
     if (!isExceptionPayload(getValue().getType())) {
-        return emitOpError("requires an f64, i1 or owning std::string payload");
+        return emitOpError(
+            "requires an f64, i1 or owning std::string payload (including typed Number/Boolean)");
     }
     mlir::Operation * next = getOperation()->getNextNode();
     if (!next || !next->hasTrait<mlir::OpTrait::IsTerminator>()) {

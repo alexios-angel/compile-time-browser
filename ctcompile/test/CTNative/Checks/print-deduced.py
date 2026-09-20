@@ -36,7 +36,7 @@ PIN = re.compile(r"^[ \t]*CTCOMPILE_PIN\(")
 CARRIERS = [
     re.compile(
         r"^([ \t]*(constexpr )?)(auto|double|js_num|bool|int32_t|int64_t|float|std::string"
-        r"|ctnative::js_boolean_t|ctnative::nullable_scalar|ctnative::nullable_string|ctnative::object_value)"
+        r"|ctnative::js_num|ctnative::js_boolean_t|ctnative::nullable_scalar|ctnative::nullable_string|ctnative::object_value)"
         r"(( const)? [A-Za-z_0-9]+ = )"
     ),
     re.compile(

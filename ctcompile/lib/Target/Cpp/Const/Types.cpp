@@ -18,6 +18,7 @@ bool supportsConstBinding(mlir::Type type) {
     // can hide references, move-only ownership or const-sensitive operators.
     const auto name = opaque.getValue();
     static const llvm::StringSet<> copyableCarriers{"std::string",
+                                                    "ctnative::js_num",
                                                     "ctnative::nullable_scalar",
                                                     "ctnative::nullable_string",
                                                     "ctnative::object_value",

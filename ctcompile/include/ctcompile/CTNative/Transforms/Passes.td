@@ -354,14 +354,14 @@ def CTNativePrintDeduced : Pass<"ctnative-print-deduced", "mlir::ModuleOp"> {
 
     The pin macro is a static_assert on decltype naming the JavaScript site,
     defined at the top of the module after the includes and empty under
-    -DCTCOMPILE_NO_TYPE_PINS. `mutate=N` pins the Nth deduced double as
+    -DCTCOMPILE_NO_TYPE_PINS. `mutate=N` pins the Nth deduced number (js_num or f64) as
     int32_t instead; the emitted file must then fail to build naming the
     site, which is the gate that proves the pins bite. A mutation that lands
     on nothing is a pass failure, not a silent pass.
   }];
   let options = [
     Option<"mutate", "mutate", "unsigned", /*default=*/"0",
-           "Stage 53F's mutation gate: pin the Nth deduced double as int32_t so the file fails to build naming its site">
+           "Stage 53F's mutation gate: pin the Nth deduced number (js_num or f64) as int32_t so the file fails to build naming its site">
   ];
   let dependentDialects = ["::mlir::emitc::EmitCDialect"];
 }

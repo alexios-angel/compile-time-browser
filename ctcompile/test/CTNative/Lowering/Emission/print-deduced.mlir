@@ -89,4 +89,4 @@ emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
 
 // --- a mutation that lands nowhere is a failure, not a pass ---------------
 //
-// NOMUT: mutate=9 names no deduced double declaration; the module has 3
+// NOMUT: mutate=9 names no deduced number declaration; the module has 3

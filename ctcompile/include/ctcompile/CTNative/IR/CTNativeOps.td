@@ -17,7 +17,8 @@ def CTNative_CppTryOp : CTNative_Op<"cpp_try", [SingleBlock, RecursiveMemoryEffe
   let summary = "Catch a homogeneous owning primitive JavaScript exception in native C++";
   let description = [{
     Executes body and catches only ctnative::js_exception<T>. The catch region's
-    sole f64, i1 or owning std::string argument copies the thrown primitive.
+    sole ctnative::js_num, ctnative::js_boolean_t or owning std::string argument
+    copies the thrown primitive. Raw f64 and i1 remain supported for EmitC clients.
     The payload type is homogeneous: no numeric/boolean coercion or borrowed
     string carrier is permitted. Each protected native throw must match it.
     Foreign C++ exceptions are not caught. Both regions are single blocks;
