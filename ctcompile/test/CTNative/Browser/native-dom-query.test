@@ -1,0 +1,2 @@
+# Element queries use ctbrowser's existing scoped traversal and guarded node borrows.
+# RUN: python3 %S/native_dom_query.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm

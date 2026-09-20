@@ -485,7 +485,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     } else if (edge.kind == HostDOMMethod::numberToString) {
         arguments.push_back(call.getReceiver());
     } else {
-        // Earlier closest replacements update operands and erase the original
+        // Earlier selector replacements update operands and erase the original
         // producer. Read the live receiver instead of its cached source value.
         mlir::Value element = call.getReceiver();
         if (edge.kind == HostDOMMethod::toggleClass) {
@@ -514,6 +514,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     case HostDOMMethod::contains: callee = "ctnative::contains"; break;
     case HostDOMMethod::matches: callee = "ctnative::matches"; break;
     case HostDOMMethod::closest: callee = "ctnative::closest"; break;
+    case HostDOMMethod::querySelector: callee = "ctnative::query_selector"; break;
     case HostDOMMethod::number:
         callee = arguments.front().getType() == optionalString ? "ctnative::dom_number"
                                                                : "ctbrowser::string_to_number";
@@ -541,7 +542,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
                                                 at.getStringAttr(callee), arguments);
         if (edge.returnsElement()) {
-            // Every chain begins with a parameter's closest call, which already
+            // Every chain begins with a parameter's selector call, which already
             // requires that parameter's engine in the native signature.
             domStyles[value.getResult(0)] = domStyles.lookup(arguments.front());
         }

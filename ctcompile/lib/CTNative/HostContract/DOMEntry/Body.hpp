@@ -49,6 +49,7 @@ enum class Kind {
     contains,
     matches,
     closest,
+    querySelector,
     numberIntrinsic,
     uriIntrinsic,
     jsonIntrinsic,

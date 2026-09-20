@@ -162,13 +162,15 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             return true;
         }
         if (hasKind(read.getObject(), Kind::element) &&
-            (key == "contains" || key == "matches" || key == "closest")) {
+            (key == "contains" || key == "matches" || key == "closest" || key == "querySelector")) {
             values[read.getResult()] = key == "contains"  ? Kind::contains
                                        : key == "matches" ? Kind::matches
-                                                          : Kind::closest;
+                                       : key == "closest" ? Kind::closest
+                                                          : Kind::querySelector;
             provedMethods.emplace_back(read, key == "contains"  ? HostDOMMethod::contains
                                              : key == "matches" ? HostDOMMethod::matches
-                                                                : HostDOMMethod::closest);
+                                             : key == "closest" ? HostDOMMethod::closest
+                                                                : HostDOMMethod::querySelector);
             return true;
         }
         if (hasKind(read.getObject(), Kind::element) &&
@@ -395,15 +397,17 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         const bool contains = hasKind(invoke.getCallee(), Kind::contains);
         const bool matches = hasKind(invoke.getCallee(), Kind::matches);
         const bool closest = hasKind(invoke.getCallee(), Kind::closest);
+        const bool query = hasKind(invoke.getCallee(), Kind::querySelector);
         if (arguments.size() == 1 &&
             ((contains && hasKind(arguments[0], Kind::element)) ||
-             ((matches || closest) && hasKind(arguments[0], Kind::string)))) {
+             ((matches || closest || query) && hasKind(arguments[0], Kind::string)))) {
             provedCalls.push_back({invoke,
                                    contains  ? HostDOMMethod::contains
                                    : matches ? HostDOMMethod::matches
-                                             : HostDOMMethod::closest,
+                                   : closest ? HostDOMMethod::closest
+                                             : HostDOMMethod::querySelector,
                                    invoke.getReceiver()});
-            values[invoke.getResult()] = closest ? Kind::nullableElement : Kind::boolean;
+            values[invoke.getResult()] = closest || query ? Kind::nullableElement : Kind::boolean;
             return true;
         }
         if ((hasKind(invoke.getCallee(), Kind::toggle) ||

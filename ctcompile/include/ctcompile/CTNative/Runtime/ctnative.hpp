@@ -844,7 +844,7 @@ inline bool contains(ctbrowser::element_ref element, ctbrowser::element_ref othe
 // THE SELECTOR ENGINE IS NOT INCLUDED HERE. ctbrowser/style/engine.hpp costs
 // about as much to parse as the rest of a DOM program put together, so a
 // program that takes a `ctbrowser::style::engine &` includes it itself, after
-// this header, and these three instantiate against it there.
+// this header, and the selector helpers instantiate against it there.
 template <class Style> void require_style(ctbrowser::element_ref element, Style & style) {
     if (&style.atoms() != &element.owner->atoms()) {
         throw std::invalid_argument("DOM selector engine uses another atom table");
@@ -868,6 +868,14 @@ ctbrowser::element_ref closest(ctbrowser::element_ref element, Style & style,
     const auto parsed = parse_selector(element, selector);
     const auto found = style.closest(element.owner->read(), element.id, parsed.selectors);
     return found ? ctbrowser::element_ref{element.owner, found} : ctbrowser::element_ref{};
+}
+template <class Style>
+ctbrowser::element_ref query_selector(ctbrowser::element_ref element, Style & style,
+                                      std::string_view selector) {
+    const auto parsed = parse_selector(element, selector);
+    const auto found = style.select(element.owner->read(), element.id, parsed.selectors, true);
+    return found.empty() ? ctbrowser::element_ref{}
+                         : ctbrowser::element_ref{element.owner, found.front()};
 }
 // Comparison never resolves either borrowed owner; both slot and generation
 // belong to identity.

@@ -7,7 +7,7 @@ contract for one synchronous function. Its explicit parameters are borrowed
 the call. Identity compares both fields, including across documents; detaching
 a node does not destroy it.
 
-Entries using `matches` or `closest` also take the caller's live
+Entries using `matches`, `closest` or `querySelector` also take the caller's live
 `ctbrowser::style::engine &` for each element parameter used as a selector
 receiver, appended after the element parameters in source parameter order.
 For example, `closest(element, expected)` takes `(element_ref, element_ref,
@@ -217,15 +217,20 @@ constants and returns,
 `getAttribute(name)`, `hasAttribute(name)`, `removeAttribute(name)` and
 `setAttribute(name, String-or-Boolean)`. Tokens and names come from definite source strings, including String + String expressions;
 force is a proved Boolean (including an earlier DOM result) or explicit undefined.
-`contains(otherElement)`, `matches(selector)` and `closest(selector)` also
-use proved parameter receivers. Selectors are source strings, parsed by the
+`contains(otherElement)`, `matches(selector)`, `closest(selector)` and
+`querySelector(selector)` also use proved element receivers. Selectors are
+source strings, parsed by the
 existing Style parser at the source call; invalid syntax throws
 `std::invalid_argument` after any preceding source effects. `contains` preserves
 document identity before calling `read_txn::is_ancestor_of`. Selector calls use
-`engine::element_matches` and `engine::closest`, the same cores as the bindings.
+`engine::element_matches`, `engine::closest` and `engine::select`, the same cores
+as the bindings. Element `querySelector` returns the first descendant in current
+tree order, excludes the receiver itself, binds `:scope` to that receiver and
+preserves the platform's shadow boundaries. It also works in detached subtrees.
+Document receivers and `querySelectorAll` remain outside this contract.
 
-A `closest` result is a local borrowed identity, with a canonical empty
-`element_ref{}` for no match. Strict equality compares it with another result or
+A `closest` or `querySelector` result is a local borrowed identity, with a
+canonical empty `element_ref{}` for no match. Strict equality compares it with another result or
 an element parameter, so misses compare equal even across documents. A truthiness
 or `!`/`!!` guard permits existing DOM operations on that exact result inside the
 present branch:
@@ -238,10 +243,11 @@ if (button) {
 }
 ```
 
-Guarded results may also be passed to `contains` or call `matches` and `closest`.
-Selector chains retain the original input's live Style engine; each new `closest`
-result requires its own guard. The absent branch, another result and uses after
-the guard acquire no dereference permission. Borrowed returns, property storage,
+Guarded results may also be passed to `contains` or call `matches`, `closest`
+and `querySelector`. Selector chains retain the original input's live Style
+engine; each new `closest` or `querySelector` result requires its own guard.
+The absent branch, another result and uses after the guard acquire no
+dereference permission. Borrowed returns, property storage,
 branch/loop transport, dataset access on derived elements and explicit source
 `null` comparisons still refuse. The caller's document remains the sole owner;
 the admitted synchronous operations neither destroy nodes nor reenter script.

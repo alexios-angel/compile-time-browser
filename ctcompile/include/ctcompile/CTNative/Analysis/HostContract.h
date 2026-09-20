@@ -109,6 +109,7 @@ enum class HostDOMMethod {
     contains,
     matches,
     closest,
+    querySelector,
     number,
     numberToString,
     decodeURIComponent,
@@ -129,7 +130,9 @@ struct HostDOMCall {
     // Browser receiver, or the original scalar input for number/numberToString.
     mlir::Value element;
     ctjs::FuncOp callback{};
-    [[nodiscard]] bool returnsElement() const { return kind == HostDOMMethod::closest; }
+    [[nodiscard]] bool returnsElement() const {
+        return kind == HostDOMMethod::closest || kind == HostDOMMethod::querySelector;
+    }
     [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
     [[nodiscard]] bool returnsStringVector() const {
         return kind == HostDOMMethod::datasetKeys || kind == HostDOMMethod::filterStrings;
@@ -149,7 +152,7 @@ struct HostDOMCall {
                kind != HostDOMMethod::setAttribute && kind != HostDOMMethod::removeAttribute;
     }
     [[nodiscard]] bool usesStyle() const {
-        return kind == HostDOMMethod::matches || kind == HostDOMMethod::closest;
+        return kind == HostDOMMethod::matches || returnsElement();
     }
 };
 
