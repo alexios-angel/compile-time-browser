@@ -129,9 +129,27 @@ void StructuredCases::reloads() {
                     .arrays = "a:[zero,one,zero,one]",
                     .reads = "a[0]=zero; a[2]=zero",
                     .exit = "zero -> {}"});
+    const auto positiveBand =
+        replace(replace(signedBoundary, "sub %maximum, %i", "add %minimumMagnitude, %i"),
+                "add %negative, %minimumMagnitude", "sub %maximum, %negative");
+    const auto negativeBand =
+        replace(replace(positiveBand, "%part = ctjs.binary add %minimumMagnitude, %i",
+                        "%lower = ctjs.unary neg %minimumMagnitude\n"
+                        "    %below = ctjs.binary sub %lower, %one\n"
+                        "    %part = ctjs.binary sub %below, %i"),
+                "sub %maximum, %negative", "add %negative, %minimumMagnitude");
+    for (const auto & body : {positiveBand, negativeBand}) {
+        rows.push_back({.what = "structured complements preserve a single wrapping ToInt32 band",
+                        .body = body,
+                        .arrays = "a:[zero,one,zero,one]",
+                        .reads = "a[0]=zero; a[2]=zero",
+                        .exit = "zero -> {}"});
+    }
     for (const auto & body : {replace(signedBoundary, "sub %maximum, %i", "add %maximum, %i"),
+                              replace(negativeBand, "sub %below, %i", "add %below, %i"),
                               replace(negativeComplement, "sub %part, %one", "sub %part, %zero")}) {
-        reject("structured complement indices reject signed wrap and negative own positions", body);
+        reject("structured complements reject ToInt32 discontinuities and negative own positions",
+               body);
     }
     rows.push_back({.what = "structured subtracted offsets retain a nonzero start",
                     .body = previousIndex,

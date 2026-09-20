@@ -208,12 +208,50 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero; a[2]=zero",
          .exit = "a -> {a}"},
         "x");
-    for (const auto & body :
-         {replace(signedBoundary, "sub %maximum, %i", "add %maximum, %i"),
-          replace(replace(signedBoundary, "sub %maximum, %i", "add %minimumMagnitude, %i"),
-                  "add %negative, %minimumMagnitude", "sub %maximum, %negative"),
-          replace(negativeComplement, "sub %part, %one", "sub %part, %zero")}) {
-        reject("complement indices reject ToInt32 wrapping and negative own positions", body);
+    const auto positiveBand =
+        replace(replace(signedBoundary, "sub %maximum, %i", "add %minimumMagnitude, %i"),
+                "add %negative, %minimumMagnitude", "sub %maximum, %negative");
+    const auto negativeBand =
+        replace(replace(positiveBand, "%part = ctjs.binary add %minimumMagnitude, %i",
+                        "%lower = ctjs.unary neg %minimumMagnitude\n"
+                        "  %below = ctjs.binary sub %lower, %one\n"
+                        "  %part = ctjs.binary sub %below, %i"),
+                "sub %maximum, %negative", "add %negative, %minimumMagnitude");
+    for (const auto & body : {positiveBand, negativeBand}) {
+        run({.what = "a single wrapping ToInt32 band preserves complement stride and own positions",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto unsignedBoundary =
+        replace(replace(replace(signedBoundary, "4746794007244308480", "4751297606873776128"),
+                        "  %minimumMagnitude = ctjs.binary add %maximum, %one\n", ""),
+                "%negative = ctjs.unary bitnot %part\n"
+                "  %position = ctjs.binary add %negative, %minimumMagnitude",
+                "%position = ctjs.unary bitnot %part");
+    const auto negativeUnsignedBoundary =
+        replace(replace(unsignedBoundary, "sub %maximum, %i", "sub %i, %maximum"),
+                "%position = ctjs.unary bitnot %part",
+                "%complement = ctjs.unary bitnot %part\n"
+                "  %positive = ctjs.unary neg %complement\n"
+                "  %position = ctjs.binary sub %positive, %two");
+    for (const auto & body : {unsignedBoundary, negativeUnsignedBoundary}) {
+        run({.what = "complement bands include the exact positive and negative u32 magnitudes",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("complement bands cannot borrow an intermediate outside the bounded Number range",
+               replace(body, "4751297606873776128", "4751297606875873280"));
+    }
+    for (const auto & body : {replace(signedBoundary, "sub %maximum, %i", "add %maximum, %i"),
+                              replace(negativeBand, "sub %below, %i", "add %below, %i"),
+                              replace(negativeComplement, "sub %part, %one", "sub %part, %zero")}) {
+        reject("complement indices reject ToInt32 discontinuities and negative own positions",
+               body);
     }
     run({.what = "subtracted Number offsets stay relative to a nonzero start",
          .body = previousIndex,

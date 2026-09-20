@@ -228,6 +228,20 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             auto range = self(self, unary.getOperand(), depth + 1);
             if (!range) { return std::nullopt; }
+            if (unary.getKind() == ctjs::UnaryKind::BitNot) {
+                // Magnitudes are already bounded by 2^32-1. Complement stays
+                // affine within each ToInt32 band, but jumps at its boundaries.
+                const auto band = [](const ContentsValue & endpoint) {
+                    if (endpoint.integerNumber && *endpoint.integerNumber > 2147483647ULL) {
+                        return 1;
+                    }
+                    return endpoint.negativeIntegerNumber &&
+                                   *endpoint.negativeIntegerNumber > 2147483648ULL
+                               ? -1
+                               : 0;
+                };
+                if (band(range->first) != band(range->last)) { return std::nullopt; }
+            }
             // The recursive range already proves exact bounded Numbers. Negation
             // changes their sign and order; both signed zeros remain own key zero.
             for (ContentsValue * endpoint : {&range->first, &range->last}) {
@@ -237,14 +251,6 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 }
                 endpoint->original = operand;
                 if (unary.getKind() == ctjs::UnaryKind::BitNot) {
-                    // Within signed i32, ~x = -x - 1 preserves the stride.
-                    // Reject ToInt32 wrap rather than infer an affine footprint
-                    // from endpoints on opposite sides of its discontinuity.
-                    if ((endpoint->integerNumber && *endpoint->integerNumber > 2147483647ULL) ||
-                        (endpoint->negativeIntegerNumber &&
-                         *endpoint->negativeIntegerNumber > 2147483648ULL)) {
-                        return std::nullopt;
-                    }
                     ContentsValue result{operand, ContentsKind::NonBigInt};
                     boundedNumberComplement(*endpoint, result);
                     if (!result.integerNumber && !result.negativeIntegerNumber) {
