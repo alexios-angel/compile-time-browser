@@ -12,8 +12,10 @@ and browser counts. Raw Map/vector/JSON storage uses explicit adapters.
 literals. `js_basic_string<char>` now supplies `js_string` for String literals,
 concatenation, calls, fields, captures and exceptions, with explicit raw storage
 and browser adapters. Its first instance method is the already-proved ASCII-prefix
-`startsWith`. Broader primitive coercions, Object/Array prototypes and document
-views remain planned. This is the user's
+`startsWith`. Exact String unary `+`/`-` now uses `.to_number()`, and mixed
+String/Number addition uses typed `operator+` overloads. Both reuse public Core
+conversion/formatting. Broader primitive coercions, Object/Array prototypes and
+document views remain planned. This is the user's
 revised direction for the native C++ interface and supersedes conflicting
 raw-carrier prescriptions in master-plan part 24. Historical measurements retain
 their original scope.
@@ -294,8 +296,19 @@ existing `auto`/template deduction.
    keep their separate public Core UTF-16 operations and recorded VM differences.
    The class has no general length/index/casing API yet. Do not normalize all
    constructor bytes or silently broaden the ASCII-prefix admission.
-   Next implement proved primitive String numeric conversions and mixed
-   String/Number addition, with the runtime `baNaNa` witness and refusal controls.
+   Exact String unary `+`/`-` now calls `.to_number() -> js_num`; the Number
+   identity rewrite still requires an original Number operand. Mixed exact
+   String/Number addition in either order uses class overloads and public Core
+   `number_to_string`. Generated programs link Core and its configured dependencies,
+   with no Script symbols. The focused `string-coercions.test` passes 18 distinct
+   Node/VM/native observations across eight native modes, six refusal controls
+   and a distinguishing `baNaNa` mutation. Core
+   `number_to_string` now checks range before its integer fast-path cast.
+   Next extend proved String numeric arithmetic (`-`, `*`, `/`, `%`, `**`),
+   then the remaining Boolean/absence-to-String pairs. Keep numeric relational
+   conversion separate from String lexicographic ordering and loose equality.
+   Object conversion hooks and optional/union String numeric conversion remain
+   refused; a class method does not establish their proof.
    Resolve general UTF-16 length/index/comparison/casing alignment as a separate
    runtime/compiler change. Update literal creation, joins, calls/returns,
    print helpers and deduced-type assertions with each admitted operation.

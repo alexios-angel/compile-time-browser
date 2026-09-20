@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Primitive String coercions, 2026-09-20 UTC
+
+Continued clean **2fe9a029**. **d1f98f2a** fixes public Core Number formatting's
+range check before its integer cast. **ff023451** adds `js_string.to_number()`
+and typed String/Number addition overloads; **0d5cdec0** admits exact String unary
+`+`/`-` and String/Number `+` in either order, emitting those class operations.
+The VM and native classes share public Core conversion/formatting. Object hooks,
+optional/union String numeric conversion, loose equality and ordering retain
+their existing refusals.
+
+Focused checks pass: **three CTests**, **five distinct lit cases**, including
+18 distinct Node/VM/native observations across eight native compiler/printing/
+optimization modes, six refusal controls and one `baNaNa` mutation. The former
+Core cast fails a sanitizer control at `1e20`; the corrected formatter passes
+six extreme roundtrips. All **13** code/test hashes match the devbox. Scoped
+formatting/syntax passes; global formatting retains 16 pre-existing diagnostics.
+Full suites and a complete wtfjs replay were skipped.
+[Exact changes, checks and initial link failure](handoff/2026-09-20-native-string-coercions.md).
+
+**Next:** proved String numeric arithmetic (`-`, `*`, `/`, `%`, `**`), then
+remaining Boolean/absence-to-String pairs. Keep relational conversion, String
+ordering and loose equality distinct. Shared Core parser gaps and general UTF-16
+alignment require separate fixes and comparisons. Raw Number alias retirement,
+collections/document views and the planned `Symbol.hasInstance` wrapper remain.
+Indexed Bootstrap `R.find` still needs NodeList >1,000,000 undefined slots resolved,
+with the independent 2^24 spread cap preserved. Full Bootstrap and the application
+driver remain unfinished.
+
 ## String value carrier, 2026-09-20 UTC
 
 Continued clean **2bc6cc6d**. **8cc0cf6e** introduces owning
