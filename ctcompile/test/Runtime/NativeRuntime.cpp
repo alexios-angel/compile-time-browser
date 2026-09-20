@@ -99,13 +99,25 @@ int main() {
     CHECK(vec_at(three, nullable_scalar{-0.5}).value == 10); // the engine truncates
     CHECK(vec_at(three, nullable_scalar{3.0}).tag == nullable_scalar::kind::undefined);
     CHECK(vec_at(three, nullable_scalar::null()).tag == nullable_scalar::kind::undefined);
-    CHECK(vec_length(three) == 3);
+    static_assert(std::is_same_v<decltype(vec_length(three)), ctnative::js_num>);
+    CHECK(vec_length(three) == ctnative::js_num{3.0});
+    std::vector<double> storedNumbers;
+    vec_push(storedNumbers, negativeZero);
+    vec_push(storedNumbers, notANumber);
+    CHECK(vec_length(storedNumbers) == two && std::signbit(storedNumbers.front()));
+    CHECK(vec_at(storedNumbers, one).tag == nullable_scalar::kind::number &&
+          std::isnan(vec_at(storedNumbers, one).value));
+    static_assert(std::is_same_v<decltype(dom_number(std::nullopt)), ctnative::js_num>);
+    CHECK(dom_number(std::nullopt) == zero && !std::signbit(dom_number(std::nullopt).value()));
+    CHECK(std::signbit(dom_number(std::string("-0")).value()));
+    CHECK(std::isnan(dom_number(std::string("not a number")).value()));
 
     auto numbers = make_number_map<double>();
     map_set(numbers, NAN, 1.0);
     map_set(numbers, NAN, 2.0);
     map_set(numbers, -0.0, 3.0);
-    CHECK(map_size(numbers) == 2 && !std::signbit(numbers->entries[1].first));
+    static_assert(std::is_same_v<decltype(map_size(numbers)), ctnative::js_num>);
+    CHECK(map_size(numbers) == two && !std::signbit(numbers->entries[1].first));
     CHECK(map_get(numbers, 0.0).value == 3.0);
     CHECK(map_get(numbers, 7.0).tag == nullable_scalar::kind::undefined);
     CHECK(map_delete(numbers, NAN) && !map_has(numbers, NAN));
@@ -130,7 +142,7 @@ int main() {
     const auto booleanMap = [&](const auto & map) {
         map_set(map, enabled, disabled);
         map_set(map, disabled, enabled);
-        CHECK(map_size(map) == 2 && map_has(map, enabled));
+        CHECK(map_size(map) == two && map_has(map, enabled));
         CHECK(map_get_present(map, disabled) == enabled);
         CHECK(map_delete(map, enabled) && !map_has(map, enabled));
     };
@@ -158,7 +170,7 @@ int main() {
     // Exercise both storage layouts regardless of this translation unit's switch.
     const auto scalarMap = [&](const auto & map) {
         for (const auto key : scalarKeys) { map_set(map, key, -0.0); }
-        CHECK(map_size(map) == 9);
+        CHECK(map_size(map) == ctnative::js_num{9.0});
         const auto zero = map->find(nullable_scalar{0.0});
         CHECK(zero != map->end() && !std::signbit(zero->first.value) && std::signbit(zero->second));
         const auto saved = map_get_present(map, nullable_scalar{NAN});

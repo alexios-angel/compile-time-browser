@@ -10,8 +10,9 @@ mlir::Type lowering::typeOf(mlir::Value v) const {
     return lattice == nullptr ? mlir::Type{} : lattice->getValue().getType();
 }
 
-mlir::Value lowering::f64Constant(mlir::OpBuilder & b, mlir::Location where, double d) {
-    return ec::ConstantOp::create(b, where, mlir::Float64Type::get(context), b.getF64FloatAttr(d));
+mlir::Value lowering::numberConstant(mlir::OpBuilder & b, mlir::Location where, double d) {
+    auto raw = ec::ConstantOp::create(b, where, b.getF64Type(), b.getF64FloatAttr(d));
+    return convertScalar(b, where, raw, carrierType(context, carrier::number));
 }
 
 mlir::Value lowering::boolConstant(mlir::OpBuilder & b, mlir::Location where, bool v) {
@@ -52,11 +53,7 @@ mlir::Value lowering::lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where,
 
 // A definite number is truthy exactly when it is nonzero and not NaN.
 mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, mlir::Value x) {
-    const auto i1 = mlir::IntegerType::get(context, 1);
-    mlir::Value nonzero =
-        ec::CmpOp::create(b, where, i1, ec::CmpPredicate::ne, x, f64Constant(b, where, 0.0));
-    mlir::Value notNaN = ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, x, x);
-    return ec::LogicalAndOp::create(b, where, i1, nonzero, notNaN);
+    return ec::CastOp::create(b, where, b.getI1Type(), x);
 }
 
 mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
@@ -103,9 +100,12 @@ void lowering::push(mlir::OpBuilder & b, mlir::Location where, mlir::Value into,
 
 mlir::Value lowering::libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::StringRef fn,
                                mlir::ValueRange args) {
-    return callWithConstValueOperands(b, where, mlir::TypeRange{mlir::Float64Type::get(context)},
-                                      b.getStringAttr(fn), args)
-        .getResult(0);
+    llvm::SmallVector<mlir::Value> raw;
+    for (mlir::Value arg : args) { raw.push_back(convertScalar(b, where, arg, b.getF64Type())); }
+    auto result = callWithConstValueOperands(b, where, mlir::TypeRange{b.getF64Type()},
+                                             b.getStringAttr(fn), raw)
+                      .getResult(0);
+    return convertScalar(b, where, result, carrierType(context, carrier::number));
 }
 
 // JAVASCRIPT'S `**`, WHICH IS NOT C++'s std::pow.
@@ -125,16 +125,16 @@ mlir::Value lowering::exponentiate(mlir::OpBuilder & b, mlir::Location where, ml
     const auto i1 = mlir::IntegerType::get(context, 1);
     mlir::Value magnitude = libmCall(b, where, "std::fabs", {base});
     mlir::Value isOne = ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, magnitude,
-                                          f64Constant(b, where, 1.0));
-    mlir::Value finite =
-        callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr("std::isfinite"),
-                                   mlir::ValueRange{exponent})
-            .getResult(0);
+                                          numberConstant(b, where, 1.0));
+    mlir::Value finite = callWithConstValueOperands(
+                             b, where, mlir::TypeRange{i1}, b.getStringAttr("std::isfinite"),
+                             mlir::ValueRange{convertScalar(b, where, exponent, b.getF64Type())})
+                             .getResult(0);
     mlir::Value notFinite = ec::LogicalNotOp::create(b, where, i1, finite);
     mlir::Value diverges = ec::LogicalAndOp::create(b, where, i1, isOne, notFinite);
     return ec::ConditionalOp::create(
-        b, where, mlir::Float64Type::get(context), diverges,
-        f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()),
+        b, where, carrierType(context, carrier::number), diverges,
+        numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()),
         libmCall(b, where, "std::pow", {base, exponent}));
 }
 

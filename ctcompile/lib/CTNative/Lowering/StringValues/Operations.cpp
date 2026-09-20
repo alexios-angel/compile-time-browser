@@ -17,7 +17,8 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         auto size = callWithConstValueOperands(
             b, where, mlir::TypeRange{ec::OpaqueType::get(context, "std::size_t")},
             b.getStringAttr("std::size"), mlir::ValueRange{read.getObject()});
-        swap(ec::CastOp::create(b, where, b.getF64Type(), size.getResult(0)));
+        auto count = ec::CastOp::create(b, where, b.getF64Type(), size.getResult(0));
+        swap(convertScalar(b, where, count, carrierType(context, carrier::number)));
         return true;
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);

@@ -190,7 +190,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (domStringVectorIndices.contains(operation) || domElementVectorIndices.contains(operation)) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
         auto index = ec::CastOp::create(at, where, ec::OpaqueType::get(context, "std::size_t"),
-                                        read.getKey());
+                                        convertScalar(at, where, read.getKey(), at.getF64Type()));
         auto value = ec::MemberCallOpaqueOp::create(
             at, where, mlir::TypeRange{read.getResult().getType()}, read.getObject(),
             at.getStringAttr("at"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
@@ -492,7 +492,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         // proof's original input may already have been erased.
         llvm::append_range(arguments, call.getArgs());
     } else if (edge.kind == HostDOMMethod::numberToString) {
-        arguments.push_back(call.getReceiver());
+        arguments.push_back(convertScalar(at, where, call.getReceiver(), at.getF64Type()));
     } else {
         // Earlier selector replacements update operands and erase the original
         // producer. Read the live receiver instead of its cached source value.
@@ -547,17 +547,18 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             : edge.returnsStringVector()  ? ec::OpaqueType::get(context, kStringVectorType)
             : edge.returnsElementVector() ? ec::OpaqueType::get(context, kDOMElementVectorType)
             : edge.returnsElement()       ? carrierType(context, carrier::domElement)
-            : edge.returnsNumber()        ? at.getF64Type()
+            : edge.returnsNumber()        ? carrierType(context, carrier::number)
             : edge.returnsString()        ? carrierType(context, carrier::string)
                                           : carrierType(context, carrier::boolean);
-        auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{type},
+        const auto resultType = callee == "ctbrowser::string_to_number" ? at.getF64Type() : type;
+        auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{resultType},
                                                 at.getStringAttr(callee), arguments);
         if (edge.returnsElement() || edge.returnsElementVector()) {
             // Every chain begins with a parameter's selector call, which already
             // requires that parameter's engine in the native signature.
             domStyles[value.getResult(0)] = domStyles.lookup(arguments.front());
         }
-        call.getResult().replaceAllUsesWith(value.getResult(0));
+        call.getResult().replaceAllUsesWith(convertScalar(at, where, value.getResult(0), type));
     } else {
         callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{}, at.getStringAttr(callee),
                                    arguments);

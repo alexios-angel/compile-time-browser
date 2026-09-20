@@ -71,6 +71,16 @@
 // NUMBER: call_opaque "ctnative::to_number"
 // NUMBER: member_call_opaque {{.*}} "value"()
 // NUMBER: call_opaque "ctnative::map_snapshot_at<false>"
+// NUMBER-LABEL: emitc.func @number_literal
+// NUMBER-NOT: call_opaque "ctnative::map_values"
+// NUMBER: cast {{.*}} : f64 to !emitc.opaque<"ctnative::js_num">
+// NUMBER: call_opaque "ctnative::map_snapshot_at<false>"
+// NUMBER-LABEL: emitc.func @number_length
+// NUMBER-NOT: call_opaque "ctnative::map_values"
+// NUMBER: call_opaque "ctnative::map_size"{{.*}} -> !emitc.opaque<"ctnative::js_num">
+// NUMBER-LABEL: emitc.func @opaque_initializer
+// NUMBER: call_opaque "ctnative::map_values"
+// NUMBER-SAME: ctnative.deforest_reason = "snapshot observation crosses an effect or control barrier"
 // NUMBER-LABEL: emitc.func @unknown_receiver
 // NUMBER: call_opaque "ctnative::map_values"
 // NUMBER-SAME: ctnative.deforest_reason = "snapshot observation crosses an effect or control barrier"
@@ -93,42 +103,42 @@ emitc.func @identity(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<d
 }
 
 //--- producer-conflict.mlir
-emitc.func @conflict(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> f64 {
+emitc.func @conflict(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::js_num"> {
   %first = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
   %second = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
   %slot = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"std::vector<double>">>
   emitc.assign %first : !emitc.opaque<"std::vector<double>"> to %slot : <!emitc.opaque<"std::vector<double>">>
   emitc.assign %second : !emitc.opaque<"std::vector<double>"> to %slot : <!emitc.opaque<"std::vector<double>">>
-  %size = emitc.call_opaque "ctnative::vec_length"(%slot) : (!emitc.lvalue<!emitc.opaque<"std::vector<double>">>) -> f64
-  emitc.return %size : f64
+  %size = emitc.call_opaque "ctnative::vec_length"(%slot) : (!emitc.lvalue<!emitc.opaque<"std::vector<double>">>) -> !emitc.opaque<"ctnative::js_num">
+  emitc.return %size : !emitc.opaque<"ctnative::js_num">
 }
 
 //--- unknown-runtime.mlir
 // Familiar helper names and a forged previous-result annotation do not replace
 // the runtime contract from successful native admission.
-emitc.func @unknown_runtime(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> f64 {
+emitc.func @unknown_runtime(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::js_num"> {
   %snapshot = emitc.call_opaque "ctnative::map_values"(%map) {ctnative.deforested = "length"} : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
-  %size = emitc.call_opaque "ctnative::vec_length"(%snapshot) : (!emitc.opaque<"std::vector<double>">) -> f64
-  emitc.return %size : f64
+  %size = emitc.call_opaque "ctnative::vec_length"(%snapshot) : (!emitc.opaque<"std::vector<double>">) -> !emitc.opaque<"ctnative::js_num">
+  emitc.return %size : !emitc.opaque<"ctnative::js_num">
 }
 
 //--- before-assignment.mlir
 // The slot still contains its initial empty vector when read. A single
 // assignment is insufficient unless it precedes every observation.
-emitc.func @old_copy(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> f64 {
+emitc.func @old_copy(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::js_num"> {
   %slot = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"std::vector<double>">>
   %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
   %old = emitc.load %slot : < !emitc.opaque<"std::vector<double>"> >
   emitc.assign %snapshot : !emitc.opaque<"std::vector<double>"> to %slot : <!emitc.opaque<"std::vector<double>">>
-  %size = emitc.call_opaque "ctnative::vec_length"(%old) : (!emitc.opaque<"std::vector<double>">) -> f64
-  emitc.return %size : f64
+  %size = emitc.call_opaque "ctnative::vec_length"(%old) : (!emitc.opaque<"std::vector<double>">) -> !emitc.opaque<"ctnative::js_num">
+  emitc.return %size : !emitc.opaque<"ctnative::js_num">
 }
-emitc.func @old_slot(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> f64 {
+emitc.func @old_slot(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::js_num"> {
   %slot = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"std::vector<double>">>
   %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
-  %size = emitc.call_opaque "ctnative::vec_length"(%slot) : (!emitc.lvalue<!emitc.opaque<"std::vector<double>">>) -> f64
+  %size = emitc.call_opaque "ctnative::vec_length"(%slot) : (!emitc.lvalue<!emitc.opaque<"std::vector<double>">>) -> !emitc.opaque<"ctnative::js_num">
   emitc.assign %snapshot : !emitc.opaque<"std::vector<double>"> to %slot : <!emitc.opaque<"std::vector<double>">>
-  emitc.return %size : f64
+  emitc.return %size : !emitc.opaque<"ctnative::js_num">
 }
 
 //--- number-coercion.mlir
@@ -137,6 +147,26 @@ emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 emitc.func @number_index(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">, %value: !emitc.opaque<"ctnative::nullable_scalar">) -> !emitc.opaque<"ctnative::nullable_scalar"> {
   %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
   %number = emitc.call_opaque "ctnative::to_number"(%value) : (!emitc.opaque<"ctnative::nullable_scalar">) -> !emitc.opaque<"ctnative::js_num">
+  %index = emitc.member_call_opaque %number "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
+  %result = emitc.call_opaque "ctnative::vec_at"(%snapshot, %index) : (!emitc.opaque<"std::vector<double>">, f64) -> !emitc.opaque<"ctnative::nullable_scalar">
+  emitc.return %result : !emitc.opaque<"ctnative::nullable_scalar">
+}
+emitc.func @number_literal(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::nullable_scalar"> {
+  %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
+  %raw = "emitc.constant"() {value = 0.0 : f64} : () -> f64
+  %number = emitc.cast %raw : f64 to !emitc.opaque<"ctnative::js_num">
+  %index = emitc.member_call_opaque %number "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
+  %result = emitc.call_opaque "ctnative::vec_at"(%snapshot, %index) : (!emitc.opaque<"std::vector<double>">, f64) -> !emitc.opaque<"ctnative::nullable_scalar">
+  emitc.return %result : !emitc.opaque<"ctnative::nullable_scalar">
+}
+emitc.func @number_length(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::js_num"> {
+  %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
+  %result = emitc.call_opaque "ctnative::vec_length"(%snapshot) : (!emitc.opaque<"std::vector<double>">) -> !emitc.opaque<"ctnative::js_num">
+  emitc.return %result : !emitc.opaque<"ctnative::js_num">
+}
+emitc.func @opaque_initializer(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::nullable_scalar"> {
+  %snapshot = emitc.call_opaque "ctnative::map_values"(%map) : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
+  %number = "emitc.constant"() {value = #emitc.opaque<"mutate_map()">} : () -> !emitc.opaque<"ctnative::js_num">
   %index = emitc.member_call_opaque %number "value"() : !emitc.opaque<"ctnative::js_num">, () -> f64
   %result = emitc.call_opaque "ctnative::vec_at"(%snapshot, %index) : (!emitc.opaque<"std::vector<double>">, f64) -> !emitc.opaque<"ctnative::nullable_scalar">
   emitc.return %result : !emitc.opaque<"ctnative::nullable_scalar">

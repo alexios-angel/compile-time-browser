@@ -71,13 +71,13 @@ def caller_payload_lifetime_cpp(cpp, row):
         """    auto retained = std::make_shared<ctnative::identity_object>();
     retained->field_76616c7565 = ctnative::nullable_scalar{73.0};
     std::weak_ptr retained_lifetime = retained;
-    if (get(retained) != 1) { return 313; }
+    if (get(retained).value() != 1) { return 313; }
     auto saved = ctnative::map_get(map, js_num{1});
     retained.reset();
-    if (erase() != 1 || !map->empty() || retained_lifetime.expired() ||
+    if (erase().value() != 1 || !map->empty() || retained_lifetime.expired() ||
         saved.object->field_76616c7565.value != 73) { return 314; }
     saved.object->field_76616c7565 = ctnative::nullable_scalar{74.0};
-    if (clear() != 0 || saved.object->field_76616c7565.value != 74) { return 315; }
+    if (clear().value() != 0 || saved.object->field_76616c7565.value != 74) { return 315; }
     saved = {};
     if (!retained_lifetime.expired()) { return 316; }
     auto last = std::make_shared<ctnative::identity_object>();
@@ -92,44 +92,45 @@ def caller_payload_lifetime_cpp(cpp, row):
     if row["mixed"]:
         changed = (
             changed.replace(
-                "std::function<js_num(Object)>", "std::function<js_num(ctnative::object_value)>"
+                "std::function<ctnative::js_num(Object)>",
+                "std::function<ctnative::js_num(ctnative::object_value)>",
             )
             .replace(
                 "static_assert(!std::is_invocable_v<decltype(get), int>);",
                 "static_assert(std::is_invocable_v<decltype(get), Object>);\n"
-                "    static_assert(std::is_invocable_v<decltype(get), js_num>);",
+                "    static_assert(std::is_invocable_v<decltype(get), ctnative::js_num>);",
             )
             .replace(
                 "    if (map->size() != 1 || map->begin()->second.object != ctn_test_objects[0].lock() ||",
-                "    if (get(g_key) != 1) { return 318; }\n"
+                "    if (get(g_key).value() != 1) { return 318; }\n"
                 "    if (map->size() != 1 || map->begin()->second.object != ctn_test_objects[0].lock() ||",
             )
         )
         # The historical helper drops g_key before its Map observation.
         changed = changed.replace("} g_key.reset();", "}", 1).replace(
-            "    if (clear() != 0) { return 265; }",
-            "    g_key.reset();\n    if (clear() != 0) { return 265; }",
+            "    if (clear().value() != 0) { return 265; }",
+            "    g_key.reset();\n    if (clear().value() != 0) { return 265; }",
             1,
         )
         changed = changed.replace(
             "        if (!other_lifetime.expired() || !map->empty()) { return 259; }",
             """        if (!other_lifetime.expired() || !map->empty()) { return 259; }
         const js_num number = call % 2 == 0 ? -call : call + 0.5;
-        if (get(number) != 1) { return 319; }
+        if (get(ctnative::js_num{number}).value() != 1) { return 319; }
         const auto scalar = ctnative::map_get(map, js_num{1});
         if (scalar.object || scalar.scalar.tag != ctnative::nullable_scalar::kind::number ||
-            scalar.scalar.value != number || erase() != 1 || !map->empty()) { return 320; }""",
+            scalar.scalar.value != number || erase().value() != 1 || !map->empty()) { return 320; }""",
         )
         if row["number_last"]:
             changed = changed.replace(
-                "    if (get(g_key) != 1)",
+                "    if (get(g_key).value() != 1)",
                 """    const auto initial = ctnative::map_get(map, js_num{1});
     if (initial.object || initial.scalar.tag != ctnative::nullable_scalar::kind::number ||
         initial.scalar.value != 7) { return 321; }
-    if (get(g_key) != 1)""",
+    if (get(g_key).value() != 1)""",
             ).replace(
                 "    if (g_key != ctn_test_objects[1].lock())",
-                "    if (g_host->slot->m_get(g_key) != 1) { return 322; }\n"
+                "    if (g_host->slot->m_get(g_key).value() != 1) { return 322; }\n"
                 "    if (g_key != ctn_test_objects[1].lock())",
             )
     return changed
@@ -266,9 +267,9 @@ int main() {
     auto set = table->m_set;
     auto get = table->m_get;
     POISON_BINDING
-    static_assert(std::is_same_v<decltype(set), std::function<js_num(Value)>>);
+    static_assert(std::is_same_v<decltype(set), std::function<ctnative::js_num(Value)>>);
     static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_boolean_t(GET_SIGNATURE)>>);
-    auto read = [&get](Value value) { (void)value; return GET; };
+    auto read = [&get](Value value) { (void)value; return static_cast<bool>(GET); };
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); g_key.reset(); owner.reset(); table.reset();
@@ -280,9 +281,9 @@ int main() {
     std::weak_ptr detached_lifetime = detached;
     outer->clear();
     ctnative::map_set(detached, std::string{"value"}, Value{js_num{73}});
-    if (read(js_num{64}) || set(js_num{64}) != 0 || outer->at(js_num{1}) == detached ||
+    if (read(ctnative::js_num{64.0}) || set(ctnative::js_num{64.0}).value() != 0 || outer->at(js_num{1}) == detached ||
         ctnative::map_get(detached, std::string{"value"}).scalar.value != 73 ||
-        read(js_num{64}) != NUMBER_64) { return 332; }
+        read(ctnative::js_num{64.0}) != NUMBER_64) { return 332; }
     detached.reset();
     if (!detached_lifetime.expired()) { return 333; }
     for (int call = 0; call < 128; ++call) {
@@ -291,7 +292,7 @@ int main() {
         first->field_76616c7565 = Scalar{number};
         auto alias = first;
         std::weak_ptr first_lifetime = first;
-        if (set(first) != 0 || read(first) != OBJECT_RESULT) { return 334; }
+        if (set(first).value() != 0 || read(first) != OBJECT_RESULT) { return 334; }
         auto child = outer->at(js_num{1});
         auto saved = ctnative::map_get(child, std::string{"value"});
         first->field_76616c7565 = Scalar{number + 2};
@@ -300,12 +301,12 @@ int main() {
         auto other = std::make_shared<ctnative::identity_object>();
         other->field_76616c7565 = Scalar{number + 1};
         std::weak_ptr other_lifetime = other;
-        if (set(other) != 0 || child->at("value").object != other ||
+        if (set(other).value() != 0 || child->at("value").object != other ||
             read(other) != OBJECT_RESULT DISTINCT) { return 336; }
         other.reset();
-        if (set(number) != 0 || !other_lifetime.expired() || first_lifetime.expired() ||
+        if (set(ctnative::js_num{number}).value() != 0 || !other_lifetime.expired() || first_lifetime.expired() ||
             child->at("value").object || child->at("value").scalar.tag != Scalar::kind::number ||
-            child->at("value").scalar.value != number || read(number) != NUMBER_RESULT ||
+            child->at("value").scalar.value != number || read(ctnative::js_num{number}) != NUMBER_RESULT ||
             saved.object->field_76616c7565.value != number + 2) { return 337; }
         POISON_CHECK
         saved = {};
@@ -314,15 +315,15 @@ int main() {
     NULL_CHECK
     auto child = outer->at(js_num{1});
     child->clear();
-    if (read(js_num{64}) != MISSING || !child->empty()) { return 339; }
+    if (read(ctnative::js_num{64.0}) != MISSING || !child->empty()) { return 339; }
     outer->clear();
-    if (read(js_num{64}) || set(js_num{64}) != 0 || outer->at(js_num{1}) == child ||
-        read(js_num{64}) != NUMBER_64) { return 340; }
+    if (read(ctnative::js_num{64.0}) || set(ctnative::js_num{64.0}).value() != 0 || outer->at(js_num{1}) == child ||
+        read(ctnative::js_num{64.0}) != NUMBER_64) { return 340; }
     child.reset();
     auto last = std::make_shared<ctnative::identity_object>();
     last->field_76616c7565 = Scalar{91.0};
     std::weak_ptr last_lifetime = last;
-    if (set(last) != 0 || read(last) != OBJECT_RESULT) { return 341; }
+    if (set(last).value() != 0 || read(last) != OBJECT_RESULT) { return 341; }
     auto saved = ctnative::map_get(outer->at(js_num{1}), std::string{"value"});
     last.reset();
     const auto next = ctn_test_maps.size();
@@ -405,8 +406,8 @@ int main() {
         .replace(
             "POISON_CHECK",
             (
-                """if (set(js_num{64}) != 0 || poison() != 0 ||
-            read(js_num{64}) != MISSING || (outer->at(js_num{1}) != child) != REPLACEMENT) { return 348; }
+                """if (set(ctnative::js_num{64.0}).value() != 0 || poison().value() != 0 ||
+            read(ctnative::js_num{64.0}) != MISSING || (outer->at(js_num{1}) != child) != REPLACEMENT) { return 348; }
         const auto prior = ctnative::map_get(child, std::string{"value"});
         if (PRIOR) { return 349; }""".replace(
                     "REPLACEMENT", str(row["replacement"]).lower()
@@ -425,11 +426,11 @@ int main() {
         .replace(
             "NULL_CHECK",
             (
-                "if (set(Scalar::null()) != 0 || !read(Scalar::null())) { return 350; }"
+                "if (set(Scalar::null()).value() != 0 || !read(Scalar::null())) { return 350; }"
                 if kind == "null"
                 else (
                     "for (Value value : {Value{Scalar::null()}, Value{false}, Value{0.0}, Value{-0.0}, "
-                    'Value{std::nan("")}}) { if (set(value) != 0 || get().object || '
+                    'Value{std::nan("")}}) { if (set(value).value() != 0 || get().object || '
                     "get().scalar.tag != Scalar::kind::null) { return 351; } }"
                     if kind == "returned"
                     else ""

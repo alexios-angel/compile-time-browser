@@ -59,13 +59,8 @@ void lowering::lower(ctjs::FuncOp fn) {
     convertBoundaries(fn);
     prepareExceptions(fn);
 
-    // The signature takes the parameters after the three implicit
-    // arguments and returns the proved carrier. A function that returns
-    // nothing returns NaN, which is undefined's carrier.
-    // THE RECEIVER IS THE FIRST PARAMETER, and this is the whole of the
-    // signature change: `double bump_3(ctn_x * self, double n)`. It comes
-    // first because ctjs.call_direct's operand 0 is the receiver, so the
-    // caller already passes it there.
+    // Explicit source parameters follow the three importer bookkeeping values.
+    // A lifted receiver comes first, as a borrowed pointer to its concrete shape.
     const bool carriesReceiver = fn->hasAttr("ctnative.receiver");
     llvm::SmallVector<mlir::Type> params;
     if (carriesReceiver) { params.push_back(entry.getArgument(0).getType()); }
@@ -76,12 +71,10 @@ void lowering::lower(ctjs::FuncOp fn) {
     for (mlir::BlockArgument parameter : domStyleParameters) {
         if (parameter.getOwner() == &entry) { params.push_back(styleType); }
     }
-    const mlir::Type f64 = mlir::Float64Type::get(context);
+    const mlir::Type numeric = carrierType(context, carrier::number);
     const mlir::Type i32 = mlir::IntegerType::get(context, 32);
-    // THE RETURN TYPE IS WHAT THE RETURNS CARRY - retyped already, so any
-    // ctjs.return's operand type is the answer; a function that never
-    // returns a value returns undefined, carried as a NaN double.
-    mlir::Type returnType = isEntry ? i32 : f64;
+    // Retyped returns and the joined return census select the result carrier.
+    mlir::Type returnType = isEntry ? i32 : numeric;
     if (!isEntry) {
         fn.getBody().walk([&](ctjs::ReturnOp ret) { returnType = ret.getValue().getType(); });
         if (const auto joined = resultTypes.lookup(fn.getSymName())) { returnType = joined; }

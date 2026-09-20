@@ -179,7 +179,7 @@ struct constraints {
                 }
                 const bool length = call.getCallee() == "ctnative::vec_length" &&
                                     call.getNumOperands() == 1 &&
-                                    llvm::isa<mlir::Float64Type>(call.getResult(0).getType());
+                                    opaque(call.getResult(0).getType(), "ctnative::js_num");
                 const bool index = call.getCallee() == "ctnative::vec_at" &&
                                    call.getNumOperands() == 2 &&
                                    scalar(call.getOperand(1).getType()) &&

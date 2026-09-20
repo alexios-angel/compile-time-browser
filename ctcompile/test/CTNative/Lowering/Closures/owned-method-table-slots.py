@@ -259,7 +259,7 @@ def main():
                 tables = set(
                     re.findall(r"ctn_exports<std::shared_ptr<ctnative::(method_\w+)>>", cpp)
                 )
-                scalar = re.search(r"ctn_exports<(?:double|js_num)>", cpp)
+                scalar = re.search(r"ctn_exports<ctnative::js_num>", cpp)
                 if len(tables) != 2 or not scalar:
                     raise RuntimeError(
                         f"{name}/{mode}: missing distinct table/scalar instantiations\n{cpp}"

@@ -230,7 +230,7 @@ struct lowering {
 
     [[nodiscard]] mlir::Type typeOf(mlir::Value v) const;
 
-    mlir::Value f64Constant(mlir::OpBuilder & b, mlir::Location where, double d);
+    mlir::Value numberConstant(mlir::OpBuilder & b, mlir::Location where, double d);
 
     mlir::Value boolConstant(mlir::OpBuilder & b, mlir::Location where, bool v);
     mlir::Value absentConstant(mlir::OpBuilder & b, mlir::Location where, bool isNull = false);

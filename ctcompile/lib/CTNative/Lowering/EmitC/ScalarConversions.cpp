@@ -12,7 +12,7 @@ mlir::Value lowering::absentConstant(mlir::OpBuilder & b, mlir::Location where, 
 }
 
 mlir::Value lowering::number(mlir::OpBuilder & b, mlir::Location where, mlir::Value value) {
-    return convertScalar(b, where, value, mlir::Float64Type::get(context));
+    return convertScalar(b, where, value, carrierType(context, carrier::number));
 }
 
 mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, mlir::Value value,
@@ -21,6 +21,23 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         value = ec::LoadOp::create(b, where, lvalue.getValueType(), value);
     }
     if (value.getType() == target) { return value; }
+    if (target.isF64() &&
+        (isBooleanCarrier(value.getType()) || isNullableCarrier(value.getType()))) {
+        return convertScalar(b, where, number(b, where, value), target);
+    }
+    if (isNumberCarrier(target) && llvm::isa<mlir::IntegerType>(value.getType())) {
+        return convertScalar(b, where, ec::CastOp::create(b, where, b.getF64Type(), value), target);
+    }
+    if (isNumberCarrier(value.getType()) && target.isF64()) {
+        return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, value,
+                                              b.getStringAttr("value"), mlir::ArrayAttr{},
+                                              mlir::ArrayAttr{}, mlir::ValueRange{})
+            .getResult(0);
+    }
+    if ((value.getType().isF64() && isNumberCarrier(target)) ||
+        (isNumberCarrier(value.getType()) && target.isInteger(1))) {
+        return ec::CastOp::create(b, where, target, value);
+    }
     if ((isBooleanCarrier(value.getType()) && target.isInteger(1)) ||
         (value.getType().isInteger(1) && isBooleanCarrier(target))) {
         return ec::CastOp::create(b, where, target, value);
@@ -36,11 +53,14 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         helper = kDOMOptionalStringType;
     } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
                (value.getType() == carrierType(context, carrier::string) ||
-                llvm::isa<mlir::Float64Type>(value.getType()) || value.getType().isInteger(1) ||
-                isBooleanCarrier(value.getType()))) {
+                value.getType().isF64() || isNumberCarrier(value.getType()) ||
+                value.getType().isInteger(1) || isBooleanCarrier(value.getType()))) {
         // Primitive arms keep their exact alternatives in the owning tree.
         if (isBooleanCarrier(value.getType())) {
             value = ec::CastOp::create(b, where, b.getI1Type(), value);
+        }
+        if (isNumberCarrier(value.getType())) {
+            value = convertScalar(b, where, value, b.getF64Type());
         }
         helper = kDOMJSONType;
     } else if (target == ec::OpaqueType::get(context, kDOMJSONType) &&
@@ -91,7 +111,7 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else if (isNullableCarrier(value.getType())) {
         helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
                                                       : "ctnative::to_number";
-    } else if (isBooleanCarrier(value.getType()) && llvm::isa<mlir::Float64Type>(target)) {
+    } else if (isBooleanCarrier(value.getType()) && isNumberCarrier(target)) {
         helper = "ctnative::to_number";
     } else if (llvm::isa<mlir::Float64Type>(target) &&
                llvm::isa<mlir::IntegerType>(value.getType())) {
@@ -99,21 +119,9 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else {
         llvm::report_fatal_error("native scalar boundary has incompatible proved carriers");
     }
-    const bool toNumber = helper == "ctnative::to_number";
-    auto result =
-        callWithConstValueOperands(
-            b, where,
-            mlir::TypeRange{toNumber ? ec::OpaqueType::get(context, "ctnative::js_num") : target},
-            b.getStringAttr(helper), mlir::ValueRange{value})
-            .getResult(0);
-    if (toNumber) {
-        // Arithmetic and storage still consume binary64 during Number migration.
-        return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, result,
-                                              b.getStringAttr("value"), mlir::ArrayAttr{},
-                                              mlir::ArrayAttr{}, mlir::ValueRange{})
-            .getResult(0);
-    }
-    return result;
+    return callWithConstValueOperands(b, where, mlir::TypeRange{target}, b.getStringAttr(helper),
+                                      mlir::ValueRange{value})
+        .getResult(0);
 }
 
 mlir::Type lowering::joinedReturnType(ctjs::FuncOp fn) const {

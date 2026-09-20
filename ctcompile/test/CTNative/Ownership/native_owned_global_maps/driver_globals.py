@@ -363,6 +363,9 @@ def check_scalar_global_emission(args, ir, name):
             ):
                 numbers.add(result)
                 values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(r"\(ctnative::js_num\) (\w+)", expression):
+                numbers.add(result)
+                values[result] = values.get(match[1], "unknown")
             elif match := re.fullmatch(r"(\w+)\.value\(\)", expression):
                 if match[1] in numbers:
                     values[result] = values.get(match[1], "unknown")

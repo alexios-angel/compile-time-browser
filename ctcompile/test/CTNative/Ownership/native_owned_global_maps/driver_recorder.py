@@ -64,6 +64,7 @@ int main() {{
 """
     if child:
         changed += "    element.reset();\n    g_element.reset();\n"
+    changed = re.sub(r"\b(get|m_get)\((element|g_element)?\)(?= !=)", r"\1(\2).value()", changed)
     return changed + """    for (const auto & map : ctn_test_maps) {
         if (!map.expired()) { return 110; }
     }
@@ -288,13 +289,8 @@ int main() {
             )
             .replace(
                 'ctnative::global_number(get(element, "bs.alert")).value() != 42',
-                '!ctnative::object_strict_equal(get(element, "bs.alert"), js_num{42})',
+                '!ctnative::object_strict_equal(get(element, "bs.alert"), ctnative::js_num{42.0})',
             )
-        )
-        changed = re.sub(
-            r"\b(set|m_set)\(([^;\n]+), ([0-9]+)\)",
-            r"\1(\2, js_num{\3})",
-            changed,
         )
         signature = (
             "std::function<ctnative::object_value("
@@ -305,7 +301,11 @@ int main() {
             "auto get = table->m_get;\n"
             f"    static_assert(std::is_same_v<decltype(get), {signature}>);",
         )
-    return changed
+    return re.sub(
+        r"\b(set|m_set)\(([^;\n]+), ([0-9]+)\)",
+        r"\1(\2, ctnative::js_num{\3.0})",
+        changed,
+    )
 
 
 def template_lifetime(

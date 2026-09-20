@@ -12,7 +12,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
         eraseIfUnused(o);
     };
     if (isNativeMapBookkeeping(o)) {
-        swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+        swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
         return true;
     }
     if (o->hasAttr(kNativeMapSnapshotCopy)) {
@@ -80,6 +80,10 @@ bool lowering::replaceMap(mlir::Operation * o) {
             return value;
         };
         const auto convertAlternative = [&](mlir::Value value, mlir::Type type, bool key = false) {
+            // Maps retain their proved raw binary64 key/payload storage.
+            if (isNumberCarrier(value.getType())) {
+                value = convertScalar(b, where, value, b.getF64Type());
+            }
             auto spelling = nullableMapSpelling(type);
             if (!spelling.empty()) {
                 const bool mixed = spelling != kNullableStringType;
@@ -163,9 +167,14 @@ bool lowering::replaceMap(mlir::Operation * o) {
             ec::AssignOp::create(b, where, local, result);
             swap(local);
         } else {
-            swap(callWithConstValueOperands(b, where, mlir::TypeRange{o->getResult(0).getType()},
-                                            name, args)
-                     .getResult(0));
+            const auto resultType = o->getResult(0).getType();
+            const auto storageType = action == "get" && isNumberCarrier(resultType)
+                                         ? mlir::Type(b.getF64Type())
+                                         : resultType;
+            auto value =
+                callWithConstValueOperands(b, where, mlir::TypeRange{storageType}, name, args)
+                    .getResult(0);
+            swap(convertScalar(b, where, value, resultType));
         }
         return true;
     }

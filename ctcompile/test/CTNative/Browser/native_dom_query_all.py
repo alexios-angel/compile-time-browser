@@ -37,7 +37,7 @@ CHECKS = r"""
         const auto hovered = atoms.intern("data-hovered");
         assert(doc.set_attribute(button, classes, "selected"));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 0); // Matching roots are excluded.
+        assert(@ENTRY@(alias, selectors).value() == 0); // Matching roots are excluded.
         assert(doc.take_writes().empty());
         const auto later = doc.create_element(atoms.intern("button"));
         const auto first = doc.create_element(atoms.intern("button"));
@@ -58,11 +58,11 @@ CHECKS = r"""
         const auto duplicate = atoms.intern("data-duplicate");
         assert(doc.set_attribute(button, duplicate, ""));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 2); // Each node matches both clauses, once.
+        assert(@ENTRY@(alias, selectors).value() == 2); // Each node matches both clauses, once.
         assert(doc.take_writes().empty());
         assert(doc.remove_attribute(button, duplicate));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 2);
+        assert(@ENTRY@(alias, selectors).value() == 2);
         auto writes = doc.take_writes();
         assert(writes.size() == 6);
         std::size_t index = 0;
@@ -82,14 +82,14 @@ CHECKS = r"""
             assert(!doc.read().has_attribute(id, position));
             assert(!doc.read().has_attribute(id, hovered));
         }
-        assert(@ENTRY@(alias, selectors) == 0); // The next call takes a fresh snapshot.
+        assert(@ENTRY@(alias, selectors).value() == 0); // The next call takes a fresh snapshot.
         assert(doc.take_writes().empty());
         assert(doc.set_attribute(first, classes, "selected"));
         assert(doc.set_attribute(later, classes, "selected"));
         const auto scope = atoms.intern("data-scope");
         assert(doc.set_attribute(button, scope, ""));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 1);
+        assert(@ENTRY@(alias, selectors).value() == 1);
         writes = doc.take_writes();
         assert(writes.size() == 3);
         for (const auto & write : writes) assert(write.node == later);
@@ -98,7 +98,7 @@ CHECKS = r"""
         assert(doc.remove_attribute(button, scope));
         assert(doc.remove_child(button));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 1); // Detached subtrees remain queryable.
+        assert(@ENTRY@(alias, selectors).value() == 1); // Detached subtrees remain queryable.
         writes = doc.take_writes();
         assert(writes.size() == 3);
         for (const auto & write : writes) assert(write.node == first);
@@ -138,11 +138,11 @@ OWNED_CHECKS = r"""
         assert(owned.set_attribute(nested, owned.atoms().intern("class"), "selected"));
         assert(session.selectors().set_state(nested, style::engine::state_hover, true));
         owned.log_writes(true);
-        assert(session.invoke(element_ref{&owned, parent}) == 1);
+        assert(session.invoke(element_ref{&owned, parent}).value() == 1);
         assert(owned.read().attribute_value(nested, owned.atoms().intern("data-index")) == "0");
         assert(owned.read().attribute_value(nested, owned.atoms().intern("data-hovered")) == "true");
         assert(owned.take_writes().size() == 3);
-        assert(session.invoke(element_ref{&owned, parent}) == 0);
+        assert(session.invoke(element_ref{&owned, parent}).value() == 0);
         bool foreign_rejected = false;
         try { (void)session.invoke(alias); }
         catch (const std::invalid_argument &) { foreign_rejected = true; }

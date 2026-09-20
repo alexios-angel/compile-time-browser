@@ -44,19 +44,19 @@ BOOTSTRAP_CHECKS = r"""
         (void)pressed;
         (void)foreign;
         style::engine selectors{atoms};
-        assert(@ENTRY@(alias, selectors) == 0);
+        assert(@ENTRY@(alias, selectors).value() == 0);
         assert(doc.set_attribute(child, classes, "selected"));
         const auto nested = doc.create_element(atoms.intern("button"));
         assert(doc.append_child(child, nested));
         assert(doc.set_attribute(nested, classes, "selected"));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 5);
+        assert(@ENTRY@(alias, selectors).value() == 5);
         auto writes = doc.take_writes();
         assert(writes.size() == 1 && writes.front().node == child);
-        assert(@ENTRY@(alias, selectors) == 2);
+        assert(@ENTRY@(alias, selectors).value() == 2);
         writes = doc.take_writes();
         assert(writes.size() == 1 && writes.front().node == nested);
-        assert(@ENTRY@(alias, selectors) == 0 && doc.take_writes().empty());
+        assert(@ENTRY@(alias, selectors).value() == 0 && doc.take_writes().empty());
 """
 
 CHECKS = r"""
@@ -65,7 +65,7 @@ CHECKS = r"""
         style::engine selectors{atoms};
         assert(doc.set_attribute(button, classes, "selected"));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 0); // Root exclusion and empty results.
+        assert(@ENTRY@(alias, selectors).value() == 0); // Root exclusion and empty results.
         assert(doc.take_writes().empty());
         const auto nested = doc.create_element(atoms.intern("button"));
         assert(doc.append_child(child, nested));
@@ -81,25 +81,25 @@ CHECKS = r"""
         for (const auto node : {nested, direct, outside, hidden})
             assert(doc.set_attribute(node, classes, "selected"));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 5); // Saved 2 + copied 2 + fresh 1.
+        assert(@ENTRY@(alias, selectors).value() == 5); // Saved 2 + copied 2 + fresh 1.
         auto writes = doc.take_writes();
         assert(writes.size() == 1 && writes.front().node == nested);
         for (const auto node : {button, direct, outside, hidden})
             assert(doc.read().attribute_value(node, classes) == "selected");
-        assert(@ENTRY@(alias, selectors) == 2); // Saved 1 + copied 1 + fresh 0.
+        assert(@ENTRY@(alias, selectors).value() == 2); // Saved 1 + copied 1 + fresh 0.
         writes = doc.take_writes();
         assert(writes.size() == 1 && writes.front().node == direct);
-        assert(@ENTRY@(alias, selectors) == 0);
+        assert(@ENTRY@(alias, selectors).value() == 0);
         assert(doc.take_writes().empty());
         assert(doc.set_attribute(nested, classes, "selected"));
         assert(doc.set_attribute(direct, classes, "selected"));
         assert(doc.set_attribute(button, atoms.intern("data-scope"), ""));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 3); // Scoped list stays 1 after nested mutation.
+        assert(@ENTRY@(alias, selectors).value() == 3); // Scoped list stays 1 after nested mutation.
         assert(doc.remove_attribute(button, atoms.intern("data-scope")));
         assert(doc.remove_child(button));
         (void)doc.take_writes();
-        assert(@ENTRY@(alias, selectors) == 2); // Detached root still queries its descendants.
+        assert(@ENTRY@(alias, selectors).value() == 2); // Detached root still queries its descendants.
         assert(doc.set_attribute(button, atoms.intern("data-invalid"), ""));
         (void)doc.take_writes();
         bool rejected = false;
@@ -124,9 +124,9 @@ OWNED_CHECKS = r"""
         assert(owned.append_child(parent, nested));
         assert(owned.set_attribute(nested, owned.atoms().intern("class"), "selected"));
         owned.log_writes(true);
-        assert(session.invoke(element_ref{&owned, parent}) == 2);
+        assert(session.invoke(element_ref{&owned, parent}).value() == 2);
         assert(owned.take_writes().size() == 1);
-        assert(session.invoke(element_ref{&owned, parent}) == 0);
+        assert(session.invoke(element_ref{&owned, parent}).value() == 0);
         bool rejected = false;
         try { (void)session.invoke(alias); }
         catch (const std::invalid_argument &) { rejected = true; }

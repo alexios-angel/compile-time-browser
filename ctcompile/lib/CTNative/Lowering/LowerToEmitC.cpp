@@ -8,24 +8,10 @@
 // collector, and there is no boxed fallback - a refusal is a reason on the
 // function, and the compilation-unit gate says whether the program is native.
 //
-// HOW A VALUE IS REPRESENTED, and where the representation is exact:
-//
-//   bool               bool     exactly
-//   num<i32|i64|f64>   double   exactly - every JavaScript number is one
-//   str<utf8>         std::string  owning bytes, including NUL and WTF-8
-//   opt<num<...>>      double   with undefined as NaN. EXACT in arithmetic
-//   opt<bottom>                 (undefined + 1 is NaN), relational comparison
-//                               (undefined < 1 is false, as NaN < 1 is), and
-//                               truthiness (both are falsy). NOT exact for
-//                               equality with undefined/null, `typeof`, or
-//                               printing - so every use in which the
-//                               difference is observable is refused.
-//
-// The two `opt` rows exist because of the closed-world global rule: a global
-// is undefined until its first store runs and nothing orders a load after
-// one, so a numeric global is `opt<num>` (TypeInference.h). Numbers stay
-// `double` even when proved `i32`: an int32_t representation is a Phase 63
-// measurement, not a Phase 62½ obligation, and `double` is always correct.
+// JavaScript Booleans and Numbers use ctnative::js_boolean_t and js_num.
+// Strings own their bytes; nullable scalars retain distinct undefined/null tags.
+// Collection and public ctbrowser storage boundaries extract raw C++ values
+// explicitly. The carrier table lives in LoweringSupport.cpp.
 //
 // NOT A DIALECT CONVERSION, deliberately. After --ctjs-lift-to-scf the body is
 // structured, and after the inference every value's type is known; retyping

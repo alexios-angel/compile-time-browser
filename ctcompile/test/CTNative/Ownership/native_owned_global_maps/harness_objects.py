@@ -103,7 +103,7 @@ def check_object_argument_calls(cpp, name, mode):
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     arity = 2 if name == "object_argument_two_formals" else 1
     signature = (
-        "std::function<::js_num("
+        "std::function<ctnative::js_num("
         + ", ".join(["std::shared_ptr<ctnative::identity_object>"] * arity)
         + ")>"
     )
@@ -219,7 +219,7 @@ int main() {
     auto owner = g_host;
     auto table = owner->slot;
     auto get = table->m_get;
-    static_assert(std::is_same_v<decltype(get), std::function<js_num(Key)>>);
+    static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_num(Key)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -232,20 +232,20 @@ int main() {
         auto key = std::make_shared<ctnative::identity_object>();
         auto alias = key;
         std::weak_ptr key_lifetime = key;
-        if (get(key) != 0) { return 202; }
+        if (get(key).value() != 0) { return 202; }
         ctnative::map_set(map, key, static_cast<js_num>(call));
-        if (get(key) != 1 || get(alias) != 1 || get(other) != 0) { return 203; }
+        if (get(key).value() != 1 || get(alias).value() != 1 || get(other).value() != 0) { return 203; }
         key.reset();
-        if (key_lifetime.expired() || get(alias) != 1 ||
-            !ctnative::map_delete(map, alias) || get(alias) != 0) { return 204; }
+        if (key_lifetime.expired() || get(alias).value() != 1 ||
+            !ctnative::map_delete(map, alias) || get(alias).value() != 0) { return 204; }
         alias.reset();
         if (!key_lifetime.expired()) { return 205; }
     }
     ctnative::map_set(map, other, js_num{7});
     std::weak_ptr key_lifetime = other;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
-        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || get(other) != 1 ||
-        g_host->slot->m_get(other) != 0 || !ctn_test_objects[1].expired()) { return 206; }
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || get(other).value() != 1 ||
+        g_host->slot->m_get(other).value() != 0 || !ctn_test_objects[1].expired()) { return 206; }
     other.reset(); map.reset();
     if (key_lifetime.expired() || ctn_test_maps[0].expired()) { return 207; }
     get = {};
@@ -267,9 +267,9 @@ int main() {
             "    auto other = std::make_shared<ctnative::identity_object>();",
             """    std::weak_ptr original_key = g_key;
     ctnative::map_set(map, g_key, js_num{9});
-    if (get(g_key) != 1) { return 240; }
+    if (get(g_key).value() != 1) { return 240; }
     g_key = std::make_shared<ctnative::identity_object>();
-    if (original_key.expired() || get(g_key) != 0) { return 241; }
+    if (original_key.expired() || get(g_key).value() != 0) { return 241; }
     auto other = std::make_shared<ctnative::identity_object>();""",
         )
         .replace(
@@ -306,8 +306,8 @@ int main() {
     ctnative::map_set(map, g_key, js_num{9});""",
             )
             .replace(
-                "    if (original_key.expired() || get(g_key) != 0)",
-                "    g_alias.reset();\n    if (original_key.expired() || get(g_key) != 0)",
+                "    if (original_key.expired() || get(g_key).value() != 0)",
+                "    g_alias.reset();\n    if (original_key.expired() || get(g_key).value() != 0)",
             )
             .replace(
                 "g_key != ctn_test_objects[1].lock()",
@@ -330,8 +330,8 @@ int main() {
     g_key = g_alias;""",
                 )
                 .replace(
-                    "    g_alias.reset();\n    if (original_key.expired() || get(g_key)",
-                    "    g_alias.reset(); g_copy.reset();\n    if (original_key.expired() || get(g_key)",
+                    "    g_alias.reset();\n    if (original_key.expired() || get(g_key).value()",
+                    "    g_alias.reset(); g_copy.reset();\n    if (original_key.expired() || get(g_key).value()",
                 )
                 .replace(
                     "    g_key.reset();\n    if (!ctn_test_objects[1].expired())",
@@ -497,15 +497,15 @@ int main() {
     auto set = table->m_set;
     auto erase = table->m_erase;
     auto clear = table->m_clear;
-    static_assert(std::is_same_v<decltype(get), std::function<js_num(Key)>>);
-    static_assert(std::is_same_v<decltype(set), std::function<js_num(Key, js_num)>>);
-    static_assert(std::is_same_v<decltype(erase), std::function<js_num(Key)>>);
-    static_assert(std::is_same_v<decltype(clear), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_num(Key)>>);
+    static_assert(std::is_same_v<decltype(set), std::function<ctnative::js_num(Key, ctnative::js_num)>>);
+    static_assert(std::is_same_v<decltype(erase), std::function<ctnative::js_num(Key)>>);
+    static_assert(std::is_same_v<decltype(clear), std::function<ctnative::js_num()>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
     if (!owner_lifetime.expired() || !table_lifetime.expired() ||
-        ctn_test_maps[0].expired() || clear() != 0 ||
+        ctn_test_maps[0].expired() || clear().value() != 0 ||
         !ctn_test_objects[CTN_RETAINED].expired()) { return 211; }
     auto other = std::make_shared<ctnative::identity_object>();
     for (int call = 0; call < 128; ++call) {
@@ -513,27 +513,27 @@ int main() {
         auto alias = key;
         std::weak_ptr key_lifetime = key;
         const auto value = static_cast<js_num>(call + 1);
-        if (get(key) != 0 || set(key, value) != value || get(alias) != value ||
-            get(other) != 0 || erase(other) != 0) { return 212; }
+        if (get(key).value() != 0 || set(key, ctnative::js_num{value}).value() != value || get(alias).value() != value ||
+            get(other).value() != 0 || erase(other).value() != 0) { return 212; }
         key.reset();
-        if (set(alias, value + 1) != value + 1 || get(alias) != value + 1) { return 213; }
+        if (set(alias, ctnative::js_num{value + 1}).value() != value + 1 || get(alias).value() != value + 1) { return 213; }
         alias.reset();
         if (key_lifetime.expired()) { return 214; }
         key = key_lifetime.lock();
-        if (get(key) != value + 1 || erase(key) != 1 || get(key) != 0 ||
-            erase(key) != 0) { return 215; }
+        if (get(key).value() != value + 1 || erase(key).value() != 1 || get(key).value() != 0 ||
+            erase(key).value() != 0) { return 215; }
         key.reset();
         if (!key_lifetime.expired()) { return 216; }
         key = std::make_shared<ctnative::identity_object>();
         key_lifetime = key;
-        if (set(key, value) != value) { return 217; }
+        if (set(key, ctnative::js_num{value}).value() != value) { return 217; }
         key.reset();
-        if (key_lifetime.expired() || clear() != 0 || !key_lifetime.expired()) { return 218; }
+        if (key_lifetime.expired() || clear().value() != 0 || !key_lifetime.expired()) { return 218; }
     }
     std::weak_ptr key_lifetime = other;
-    if (set(other, 7) != 7 || ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
-        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || get(other) != 7 ||
-        g_host->slot->m_get(other) != 0) { return 219; }
+    if (set(other, ctnative::js_num{7.0}).value() != 7 || ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || get(other).value() != 7 ||
+        g_host->slot->m_get(other).value() != 0) { return 219; }
     other.reset();
     set = {}; erase = {}; clear = {};
     if (key_lifetime.expired() || ctn_test_maps[0].expired()) { return 220; }
@@ -593,28 +593,28 @@ int main() {
     auto table = owner->slot;
     auto get = table->m_get;
     auto set = table->m_set;
-    static_assert(std::is_same_v<decltype(get), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(set), std::function<js_num(Key)>>);
+    static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(set), std::function<ctnative::js_num(Key)>>);
     static_assert(!std::is_invocable_v<decltype(set), int>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
     if (!owner_lifetime.expired() || !table_lifetime.expired() ||
-        ctn_test_maps[0].expired() || get() != 1) { return 231; }
+        ctn_test_maps[0].expired() || get().value() != 1) { return 231; }
     for (int call = 0; call < 128; ++call) {
         auto key = ctn_test_make_leaf<ctnative::identity_object>();
         auto alias = key;
         std::weak_ptr key_lifetime = key;
         const auto size = static_cast<js_num>(call + 2);
-        if (set(key) != size || set(alias) != size || get() != size) { return 232; }
+        if (set(key).value() != size || set(alias).value() != size || get().value() != size) { return 232; }
         key.reset(); alias.reset();
         if (key_lifetime.expired()) { return 233; }
     }
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
-        ctn_test_objects.size() != 130 || get() != 129 || g_host->slot->m_get() != 1 ||
+        ctn_test_objects.size() != 130 || get().value() != 129 || g_host->slot->m_get().value() != 1 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 234; }
     set = {};
-    if (ctn_test_maps[0].expired() || get() != 129) { return 235; }
+    if (ctn_test_maps[0].expired() || get().value() != 129) { return 235; }
     for (const auto & key : ctn_test_objects) {
         if (key.expired()) { return 236; }
     }
@@ -702,7 +702,7 @@ int main() {
     auto table = owner->slot;
     auto get = table->m_get;
     SAVED_CALLABLES
-    static_assert(std::is_same_v<decltype(get), std::function<js_num(Object)>>);
+    static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_num(Object)>>);
     static_assert(!std::is_invocable_v<decltype(get), int>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
@@ -720,12 +720,12 @@ int main() {
         auto first = std::make_shared<ctnative::identity_object>();
         auto alias = first;
         std::weak_ptr first_lifetime = first;
-        if (get(first) != 1 || get(alias) != 1 || map->at(FIRST_KEY).object != first) { return 255; }
+        if (get(first).value() != 1 || get(alias).value() != 1 || map->at(FIRST_KEY).object != first) { return 255; }
         first.reset(); alias.reset();
         if (first_lifetime.expired()) { return 256; }
         auto other = std::make_shared<ctnative::identity_object>();
         std::weak_ptr other_lifetime = other;
-        if (get(other) != 1 || map->at(OTHER_KEY).object != other) { return 257; }
+        if (get(other).value() != 1 || map->at(OTHER_KEY).object != other) { return 257; }
         other.reset();
         OVERWRITE_DELETE
         if (!first_lifetime.expired() || other_lifetime.expired()) { return 258; }
@@ -734,7 +734,7 @@ int main() {
     }
     auto last = std::make_shared<ctnative::identity_object>();
     std::weak_ptr last_lifetime = last;
-    if (get(last) != 1) { return 260; }
+    if (get(last).value() != 1) { return 260; }
     last.reset();
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_objects.size() != 2 || ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
@@ -760,7 +760,7 @@ int main() {
             "auto erase = table->m_erase; auto clear = table->m_clear;" if scalar else ""
         ),
         DROP_CALLABLES="erase = {}; clear = {};" if scalar else "",
-        CLEAR="if (clear() != 0) { return 265; }" if scalar else "ctnative::map_clear(map)",
+        CLEAR="if (clear().value() != 0) { return 265; }" if scalar else "ctnative::map_clear(map)",
         DROP_GLOBAL=(
             "if (g_key != ctn_test_objects[0].lock()) { return 266; } g_key.reset();"
             if row.get("global_key")
@@ -772,11 +772,11 @@ int main() {
             else ""
         ),
         OVERWRITE_DELETE=(
-            r"""if (!first_lifetime.expired() || erase() != 1 ||
-            !other_lifetime.expired() || erase() != 0 || !map->empty()) { return 268; }
+            r"""if (!first_lifetime.expired() || erase().value() != 1 ||
+            !other_lifetime.expired() || erase().value() != 0 || !map->empty()) { return 268; }
         other = std::make_shared<ctnative::identity_object>();
         other_lifetime = other;
-        if (get(other) != 1 || map->at(js_num{1}).object != other) { return 269; }
+        if (get(other).value() != 1 || map->at(js_num{1}).object != other) { return 269; }
         other.reset();"""
             if scalar
             else r"""auto key = first_lifetime.lock();

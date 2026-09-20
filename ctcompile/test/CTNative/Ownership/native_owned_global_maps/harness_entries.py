@@ -68,8 +68,8 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(CTN_PARAMS)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -80,7 +80,7 @@ int main() {
     for (int call = 0; call < 128; ++call) {
         auto caller = original;
         const auto before = ctn_test_objects.size();
-        if (setter(caller CTN_FLAG) != 1 || size() != (reseeded ? 2 : 0) ||
+        if (setter(caller CTN_FLAG).value() != 1 || size().value() != (reseeded ? 2 : 0) ||
             ctn_test_objects.size() != before + 1) { return 142; }
         caller.assign(original.size(), 'q');
         for (std::size_t index = 1; index < before; ++index) {
@@ -96,7 +96,7 @@ int main() {
     }
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
-        size() != (reseeded ? 2 : 0) || g_host->slot->m_size() != (reseeded ? 1 : 0)) { return 146; }
+        size().value() != (reseeded ? 2 : 0) || g_host->slot->m_size().value() != (reseeded ? 1 : 0)) { return 146; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 147; }
     size = {};
@@ -163,7 +163,7 @@ def check_leaf_absence_calls(cpp, name, mode):
         if "set(key, flag)" in source
         else "std::string, std::string" if "set(key, other)" in source else "std::string"
     )
-    if f"std::function<::js_num({params})>" not in cpp:
+    if f"std::function<ctnative::js_num({params})>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: absence changed the numeric published ABI")
     allocations = source.count("{value:") + source.count("const item = {};")
     if cpp.count("std::make_shared<ctnative::identity_object>()") != allocations or (
@@ -224,10 +224,10 @@ int main() {
     const auto set = g_host->slot->m_set;
     const auto size = g_host->slot->m_size;
     using text = ctnative::nullable_string;
-    if (get().tag != text::kind::undefined || size() != 1 ||
-        set(text{std::string{}}) != 2 || set(text{}) != 2 ||
-        set(text{std::string{"future-key"}}) != 3 ||
-        get().tag != text::kind::undefined || size() != 2) { return 161; }
+    if (get().tag != text::kind::undefined || size().value() != 1 ||
+        set(text{std::string{}}).value() != 2 || set(text{}).value() != 2 ||
+        set(text{std::string{"future-key"}}).value() != 3 ||
+        get().tag != text::kind::undefined || size().value() != 2) { return 161; }
     return 0;
 }
 """
@@ -311,8 +311,8 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(CTN_PARAMS)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -325,7 +325,7 @@ int main() {
         auto caller = original;
         if (call % 2) { caller += 'r'; }
         const auto before = ctn_test_objects.size();
-        if (setter(caller CTN_FLAG) != 1 || size() != (reseeded ? 1 : 0) ||
+        if (setter(caller CTN_FLAG).value() != 1 || size().value() != (reseeded ? 1 : 0) ||
             ctn_test_objects.size() != before + 1) { return 162; }
         caller.assign(original.size(), 'q');
         for (std::size_t index = 0; index < before; ++index) {
@@ -340,7 +340,7 @@ int main() {
     const auto retained_index = ctn_test_objects.size() - 1;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
-        size() != (reseeded ? 1 : 0) || g_host->slot->m_size() != (reseeded ? 1 : 0)) { return 165; }
+        size().value() != (reseeded ? 1 : 0) || g_host->slot->m_size().value() != (reseeded ? 1 : 0)) { return 165; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 166; }
     size = {};
@@ -387,13 +387,13 @@ def check_numeric_entry_calls(cpp, name, mode):
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
     params = (
-        "std::string, ::js_num, ctnative::js_boolean_t"
+        "std::string, ctnative::js_num, ctnative::js_boolean_t"
         if "set(key, value, flag)" in source
         else (
-            "std::string, ::js_num"
+            "std::string, ctnative::js_num"
             if "set(key, value)" in source
             else (
-                "::js_num"
+                "ctnative::js_num"
                 if name
                 in {
                     "local_add_result_key",
@@ -407,7 +407,9 @@ def check_numeric_entry_calls(cpp, name, mode):
             )
         )
     )
-    result = "ctnative::js_boolean_t" if name == "constant_boolean_saved_result" else "::js_num"
+    result = (
+        "ctnative::js_boolean_t" if name == "constant_boolean_saved_result" else "ctnative::js_num"
+    )
     if f"std::function<{result}({params})>" not in cpp:
         raise RuntimeError(
             f"{name}/{mode}: arithmetic changed the independently typed callable ABI"
@@ -529,8 +531,8 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(CTN_PARAMS)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -545,9 +547,9 @@ int main() {
         if (call % 2) { caller += 'r'; }
         const auto before = ctn_test_objects.size();
         const js_num value = static_cast<js_num>(call - 64) / 4;
-        saved.push_back(setter(caller, value CTN_FLAG));
+        saved.push_back(setter(caller, ctnative::js_num{value} CTN_FLAG).value());
         caller.assign(original.size(), 'q');
-        if (saved.back() != value || size() != 0 || ctn_test_objects.size() != before + 1) {
+        if (saved.back() != value || size().value() != 0 || ctn_test_objects.size() != before + 1) {
             return 183;
         }
         for (std::size_t index = 0; index < before; ++index) {
@@ -562,7 +564,7 @@ int main() {
     const auto retained_index = ctn_test_objects.size() - 1;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
-        size() != 0 || g_host->slot->m_size() != 0) { return 186; }
+        size().value() != 0 || g_host->slot->m_size().value() != 0) { return 186; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 187; }
     size = {};
@@ -770,7 +772,11 @@ int main() {
         changed = changed.replace(released, released + checks)
     return changed.replace(
         "CTN_PARAMS",
-        "std::string, js_num, ctnative::js_boolean_t" if branch else "std::string, js_num",
+        (
+            "std::string, ctnative::js_num, ctnative::js_boolean_t"
+            if branch
+            else "std::string, ctnative::js_num"
+        ),
     ).replace("CTN_FLAG", ", ctnative::js_boolean_t{call % 2 != 0}" if branch else "")
 
 

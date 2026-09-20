@@ -36,15 +36,15 @@ int main() {
     auto setter = table->m_set;
     auto size = table->m_size;
     static_assert(std::is_same_v<decltype(getter), std::function<std::string(GETTER_PARAMETERS)>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(std::string)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(std::string)>>);
     auto read = [&]([[maybe_unused]] bool other) { return getter(GETTER_ARGUMENT); };
     auto saved = read(false);
     auto saved_other = read(true);
-    if (saved != expected || saved_other != other_expected || setter(saved) != INITIAL_SIZE ||
-        setter(saved_other) != INITIAL_SIZE) { return 91; }
+    if (saved != expected || saved_other != other_expected || setter(saved).value() != INITIAL_SIZE ||
+        setter(saved_other).value() != INITIAL_SIZE) { return 91; }
     saved.assign(expected.size(), 'x');
     saved_other.assign(other_expected.size(), 'x');
-    if (setter(expected) != INITIAL_SIZE || setter(other_expected) != INITIAL_SIZE) { return 92; }
+    if (setter(expected).value() != INITIAL_SIZE || setter(other_expected).value() != INITIAL_SIZE) { return 92; }
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset();
@@ -56,8 +56,8 @@ int main() {
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 94; }
     for (int index = 0; index < 128; ++index) {
         if (read(false) != expected || read(true) != other_expected ||
-            setter("saved-" + std::to_string(index)) != index + INITIAL_SIZE + 1 ||
-            size() != index + INITIAL_SIZE + 1 || g_host->slot->m_size() != INITIAL_SIZE) {
+            setter("saved-" + std::to_string(index)).value() != index + INITIAL_SIZE + 1 ||
+            size().value() != index + INITIAL_SIZE + 1 || g_host->slot->m_size().value() != INITIAL_SIZE) {
             return 95;
         }
     }
@@ -157,13 +157,13 @@ int main() {
     auto setter = table->m_set;
     auto size = table->m_size;
     static_assert(std::is_same_v<decltype(getter), std::function<result_type(ctnative::js_boolean_t)>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(result_type)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(result_type)>>);
     auto saved = getter(ctnative::js_boolean_t{false});
     auto saved_null = getter(ctnative::js_boolean_t{true});
     if (saved.tag != kind::string || saved.value != expected || saved_null.tag != kind::null_value ||
-        !saved_null.value.empty() || setter(saved) != 2 || setter(saved_null) != 2) { return 91; }
+        !saved_null.value.empty() || setter(saved).value() != 2 || setter(saved_null).value() != 2) { return 91; }
     saved.value.assign(expected.size(), 'x');
-    if (setter(result_type{expected}) != 2 || setter(result_type{std::string{}}) != 2) { return 92; }
+    if (setter(result_type{expected}).value() != 2 || setter(result_type{std::string{}}).value() != 2) { return 92; }
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset();
@@ -177,8 +177,8 @@ int main() {
         const auto text = getter(ctnative::js_boolean_t{false});
         const auto absent = getter(ctnative::js_boolean_t{true});
         if (text.tag != kind::string || text.value != expected || absent.tag != kind::null_value ||
-            !absent.value.empty() || setter(result_type{"saved-" + std::to_string(index)}) != index + 3 ||
-            size() != index + 3 || g_host->slot->m_size() != 2) { return 95; }
+            !absent.value.empty() || setter(result_type{"saved-" + std::to_string(index)}).value() != index + 3 ||
+            size().value() != index + 3 || g_host->slot->m_size().value() != 2) { return 95; }
     }
     const auto survivor = getter(ctnative::js_boolean_t{false});
     const auto null_survivor = getter(ctnative::js_boolean_t{true});
@@ -265,14 +265,14 @@ int main() {
     auto setter = table->m_set;
     auto size = table->m_size;
     static_assert(std::is_same_v<decltype(getter), std::function<key_type(ctnative::js_boolean_t)>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(key_type)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(key_type)>>);
     auto saved = getter(ctnative::js_boolean_t{false});
     const auto absent = getter(ctnative::js_boolean_t{true});
     if (saved.tag != kind::string || saved.value != expected || absent.tag != kind::null_value ||
-        !absent.value.empty() || setter(saved) != 2 || setter(absent) != 3) { return 91; }
+        !absent.value.empty() || setter(saved).value() != 2 || setter(absent).value() != 3) { return 91; }
     saved.value.assign(expected.size(), 'x');
-    if (setter(key_type{expected}) != 3 || setter(key_type{std::string{}}) != 4 ||
-        setter(key_type{}) != 4 || setter(absent) != 4 || size() != 4) { return 92; }
+    if (setter(key_type{expected}).value() != 3 || setter(key_type{std::string{}}).value() != 4 ||
+        setter(key_type{}).value() != 4 || setter(absent).value() != 4 || size().value() != 4) { return 92; }
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset();
@@ -285,12 +285,12 @@ int main() {
     for (int index = 0; index < 128; ++index) {
         const std::string text = expected + std::to_string(index);
         auto caller = key_type{text};
-        if (setter(caller) != index + 5) { return 95; }
+        if (setter(caller).value() != index + 5) { return 95; }
         caller.value.assign(text.size(), 'q');
-        if (setter(key_type{text}) != index + 5 || setter(absent) != index + 5 ||
-            setter(key_type{}) != index + 5 || setter(key_type{std::string{}}) != index + 5 ||
+        if (setter(key_type{text}).value() != index + 5 || setter(absent).value() != index + 5 ||
+            setter(key_type{}).value() != index + 5 || setter(key_type{std::string{}}).value() != index + 5 ||
             getter(ctnative::js_boolean_t{false}).value != expected || getter(ctnative::js_boolean_t{true}).tag != kind::null_value ||
-            size() != index + 5 || g_host->slot->m_size() != 2) { return 96; }
+            size().value() != index + 5 || g_host->slot->m_size().value() != 2) { return 96; }
     }
     const auto survivor = getter(ctnative::js_boolean_t{false});
     const auto null_survivor = getter(ctnative::js_boolean_t{true});
@@ -385,7 +385,7 @@ int main() {
     caller.value.assign(expected.size(), 'x');
     if (!equal(saved, kind::string, expected) || !equal(setter(absent), kind::null_value) ||
         !equal(setter(result_type{}), kind::undefined) ||
-        !equal(setter(result_type{std::string{}}), kind::string) || size() != 0) { return 91; }
+        !equal(setter(result_type{std::string{}}), kind::string) || size().value() != 0) { return 91; }
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset();
@@ -406,7 +406,7 @@ int main() {
             !equal(getter(ctnative::js_boolean_t{true}), kind::null_value) || !equal(setter(absent), kind::null_value) ||
             !equal(setter(result_type{}), kind::undefined) ||
             !equal(setter(result_type{std::string{}}), kind::string) ||
-            size() != 0 || g_host->slot->m_size() != 0) { return 94; }
+            size().value() != 0 || g_host->slot->m_size().value() != 0) { return 94; }
     }
     const auto survivor = setter(getter(ctnative::js_boolean_t{false}));
     const auto null_survivor = setter(getter(ctnative::js_boolean_t{true}));
@@ -473,15 +473,17 @@ int main() {
         generated, separator, observer = changed.rpartition("\nint main() {\n")
         if not separator:
             raise RuntimeError("nullable host-result observer lost its main function")
-        size_call = 'size(result_type{std::string{"anchor"}})'
-        observer, count = re.subn(r"(?<![.>\w])size\(\)", size_call, observer)
-        if count != 2 or observer.count("g_host->slot->m_size()") != 1:
+        size_call = 'size(result_type{std::string{"anchor"}}).value()'
+        observer, count = re.subn(r"(?<![.>\w])size\(\)\.value\(\)", size_call, observer)
+        if count != 2 or observer.count("g_host->slot->m_size().value()") != 1:
             raise RuntimeError("nullable host-result observer lost its three size calls")
-        observer = observer.replace("g_host->slot->m_size()", "g_host->slot->m_" + size_call)
+        observer = observer.replace(
+            "g_host->slot->m_size().value()", "g_host->slot->m_" + size_call
+        )
         observer = observer.replace(size_call + " != 0", size_call + " != 1")
         observer = observer.replace(
             "    auto caller = getter(ctnative::js_boolean_t{false});",
-            "    static_assert(std::is_same_v<decltype(size), std::function<js_num(result_type)>>);\n"
+            "    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num(result_type)>>);\n"
             "    auto caller = getter(ctnative::js_boolean_t{false});",
         )
         observer = observer.replace(

@@ -30,7 +30,7 @@ def string_field_cpp_value(value):
 def check_string_field_calls(cpp, name, mode):
     row = string_field_cases()[name]
     source, value = row["source"], row["expected_trace"]
-    result = "std::string" if isinstance(value, StringValue) else "::js_num"
+    result = "std::string" if isinstance(value, StringValue) else "ctnative::js_num"
     params = (
         "std::string, std::string, ctnative::js_boolean_t"
         if name == "field_string_lifetime"
@@ -161,14 +161,14 @@ int main() {
     ctnative::identity_object empty;
     if (empty.field_76616c7565.tag != ctnative::nullable_string::kind::undefined) { return 120; }
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 121; }
-    const auto before = g_host->slot->m_size();
+    const auto before = g_host->slot->m_size().value();
     const auto count = ctn_test_objects.size();
     g_host->slot->m_set(std::string{"future"});
     auto first = std::static_pointer_cast<const ctnative::identity_object>(ctn_test_objects.back().lock());
     g_host->slot->m_set(std::string{"future"});
     auto second = std::static_pointer_cast<const ctnative::identity_object>(ctn_test_objects.back().lock());
     if (!first || !second || first == second || ctn_test_objects.size() != count + 2 ||
-        g_host->slot->m_size() != before + 1 ||
+        g_host->slot->m_size().value() != before + 1 ||
         first->field_76616c7565.tag != ctnative::nullable_string::kind::string ||
         second->field_76616c7565.tag != ctnative::nullable_string::kind::string ||
         first->field_76616c7565.value != "instance" || second->field_76616c7565.value != "instance") {
@@ -214,7 +214,7 @@ int main() {
     auto table = owner->slot;
     auto size = table->m_size;
     auto setter = table->m_set;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
     static_assert(std::is_same_v<decltype(setter), std::function<std::string(std::string, std::string, ctnative::js_boolean_t)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
@@ -226,9 +226,9 @@ int main() {
         auto caller = original + std::to_string(index) + bytes;
         expected.push_back(caller);
         const auto count = ctn_test_objects.size();
-        snapshots.push_back(setter(std::string(160, index % 2 ? 'k' : 'q'), caller, index % 2 != 0));
+        snapshots.push_back(setter(std::string(160, index % 2 ? 'k' : 'q'), caller, ctnative::js_boolean_t{index % 2 != 0}));
         caller.assign(caller.size(), 'x');
-        if (snapshots.back() != expected.back() || size() != 0 || ctn_test_objects.size() != count + 1 ||
+        if (snapshots.back() != expected.back() || size().value() != 0 || ctn_test_objects.size() != count + 1 ||
             !ctn_test_objects.back().expired()) { return 133; }
     }
     if (!setter("empty", "", ctnative::js_boolean_t{false}).empty()) { return 134; }
@@ -240,8 +240,8 @@ int main() {
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 136; }
     ctn_test_capture_next = true;
     const auto kept_result = setter("retained", original + bytes, ctnative::js_boolean_t{true});
-    if (!ctn_test_retained || kept_result != original + bytes || size() != 0 ||
-        g_host->slot->m_size() != 0) { return 137; }
+    if (!ctn_test_retained || kept_result != original + bytes || size().value() != 0 ||
+        g_host->slot->m_size().value() != 0) { return 137; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 138; }
     size = {};
@@ -315,9 +315,15 @@ def check_one_size_calls(cpp, name, mode):
 
 def check_exact_size_calls(cpp, name, mode, row):
     source = row["source"]
-    params = "::js_num, ctnative::js_boolean_t" if "set(key, flag)" in source else "::js_num"
+    params = (
+        "ctnative::js_num, ctnative::js_boolean_t"
+        if "set(key, flag)" in source
+        else "ctnative::js_num"
+    )
     result = (
-        "ctnative::nullable_scalar" if name == "size_one_present_field_entry_repair" else "::js_num"
+        "ctnative::nullable_scalar"
+        if name == "size_one_present_field_entry_repair"
+        else "ctnative::js_num"
     )
     if (
         f"std::function<{result}({params})>" not in cpp
@@ -403,8 +409,8 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
-    static_assert(std::is_same_v<decltype(setter), std::function<js_num(js_num, ctnative::js_boolean_t)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<ctnative::js_num(ctnative::js_num, ctnative::js_boolean_t)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -416,8 +422,8 @@ int main() {
     for (int call = 0; call < 128; ++call) {
         const bool flag = call % 2 != 0;
         const auto before = ctn_test_objects.size();
-        results.push_back(setter(static_cast<js_num>(call % 3 == 0 ? 0 : 100 + call), ctnative::js_boolean_t{flag}));
-        if (results.back() != (flag ? 2 : 1) || size() != 1 ||
+        results.push_back(setter(ctnative::js_num{static_cast<double>(call % 3 == 0 ? 0 : 100 + call)}, ctnative::js_boolean_t{flag}).value());
+        if (results.back() != (flag ? 2 : 1) || size().value() != 1 ||
             ctn_test_objects.size() != before + 1) { return 182; }
         for (std::size_t index = 0; index < before; ++index) {
             if (!ctn_test_objects[index].expired()) { return 183; }
@@ -429,8 +435,8 @@ int main() {
     ctn_test_keep_leaf = false;
     const auto retained_index = ctn_test_objects.size() - 1;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
-        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || size() != 1 ||
-        g_host->slot->m_size() != 1) { return 185; }
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || size().value() != 1 ||
+        g_host->slot->m_size().value() != 1) { return 185; }
     setter = {};
     if (ctn_test_maps[0].expired()) { return 186; }
     size = {};

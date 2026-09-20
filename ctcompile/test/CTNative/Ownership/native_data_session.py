@@ -137,7 +137,7 @@ int main() {
     std::weak_ptr other_key = g_other;
     g_globalThis.reset();
     table->m_remove(element, "bs.collapse");
-    if (ctnative::map_size(child) != 0) { return 7; }
+    if (ctnative::map_size(child).value() != 0) { return 7; }
     table->m_set(element, "bs.alert", 47.0);
     auto replacement = ctnative::map_get_present(table->capture_map(), element);
     if (replacement == child) { return 8; }
@@ -149,7 +149,7 @@ int main() {
     table.reset();
     if (!lifetime.expired()) { return 6; }
     if (!other_child.expired() || !other_key.expired()) { return 9; }
-    if (ctnative::map_size(child) != 0 ||
+    if (ctnative::map_size(child).value() != 0 ||
         ctnative::global_number(ctnative::map_get_present(replacement, std::string("bs.alert"))).value()
             != 47) { return 10; }
     if (ctnative::global_number(ctnative::object_get_field_76616c7565(payload)).value() != 64) {

@@ -123,6 +123,14 @@ bool isNullableCarrier(mlir::Type type) {
     return opaque && opaque.getValue() == kNullableType;
 }
 
+bool isNumberCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNumberType;
+}
+
 bool isBooleanCarrier(mlir::Type type) {
     if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
         type = value.getValueType();
@@ -275,7 +283,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::methodTable:
         llvm::report_fatal_error("method table carrier needs its proved schema");
     case carrier::boolean: return ec::OpaqueType::get(c, kBooleanType);
-    case carrier::number: return mlir::Float64Type::get(c);
+    case carrier::number: return ec::OpaqueType::get(c, kNumberType);
     case carrier::string:
         return ec::OpaqueType::get(c, StrType::get(c, StrEncoding::UTF8).cppCarrier());
     case carrier::structure:

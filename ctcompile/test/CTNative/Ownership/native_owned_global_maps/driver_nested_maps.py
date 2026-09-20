@@ -176,7 +176,7 @@ int main() {
     auto owner = g_host;
     auto table = owner->slot;
     auto get = table->m_get;
-    static_assert(std::is_same_v<decltype(get), std::function<js_num(js_num)>>);
+    static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_num(ctnative::js_num)>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
@@ -238,9 +238,9 @@ int main() {
                 "auto get = table->m_get;", "auto get = table->m_get;\n    auto set = table->m_set;"
             )
             .replace(
-                "static_assert(std::is_same_v<decltype(get), std::function<js_num(js_num)>>);",
-                "static_assert(std::is_same_v<decltype(get), std::function<js_num()>>);\n"
-                "    static_assert(std::is_same_v<decltype(set), std::function<js_num(js_num)>>);",
+                "static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_num(ctnative::js_num)>>);",
+                "static_assert(std::is_same_v<decltype(get), std::function<ctnative::js_num()>>);\n"
+                "    static_assert(std::is_same_v<decltype(set), std::function<ctnative::js_num(ctnative::js_num)>>);",
             )
             .replace("get(value) != value", "set(value) != value || get() != value")
             .replace(
@@ -295,7 +295,8 @@ int main() {
         )
     if row["previous"] or row.get("alias"):
         changed = changed.replace(
-            "std::function<js_num(js_num)>", "std::function<ctnative::nullable_scalar(js_num)>"
+            "std::function<ctnative::js_num(ctnative::js_num)>",
+            "std::function<ctnative::nullable_scalar(ctnative::js_num)>",
         )
         changed = re.sub(
             r"\bget\((value|13|19|23)\)", r"ctnative::global_number(get(\1)).value()", changed
@@ -319,8 +320,11 @@ int main() {
             : result.tag == Result::kind::number && result.value == value;
     };""",
             )
-            .replace("std::function<js_num()>", "std::function<Result(std::string)>")
-            .replace("std::function<js_num(js_num)>", "std::function<js_num(js_num, std::string)>")
+            .replace("std::function<ctnative::js_num()>", "std::function<Result(std::string)>")
+            .replace(
+                "std::function<ctnative::js_num(ctnative::js_num)>",
+                "std::function<ctnative::js_num(ctnative::js_num, std::string)>",
+            )
             .replace(
                 "set(value) != value || get() != value",
                 'set(value, "value") != value || !matches(get("value"), value)',
@@ -362,6 +366,24 @@ int main() {
                 "    set = {};\n    if (ctn_test_maps[0].expired()) { return 290; }\n    remove = {};",
             )
         )
+    generated, separator, observer = changed.rpartition("\nint main() {\n")
+    if not separator:
+        raise RuntimeError("nested Map lifetime observer lost its main function")
+    numeric_get = not (row["previous"] or row.get("alias") or row["dynamic"])
+    observer = re.sub(
+        r"\b(get|set)\((value|[0-9]+)([^()\n]*)\)",
+        lambda match: f"{match[1]}(ctnative::js_num{{"
+        + (match[2] if match[2] == "value" else match[2] + ".0")
+        + "}"
+        + match[3]
+        + ")"
+        + (".value()" if match[1] == "set" or numeric_get else ""),
+        observer,
+    )
+    if numeric_get:
+        observer = observer.replace("get()", "get().value()")
+    observer = re.sub(r'\bremove\((spelling|"[^"\n]*")\)', r"remove(\1).value()", observer)
+    changed = generated + separator + observer
     return (
         changed.replace("CHILDREN", str(row["children"]))
         .replace("RETAINED", str(row["retained"]).lower())
@@ -386,8 +408,8 @@ int main() {
     auto set = table->m_set;
     auto poison = table->m_poison;
     static_assert(std::is_same_v<decltype(get), std::function<Result()>>);
-    static_assert(std::is_same_v<decltype(set), std::function<js_num(js_num)>>);
-    static_assert(std::is_same_v<decltype(poison), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(set), std::function<ctnative::js_num(ctnative::js_num)>>);
+    static_assert(std::is_same_v<decltype(poison), std::function<ctnative::js_num()>>);
     static_assert(std::is_same_v<decltype(g_trace), Result>);
     if (get().tag != Result::kind::INITIAL_TAG ||
         g_trace.tag != Result::kind::INITIAL_TAG) { return 296; }
@@ -401,11 +423,11 @@ int main() {
     for (int call = 0; call < 128; ++call) {
         const auto before = ctn_test_maps.size();
         const js_num value = call % 2 == 0 ? -call : call + 0.5;
-        if (set(value) != value || ctnative::global_number(get()).value() != value ||
+        if (set(ctnative::js_num{value}).value() != value || ctnative::global_number(get()).value() != value ||
             ctn_test_maps.size() != before + 1) { return 298; }
         auto saved = outer->at(js_num{1});
         std::weak_ptr saved_lifetime = saved;
-        if (poison() != 0 || get().tag != Result::kind::undefined || outer->size() != 1U ||
+        if (poison().value() != 0 || get().tag != Result::kind::undefined || outer->size() != 1U ||
             ctn_test_maps.size() != before + 1 + (replacement ? 1U : 0U) ||
             (outer->at(js_num{1}) != saved) != replacement) { return 299; }
         const auto prior = ctnative::map_get(saved, std::string{"value"});
@@ -415,13 +437,13 @@ int main() {
         if (saved_lifetime.expired() != replacement) { return 301; }
     }
     ctnative::map_clear(outer);
-    if (ctnative::global_number(get()).value() != 0 || set(19) != 19 ||
+    if (ctnative::global_number(get()).value() != 0 || set(ctnative::js_num{19.0}).value() != 19 ||
         ctnative::global_number(get()).value() != 19) { return 302; }
     auto saved = outer->at(js_num{1});
     std::weak_ptr saved_lifetime = saved;
     ctnative::map_clear(outer);
     if (saved_lifetime.expired() || saved->at("value") != 19 ||
-        ctnative::global_number(get()).value() != 0 || set(23) != 23 ||
+        ctnative::global_number(get()).value() != 0 || set(ctnative::js_num{23.0}).value() != 23 ||
         ctnative::global_number(get()).value() != 23 || outer->at(js_num{1}) == saved) { return 303; }
     saved.reset();
     if (!saved_lifetime.expired()) { return 304; }
@@ -431,9 +453,9 @@ int main() {
         ctnative::global_number(get()).value() != 23) { return 305; }
     outer.reset();
     get = {};
-    if (ctn_test_maps[0].expired() || set(31) != 31) { return 306; }
+    if (ctn_test_maps[0].expired() || set(ctnative::js_num{31.0}).value() != 31) { return 306; }
     set = {};
-    if (ctn_test_maps[0].expired() || poison() != 0) { return 307; }
+    if (ctn_test_maps[0].expired() || poison().value() != 0) { return 307; }
     poison = {};
     if (!ctn_test_maps[0].expired() || ctn_test_maps[next].expired()) { return 308; }
     g_host.reset();
@@ -762,21 +784,21 @@ def check_nested_maps(args, node, reference, compilers, nm):
         for mode, native in (("explicit", default), ("deduced", deduced)):
             cpp = host.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
             signature = (
-                "std::function<::js_num(::js_num, std::string)>"
+                "std::function<ctnative::js_num(ctnative::js_num, std::string)>"
                 if row["dynamic"]
                 else (
-                    "std::function<::js_num(ctnative::object_value)>"
+                    "std::function<ctnative::js_num(ctnative::object_value)>"
                     if row.get("mixed_child") or row.get("caller_payload") and row["mixed"]
                     else (
-                        "std::function<::js_num(std::shared_ptr<ctnative::identity_object>)>"
+                        "std::function<ctnative::js_num(std::shared_ptr<ctnative::identity_object>)>"
                         if row.get("caller_payload")
                         else (
                             "std::function<ctnative::nullable_scalar()>"
                             if row.get("nullable")
                             else (
-                                "std::function<ctnative::nullable_scalar(::js_num)>"
+                                "std::function<ctnative::nullable_scalar(ctnative::js_num)>"
                                 if row["previous"] or row.get("alias")
-                                else "std::function<::js_num(::js_num)>"
+                                else "std::function<ctnative::js_num(ctnative::js_num)>"
                             )
                         )
                     )

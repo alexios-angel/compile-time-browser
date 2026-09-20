@@ -309,12 +309,12 @@ inline nullable_scalar vec_at(const std::vector<double> & v, nullable_scalar key
 }
 // ctcompile: `a.length`, which is `size()` exactly - the site proof is what
 // rules out a hole
-template <class T> double vec_length(const std::vector<T> & v) {
-    return static_cast<double>(v.size());
+template <class T> js_num vec_length(const std::vector<T> & v) {
+    return js_num{static_cast<double>(v.size())};
 }
 // ctcompile: one element of an array literal, in source order
-inline void vec_push(std::vector<double> & v, double x) {
-    v.push_back(x);
+inline void vec_push(std::vector<double> & v, js_num x) {
+    v.push_back(x.value());
 }
 // ctcompile: confined owning Map string-key snapshots
 inline nullable_string vec_at(const std::vector<std::string> & values, nullable_scalar key) {
@@ -557,8 +557,8 @@ template <class Map, class K> js_boolean_t map_delete(const Map & map, const K &
 template <class Map> void map_clear(const Map & map) {
     map->clear();
 }
-template <class Map> double map_size(const Map & map) {
-    return static_cast<double>(map->size());
+template <class Map> js_num map_size(const Map & map) {
+    return js_num{static_cast<double>(map->size())};
 }
 
 // Nullable Strings also own payload storage. Every read returns a copy;
@@ -873,8 +873,8 @@ inline void set_optional_attribute(ctbrowser::element_ref element, std::string_v
                                    const std::optional<std::string> & value) {
     set_attribute(element, name, value ? std::string_view(*value) : std::string_view("null"));
 }
-inline double dom_number(const std::optional<std::string> & text) {
-    return text ? ctbrowser::string_to_number(*text) : 0.0;
+inline js_num dom_number(const std::optional<std::string> & text) {
+    return js_num{text ? ctbrowser::string_to_number(*text) : 0.0};
 }
 inline js_boolean_t toggle_attribute(ctbrowser::element_ref element, std::string_view name,
                                      std::optional<bool> force = std::nullopt) {
