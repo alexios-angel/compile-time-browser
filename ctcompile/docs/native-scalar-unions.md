@@ -4,7 +4,8 @@ The native backend carries closed boolean/number unions in the existing
 `ctnative::nullable_scalar` type. The same representation handles their
 nullable forms. The inferred type still records the exact alternatives;
 using this carrier does not add nullability to a definite union. Definite
-numbers and booleans retain `double` and `bool` signatures and storage.
+numbers and booleans now use `ctnative::js_num` and `ctnative::js_boolean_t`;
+raw storage and host interfaces use explicit adapters.
 
 Calls, returns, conditional and loop edges, local fields, shared cells and
 returned closure environments preserve the tag. Numeric addition is proved
@@ -45,7 +46,18 @@ with zero violations and zero unvisited live values. All 39 observations also
 match under ASan/UBSan with leak detection. Native compile coverage
 stays Bootstrap 19/574, p5 39/4754 and Phaser 45/7725.
 
-Unions containing strings, objects or unknown values remain refused. Mixed
-scalar Map keys, Map payloads and array storage are also refused: admitting
-scalar SSA values does not change the concrete storage contracts of those
-containers. This slice does not implement general `std::variant` lowering.
+The measurements above describe the original Boolean/Number slice. Closed
+local Boolean/String temporaries now support numeric conversion and exact String
+concatenation; their signatures/globals remain refused. Closed Number/String
+values use `ctnative::number_string` (`std::variant<js_num, js_string>`) through
+parameters, returns, conditionals, loops and global stores. Generic primitive `+`
+chooses concatenation only when an actual operand is String; numeric arithmetic,
+truthiness, `typeof` and String concatenation consume that result without losing
+its tag. See [the focused addition handoff](handoff/2026-09-20-native-generic-addition.md).
+
+Optional Number/String source values, including changing-global reads, still
+need distinct null/undefined transport. Global `std::optional<number_string>`
+only guards missing initialization; it is not the source optional carrier.
+Equality/ordering of Number/String unions, broader unions and mixed scalar Map
+keys/payloads or array storage retain their existing refusal boundaries. This
+does not implement arbitrary `std::variant` lowering.

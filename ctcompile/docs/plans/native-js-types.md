@@ -20,8 +20,9 @@ types and `js_boolean_t` in either order; Boolean words remain distinct from
 numbers. Optional String arithmetic retains null/undefined tags until numeric
 conversion. Closed local Boolean/String unions support numeric arithmetic and
 concatenation with an exact String. These operations reuse public Core conversion/
-formatting. Generic addition with a String/Number result, Object/Array prototypes
-and document views remain planned. This is the user's revised direction for the
+formatting. Generic primitive addition now returns a proved closed String/Number
+carrier, retaining its tags through calls, joins, loops and global stores. Object/
+Array prototypes and document views remain planned. This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
 
@@ -306,9 +307,10 @@ existing `auto`/template deduction.
    String/Number addition in either order uses class overloads and public Core
    `number_to_string`. Generated programs link Core and its configured dependencies,
    with no Script symbols. The focused `string-coercions.test` passes 18 distinct
-   Node/VM/native observations across eight native modes, five refusal controls,
-   an optional String admission control and a distinguishing `baNaNa` mutation. Core
-   `number_to_string` now checks range before its integer fast-path cast.
+   Node/VM/native observations across eight native modes, four refusal controls,
+   optional String and generic-addition admission controls and a distinguishing
+   `baNaNa` mutation. Core `number_to_string` now checks range before its integer
+   fast-path cast.
    String numeric arithmetic (`-`, `*`, `/`, `%`, `**`) now uses that conversion
    and the existing Number operators/remainder/exponentiation guards. Addition
    with an exact String admits Boolean and finite nullable scalar alternatives;
@@ -329,11 +331,21 @@ existing `auto`/template deduction.
    and concatenation with an exact String. Boolean false becomes Number zero;
    String `"false"` becomes NaN. Their parameter/return/global ABI remains outside
    admission. The `string-union-coercions.test` source gate passes 51 observations
-   across eight native modes, four refusals and two distinguishing mutations.
-   Next give generic `+` a proved closed String/Number result carrier when neither
-   operand is definitely String, then select addition or concatenation from its
-   actual primitive alternatives. These additions stay refused until that
-   complete boundary is implemented; never stringify both sides unconditionally.
+   across eight native modes, two remaining refusals, two generic-addition
+   admission controls and two distinguishing mutations.
+   Generic primitive `+` now selects Number addition or String concatenation from
+   the actual alternatives and returns `ctnative::number_string`, exactly
+   `std::variant<js_num, js_string>`. It reuses the typed Number/String operations
+   and existing finite optional/Boolean-String carriers. Number/String parameters,
+   returns, conditional/loop edges, truthiness, `typeof`, later numeric conversion
+   and global stores preserve the selected tag. Global storage uses
+   `std::optional<number_string>` solely to detect an uninitialized store;
+   that optional is not a source null/undefined representation.
+   Next implement optional Number/String transport, beginning with the preserved
+   `generic-addition.test` changing-global read/copy/reassign refusal. Represent
+   source null and undefined separately, including early reads, before admitting
+   those paths. Boolean/String signatures, wider unions and mixed container
+   payloads remain separate; never stringify both sides unconditionally.
    Keep numeric relational conversion separate from String lexicographic ordering
    and loose equality. Object conversion hooks remain refused; an overload or class
    method does not establish their source proof.

@@ -22,6 +22,33 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Generic primitive addition, 2026-09-20 UTC
+
+Continued clean **a7abf61b**, resuming its documented generic-`+` boundary.
+**bede47ad** adds `ctnative::number_string`, exactly
+`std::variant<js_num, js_string>`, and tag-dependent primitive addition.
+**b9aa1580** infers and lowers that result through parameters, returns,
+conditional/loop edges and global stores. Later numeric conversion, truthiness,
+`typeof` and concatenation preserve JavaScript behavior. Public Core and the
+existing Number/String operations supply conversion and text joining; no browser,
+Script, VM or GC implementation changed.
+
+Focused validation passes: **two CTests** and **eight distinct lit cases** across
+corrected runs. The new source fixture checks **48 Node/VM/native observations**,
+eight native modes, nine refusals and two mutations. All **18** code/test hashes
+match the devbox. Scoped formatting and whitespace pass; required global
+formatting retains the same 16 pre-existing diagnostics. Full suites were
+skipped. [Exact checks and retained source controls](handoff/2026-09-20-native-generic-addition.md).
+
+**Next:** optional Number/String source transport, starting with the complete
+changing-global read/copy/reassign refusal in `generic-addition.test`. Preserve
+null and undefined separately. `std::optional<number_string>` currently guards
+uninitialized global storage only; it does not represent source absence.
+Boolean/String signatures, wider unions, equality/ordering, object hooks, Core
+parser gaps and UTF-16 alignment remain separate. Collections/document views,
+`Symbol.hasInstance`, indexed Bootstrap `R.find` and the application driver
+remain unfinished.
+
 ## Optional and union primitive coercions, 2026-09-20 UTC
 
 Continued clean **c83df6b8**. **d29f1bf2** adds `nullable_string.to_number()` and
