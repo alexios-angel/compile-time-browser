@@ -210,6 +210,54 @@ void StructuredCases::reloads() {
                         "[%one, %y, %one, %y]", "[%y, %y, %one, %one]"),
                 "ctjs.binary add %i, %one", "ctjs.binary div %i, %two"),
         "ctjs.return %result", "ctjs.return %a");
+    const auto rightShiftIndex =
+        replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
+    for (const auto & kind : {"shr", "ushr"}) {
+        const auto body =
+            replace(rightShiftIndex, "binary_static shr", std::string{"binary_static "} + kind);
+        rows.push_back({.what = "structured right shifts preserve exact own positions",
+                        .body = body,
+                        .arrays = "a:[zero,zero,one,one]",
+                        .reads = "a[0]=zero; a[2]=one",
+                        .exit = "a -> {a}"});
+        rows.push_back({.what = "structured right shifts permit an unaligned first endpoint",
+                        .body = replace(body, "%index = %zero", "%index = %one"),
+                        .arrays = "a:[zero,zero,one,one]",
+                        .reads = "a[1]=y; a[3]=one",
+                        .exit = "a -> {a}"});
+        reject("structured right shifts require divisible strides",
+               replace(body, "add %i, %two\n    scf.yield", "add %i, %one\n    scf.yield"));
+    }
+    const auto shiftReload =
+        replace(replace(rightShiftIndex, "  %a =", "  %three = ctjs.binary add %two, %one\n  %a ="),
+                "    %position = ctjs.binary_static shr %i, %one",
+                "    %count = ctjs.get_property %base[%three]\n"
+                "    %position = ctjs.binary_static shr %i, %count");
+    rows.push_back({.what = "structured right-shift counts may reload beyond transformed writes",
+                    .body = shiftReload,
+                    .arrays = "a:[zero,zero,one,one]",
+                    .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
+                    .exit = "a -> {a}"});
+    const auto signedShiftBoundary =
+        replace(replace(rightShiftIndex, "  %a =",
+                        "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                        "  %half = ctjs.constant #ctjs.number<4742290407612743680>\n  %a ="),
+                "%position = ctjs.binary_static shr %i, %one",
+                "%part = ctjs.binary sub %maximum, %i\n"
+                "    %shifted = ctjs.binary_static shr %part, %one\n"
+                "    %position = ctjs.binary sub %half, %shifted");
+    rows.push_back({.what = "structured signed shifts include the exact upper i32 endpoint",
+                    .body = signedShiftBoundary,
+                    .arrays = "a:[zero,zero,one,one]",
+                    .reads = "a[0]=zero; a[2]=one",
+                    .exit = "a -> {a}"});
+    reject("structured signed shifts refuse a ToInt32 discontinuity",
+           replace(signedShiftBoundary, "4746794007244308480", "4746794007248502784"));
+    reject("structured right shifts retain the complete reload overlap check",
+           replace(shiftReload,
+                   "    %step =", "    ctjs.set_property %base[%three], %two\n    %step ="));
+    reject("structured right shifts cannot borrow a changing count",
+           replace(rightShiftIndex, "shr %i, %one", "shr %i, %last"));
     rows.push_back({.what = "structured exact quotients overwrite their bounded prefix",
                     .body = quotientIndex,
                     .arrays = "a:[zero,zero,one,one]",

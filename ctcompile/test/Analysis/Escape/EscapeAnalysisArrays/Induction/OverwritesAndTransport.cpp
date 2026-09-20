@@ -314,6 +314,92 @@ void InductionCases::overwritesAndTransport() {
     const auto quotientIndex =
         replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%x, %x, %one, %one]"),
                 "ctjs.binary add %i, %one", "ctjs.binary div %i, %two");
+    const auto rightShiftIndex =
+        replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
+    for (const auto & kind : {"shr", "ushr"}) {
+        const auto body =
+            replace(rightShiftIndex, "binary_static shr", std::string{"binary_static "} + kind);
+        run({.what = "right shifts preserve exact bounded affine own positions",
+             .body = body,
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "right shifts allow an unaligned start with a divisible stride",
+             .body = replace(body, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[1]=x; a[3]=one",
+             .exit = "a -> {a}"},
+            "x");
+        reject("right shifts cannot assume an affine range from a nondivisible stride",
+               replace(body, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"));
+    }
+    run({.what = "a masked zero shift preserves each original own index",
+         .body =
+             replace(replace(complementIndex, "  %a =",
+                             "  %count = ctjs.constant #ctjs.number<4629700416936869888>\n  %a ="),
+                     "%negative = ctjs.unary bitnot %i\n  %position = ctjs.unary bitnot %negative",
+                     "%position = ctjs.binary_static shr %i, %count"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative Number counts use their exact modulo32 shift",
+         .body =
+             replace(replace(rightShiftIndex, "  %a =",
+                             "  %count = ctjs.constant #ctjs.number<13852790978814935040>\n  %a ="),
+                     "shr %i, %one", "shr %i, %count"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[0]=zero; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto shiftReload =
+        replace(rightShiftIndex, "  %position = ctjs.binary_static shr %i, %one",
+                "  %count = ctjs.get_property %base[%three]\n"
+                "  %position = ctjs.binary_static shr %i, %count");
+    run({.what = "right-shift counts may reload beyond every transformed write",
+         .body = shiftReload,
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto signedShiftBoundary =
+        replace(replace(rightShiftIndex, "  %a =",
+                        "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                        "  %half = ctjs.constant #ctjs.number<4742290407612743680>\n  %a ="),
+                "%position = ctjs.binary_static shr %i, %one",
+                "%part = ctjs.binary sub %maximum, %i\n"
+                "  %shifted = ctjs.binary_static shr %part, %one\n"
+                "  %position = ctjs.binary sub %half, %shifted");
+    const auto unsignedShiftBoundary =
+        replace(replace(replace(signedShiftBoundary, "4746794007244308480", "4751297606873776128"),
+                        "4742290407612743680", "4746794007244308480"),
+                "binary_static shr", "binary_static ushr");
+    for (const auto & body : {signedShiftBoundary, unsignedShiftBoundary}) {
+        run({.what = "right-shift ranges include exact signed and unsigned upper endpoints",
+             .body = body,
+             .arrays = "a:[zero,zero,one,one]",
+             .reads = "a[0]=zero; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    reject("signed right shifts cannot cross the ToInt32 sign boundary",
+           replace(signedShiftBoundary, "4746794007244308480", "4746794007248502784"));
+    reject("unsigned right shifts cannot borrow an input above the bounded u32 range",
+           replace(unsignedShiftBoundary, "4751297606873776128", "4751297606875873280"));
+    for (const auto & body :
+         {replace(shiftReload, "%base[%three]", "%base[%one]"),
+          replace(shiftReload, "  %step =", "  ctjs.set_property %base[%three], %two\n  %step ="),
+          replace(rightShiftIndex, "shr %i, %one", "shr %one, %i"),
+          replace(rightShiftIndex, "shr %i, %one", "shr %i, %s"),
+          replace(rightShiftIndex, "shr %i, %one", "shr %i, %two"),
+          replace(rightShiftIndex, "%position = ctjs.binary_static shr %i, %one",
+                  "%part = ctjs.unary neg %i\n  %position = ctjs.binary_static ushr %part, %one"),
+          replace(rightShiftIndex, "%position = ctjs.binary_static shr %i, %one",
+                  "%part = ctjs.binary_static shr %i, %one\n"
+                  "  %position = ctjs.binary add %part, %three")}) {
+        reject("right-shift ranges retain count, reload, signed-input and own-bounds guards", body);
+    }
     run({.what = "exact index quotients overwrite only their bounded prefix",
          .body = quotientIndex,
          .arrays = "a:[zero,zero,one,one]",

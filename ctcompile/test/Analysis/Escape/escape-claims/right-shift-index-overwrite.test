@@ -1,0 +1,142 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name right-shift-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-right-shift-index-overwrite.claims
+
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function signedShift() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >> 1] = 0;
+    return a;
+}
+function unsignedShift() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> 1] = 0;
+    return a;
+}
+function unalignedStart() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 1; i < a.length; i += 2) a[i >> 1] = 0;
+    return a;
+}
+function modulo32() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i >> 32] = 0;
+    return a;
+}
+function negativeCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> -31] = 0;
+    return a;
+}
+function reloadGap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) a[i >> a[3]] = 0;
+    return a;
+}
+function signedUpper() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[1073741823 - ((2147483647 - i) >> 1)] = 0;
+    return a;
+}
+function unsignedUpper() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[2147483647 - ((4294967295 - i) >>> 1)] = 0;
+    return a;
+}
+function reversedShift() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[1 - (i >> 1)] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [child, child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[i >> 1] = 0;
+    return saved;
+}
+function remaining() {
+    var child = {}, a = [child, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[i >>> 1] = 0;
+    return a;
+}
+function zeroTrip() {
+    var child = {}, a = [child];
+    for (var i = 1; i < a.length; i += 2) a[i >> 1] = 0;
+    return a;
+}
+function nondivisibleStride() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i >> 1] = 0;
+    return a;
+}
+function overlappingCount() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >> a[1]] = 0;
+    return a;
+}
+function laterOverlap() {
+    var child = {}, a = [child, child, 0, 1];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i >> a[3]] = 0;
+        a[3] = 0;
+    }
+    return a;
+}
+function signedDiscontinuity() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) >> 0) - 2147483647] = 0;
+    return a;
+}
+function unsignedOverflow() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(4294967296 + i) >>> 0] = 0;
+    return a;
+}
+function negativeInput() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2) >>> 0) - 4294967294] = 0;
+    return a;
+}
+function stringCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >> "1"] = 0;
+    return a;
+}
+function varyingCount() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i >> i] = 0;
+    return a;
+}
+function cycle() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i >> 1] = a;
+        a[i >> 1] = 0;
+    }
+    return a;
+}
+signedShift(); unsignedShift(); unalignedStart(); modulo32(); negativeCount(); reloadGap();
+signedUpper(); unsignedUpper(); reversedShift(); saved(); remaining(); zeroTrip();
+nondivisibleStride(); overlappingCount(); laterOverlap(); signedDiscontinuity();
+unsignedOverflow(); negativeInput(); stringCount(); varyingCount(); cycle();
