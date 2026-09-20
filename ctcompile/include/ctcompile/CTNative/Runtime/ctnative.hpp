@@ -14,8 +14,8 @@
 //                          observable somewhere in the program); otherwise
 //                          lookup is `std::map` with SameValueZero keys
 //   CTNATIVE_DOM           the program is a DOM entry and ctbrowser's public
-//                          DOM headers are on its include path. Off, only
-//                          header-only public Core algorithms are needed.
+//                          DOM headers are on its include path. Primitive String
+//                          conversion/formatting also links public Core without it.
 //
 // NO ctbrowser::script SYMBOL, ever: Script/ is the interpreter, a dev-time
 // oracle and never a dependency of a native program.
@@ -118,6 +118,15 @@ struct nullable_scalar {
     nullable_scalar(js_boolean_t boolean)
         : tag(kind::boolean), value(boolean.to_number().value()) {}
     nullable_scalar(bool boolean) : nullable_scalar(js_boolean_t{boolean}) {}
+    js_string to_string() const {
+        switch (tag) {
+        case kind::undefined: return js_string{"undefined"};
+        case kind::null: return js_string{"null"};
+        case kind::number: return js_string{ctbrowser::number_to_string(value)};
+        case kind::boolean: return js_string{} + js_boolean_t{value != 0.0};
+        }
+        std::terminate();
+    }
     static nullable_scalar null() { return js_null_t{}; }
 };
 inline nullable_scalar to_nullable(nullable_scalar value) {

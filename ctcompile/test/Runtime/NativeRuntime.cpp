@@ -20,6 +20,18 @@ struct identity_object {};
 } // namespace ctnative
 
 namespace {
+template <class T>
+concept string_addable = requires(ctnative::js_string text, T value) {
+    text + value;
+    value + text;
+};
+struct convertible_number {
+    operator double() const { return 3.0; }
+};
+enum unrelated_number {
+    three = 3
+};
+
 int failures = 0;
 void check(bool value, const char * message) {
     if (value) { return; }
@@ -118,6 +130,42 @@ int main() {
           js_string{"baNaNa"});
     CHECK((js_string{"x"} + negativeZero) == js_string{"x0"});
     CHECK((two + js_string{"\0x"}) == js_string{"2\0x"});
+    static_assert(!string_addable<const char *>);
+    static_assert(!string_addable<std::nullptr_t>);
+    static_assert(!string_addable<convertible_number>);
+    static_assert(!string_addable<unrelated_number>);
+    const auto checkPrimitiveConcat = []<class U>(U value, std::string_view expected) {
+        static_assert(std::is_same_v<decltype(js_string{} + value), js_string>);
+        static_assert(std::is_same_v<decltype(value + js_string{}), js_string>);
+        CHECK((js_string{"x"} + value).value() == "x" + std::string{expected});
+        CHECK((value + js_string{"x"}).value() == std::string{expected} + "x");
+    };
+    checkPrimitiveConcat(short{-3}, "-3");
+    checkPrimitiveConcat(42, "42");
+    checkPrimitiveConcat(42L, "42");
+    checkPrimitiveConcat(9007199254740993LL, "9007199254740992");
+    checkPrimitiveConcat(42U, "42");
+    checkPrimitiveConcat(42UL, "42");
+    checkPrimitiveConcat(42ULL, "42");
+    checkPrimitiveConcat(2.5F, "2.5");
+    checkPrimitiveConcat(2.5, "2.5");
+    checkPrimitiveConcat(2.5L, "2.5");
+    checkPrimitiveConcat(-0.0, "0");
+    checkPrimitiveConcat(std::numeric_limits<double>::quiet_NaN(), "NaN");
+    if constexpr (std::numeric_limits<long double>::max() > std::numeric_limits<double>::max()) {
+        checkPrimitiveConcat(std::numeric_limits<long double>::max(), "Infinity");
+        checkPrimitiveConcat(-std::numeric_limits<long double>::max(), "-Infinity");
+    }
+    checkPrimitiveConcat(true, "true");
+    checkPrimitiveConcat(false, "false");
+    checkPrimitiveConcat(js_boolean_t{true}, "true");
+    checkPrimitiveConcat(js_boolean_t{false}, "false");
+    CHECK(nullable_scalar{undefined_t{}}.to_string() == js_string{"undefined"});
+    CHECK(nullable_scalar{js_null_t{}}.to_string() == js_string{"null"});
+    CHECK(nullable_scalar{js_boolean_t{false}}.to_string() == js_string{"false"});
+    CHECK(nullable_scalar{js_boolean_t{true}}.to_string() == js_string{"true"});
+    CHECK(nullable_scalar{-0.0}.to_string() == js_string{"0"});
+    CHECK(nullable_scalar{notANumber}.to_string() == js_string{"NaN"});
     CHECK(!js_string{} && js_string{"false"} && js_string{"\0"});
     CHECK(js_string{"a\0b"}.value() == std::string("a\0b", 3));
     CHECK((js_string{"a\0b", 3} == js_string{"a\0b"}));
