@@ -116,6 +116,11 @@ BOOLEAN_CASES = {
 }
 BOOLEAN_CASES.update(
     {
+        "branch_loop": (
+            "while (element.hasAttribute('x')) { element.removeAttribute('x'); } "
+            "return element.getAttribute('x') === null;",
+            "1111",
+        ),
         "branch_effects": (
             """if (element.getAttribute('x')) {
       element.setAttribute('marker', 'yes');
@@ -210,6 +215,11 @@ HELPER_CASES = {
     "helper_branch": (
         "function read(target) { if (target.hasAttribute('x')) return true; return false; } return read(element);",
         "0111",
+    ),
+    "helper_branch_loop": (
+        "function read(target) { while (target.hasAttribute('x')) { target.removeAttribute('x'); } "
+        "return target.getAttribute('x'); } return read(element) === null;",
+        "1111",
     ),
     "helper_branch_effects": (
         """function change(target) {

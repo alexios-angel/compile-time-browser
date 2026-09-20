@@ -277,6 +277,10 @@ BOOLEAN_OBSERVATIONS = "\n".join(
     for j, value in enumerate(("null", "''", r"'a\0b'", r"'\u00e9'"))
 )
 BOOLEAN_CHECKS = {
+    **dict.fromkeys(
+        ("branch_loop", "helper_branch_loop"),
+        "assert(!doc.read().has_attribute(node, state));",
+    ),
     "set_value": 'assert(doc.read().attribute_value(node, atoms.intern("y")) == (value ? std::string_view(*value) : std::string_view("null")));',
     "helper_completion_effects": r"""assert(doc.read().attribute_value(node, atoms.intern("marker")) ==
             (!value ? "missing" : value->empty() ? "empty" :
@@ -593,7 +597,7 @@ REFUSALS = {
     "branch_mixed_join": "let value; if (element.hasAttribute('x')) { value=true; } else { value='text'; } return value;",
     "branch_optional_undefined": "let value; if (element.hasAttribute('x')) { value=element.getAttribute('x'); } else { value=undefined; } return value;",
     "branch_borrowed_join": "let value; if (element.hasAttribute('x')) { value=element; } else { value=element.closest('x'); } return value === element;",
-    "branch_loop": "while (element.hasAttribute('x')) { element.removeAttribute('x'); } return true;",
+    "branch_loop_unknown_call": "while (element.hasAttribute('x')) { element.unknown(); element.removeAttribute('x'); } return true;",
     "boolean-call": "return Boolean(element.getAttribute('x'));",
     "stringify": "return '' + element.getAttribute('x');",
     "loose-equality": "return element.getAttribute('x') == null;",
@@ -621,7 +625,7 @@ HELPER_REFUSALS = {
     "helper_completion_exception": "function read(target) { try { if (target.getAttribute('x') === null) return false; if (target.getAttribute('x') === '') return true; return false; } catch (error) { return true; } } return read(element);",
     "helper_branch_unsafe_then": "function read(target) { if (target.hasAttribute('x')) { target.unknown(); } return target.getAttribute('x'); } return read(element);",
     "helper_branch_unsafe_else": "function read(target) { if (target.hasAttribute('x')) { return target.getAttribute('x'); } else { target.unknown(); return null; } } return read(element);",
-    "helper_branch_loop": "function read(target) { while (target.hasAttribute('x')) { target.removeAttribute('x'); } return target.getAttribute('x'); } return read(element);",
+    "helper_branch_loop_unknown_call": "function read(target) { while (target.hasAttribute('x')) { target.unknown(); target.removeAttribute('x'); } return target.getAttribute('x'); } return read(element);",
     "helper_branch_mixed_join": "function read(target) { if (target.hasAttribute('x')) return true; return 'text'; } return read(element);",
     "helper_branch_optional_undefined": "function read(target) { if (target.hasAttribute('x')) return target.getAttribute('x'); return undefined; } return read(element);",
     "helper_branch_borrowed_join": "function read(target) { let value; if (target.hasAttribute('x')) { value = target; } else { value = target.closest('button'); } return value.getAttribute('x'); } return read(element);",
