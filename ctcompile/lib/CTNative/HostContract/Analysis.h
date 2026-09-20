@@ -6,6 +6,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <optional>
 #include <utility>
@@ -13,6 +14,10 @@
 namespace ctcompile::ctnative::host_detail {
 
 inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_defined";
+
+// Ordinary DOM identities; class preparation consumes its separate declarations.
+inline constexpr unsigned maxDOMIntrinsicNameLength = 23; // __ctbrowser_for_of_open
+const llvm::StringSet<> & domInitialIntrinsics();
 
 // Invocation shape only: identity does not prove heritage, receiver rebinding,
 // field initialization or super lookup, and never authorizes erasing a call.

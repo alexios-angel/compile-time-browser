@@ -64,6 +64,25 @@ std::string realmReceiverProblem(const HostContract & contract) {
 
 } // namespace
 
+const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
+    static const llvm::StringSet<> names{
+        "Object",
+        "Number",
+        "decodeURIComponent",
+        "JSON",
+        "Array",
+        "String",
+        "RegExp",
+        "Element",
+        "Function",
+        "__ctbrowser_regexp",
+        "__ctbrowser_for_of_open",
+        "__ctbrowser_iter_next",
+        "__ctbrowser_iter_close",
+    };
+    return names;
+}
+
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     auto parsed = llvm::json::parse(text);
     if (!parsed) { return parsed.takeError(); }
@@ -144,17 +163,14 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                 // declarations survive for every method probe and final proof.
                 const bool hasClasses = llvm::is_contained(result.initialIntrinsics,
                                                            host_detail::classDefinedIntrinsic);
+                const auto & supportedIntrinsics = host_detail::domInitialIntrinsics();
                 if (llvm::any_of(result.initialIntrinsics, [&](const auto & name) {
                         if (hasClasses &&
                             (host_detail::classIntrinsicArity(name) || name == "Error")) {
                             return false;
                         }
-                        return name != "Object" && name != "Number" &&
-                               name != "decodeURIComponent" && name != "JSON" && name != "Array" &&
-                               name != "String" && name != "RegExp" && name != "Element" &&
-                               name != "Function" && name != "__ctbrowser_regexp" &&
-                               name != "__ctbrowser_for_of_open" &&
-                               name != "__ctbrowser_iter_next" && name != "__ctbrowser_iter_close";
+                        return name.size() > host_detail::maxDOMIntrinsicNameLength ||
+                               !supportedIntrinsics.contains(name);
                     })) {
                     return error("unsupported DOM initial intrinsic identity");
                 }

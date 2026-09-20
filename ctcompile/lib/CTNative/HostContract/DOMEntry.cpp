@@ -47,21 +47,19 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         return;
     }
     llvm::StringSet<> intrinsicNames;
+    const auto & supportedIntrinsics = host_detail::domInitialIntrinsics();
     if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         contract.elementParameters.empty() || !contract.roots.empty() ||
         !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() || contract.initialIntrinsics.size() > 13 ||
-        llvm::any_of(
-            contract.initialIntrinsics,
-            [&](const auto & name) {
-                return (name != "Object" && name != "Number" && name != "decodeURIComponent" &&
-                        name != "JSON" && name != "Array" && name != "String" && name != "RegExp" &&
-                        name != "Element" && name != "Function" && name != "__ctbrowser_regexp" &&
-                        name != "__ctbrowser_for_of_open" && name != "__ctbrowser_iter_next" &&
-                        name != "__ctbrowser_iter_close") ||
-                       !intrinsicNames.insert(name).second;
-            }) ||
+        !contract.undefinedBindings.empty() ||
+        contract.initialIntrinsics.size() > supportedIntrinsics.size() ||
+        llvm::any_of(contract.initialIntrinsics,
+                     [&](const auto & name) {
+                         return name.size() > host_detail::maxDOMIntrinsicNameLength ||
+                                !supportedIntrinsics.contains(name) ||
+                                !intrinsicNames.insert(name).second;
+                     }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.realmOwnDataProperties.empty()) {
         refusal = "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
