@@ -22,6 +22,32 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited own-field snapshots and complement bands, 2026-09-20 UTC
+
+**117783b6** proves fixed inherited own-field snapshots. Shared inherited methods
+require the same ordered field set on every descendant, including empty shapes;
+leaf-only snapshots may add fields after proved super initialization. All ancestor
+writes and partial-construction observations remain checked. Six new positives add
+**48 native executions**. **170eb7e6** independently admits bounded BitNot indices
+within one ToInt32 conversion band, preserving discontinuity and reload guards.
+
+Focused arrays **1/1**, escape lit **3/3**, host **1/1** and class initialization/DOM
+lit **2/2 (425.99s)** passed. Class: **292 observations / 812 main executions /
+584 unprepared and 311 preparation refusals**. DOM remains **632 / eight / 4,922**.
+BitNot: **60 sites / 11 sound / 11 of 14 confined precision**, zero violations,
+partial, pending or unclaimed sites. Eleven tested hashes match. Changed formatting
+passes; the required formatter retains 20 diagnostics in six unchanged files.
+Full suites and broad matrices were skipped; no browser/runtime changes or push.
+
+**Next measured boundary:** unchanged Bootstrap W/B now refuses
+`super condition is not a proved Boolean` in B's conditional constructor.
+Prove conditional field presence and the original own-key for-of clearing loop,
+retaining dispose's `e.remove`/`P.off` effects. Distinct inherited shapes, implicit
+rest/apply, static `this.getInstance`/`new this`, inherited DOM/getters,
+H/config/selectors/events/Popper, broader ownership and the driver remain.
+
+[Exact changes, validation and next boundary](handoff/2026-09-20-inherited-fields.md).
+
 ## Fixed own-field snapshots and BitNot indices, 2026-09-20 UTC
 
 **674b985c** folds fixed own-field snapshot length/index observations to constants,
