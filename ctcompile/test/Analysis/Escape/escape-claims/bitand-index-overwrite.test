@@ -45,6 +45,18 @@
 // CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function masked() {
@@ -283,3 +295,70 @@ signedReloadOverwrite(); signedEndpointInterior();
 latticeReload(); commutedLatticeReload(); signedLatticeReload(); commutedSignedLatticeReload();
 highSignedLatticeReload(); negativeLatticeReload(); widerLatticeReload(); retainedLatticeGap();
 overlappingLatticeReload(); laterLatticeStore(); savedLatticeChild();
+function inputLatticeReload() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 1; i < a.length; i += 2) a[i & a[2]] = 0;
+    return a;
+}
+function commutedInputLatticeReload() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 1; i < a.length; i += 2) a[a[2] & i] = 0;
+    return a;
+}
+function signedInputLatticeReload() {
+    var child = {}, a = [0, child, -1, child];
+    for (var i = 1; i < a.length; i += 2) a[i & a[2]] = 0;
+    return a;
+}
+function highInputLatticeReload() {
+    var child = {}, a = [0, child, -1, child];
+    for (var i = 1; i < a.length; i += 2) a[((2147483648 + i) & a[2]) + 2147483648] = 0;
+    return a;
+}
+function negativeInputLatticeReload() {
+    var child = {}, a = [child, -1, child, 0];
+    for (var i = 1; i < a.length; i += 2) a[(~i & a[1]) + 4] = 0;
+    return a;
+}
+function crossingInputLatticeReload() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 0; i < a.length; i += 2) a[(2147483647 + i) & a[2]] = 0;
+    return a;
+}
+function unevenInputLatticeReload() {
+    var child = {}, a = [0, child, 7, 0, 0, 0, 0, child];
+    for (var i = 1; i < a.length; i += 6) a[i & a[2]] = 0;
+    return a;
+}
+function widerInputLatticeReload() {
+    var child = {}, a = [0, 0, child, 7, 0, 0, child, 0];
+    for (var i = 2; i < a.length; i += 4) a[i & a[3]] = 0;
+    return a;
+}
+function retainedInputLatticeGap() {
+    var child = {}, a = [child, child, 3, child];
+    for (var i = 1; i < a.length; i += 2) a[i & a[2]] = 0;
+    return a;
+}
+function overlappingInputLatticeReload() {
+    var child = {}, a = [0, 3, 0, child];
+    for (var i = 1; i < a.length; i += 2) a[i & a[1]] = 0;
+    return a;
+}
+function laterInputLatticeStore() {
+    var child = {}, a = [0, child, 3, child];
+    for (var i = 1; i < a.length; i += 2) {
+        a[i & a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function savedInputLatticeChild() {
+    var child = {}, a = [0, child, 3, child], saved = a[1];
+    for (var i = 1; i < a.length; i += 2) a[i & a[2]] = 0;
+    return saved;
+}
+inputLatticeReload(); commutedInputLatticeReload(); signedInputLatticeReload();
+highInputLatticeReload(); negativeInputLatticeReload(); crossingInputLatticeReload();
+unevenInputLatticeReload(); widerInputLatticeReload(); retainedInputLatticeGap();
+overlappingInputLatticeReload(); laterInputLatticeStore(); savedInputLatticeChild();

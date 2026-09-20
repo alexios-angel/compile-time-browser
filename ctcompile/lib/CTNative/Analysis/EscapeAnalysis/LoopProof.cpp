@@ -372,10 +372,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!positive && !negative) { return std::nullopt; }
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
+            const auto inputStride = std::size_t{1} << std::countr_zero(range->stride);
             const auto writeStride =
-                bitAnd ? (mask != 0 ? std::size_t{1} << std::countr_zero(mask) : 1)
-                       : std::size_t{1} << std::countr_zero(range->stride);
-            std::uint32_t first = 0, last = mask;
+                bitAnd && mask != 0
+                    ? std::max(inputStride, std::size_t{1} << std::countr_zero(mask))
+                    : inputStride;
+            const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
+            std::uint32_t first = numberBits(range->first) & mask & fixed;
+            std::uint32_t last = first | (mask & ~fixed);
             if (!bitAnd || mask > 2147483647U) {
                 if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
                 const auto lower = numberBits(range->first);
@@ -390,9 +394,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     // sign bit needs a union of ranges before composition.
                     return std::nullopt;
                 }
-                // An input lattice fixes its low bits. OR/XOR preserve those
-                // bits' transformed residue, even when higher bits vary.
-                if (!bitAnd) { varying &= ~static_cast<std::uint32_t>(writeStride - 1); }
+                // An input lattice fixes its low bits. Every bitwise operation
+                // preserves their transformed residue, even when higher bits vary.
+                varying &= ~fixed;
                 first = bitAnd  ? (lower & ~varying) & mask
                         : bitOr ? (lower & ~varying) | mask
                                 : (lower ^ mask) & ~varying;

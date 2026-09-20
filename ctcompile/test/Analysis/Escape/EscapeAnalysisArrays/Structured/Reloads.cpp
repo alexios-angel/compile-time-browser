@@ -371,6 +371,36 @@ void StructuredCases::reloads() {
                replace(gapReload,
                        "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
     }
+    for (const auto & bits : {"4613937818241073152", "13830554455654793216"}) {
+        auto inputGap = replace(replace(readAndMask, "13970166044099084288", bits),
+                                "[%x, %y, %negativeMask, %zero]", "[%zero, %x, %negativeMask, %y]");
+        inputGap = replace(replace(inputGap, "%index = %zero", "%index = %one"), "add %i, %one",
+                           "add %i, %two");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            rows.push_back(
+                {.what = "structured AND input low bits preserve a nonzero mask-reload gap",
+                 .body = replace(inputGap, "bitand %i, %mask", "bitand " + std::string(operands)),
+                 .arrays = "a:[zero,zero,mask,zero]",
+                 .reads = "a[2]=mask; a[1]=zero; a[2]=mask; a[3]=zero",
+                 .exit = "a -> {a}"});
+        }
+        rows.push_back({.what = "structured AND input lattices retain unwritten gap children",
+                        .body = replace(inputGap, "[%zero, %x, %negativeMask, %y]",
+                                        "[%x, %x, %negativeMask, %y]"),
+                        .arrays = "a:[x,zero,mask,zero]",
+                        .reads = "a[2]=mask; a[1]=zero; a[2]=mask; a[3]=zero",
+                        .exit = "a -> {a,x}"});
+        reject("structured AND input lattices reject a mask at a visited residue",
+               replace(replace(inputGap, "[%zero, %x, %negativeMask, %y]",
+                               "[%zero, %negativeMask, %zero, %y]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%one]"));
+        reject("later structured stores invalidate a mask inside an AND input-lattice gap",
+               replace(inputGap,
+                       "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+        reject("structured unit input strides cannot retain an AND low-bit gap",
+               replace(inputGap, "add %i, %two", "add %i, %one"));
+    }
     for (const auto & expression :
          {"%high = ctjs.binary sub %maximum, %i\n"
           "    %position = ctjs.binary_static bitxor %high, %maximum",

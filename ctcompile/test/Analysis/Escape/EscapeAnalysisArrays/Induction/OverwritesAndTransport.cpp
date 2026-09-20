@@ -374,6 +374,38 @@ void InductionCases::overwritesAndTransport() {
             reject("masks require exact integer Numbers", source);
         }
     }
+    for (const auto & bits : {"4613937818241073152", "13830554455654793216"}) {
+        auto inputGap =
+            replace(replace(maskedReload, "  %a =",
+                            "  %latticeMask = ctjs.constant #ctjs.number<" + std::string(bits) +
+                                "> {storage_test_id = \"mask\"}\n  %a ="),
+                    "[%x, %x, %one, %zero]", "[%zero, %x, %latticeMask, %x]");
+        inputGap = replace(replace(inputGap, "^header(%a, %zero", "^header(%a, %one"),
+                           "add %i, %one", "add %i, %two");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            run({.what = "AND input low bits preserve a nonzero residue around a mask reload",
+                 .body = replace(inputGap, "bitand %i, %mask", "bitand " + std::string(operands)),
+                 .arrays = "a:[zero,zero,mask,zero]",
+                 .reads = "a[2]=mask; a[1]=zero; a[2]=mask; a[3]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "AND input lattices retain an unwritten child outside their residue",
+             .body =
+                 replace(inputGap, "[%zero, %x, %latticeMask, %x]", "[%x, %x, %latticeMask, %x]"),
+             .arrays = "a:[x,zero,mask,zero]",
+             .reads = "a[2]=mask; a[1]=zero; a[2]=mask; a[3]=zero",
+             .exit = "a -> {a,x}"});
+        reject("AND input lattices reject a mask at a visited residue",
+               replace(replace(inputGap, "[%zero, %x, %latticeMask, %x]",
+                               "[%zero, %latticeMask, %zero, %x]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%one]"));
+        reject("later stores invalidate a mask inside an AND input-lattice gap",
+               replace(inputGap, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+        reject("unit input strides cannot retain an AND low-bit gap",
+               replace(inputGap, "add %i, %two", "add %i, %one"));
+    }
     for (const std::string kind : {"bitor", "bitxor"}) {
         const bool isOr = kind == "bitor";
         const auto bitwise = replace(masked, "bitand", kind);
