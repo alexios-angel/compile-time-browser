@@ -22,6 +22,32 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured local holders and unsigned-shift bands, 2026-09-20 UTC
+
+**4d909704** proves fixed local callable-holder captures in ordinary classes,
+including inherited constructors, distinct base/leaf capture identities and unused
+captured-slot cleanup. Eight new sources add **64 native executions**.
+**74bb2f83** proves unsigned right-shift indices within the negative ToUint32 band.
+
+Focused constructor probe: **42 observations / 128 main native executions / 84
+unprepared and 45 preparation refusals**. Exact host **1/1**, arrays **1/1**,
+escape lit **3/3** and DOM lit **1/1 (291.76s)** passed. DOM retains **632
+observations / eight executions / 4,922 refusals**. Right shift: **99 sites / 18
+sound / 18 of 24 confined precision**, zero violations, partial, pending or
+unclaimed sites. All twelve tested hashes match. Changed formatting passes;
+the required formatter retains 20 diagnostics in six unchanged files. Full
+suites, whole class lit and broad matrices were skipped.
+
+**Next:** authentic Data+B now reaches `class own-key snapshot requires fixed
+constructor fields`, after the earlier captured-holder gate. Prove variable
+own-field presence and the original clearing loop alongside complete shared Map
+and stored-receiver ownership. Data registration remains unproved; preserve
+`e.remove`/`P.off` and all original bodies. Inherited getters/DOM, static
+construction, config/selectors/events/Popper, broader ownership and the
+application driver remain. No browser/runtime change or push.
+
+[Exact changes, focused checks and boundary](handoff/2026-09-20-captured-holders.md).
+
 ## Post-super holder calls and left-shift indices, 2026-09-20 UTC
 
 **e055e73e** preserves post-super calls for the existing complete receiver,
