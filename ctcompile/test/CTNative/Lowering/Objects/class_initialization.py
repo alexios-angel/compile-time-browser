@@ -153,13 +153,17 @@ def main():
                 if operation not in structured.read_text():
                     raise RuntimeError(f"method dispatch no longer exercises {operation}")
         diagnostic = {
+            "inherited-helper-changing": "class local cell has changing writes",
+            "inherited-helper-identity": "captured helper escapes its ordinary local call",
+            "inherited-helper-effect": "unknown call, binding or reflective effect",
+            "inherited-helper-receiver": "captured helper observes its implicit receiver or new.target",
+            "inherited-helper-newtarget": "captured helper observes its implicit receiver or new.target",
             "captured-helper-replaced": "class local cell has changing writes",
             "inherited-helper-ambient": "unknown call, binding or reflective effect",
             "captured-helper-identity": "captured helper escapes its ordinary local call",
             "captured-helper-receiver": "captured helper observes its implicit receiver or new.target",
             "captured-helper-excess": "captured helper escapes its ordinary local call",
             "captured-helper-nested": "class method capture is not its constructor or an inert sibling helper",
-            "inherited-helper-constructor": "inherited constructor captures require receiver-preserving normalization",
             "inherited-super-helper": "super method requires a proved capture-free linear base target",
             "inherited": "derived class requires receiver-preserving super normalization",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
@@ -173,7 +177,7 @@ def main():
             "inherited-method-ambient": "unknown call, binding or reflective effect",
             "inherited-method-getter": "inherited receiver getters require per-leaf target proof",
             "inherited-method-shadow": "class method is observed or shadowed",
-            "bootstrap-base": "inherited constructor captures require receiver-preserving normalization",
+            "bootstrap-base": "class method capture is not its constructor or an inert sibling helper",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-shadow": "class method is observed or shadowed",
@@ -247,7 +251,7 @@ def main():
                 preparation_refusals += 1
         if name in PREPARED_ONLY | GLOBAL_HOLDERS:
             before, after = structured.read_text(), prepared.read_text()
-            if name == "override-different-leaves":
+            if name in ("override-different-leaves", "inherited-helper-order"):
                 operations = ()
             elif name in GLOBAL_HOLDERS:
                 operations = ()
@@ -334,12 +338,16 @@ def main():
         ):
             cutoffs[name] = check_proof_inputs(args, structured, manifest, prepared, name)
             preparation_refusals += 4
-        if name == "inherited-super-order":
+        if name in ("inherited-super-order", "inherited-helper-distinct"):
             check_super_roots(
                 args,
                 structured,
                 manifest,
-                "super method target has unsupported control flow, roots or declarations",
+                (
+                    "super constructor declarations, roots and global writes remain unsupported"
+                    if name == "inherited-helper-distinct"
+                    else "super method target has unsupported control flow, roots or declarations"
+                ),
             )
             cutoffs[name] = check_proof_budget(args, structured, manifest, prepared, name)
             preparation_refusals += 2
@@ -374,6 +382,11 @@ def main():
                 if name in PREPARED_ONLY and not (name == "bootstrap-r" and optimize):
                     native_text = native.read_text()
                     check_refusal(name, native_text, len(FUNCTION.findall(prepared.read_text())))
+                    if name == "inherited-helper-order" and (
+                        "an object literal passed to a direct call as an argument"
+                        not in native_text
+                    ):
+                        raise RuntimeError("helper mutation lost its argument ownership refusal")
                     if len(re.findall(r"^\s*ctjs.throw ", native_text, re.M)) != len(
                         re.findall(r"^\s*ctjs.throw ", prepared.read_text(), re.M)
                     ):
