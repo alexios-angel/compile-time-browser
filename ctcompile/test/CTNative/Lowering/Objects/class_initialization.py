@@ -118,9 +118,10 @@ def check_record_map_inputs(args, prepared):
     get = next(call for call in calls if methods.get(call[2], (None, None))[1] == "get")
     put = next(call for call in calls if methods.get(call[2], (None, None))[1] == "set")
     payload = put[3].split(", ")[-1]
+    key = put[3].split(", ")[1]
     variants = {
         "binding-replaced": text[: get.end()]
-        + f'\n    ctjs.store_global "Map", {payload}'
+        + f'\n    ctjs.store_global "Map", {key}'
         + text[get.end() :],
         "alias-published": text[: get.end()]
         + f'\n    ctjs.store_global "saved", {get[1]}'
@@ -155,6 +156,12 @@ def check_record_map_inputs(args, prepared):
                 ]
             )
             check_refusal(label, output.read_text(), len(FUNCTION.findall(changed)))
+            if label == "binding-replaced" and (
+                "standard Map binding is assigned in this program" not in output.read_text()
+            ):
+                raise RuntimeError(
+                    "retained records bypassed the final standard Map identity proof"
+                )
 
 
 def main():

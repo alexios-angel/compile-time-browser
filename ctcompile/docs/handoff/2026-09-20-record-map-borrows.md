@@ -67,7 +67,9 @@ Evidence: `/tmp/ctcompile-record-native-1107/`. Every devbox build and check hel
   executions / four refusals**, separately counted.
 - Four raw input mutations with forged Map proof markers refuse in both modes:
   **8/8**. They cover replaced Map binding, published alias, absent read and
-  mixed payload. Added output assertions pass over **36/36 existing generated
+  mixed payload. Binding replacement stores a scalar, preserving the constructor
+  shape proof, and must reach the exact final standard-Map identity refusal.
+  Added output assertions pass over **36/36 existing generated
   C++ artifacts**; construction preservation passes **9/9**. These final checks
   reuse the execution artifacts, without another compiler matrix replay.
 - Source-proof cutoffs: overwrite **622**, helper holder **1464**, empty **218**.
