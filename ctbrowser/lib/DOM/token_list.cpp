@@ -43,6 +43,41 @@ std::expected<bool, dom_error> update_tokens(document & doc, node_id element, at
     return true;
 }
 
+bool contains_token(std::string_view attribute_text, std::string_view token) {
+    const auto tokens = parse_ordered_tokens(attribute_text);
+    return std::ranges::find(tokens, token) != tokens.end();
+}
+
+namespace {
+token_update_result change_tokens(document & doc, node_id element, atom attribute,
+                                  std::span<const std::string> given, bool add) {
+    for (std::size_t i = 0; i < given.size(); ++i) {
+        if (const auto error = validate_token(given[i])) {
+            return std::unexpected{token_argument_error{i, *error}};
+        }
+    }
+    auto tokens = parse_ordered_tokens(doc.read().attribute_value(element, attribute));
+    for (const auto & token : given) {
+        if (add) {
+            if (std::ranges::find(tokens, token) == tokens.end()) { tokens.push_back(token); }
+        } else {
+            std::erase(tokens, token);
+        }
+    }
+    return update_tokens(doc, element, attribute, tokens);
+}
+} // namespace
+
+token_update_result add_tokens(document & doc, node_id element, atom attribute,
+                               std::span<const std::string> tokens) {
+    return change_tokens(doc, element, attribute, tokens, true);
+}
+
+token_update_result remove_tokens(document & doc, node_id element, atom attribute,
+                                  std::span<const std::string> tokens) {
+    return change_tokens(doc, element, attribute, tokens, false);
+}
+
 std::expected<token_toggle_result, token_error> toggle_token(document & doc, node_id element,
                                                              atom attribute, std::string_view token,
                                                              std::optional<bool> force) {

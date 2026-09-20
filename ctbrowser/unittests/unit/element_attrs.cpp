@@ -23,6 +23,7 @@
 #include "check.hpp"
 #include "dom_probe.hpp"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -741,6 +742,93 @@ void test_width_and_height_reflect_the_type_their_interface_names() {
        "12,0,7,7");
 }
 
+void test_class_list_preserves_conversion_and_updates() {
+    // The old binding evaluated has(tokens_now(), arg_string(...)). C++ leaves
+    // those argument evaluations unordered; retain the toolchain's existing
+    // answer when toString changes the attribute being inspected.
+    std::string attribute = "before";
+    const auto tokens_now = [&] { return std::vector<std::string>{attribute}; };
+    const auto arg_string = [&] {
+        attribute = "after";
+        return std::string{"after"};
+    };
+    const auto has = [](const std::vector<std::string> & tokens, const std::string & token) {
+        return std::find(tokens.begin(), tokens.end(), token) != tokens.end();
+    };
+    const bool before_extraction = has(tokens_now(), arg_string());
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.className = 'before';
+        var conversions = 0;
+        var token = {toString: function () {
+            conversions++;
+            e.className = 'after';
+            return 'after';
+        }};
+        var found = e.classList.contains(token);
+        return found + ',' + conversions + ',' + e.className + ',' +
+               e.classList.contains('') + ',' + e.classList.contains('after later');
+    })())JS",
+       std::string{before_extraction ? "true" : "false"} + ",1,after,false,false");
+    // Convert every argument before validating the first invalid token. Neither
+    // failed call writes, and add/remove preserve the same first-error priority.
+    is(R"JS((function () {
+        var out = [];
+        var e = document.createElement('div');
+        e.className = 'a b';
+        var m = new MutationObserver(function () {});
+        m.observe(e, {attributes: true});
+        var seen = '';
+        function token(label, text) {
+            return {toString: function () { seen += label; return text; }};
+        }
+        var methods = ['add', 'remove'];
+        for (var i = 0; i < methods.length; i++) {
+            seen = '';
+            try { e.classList[methods[i]](token('a', 'new'), token('b', 'bad token'), token('c', '')); }
+            catch (error) { out.push(seen + ':' + error.name); }
+            seen = '';
+            try { e.classList[methods[i]](token('a', ''), token('b', 'bad token')); }
+            catch (error) { out.push(seen + ':' + error.name); }
+        }
+        out.push(e.className + ':' + m.takeRecords().length);
+        m.disconnect();
+        return out.join(',');
+    })())JS",
+       "abc:InvalidCharacterError,ab:SyntaxError,abc:InvalidCharacterError,ab:SyntaxError,a b:0");
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.className = 'old';
+        var add = {toString: function () { e.className = 'seed'; return 'leaf'; }};
+        var added = e.classList.add(add) + ':' + e.className;
+        var remove = {toString: function () { e.className = 'seed leaf'; return 'seed'; }};
+        return added + ',' + e.classList.remove(remove) + ':' + e.className;
+    })())JS",
+       "undefined:seed leaf,undefined:leaf");
+    // Empty calls leave an absent attribute alone. Once present, even an empty
+    // or duplicate-only call runs the update steps and reports a same-value write.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        var m = new MutationObserver(function () {});
+        m.observe(e, {attributes: true, attributeOldValue: true});
+        e.classList.add();
+        e.classList.remove();
+        var absent = e.hasAttribute('class') + ':' + m.takeRecords().length;
+        e.className = ' a  a\tb ';
+        m.takeRecords();
+        e.classList.add();
+        var normalized = e.className + ':' + m.takeRecords().length;
+        e.classList.remove();
+        e.classList.add('a', 'a');
+        e.classList.remove('missing', 'missing');
+        var records = m.takeRecords();
+        m.disconnect();
+        return absent + ',' + normalized + ',' + records.length + ':' +
+               records[0].oldValue + ':' + records[1].oldValue + ':' + records[2].oldValue;
+    })())JS",
+       "false:0,a b:1,3:a b:a b:a b");
+}
+
 // --- what a page may NOT overwrite -----------------------------------------
 
 void test_a_same_object_attribute_survives_being_assigned_to() {
@@ -808,6 +896,7 @@ int main() {
     test_an_enumerated_attribute_is_limited_to_its_keywords();
     test_a_nullable_enumerated_attribute_defaults_to_null();
     test_width_and_height_reflect_the_type_their_interface_names();
+    test_class_list_preserves_conversion_and_updates();
     test_a_same_object_attribute_survives_being_assigned_to();
     REPORT("element_attrs");
 }

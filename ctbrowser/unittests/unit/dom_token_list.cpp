@@ -140,6 +140,82 @@ void test_failed_write() {
     CHECK(doc.take_writes().empty());
 }
 
+void test_contains_add_remove() {
+    atom_table atoms;
+    document doc{atoms};
+    const node_id node = doc.create_element(atoms.intern("a"));
+    const atom rel = atoms.intern("rel");
+    doc.log_writes(true);
+    for (const auto change : {add_tokens, remove_tokens}) {
+        const auto result = change(doc, node, rel, {});
+        CHECK(result && *result && !**result);
+        CHECK(!doc.read().has_attribute(node, rel));
+    }
+    CHECK(doc.take_writes().empty());
+    const std::string_view raw = "\ta  a\nb\r";
+    CHECK(doc.set_attribute(node, rel, raw).has_value());
+    (void)doc.take_writes();
+    const auto before = doc.version();
+    CHECK(contains_token(doc.read().attribute_value(node, rel), "a"));
+    CHECK(contains_token(doc.read().attribute_value(node, rel), "b"));
+    const std::string snapshot{doc.read().attribute_value(node, rel)};
+    CHECK(contains_token(snapshot, "a"));
+    for (const std::string_view token : {"", "a b", "a\tb", "a\nb", "A", "missing"}) {
+        CHECK(!contains_token(doc.read().attribute_value(node, rel), token));
+    }
+    CHECK_EQ(doc.read().attribute_value(node, rel), raw);
+    CHECK_EQ(doc.version(), before);
+    CHECK(doc.take_writes().empty());
+
+    for (const auto change : {add_tokens, remove_tokens}) {
+        CHECK(doc.set_attribute(node, rel, raw).has_value());
+        (void)doc.take_writes();
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            const auto version = doc.version();
+            const auto result = change(doc, node, rel, {});
+            CHECK(result && *result && **result);
+            CHECK_EQ(doc.read().attribute_value(node, rel), "a b");
+            CHECK_EQ(doc.version(), version + 1);
+            CHECK_EQ(doc.take_writes().size(), 1u);
+        }
+        for (const auto & given : {std::array<std::string, 3>{"good", "a b", ""},
+                                   std::array<std::string, 3>{"good", "", "a b"}}) {
+            const auto version = doc.version();
+            const auto result = change(doc, node, rel, given);
+            CHECK(!result && result.error().index == 1 &&
+                  result.error().error ==
+                      (given[1].empty() ? token_error::empty : token_error::whitespace));
+            CHECK_EQ(doc.read().attribute_value(node, rel), "a b");
+            CHECK_EQ(doc.version(), version);
+            CHECK(doc.take_writes().empty());
+            const auto invalid_node = change(doc, {}, rel, given);
+            CHECK(!invalid_node && invalid_node.error().index == 1);
+        }
+    }
+    const std::array<std::string, 3> added{"b", "c", "c"};
+    const auto add = add_tokens(doc, node, rel, added);
+    CHECK(add && *add && **add);
+    CHECK_EQ(doc.read().attribute_value(node, rel), "a b c");
+    CHECK_EQ(doc.take_writes().size(), 1u);
+    const std::array<std::string, 3> removed{"b", "missing", "b"};
+    const auto remove = remove_tokens(doc, node, rel, removed);
+    CHECK(remove && *remove && **remove);
+    CHECK_EQ(doc.read().attribute_value(node, rel), "a c");
+    CHECK(contains_token(snapshot, "b") &&
+          !contains_token(doc.read().attribute_value(node, rel), "b"));
+    CHECK_EQ(doc.take_writes().size(), 1u);
+    CHECK(!doc.read().has_attribute(node, atoms.intern("class")));
+
+    const node_id stale{node.slot, node.generation + 1};
+    const auto failed = add_tokens(doc, stale, rel, added);
+    CHECK(failed && !*failed && failed->error() == dom_error::no_such_node);
+    const node_id text = doc.create_text("unchanged");
+    const auto wrong_kind = add_tokens(doc, text, rel, added);
+    CHECK(wrong_kind && !*wrong_kind && wrong_kind->error() == dom_error::not_an_element);
+    CHECK_EQ(doc.read().text(text), "unchanged");
+    CHECK(doc.take_writes().empty());
+}
+
 } // namespace
 
 int main() {
@@ -148,5 +224,6 @@ int main() {
     test_update_steps();
     test_noop_and_validation();
     test_failed_write();
+    test_contains_add_remove();
     REPORT("dom_token_list");
 }
