@@ -1,0 +1,258 @@
+# Generic + chooses concatenation or arithmetic from proved primitive tags.
+# String/Number results survive calls, joins, later coercions and global stores.
+# Node's type and Object.is checks distinguish String digits, NaN and signed zero.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
+# RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name addition_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name addition_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name addition_runtime_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name addition_runtime_deduced_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name addition_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name addition_optimized_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name addition_optimized_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name addition_optimized_deduced_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name addition_numeric_mutation --mutate numericText --core-build %build 2>&1 | FileCheck %s --check-prefix=NUMERIC-MUTATION
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name addition_string_mutation --mutate decoratedNumber --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=STRING-MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/symbol.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bigint.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-string-parameter.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-string-return.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=GLOBAL-REFUSED
+
+# RUNTIME-DAG: !emitc.opaque<"ctnative::number_string">
+# RUNTIME-DAG: call_opaque "ctnative::add"
+# RUNTIME-DAG: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"ctnative::number_string">
+# CPP-DAG: ctnative::number_string
+# CPP-DAG: ctnative::add(
+# NUMERIC-MUTATION: global 'numericText' differs
+# STRING-MUTATION: global 'decoratedNumber' differs
+# REFUSED: ctnative.not_native =
+# GLOBAL-REFUSED: ctnative.not_native = "global `changing` is !ctnative.opt<!ctnative.variant<
+
+#--- values.js
+function optional(mode, text) {
+    let value;
+    if (mode === 1) { value = null; }
+    if (mode === 2) { value = text; }
+    return value;
+}
+function optionalAdd(mode, text, number) { return optional(mode, text) + number; }
+function numberOptional(number, mode, text) { return number + optional(mode, text); }
+function optionalPair(leftMode, rightMode, left, right) {
+    return optional(leftMode, left) + optional(rightMode, right);
+}
+function booleanAdd(flag, boolean, text, number) { return (flag ? boolean : text) + number; }
+function booleanPair(leftFlag, leftBool, leftText, rightFlag, rightBool, rightText) {
+    return (leftFlag ? leftBool : leftText) + (rightFlag ? rightBool : rightText);
+}
+function choose(flag, number, text) { return flag ? number : text; }
+function selectReturn(flag, number, text) {
+    if (flag) { return number; }
+    return text;
+}
+function accumulate(flag, count) {
+    let value = flag ? 0 : "";
+    while (count > 0) { value = value + count; count = count - 1; }
+    return value;
+}
+function increment(value) { return value + 1; }
+function chain(value) { return (value + 1) + 2; }
+function saved(flag, number, text) {
+    let value = choose(flag, number, text);
+    const before = value;
+    value = value + 2;
+    return before + value;
+}
+function describe(value) { return typeof value; }
+function truthy(value) { return !!value; }
+function numeric(value) { return +value; }
+function negate(value) { return -value; }
+function arithmetic(value) { return ((value - 1) * 2) / 4 % 3; }
+function power(value) { return value ** 2; }
+function decorate(value) { return "[" + value + "]"; }
+
+var missingSum = optionalAdd(0, "3", 2);
+var nullSum = optionalAdd(1, "3", 2);
+var stringSum = optionalAdd(2, "3", 2);
+var reverseMissing = numberOptional(2, 0, "3");
+var reverseNull = numberOptional(2, 1, "3");
+var reverseString = numberOptional(2, 2, "3");
+var absentPair = optionalPair(0, 0, "3", "4");
+var nullPair = optionalPair(1, 1, "3", "4");
+var nullString = optionalPair(1, 2, "3", "4");
+var stringMissing = optionalPair(2, 0, "3", "4");
+var stringPair = optionalPair(2, 2, "3", "4");
+var embeddedNul = optionalPair(2, 2, "a\u0000", "b");
+var joinedSurrogate = optionalPair(2, 2, "\ud83d", "\ude00");
+var trueNumber = booleanAdd(true, true, "3", 2);
+var falseNumber = booleanAdd(true, false, "3", 2);
+var textNumber = booleanAdd(false, false, "3", 2);
+var boolPair = booleanPair(true, true, "x", true, false, "y");
+var boolText = booleanPair(true, true, "x", false, false, "3");
+var textBool = booleanPair(false, false, "true", true, false, "x");
+var emptyPair = booleanPair(false, true, "", false, false, "");
+var returnNumber = selectReturn(true, 3, "3");
+var returnString = selectReturn(false, 3, "3");
+var loopNumber = accumulate(true, 3);
+var loopString = accumulate(false, 3);
+var incrementNumber = increment(4);
+var incrementString = increment("4");
+var chainNumber = chain(4);
+var chainString = chain("4");
+var savedNumber = saved(true, 3, "3");
+var savedString = saved(false, 3, "3");
+var numberType = describe(choose(true, 0, "0"));
+var stringType = describe(choose(false, 0, "0"));
+var zeroFalsy = truthy(choose(true, -0, "0"));
+var nanFalsy = truthy(choose(true, 0 / 0, "0"));
+var emptyFalsy = truthy(choose(false, 1, ""));
+var textZeroTruthy = truthy(choose(false, 0, "0"));
+var numericText = numeric(choose(false, 1, "12"));
+var numericNumber = numeric(choose(true, -0, "12"));
+var numericInvalid = numeric(choose(false, 1, "x"));
+var negatedText = negate(choose(false, 1, "-0"));
+var negatedNumber = negate(choose(true, 0, "12"));
+var arithmeticText = arithmetic(choose(false, 1, "12"));
+var arithmeticNumber = arithmetic(choose(true, 12, "1"));
+var powerText = power(choose(false, 1, "3"));
+var powerNumber = power(choose(true, 3, "1"));
+var decoratedNumber = decorate(choose(true, -0, "3"));
+var decoratedString = decorate(choose(false, 1, "3"));
+var changing = optionalAdd(2, "3", 2);
+changing = 7;
+changing = "tail";
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    missingSum: NaN,
+    nullSum: 2,
+    stringSum: "32",
+    reverseMissing: NaN,
+    reverseNull: 2,
+    reverseString: "23",
+    absentPair: NaN,
+    nullPair: 0,
+    nullString: "null4",
+    stringMissing: "3undefined",
+    stringPair: "34",
+    embeddedNul: "a\u0000b",
+    joinedSurrogate: "\ud83d\ude00",
+    trueNumber: 3,
+    falseNumber: 2,
+    textNumber: "32",
+    boolPair: 1,
+    boolText: "true3",
+    textBool: "truefalse",
+    emptyPair: "",
+    returnNumber: 3,
+    returnString: "3",
+    loopNumber: 6,
+    loopString: "321",
+    incrementNumber: 5,
+    incrementString: "41",
+    chainNumber: 7,
+    chainString: "412",
+    savedNumber: 8,
+    savedString: "332",
+    numberType: "number",
+    stringType: "string",
+    zeroFalsy: false,
+    nanFalsy: false,
+    emptyFalsy: false,
+    textZeroTruthy: true,
+    numericText: 12,
+    numericNumber: -0,
+    numericInvalid: NaN,
+    negatedText: 0,
+    negatedNumber: -0,
+    arithmeticText: 2.5,
+    arithmeticNumber: 2.5,
+    powerText: 9,
+    powerNumber: 9,
+    decoratedNumber: "[0]",
+    decoratedString: "[3]",
+    changing: "tail"
+};
+assert.equal(Object.keys(expected).length, 48);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("48 finite generic addition observations agree with JavaScript");
+
+#--- object-hook.js
+function convert(value) { return value + 2; }
+convert({valueOf: function() { return 3; }});
+
+#--- symbol.js
+function convert(value) { return value + 2; }
+convert(Symbol("x"));
+
+#--- bigint.js
+function convert(value) { return value + 2; }
+convert(3n);
+
+#--- broad-union.js
+function convert(mode) {
+    let value = 1;
+    if (mode === 1) { value = true; }
+    if (mode === 2) { value = "3"; }
+    return value + 2;
+}
+convert(0);
+convert(1);
+convert(2);
+
+#--- boolean-string-parameter.js
+function convert(value) { return value + 2; }
+convert(true);
+convert("3");
+
+#--- boolean-string-return.js
+function convert(flag) { return flag ? true : "3"; }
+convert(true);
+convert(false);
+
+#--- equality.js
+function convert(value) { return value == 3; }
+convert(3);
+convert("3");
+
+#--- ordering.js
+function convert(value) { return value < 4; }
+convert(3);
+convert("3");
+
+#--- optional-global.js
+// The store join also includes absence at a source global read. Keep the
+// complete read/copy/reassign case refused until that source carrier exists.
+function optional(mode, text) {
+    let value;
+    if (mode === 1) { value = null; }
+    if (mode === 2) { value = text; }
+    return value;
+}
+function optionalAdd(mode, text, number) { return optional(mode, text) + number; }
+var changing = optionalAdd(2, "3", 2);
+var savedGlobal = changing;
+changing = 7;
+var afterNumber = changing;
+changing = "tail";
+var afterString = changing;

@@ -20,12 +20,14 @@ bool supportsConstBinding(mlir::Type type) {
     static const llvm::StringSet<> copyableCarriers{"std::string",
                                                     "ctnative::js_num",
                                                     "ctnative::js_string",
+                                                    "ctnative::number_string",
+                                                    "std::optional<ctnative::number_string>",
                                                     "ctnative::nullable_scalar",
                                                     "ctnative::nullable_string",
                                                     "ctnative::object_value",
                                                     "std::vector<double>",
                                                     "std::vector<std::string>"};
-    return (name.size() <= 25 && copyableCarriers.contains(name)) ||
+    return copyableCarriers.contains(name) ||
            (name.starts_with("std::shared_ptr<") && name.ends_with(">")) ||
            (name.starts_with("ctnative::ctn_env_") &&
             name.find_first_of(" &*") == llvm::StringRef::npos);

@@ -494,6 +494,7 @@ bool admission::op(mlir::Operation * o) {
                 carrierOf(typeOf(operands[i])) != carrier::closure &&
                 carrierOf(typeOf(operands[i])) != carrier::boolean &&
                 !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
+                carrierOf(typeOf(operands[i])) != carrier::numberString &&
                 !(carrierOf(typeOf(operands[i])) == carrier::map &&
                   nativeMapGroup(operands[i]) >= 0) &&
                 !numeric(operands[i], "argument")) {
@@ -582,19 +583,26 @@ bool admission::op(mlir::Operation * o) {
     }
     const auto numericOperand = [&](mlir::Value value, llvm::StringRef where) {
         const auto c = carrierOf(typeOf(value));
-        return isStringCarrier(c) || c == carrier::booleanString || numeric(value, where);
+        return isStringCarrier(c) || c == carrier::booleanString || c == carrier::numberString ||
+               numeric(value, where);
     };
     if (auto b = llvm::dyn_cast<BinaryOp>(o)) {
         switch (b.getKind()) {
         case BinaryKind::Add: {
             if (stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs()))) { return true; }
-            const auto textOperand = [](carrier c) {
-                return isScalarCarrier(c) || c == carrier::booleanString;
+            const auto primitive = [](carrier c) {
+                return isScalarCarrier(c) || isStringCarrier(c) || c == carrier::booleanString ||
+                       c == carrier::numberString;
             };
+            if (carrierOf(typeOf(b.getResult())) == carrier::numberString &&
+                primitive(carrierOf(typeOf(b.getLhs()))) &&
+                primitive(carrierOf(typeOf(b.getRhs())))) {
+                return true;
+            }
             if ((carrierOf(typeOf(b.getLhs())) == carrier::string &&
-                 textOperand(carrierOf(typeOf(b.getRhs())))) ||
+                 primitive(carrierOf(typeOf(b.getRhs())))) ||
                 (carrierOf(typeOf(b.getRhs())) == carrier::string &&
-                 textOperand(carrierOf(typeOf(b.getLhs()))))) {
+                 primitive(carrierOf(typeOf(b.getLhs()))))) {
                 return true;
             }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
@@ -626,6 +634,7 @@ bool admission::op(mlir::Operation * o) {
             return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    isObjectCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    isStringCarrier(carrierOf(typeOf(u.getOperand()))) ||
+                   carrierOf(typeOf(u.getOperand())) == carrier::numberString ||
                    refuse("typeof requires a scalar, object identity or owning string carrier");
         case UnaryKind::Not:
             // `!x` applies the carrier's exact truthiness conversion, then
@@ -676,6 +685,7 @@ bool admission::op(mlir::Operation * o) {
         if (carrierOf(typeOf(load.getResult())) != carrier::number &&
             carrierOf(typeOf(load.getResult())) != carrier::boolean &&
             carrierOf(typeOf(load.getResult())) != carrier::nullable &&
+            carrierOf(typeOf(load.getResult())) != carrier::numberString &&
             !isStringCarrier(carrierOf(typeOf(load.getResult())))) {
             return refuse(("global `" + load.getName() + "` is " +
                            printed(typeOf(load.getResult())) + ", not a number")
@@ -710,7 +720,8 @@ bool admission::op(mlir::Operation * o) {
                 joined = meet(joined, type);
             }
         });
-        consistent &= isScalarCarrier(carrierOf(joined)) || isStringCarrier(carrierOf(joined));
+        consistent &= isScalarCarrier(carrierOf(joined)) || isStringCarrier(carrierOf(joined)) ||
+                      carrierOf(joined) == carrier::numberString;
         return consistent || refuse(where + " has inconsistent global observation types");
     }
     if (auto attempt = llvm::dyn_cast<TryOp>(o)) { return exceptionRegion(attempt); }
@@ -725,6 +736,11 @@ bool admission::op(mlir::Operation * o) {
         if (returns != c) {
             if (isScalarCarrier(returns) && isScalarCarrier(c)) {
                 returns = carrier::nullable;
+            } else if ((returns == carrier::number || returns == carrier::string ||
+                        returns == carrier::numberString) &&
+                       (c == carrier::number || c == carrier::string ||
+                        c == carrier::numberString)) {
+                returns = carrier::numberString;
             } else if ((isObjectCarrier(returns) || isScalarCarrier(returns)) &&
                        (isObjectCarrier(c) || isScalarCarrier(c))) {
                 returns = carrier::objectValue;

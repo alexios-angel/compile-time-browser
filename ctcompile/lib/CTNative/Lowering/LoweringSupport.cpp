@@ -76,6 +76,14 @@ carrier carrierOf(mlir::Type type) {
             })) {
             return carrier::booleanString;
         }
+        if (variant.getAlternatives().size() == 2 &&
+            llvm::any_of(variant.getAlternatives(),
+                         [](mlir::Type alternative) { return llvm::isa<NumType>(alternative); }) &&
+            llvm::any_of(variant.getAlternatives(), [](mlir::Type alternative) {
+                return carrierOf(alternative) == carrier::string;
+            })) {
+            return carrier::numberString;
+        }
         if (llvm::all_of(variant.getAlternatives(), [](mlir::Type alternative) {
                 return llvm::isa<NumType, BoolType>(alternative);
             })) {
@@ -145,6 +153,14 @@ bool isBooleanStringCarrier(mlir::Type type) {
     }
     auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
     return opaque && opaque.getValue() == kBooleanStringType;
+}
+
+bool isNumberStringCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNumberStringType;
 }
 
 // The one C++ type a dense array lowers to. Spelled once: the emitted
@@ -277,6 +293,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::json: return ec::OpaqueType::get(c, kDOMJSONType);
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
     case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);
+    case carrier::numberString: return ec::OpaqueType::get(c, kNumberStringType);
     case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);
     case carrier::objectValue: return ec::OpaqueType::get(c, kObjectValueType);
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);

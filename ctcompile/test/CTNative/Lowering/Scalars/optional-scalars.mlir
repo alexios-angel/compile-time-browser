@@ -6,7 +6,7 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../Fixtures/Scalars/optional-scalars.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-string.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=STRING
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-present.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-present.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PAYLOAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-map.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=MAP
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-array-payload.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=ARRAY
@@ -27,8 +27,7 @@
 // STRING: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
 // STRING: call_opaque "ctnative::to_nullable_string"
 // STRING-NOT: ctnative.not_native
-// MIXED: ctjs.func private @choose$1
-// MIXED-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
+// MIXED: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::number_string">
 // PAYLOAD: ctjs.func private @probe$1
 // PAYLOAD-SAME: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.opt<!ctnative.num<i32>>>"
 // MAP: ctjs.func private @choose$1
@@ -50,7 +49,7 @@ function probe(flag) {
 probe(false);
 
 //--- mixed-present.js
-// A string/number union still needs a representation of its own.
+// Preserve the former refusal with its owning String/Number representation.
 function choose(flag) { return flag ? "value" : 42; }
 choose(false);
 

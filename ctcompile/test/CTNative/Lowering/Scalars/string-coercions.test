@@ -23,7 +23,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=OPTIONAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=ADD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 
@@ -33,6 +33,7 @@
 # OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 # CPP: .to_number()
 # MUTATION: global 'banana' differs
+# ADD: call_opaque "ctnative::add"
 # REFUSED: ctjs.func private @convert$1
 # REFUSED-SAME: ctnative.not_native =
 
@@ -113,8 +114,8 @@ convert(true);
 convert(false);
 
 #--- boolean-add.js
-// A mixed String/Number parameter still has no native carrier. Exact Boolean
-// concatenation is covered by string-arithmetic.test.
+// Preserve the former refusal: the parameter now keeps its String/Number
+// tag through generic addition with a Boolean.
 function convert(value) { return value + true; }
 convert("3");
 convert(3);

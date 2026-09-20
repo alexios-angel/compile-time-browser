@@ -23,6 +23,21 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     if (value.getType() == target) { return value; }
     const auto string = carrierType(context, carrier::string);
     const auto rawString = ec::OpaqueType::get(context, kRawStringType);
+    const auto numberString = carrierType(context, carrier::numberString);
+    const auto numberStringGlobal = ec::OpaqueType::get(context, kNumberStringGlobalType);
+    if (target == numberString && (isNumberCarrier(value.getType()) || value.getType() == string)) {
+        return ec::CastOp::create(b, where, target, value);
+    }
+    if (target == numberStringGlobal) {
+        return ec::CastOp::create(b, where, target, convertScalar(b, where, value, numberString));
+    }
+    if (value.getType() == numberStringGlobal) {
+        auto current = callWithConstValueOperands(b, where, mlir::TypeRange{numberString},
+                                                  b.getStringAttr("ctnative::global_number_string"),
+                                                  mlir::ValueRange{value})
+                           .getResult(0);
+        return convertScalar(b, where, current, target);
+    }
     if (isNullableCarrier(value.getType()) && target == string) {
         return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, value,
                                               b.getStringAttr("to_string"), mlir::ArrayAttr{},
@@ -36,9 +51,12 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
                                               mlir::ArrayAttr{}, mlir::ValueRange{})
             .getResult(0);
     }
-    if (isBooleanStringCarrier(value.getType()) && target == string) {
+    if ((isBooleanStringCarrier(value.getType()) || isNumberStringCarrier(value.getType())) &&
+        target == string) {
         return callWithConstValueOperands(b, where, mlir::TypeRange{target},
-                                          b.getStringAttr("ctnative::boolean_string_text"),
+                                          b.getStringAttr(isNumberStringCarrier(value.getType())
+                                                              ? "ctnative::number_string_text"
+                                                              : "ctnative::boolean_string_text"),
                                           mlir::ValueRange{value})
             .getResult(0);
     }
@@ -146,7 +164,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else if (isNullableCarrier(value.getType())) {
         helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
                                                       : "ctnative::to_number";
-    } else if ((isBooleanCarrier(value.getType()) || isBooleanStringCarrier(value.getType())) &&
+    } else if ((isBooleanCarrier(value.getType()) || isBooleanStringCarrier(value.getType()) ||
+                isNumberStringCarrier(value.getType())) &&
                isNumberCarrier(target)) {
         helper = "ctnative::to_number";
     } else if (llvm::isa<mlir::Float64Type>(target) &&
@@ -172,7 +191,10 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                              const OwnedGlobalRoots * roots) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
-        if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c)) { return {}; }
+        if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c) &&
+            c != carrier::numberString) {
+            return {};
+        }
         needsObjectValue |= c == carrier::objectValue;
         return carrierType(context, c);
     };

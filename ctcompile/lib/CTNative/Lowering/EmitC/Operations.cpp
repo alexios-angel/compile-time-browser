@@ -568,6 +568,18 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             llvm::sort(names);
             for (llvm::StringRef name : names) {
                 const auto storedType = globalTypes.lookup(name);
+                if (carrierOf(storedType) == carrier::numberString) {
+                    mlir::Value current =
+                        convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                      carrierType(context, carrier::numberString));
+                    mlir::Value label = ec::LiteralOp::create(
+                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                        b.getStringAttr(cpp::c_string_literal(name.str())));
+                    callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                               b.getStringAttr("ctnative::print_number_string"),
+                                               mlir::ValueRange{label, current});
+                    continue;
+                }
                 if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(storedType)) {
                     if (!isScalarCarrier(carrierOf(storedType)) &&
                         !isStringCarrier(carrierOf(storedType))) {

@@ -117,23 +117,28 @@ bool isProvedString(const TypeLattice * operand) {
     return llvm::isa_and_nonnull<StrType, StrViewType>(operand->getValue().getType());
 }
 
-// A value on which `+` is numeric addition: a number, a boolean, undefined
-// or null - the types ToPrimitive leaves alone and ToNumber accepts.
-bool isProvedNumericType(mlir::Type type) {
+// Primitive alternatives on which ToPrimitive cannot invoke object hooks.
+// Without Strings, generic `+` is necessarily numeric addition.
+bool isProvedPrimitiveType(mlir::Type type, bool allowString) {
     if (type == nullptr) { return false; }
-    if (llvm::isa<BoolType, NumType>(type)) { return true; }
+    if (llvm::isa<BoolType, NumType>(type) ||
+        (allowString && llvm::isa<StrType, StrViewType>(type))) {
+        return true;
+    }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
         return llvm::isa<BottomType>(opt.getElementType()) ||
-               isProvedNumericType(opt.getElementType());
+               isProvedPrimitiveType(opt.getElementType(), allowString);
     }
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
-        return llvm::all_of(variant.getAlternatives(), isProvedNumericType);
+        return llvm::all_of(variant.getAlternatives(), [&](mlir::Type alternative) {
+            return isProvedPrimitiveType(alternative, allowString);
+        });
     }
     return false;
 }
 
 bool isProvedNumeric(const TypeLattice * operand) {
-    return isProvedNumericType(operand->getValue().getType());
+    return isProvedPrimitiveType(operand->getValue().getType(), false);
 }
 
 bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
@@ -654,6 +659,11 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                     numeric = doubleType(c);
                 } else if (isProvedNumeric(operands[0]) && isProvedNumeric(operands[1])) {
                     numeric = doubleType(c);
+                } else if (isProvedPrimitiveType(operands[0]->getValue().getType(), true) &&
+                           isProvedPrimitiveType(operands[1]->getValue().getType(), true)) {
+                    // A finite primitive union may select either Number addition
+                    // or String concatenation; neither requires object hooks.
+                    numeric = meet(doubleType(c), stringType(c));
                 }
                 break;
             default: break;

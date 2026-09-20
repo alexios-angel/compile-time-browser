@@ -8,7 +8,8 @@
 //      different `where`. The word in front of "operand is" is the only thing
 //      that tells a reader which operation refused, so a rewrite that lost the
 //      `where` argument would leave every one of them saying the same thing
-//      and no test would notice. Two are pinned here.
+//      and no test would notice. Its original examples below are now native;
+//      the remaining broad union is rejected earlier by the carrier sweep.
 //   2. the carrier check in `admission::function`, "a value of type T from
 //      `OP`" - the sweep after every operation, which catches what the arms
 //      let through. It is the most common refusal in this file's own probes
@@ -26,6 +27,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/binary.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=BINARY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/generic-binary.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=GENERIC --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union-binary.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=UNION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
@@ -60,14 +64,15 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=FRAMESLOT
 
-// --- numeric(), where = "binary" --------------------------------------------
+// --- former numeric() refusals and a wider unsupported union --------------------------------------------
 //
-// String and Boolean/String union subtraction are native. Generic addition of
-// that union to Number needs a String/Number result carrier; retain its binary
-// operand diagnostic and preserve both former subtraction sources as positives.
+// String and Boolean/String union subtraction and generic addition are native.
+// A broader Boolean/Number/String union fails the carrier sweep at its join;
+// preserve all former sources as positives.
 // BINARY: ctjs.func {{.*}}@badd$1
-// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.variant<{{.*}}>, not a number"
+// BINARY-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.bool, !ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
 
+// GENERIC: call_opaque "ctnative::add"
 // UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"std::variant<ctnative::js_boolean_t, std::string>">{{.*}} -> !emitc.opaque<"ctnative::js_num">
 // OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 
@@ -152,6 +157,10 @@
 // FRAMESLOT-SAME: ctnative.not_native = "an array literal created inside a branch or a loop - its storage has to be one frame slot (obligation O-4)"
 
 //--- binary.js
+function badd(n) { var u = n; if (n > 0) { u = "text"; } else if (n < 0) { u = false; } return u + n; }
+var r = badd(1);
+
+//--- generic-binary.js
 function badd(n) { var u; if (n > 0) { u = "text"; } else { u = false; } return u + n; }
 var r = badd(1);
 

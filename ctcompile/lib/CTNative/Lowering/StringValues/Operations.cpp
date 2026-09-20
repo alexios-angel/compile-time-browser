@@ -39,13 +39,25 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
                                operand(binary.getRhs())));
         return true;
     }
+    if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);
+        binary && binary.getKind() == ctjs::BinaryKind::Add &&
+        isNumberStringCarrier(binary.getResult().getType())) {
+        swap(callWithConstValueOperands(b, where, mlir::TypeRange{binary.getResult().getType()},
+                                        b.getStringAttr("ctnative::add"),
+                                        mlir::ValueRange{binary.getLhs(), binary.getRhs()})
+                 .getResult(0));
+        return true;
+    }
     llvm::StringRef helper;
     llvm::SmallVector<mlir::Value> operands;
     mlir::Type result;
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
         unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
-        isNullableStringCarrier(unary.getOperand().getType())) {
-        helper = "ctnative::string_typeof";
+        (isNullableStringCarrier(unary.getOperand().getType()) ||
+         isNumberStringCarrier(unary.getOperand().getType()))) {
+        helper = isNumberStringCarrier(unary.getOperand().getType())
+                     ? "ctnative::number_string_typeof"
+                     : "ctnative::string_typeof";
         operands.push_back(unary.getOperand());
         result = ec::OpaqueType::get(context, kRawStringType);
     } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);

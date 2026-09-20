@@ -21,8 +21,8 @@
 # RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name union_optimized_deduced_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name union_mutation --mutate product --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name union_numeric_mutation --mutate unionTextProduct --core-build %build 2>&1 | FileCheck %s --check-prefix=UNION-MUTATION
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-pair.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=ADD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-pair.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=ADD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/union-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=UNION --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
@@ -41,6 +41,7 @@
 # UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"std::variant<ctnative::js_boolean_t, std::string>">{{.*}} -> !emitc.opaque<"ctnative::js_num">
 # UNION-MUTATION: global 'unionTextProduct' differs
 # MUTATION: global 'product' differs
+# ADD: call_opaque "ctnative::add"
 # REFUSED: ctjs.func private @convert$1
 # REFUSED-SAME: ctnative.not_native =
 
