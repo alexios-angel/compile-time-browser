@@ -24,19 +24,30 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     const auto string = carrierType(context, carrier::string);
     const auto rawString = ec::OpaqueType::get(context, kRawStringType);
     const auto numberString = carrierType(context, carrier::numberString);
-    const auto numberStringGlobal = ec::OpaqueType::get(context, kNumberStringGlobalType);
+    const auto nullableNumberString = carrierType(context, carrier::nullableNumberString);
     if (target == numberString && (isNumberCarrier(value.getType()) || value.getType() == string)) {
         return ec::CastOp::create(b, where, target, value);
     }
-    if (target == numberStringGlobal) {
-        return ec::CastOp::create(b, where, target, convertScalar(b, where, value, numberString));
+    if (target == nullableNumberString) {
+        if (isNumberCarrier(value.getType()) || value.getType() == string) {
+            return ec::CastOp::create(b, where, target, value);
+        }
+        return callWithConstValueOperands(b, where, mlir::TypeRange{target},
+                                          b.getStringAttr("ctnative::to_nullable_number_string"),
+                                          mlir::ValueRange{value})
+            .getResult(0);
     }
-    if (value.getType() == numberStringGlobal) {
-        auto current = callWithConstValueOperands(b, where, mlir::TypeRange{numberString},
-                                                  b.getStringAttr("ctnative::global_number_string"),
-                                                  mlir::ValueRange{value})
-                           .getResult(0);
-        return convertScalar(b, where, current, target);
+    if (value.getType() == nullableNumberString && target == numberString) {
+        return callWithConstValueOperands(b, where, mlir::TypeRange{target},
+                                          b.getStringAttr("ctnative::global_number_string"),
+                                          mlir::ValueRange{value})
+            .getResult(0);
+    }
+    if (value.getType() == nullableNumberString && target == string) {
+        return callWithConstValueOperands(b, where, mlir::TypeRange{target},
+                                          b.getStringAttr("ctnative::nullable_number_string_text"),
+                                          mlir::ValueRange{value})
+            .getResult(0);
     }
     if (isNullableCarrier(value.getType()) && target == string) {
         return ec::MemberCallOpaqueOp::create(b, where, mlir::TypeRange{target}, value,
@@ -165,7 +176,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         helper = llvm::isa<mlir::IntegerType>(target) ? "ctnative::scalar_truthy"
                                                       : "ctnative::to_number";
     } else if ((isBooleanCarrier(value.getType()) || isBooleanStringCarrier(value.getType()) ||
-                isNumberStringCarrier(value.getType())) &&
+                isNumberStringCarrier(value.getType()) ||
+                isNullableNumberStringCarrier(value.getType())) &&
                isNumberCarrier(target)) {
         helper = "ctnative::to_number";
     } else if (llvm::isa<mlir::Float64Type>(target) &&
@@ -192,7 +204,7 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
         if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c) &&
-            c != carrier::numberString) {
+            c != carrier::numberString && c != carrier::nullableNumberString) {
             return {};
         }
         needsObjectValue |= c == carrier::objectValue;

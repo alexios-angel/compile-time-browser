@@ -56,6 +56,9 @@ carrier carrierOf(mlir::Type type) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
+        if (carrierOf(opt.getElementType()) == carrier::numberString) {
+            return carrier::nullableNumberString;
+        }
         if (carrierOf(opt.getElementType()) == carrier::string) { return carrier::nullableString; }
         if (llvm::isa<BottomType>(opt.getElementType()) ||
             isScalarCarrier(carrierOf(opt.getElementType()))) {
@@ -161,6 +164,14 @@ bool isNumberStringCarrier(mlir::Type type) {
     }
     auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
     return opaque && opaque.getValue() == kNumberStringType;
+}
+
+bool isNullableNumberStringCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNullableNumberStringType;
 }
 
 // The one C++ type a dense array lowers to. Spelled once: the emitted
@@ -294,6 +305,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
     case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);
     case carrier::numberString: return ec::OpaqueType::get(c, kNumberStringType);
+    case carrier::nullableNumberString: return ec::OpaqueType::get(c, kNullableNumberStringType);
     case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);
     case carrier::objectValue: return ec::OpaqueType::get(c, kObjectValueType);
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);

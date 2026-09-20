@@ -52,6 +52,7 @@ enum class carrier {
     nullableString,
     booleanString,
     numberString,
+    nullableNumberString,
     map,
     closure,
     methodTable,
@@ -73,8 +74,7 @@ inline constexpr llvm::StringLiteral kBooleanType = "ctnative::js_boolean_t";
 inline constexpr llvm::StringLiteral kBooleanStringType =
     "std::variant<ctnative::js_boolean_t, std::string>";
 inline constexpr llvm::StringLiteral kNumberStringType = "ctnative::number_string";
-inline constexpr llvm::StringLiteral kNumberStringGlobalType =
-    "std::optional<ctnative::number_string>";
+inline constexpr llvm::StringLiteral kNullableNumberStringType = "ctnative::nullable_number_string";
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
@@ -90,6 +90,7 @@ bool isBooleanCarrier(mlir::Type type);
 bool isNullableStringCarrier(mlir::Type type);
 bool isBooleanStringCarrier(mlir::Type type);
 bool isNumberStringCarrier(mlir::Type type);
+bool isNullableNumberStringCarrier(mlir::Type type);
 bool isStringCarrier(carrier value);
 bool isVectorCarrier(carrier value);
 bool stringConcatenation(mlir::Type left, mlir::Type right);

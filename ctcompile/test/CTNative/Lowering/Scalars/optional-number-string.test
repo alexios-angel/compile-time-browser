@@ -1,0 +1,241 @@
+# Source optional Number/String values retain undefined, null and value tags.
+# The historical optional-global.js refusal body is executed unchanged before
+# further global, call, loop and coercion checks.
+# RUN: split-file %s %t
+# RUN: cat %t/optional-global.js %t/more-values.js > %t/values.js
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
+# RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name optional_addition_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name optional_addition_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name optional_addition_runtime_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name optional_addition_runtime_deduced_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name optional_addition_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name optional_addition_optimized_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name optional_addition_optimized_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name optional_addition_optimized_deduced_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name optional_addition_numeric_mutation --mutate numericString --core-build %build 2>&1 | FileCheck %s --check-prefix=NUMERIC-MUTATION
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name optional_addition_string_mutation --mutate decoratedMissing --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=STRING-MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_number_string">
+# RUNTIME-DAG: call_opaque "ctnative::add"
+# RUNTIME-DAG: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"ctnative::nullable_number_string">
+# CPP-DAG: ctnative::nullable_number_string
+# CPP-DAG: ctnative::add(
+# NUMERIC-MUTATION: global 'numericString' differs
+# STRING-MUTATION: global 'decoratedMissing' differs
+# REFUSED: ctnative.not_native =
+
+#--- optional-global.js
+// The store join also includes absence at a source global read. Keep the
+// complete read/copy/reassign case refused until that source carrier exists.
+function optional(mode, text) {
+    let value;
+    if (mode === 1) { value = null; }
+    if (mode === 2) { value = text; }
+    return value;
+}
+function optionalAdd(mode, text, number) { return optional(mode, text) + number; }
+var changing = optionalAdd(2, "3", 2);
+var savedGlobal = changing;
+changing = 7;
+var afterNumber = changing;
+changing = "tail";
+var afterString = changing;
+
+#--- more-values.js
+function optionalValue(mode, number, text) {
+    let value;
+    if (mode === 1) { return null; }
+    if (mode === 2) { return number; }
+    if (mode === 3) { return text; }
+    return value;
+}
+function missingValue() { let value; return value; }
+function identity(value) { return value; }
+function select(flag, left, right) { return flag ? left : right; }
+function accumulate(count, value) {
+    while (count > 0) { value = value + count; count = count - 1; }
+    return value;
+}
+function numeric(value) { return +value; }
+function negate(value) { return -value; }
+function arithmetic(value) { return ((value - 1) * 2) / 4 % 3; }
+function power(value) { return value ** 2; }
+function add(left, right) { return left + right; }
+function decorate(value) { return "[" + value + "]"; }
+function suffix(value) { return value + "!"; }
+function describe(value) { return typeof value; }
+function truthy(value) { return !!value; }
+
+var early = later;
+var later = optionalValue(2, 7, "3");
+var initialLater = later;
+later = null;
+var savedNull = later;
+later = missingValue();
+var savedMissing = later;
+later = "a\u0000b";
+var savedString = later;
+later = -0;
+var savedNumber = later;
+later = "final";
+
+var returnedMissing = identity(optionalValue(0, 3, "3"));
+var returnedNull = identity(optionalValue(1, 3, "3"));
+var returnedNumber = identity(optionalValue(2, -0, "3"));
+var returnedString = identity(optionalValue(3, 3, "3"));
+var selectedNull = select(true, optionalValue(1, 3, "3"), optionalValue(3, 3, "3"));
+var selectedText = select(false, optionalValue(1, 3, "3"), optionalValue(3, 3, "3"));
+var loopNumber = accumulate(3, optionalValue(2, 0, ""));
+var loopString = accumulate(3, optionalValue(3, 0, ""));
+var loopMissing = accumulate(3, optionalValue(0, 0, ""));
+var loopNull = accumulate(3, optionalValue(1, 0, ""));
+var noLoopMissing = accumulate(0, optionalValue(0, 0, ""));
+var numericMissing = numeric(optionalValue(0, 3, "3"));
+var numericNull = numeric(optionalValue(1, 3, "3"));
+var numericNumber = numeric(optionalValue(2, -0, "3"));
+var numericString = numeric(optionalValue(3, 3, "12"));
+var negatedMissing = negate(optionalValue(0, 3, "3"));
+var negatedNull = negate(optionalValue(1, 3, "3"));
+var arithmeticMissing = arithmetic(optionalValue(0, 12, "12"));
+var arithmeticNull = arithmetic(optionalValue(1, 12, "12"));
+var arithmeticNumber = arithmetic(optionalValue(2, 12, "12"));
+var arithmeticString = arithmetic(optionalValue(3, 12, "12"));
+var powerNull = power(optionalValue(1, 3, "3"));
+var powerString = power(optionalValue(3, 3, "3"));
+var missingSum = add(optionalValue(0, 4, "3"), optionalValue(1, 4, "3"));
+var nullSum = add(optionalValue(1, 4, "3"), optionalValue(2, 4, "3"));
+var numberTextSum = add(optionalValue(2, 2, "3"), optionalValue(3, 2, "3"));
+var textMissingSum = add(optionalValue(3, 2, "3"), optionalValue(0, 2, "3"));
+var decoratedMissing = decorate(optionalValue(0, -0, "a\u0000b"));
+var decoratedNull = decorate(optionalValue(1, -0, "a\u0000b"));
+var decoratedNumber = decorate(optionalValue(2, -0, "a\u0000b"));
+var decoratedString = decorate(optionalValue(3, -0, "a\u0000b"));
+var suffixedMissing = suffix(optionalValue(0, 3, "3"));
+var missingType = describe(optionalValue(0, 3, "3"));
+var nullType = describe(optionalValue(1, 3, "3"));
+var numberType = describe(optionalValue(2, 3, "3"));
+var stringType = describe(optionalValue(3, 3, "3"));
+var missingFalsy = truthy(optionalValue(0, 3, "3"));
+var nullFalsy = truthy(optionalValue(1, 3, "3"));
+var zeroFalsy = truthy(optionalValue(2, -0, "3"));
+var nanFalsy = truthy(optionalValue(2, 0 / 0, "3"));
+var emptyFalsy = truthy(optionalValue(3, 3, ""));
+var textZeroTruthy = truthy(optionalValue(3, 3, "0"));
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    changing: "tail",
+    savedGlobal: "32",
+    afterNumber: 7,
+    afterString: "tail",
+    early: undefined,
+    later: "final",
+    initialLater: 7,
+    savedNull: null,
+    savedMissing: undefined,
+    savedString: "a\u0000b",
+    savedNumber: -0,
+    returnedMissing: undefined,
+    returnedNull: null,
+    returnedNumber: -0,
+    returnedString: "3",
+    selectedNull: null,
+    selectedText: "3",
+    loopNumber: 6,
+    loopString: "321",
+    loopMissing: NaN,
+    loopNull: 6,
+    noLoopMissing: undefined,
+    numericMissing: NaN,
+    numericNull: 0,
+    numericNumber: -0,
+    numericString: 12,
+    negatedMissing: NaN,
+    negatedNull: -0,
+    arithmeticMissing: NaN,
+    arithmeticNull: -0.5,
+    arithmeticNumber: 2.5,
+    arithmeticString: 2.5,
+    powerNull: 0,
+    powerString: 9,
+    missingSum: NaN,
+    nullSum: 4,
+    numberTextSum: "23",
+    textMissingSum: "3undefined",
+    decoratedMissing: "[undefined]",
+    decoratedNull: "[null]",
+    decoratedNumber: "[0]",
+    decoratedString: "[a\u0000b]",
+    suffixedMissing: "undefined!",
+    missingType: "undefined",
+    nullType: "object",
+    numberType: "number",
+    stringType: "string",
+    missingFalsy: false,
+    nullFalsy: false,
+    zeroFalsy: false,
+    nanFalsy: false,
+    emptyFalsy: false,
+    textZeroTruthy: true
+};
+assert.equal(Object.keys(expected).length, 53);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("53 optional Number/String observations agree with JavaScript");
+
+#--- broad-union.js
+function convert(mode) {
+    let value;
+    if (mode === 1) { value = true; }
+    if (mode === 2) { value = 3; }
+    if (mode === 3) { value = "3"; }
+    return value;
+}
+convert(0);
+convert(1);
+convert(2);
+convert(3);
+
+#--- container.js
+function convert(mode) {
+    let value;
+    if (mode === 1) { value = 3; }
+    if (mode === 2) { value = "3"; }
+    return [value];
+}
+convert(0);
+convert(1);
+convert(2);
+
+#--- equality.js
+function convert(mode) {
+    let value;
+    if (mode === 1) { value = 3; }
+    if (mode === 2) { value = "3"; }
+    return value == 3;
+}
+convert(0);
+convert(1);
+convert(2);
+
+#--- object-hook.js
+function convert(value) { return value + 2; }
+convert({valueOf: function() { return 3; }});

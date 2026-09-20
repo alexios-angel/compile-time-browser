@@ -34,9 +34,10 @@ mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location w
 
 mlir::Type lowering::globalStorageType(llvm::StringRef name) const {
     // The entire source-store census selects one owning carrier per binding.
-    // Its initial absence tag preserves early reads independently of output.
-    if (carrierOf(globalTypes.lookup(name)) == carrier::numberString) {
-        return ec::OpaqueType::get(context, kNumberStringGlobalType);
+    // Initial undefined preserves early reads independently of output.
+    if (carrierOf(globalTypes.lookup(name)) == carrier::numberString ||
+        carrierOf(globalTypes.lookup(name)) == carrier::nullableNumberString) {
+        return carrierType(context, carrier::nullableNumberString);
     }
     return carrierType(context, isStringCarrier(carrierOf(globalTypes.lookup(name)))
                                     ? carrier::nullableString
@@ -63,6 +64,13 @@ mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, ml
 mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
     if (isBooleanCarrier(value.getType())) {
         return convertScalar(builder, where, value, builder.getI1Type());
+    }
+    if (isNullableNumberStringCarrier(value.getType())) {
+        return callWithConstValueOperands(
+                   builder, where, mlir::TypeRange{mlir::IntegerType::get(context, 1)},
+                   builder.getStringAttr("ctnative::nullable_number_string_truthy"),
+                   mlir::ValueRange{value})
+            .getResult(0);
     }
     if (isBooleanStringCarrier(value.getType()) || isNumberStringCarrier(value.getType())) {
         return callWithConstValueOperands(

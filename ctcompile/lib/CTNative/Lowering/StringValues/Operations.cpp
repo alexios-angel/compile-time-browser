@@ -48,6 +48,17 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
                  .getResult(0));
         return true;
     }
+    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
+        unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
+        isNullableNumberStringCarrier(unary.getOperand().getType())) {
+        auto result = callWithConstValueOperands(
+                          b, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)},
+                          b.getStringAttr("ctnative::nullable_number_string_typeof"),
+                          mlir::ValueRange{unary.getOperand()})
+                          .getResult(0);
+        swap(convertScalar(b, where, result, op->getResult(0).getType()));
+        return true;
+    }
     llvm::StringRef helper;
     llvm::SmallVector<mlir::Value> operands;
     mlir::Type result;

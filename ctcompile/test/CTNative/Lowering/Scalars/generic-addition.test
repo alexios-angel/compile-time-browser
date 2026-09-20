@@ -29,7 +29,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=GLOBAL-REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=GLOBAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 
 # RUNTIME-DAG: !emitc.opaque<"ctnative::number_string">
 # RUNTIME-DAG: call_opaque "ctnative::add"
@@ -39,7 +39,7 @@
 # NUMERIC-MUTATION: global 'numericText' differs
 # STRING-MUTATION: global 'decoratedNumber' differs
 # REFUSED: ctnative.not_native =
-# GLOBAL-REFUSED: ctnative.not_native = "global `changing` is !ctnative.opt<!ctnative.variant<
+# GLOBAL: !emitc.opaque<"ctnative::nullable_number_string">
 
 #--- values.js
 function optional(mode, text) {

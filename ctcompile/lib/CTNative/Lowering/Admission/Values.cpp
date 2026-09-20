@@ -24,7 +24,8 @@ bool admission::numeric(mlir::Value v, llvm::StringRef where) {
 // An observation preserves the alternatives of a proved scalar carrier.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
     const auto stored = carrierOf(typeOf(v));
-    if (!isScalarCarrier(stored) && !isStringCarrier(stored) && stored != carrier::numberString) {
+    if (!isScalarCarrier(stored) && !isStringCarrier(stored) && stored != carrier::numberString &&
+        stored != carrier::nullableNumberString) {
         return refuse((where + " is " + printed(typeOf(v)) +
                        "; native global observations require a supported scalar type")
                           .str());

@@ -21,6 +21,7 @@ bool supportsConstBinding(mlir::Type type) {
                                                     "ctnative::js_num",
                                                     "ctnative::js_string",
                                                     "ctnative::number_string",
+                                                    "ctnative::nullable_number_string",
                                                     "std::optional<ctnative::number_string>",
                                                     "ctnative::nullable_scalar",
                                                     "ctnative::nullable_string",
