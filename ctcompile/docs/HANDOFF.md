@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved record Map snapshots and OR/XOR index congruence, 2026-09-20 UTC
+
+Saved Map aliases now participate in the fixed own-field snapshot proof.
+**c4087c5c** includes their snapshots and writes before folding, enabling method
+snapshots, inherited snapshots and disposal through completed record aliases.
+Five new positives add **40 native executions**. Field additions, deletion,
+escaping receivers and constructor publication remain refused.
+**8dd68d45** preserves the transformed low-bit residue of OR/XOR array indices.
+
+Focused selection: **60 observations / 224 main native executions / 120
+unprepared refusals / 85 preparation refusals**. Exact host and arrays CTests
+pass **1/1** each; lowering lit **3/3**, escape lit **4/4** pass. All **80**
+record-pointer artifacts, **10** raw refusal controls and **nine** tested file
+hashes pass. OR/XOR recording: **120 sites / 27 sound / 27 of 34 precision**,
+zero violations, partial, pending or unclaimed sites. Required formatting
+retains 20 baseline diagnostics in six unchanged files; changed files pass.
+Original class fixtures 01–28 and all 28 prior OR/XOR sources remain unchanged.
+
+**Next:** original B/Data+B still refuse constructor-time `e.set(..., this)`.
+Connect partial initialization, exception/reentry and enclosing owner lifetime
+proofs through the captured outer element Map, nested DATA_KEY Map and helper
+calls. Preserve conflict checks, `e.remove`, `P.off`, configuration and disposal.
+Transported/nested and region-local record Maps remain. Full Bootstrap and the
+application driver are unfinished. No browser/runtime-oracle edits or push;
+full suites and broad replays were skipped.
+
+[Exact changes, focused checks and next boundary](handoff/2026-09-20-record-map-snapshots.md).
+
 ## Saved record Map methods and AND index gaps, 2026-09-20 UTC
 
 Saved Map aliases now call immutable instance methods in native output.
