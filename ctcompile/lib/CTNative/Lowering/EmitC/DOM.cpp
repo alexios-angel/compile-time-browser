@@ -506,40 +506,35 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
     }
-    llvm::StringRef callee;
-    switch (edge.kind) {
-    case HostDOMMethod::datasetKeys: callee = "ctnative::dataset_keys"; break;
-    case HostDOMMethod::toggleClass: callee = "ctnative::toggle_class"; break;
-    case HostDOMMethod::containsClass: callee = "ctnative::contains_class"; break;
-    case HostDOMMethod::addClass: callee = "ctnative::add_class"; break;
-    case HostDOMMethod::removeClass: callee = "ctnative::remove_class"; break;
-    case HostDOMMethod::setAttribute:
-        callee = call.getArgs()[1].getType() == optionalString ? "ctnative::set_optional_attribute"
-                                                               : "ctnative::set_attribute";
-        break;
-    case HostDOMMethod::getAttribute: callee = "ctnative::get_attribute"; break;
-    case HostDOMMethod::toggleAttribute: callee = "ctnative::toggle_attribute"; break;
-    case HostDOMMethod::hasAttribute: callee = "ctnative::has_attribute"; break;
-    case HostDOMMethod::removeAttribute: callee = "ctnative::remove_attribute"; break;
-    case HostDOMMethod::contains: callee = "ctnative::contains"; break;
-    case HostDOMMethod::matches: callee = "ctnative::matches.call"; break;
-    case HostDOMMethod::closest: callee = "ctnative::closest.call"; break;
-    case HostDOMMethod::querySelector: callee = "ctnative::querySelector.call"; break;
-    case HostDOMMethod::querySelectorAll: callee = "ctnative::querySelectorAll.call"; break;
-    case HostDOMMethod::number:
-        callee = arguments.front().getType() == optionalString ? "ctnative::dom_number"
-                                                               : "ctbrowser::string_to_number";
-        break;
-    case HostDOMMethod::numberToString: callee = "ctbrowser::number_to_string"; break;
-    case HostDOMMethod::filterStrings:
-    case HostDOMMethod::replaceUppercase:
-    case HostDOMMethod::removeStringPrefix:
-    case HostDOMMethod::stringCharAt:
-    case HostDOMMethod::stringSlice:
-    case HostDOMMethod::stringLowercaseUnit:
-    case HostDOMMethod::startsWith: llvm_unreachable("String filter handled above");
-    case HostDOMMethod::decodeURIComponent:
-    case HostDOMMethod::jsonParse: llvm_unreachable("fallible call belongs to its invocation");
+    static const llvm::DenseMap<HostDOMMethod, llvm::StringRef> callees{
+        {HostDOMMethod::datasetKeys, "ctnative::dataset_keys"},
+        {HostDOMMethod::toggleClass, "ctnative::toggle_class"},
+        {HostDOMMethod::containsClass, "ctnative::contains_class"},
+        {HostDOMMethod::addClass, "ctnative::add_class"},
+        {HostDOMMethod::removeClass, "ctnative::remove_class"},
+        {HostDOMMethod::setAttribute, "ctnative::set_attribute"},
+        {HostDOMMethod::getAttribute, "ctnative::get_attribute"},
+        {HostDOMMethod::toggleAttribute, "ctnative::toggle_attribute"},
+        {HostDOMMethod::hasAttribute, "ctnative::has_attribute"},
+        {HostDOMMethod::removeAttribute, "ctnative::remove_attribute"},
+        {HostDOMMethod::contains, "ctnative::contains"},
+        {HostDOMMethod::matches, "ctnative::matches.call"},
+        {HostDOMMethod::closest, "ctnative::closest.call"},
+        {HostDOMMethod::querySelector, "ctnative::querySelector.call"},
+        {HostDOMMethod::querySelectorAll, "ctnative::querySelectorAll.call"},
+        {HostDOMMethod::number, "ctbrowser::string_to_number"},
+        {HostDOMMethod::numberToString, "ctbrowser::number_to_string"},
+    };
+    const auto calleeName = callees.find(edge.kind);
+    if (calleeName == callees.end()) {
+        llvm_unreachable("DOM method requires specialized lowering");
+    }
+    llvm::StringRef callee = calleeName->second;
+    if (edge.kind == HostDOMMethod::setAttribute && call.getArgs()[1].getType() == optionalString) {
+        callee = "ctnative::set_optional_attribute";
+    } else if (edge.kind == HostDOMMethod::number &&
+               arguments.front().getType() == optionalString) {
+        callee = "ctnative::dom_number";
     }
     if (edge.returnsBoolean() || edge.returnsElement() || edge.returnsOptionalString() ||
         edge.returnsNumber() || edge.returnsString() || edge.returnsStringVector() ||
