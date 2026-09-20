@@ -22,6 +22,48 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Literal membership cleanup, 2026-09-20 UTC
+
+Converted **27** same-subject literal equality chains of four or more comparisons
+across **26** files: 16 compiler string checks, nine test-case checks and two
+runtime/reference character checks. Compiler names use bounded `StringSet::contains`;
+integer cases use `DenseSet`, the LLVM-independent inventory uses `unordered_set`,
+and punctuation uses allocation-free `string_view::contains`. Shared Map-action,
+callback-binding and closure-metadata predicates reuse existing support files.
+Shorter chains, enum/SSA comparisons and source fixture contents are unchanged.
+The broader C++/Python/CMake/shell scan found no additional qualifying implementation
+chains; review verified all 17 raw fixture literals remain byte-identical.
+
+Landed **c223d8cf** (Map actions), **e84eca66** (compiler classifications),
+**080ec1e1** (host reserved names), **22d40e13** (test case selection), and
+**451339df** (runtime/reference punctuation). No browser semantics or source-proof
+authority changed; native output remains independent of LLVM and Script.
+
+Final devbox build passed, followed by **6/6** selected CTests (7.13s) and **8/8**
+selected lit cases (7.08s). All **26** final source hashes match. The first build
+caught a removed local `subtract` flag still used later in an induction test;
+retaining that flag with its set-derived value fixed it. No tests ran in that
+first attempt. Both attempts used these commands under the build lock, with
+helper/SSH stdin from `/dev/null`:
+
+```sh
+# Local helper:
+tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-inventories ctcompile-test-native-runtime ctcompile-test-native-reference ctcompile-test-exception-recovery ctcompile-test-host-contract ctcompile-test-escape-analysis-arrays ctcompile-test-type-inference ctcompile-native-pipeline-strings
+# On devbox, from projects/compile-time-browser (reached in the second attempt):
+ctest --test-dir build --output-on-failure --no-tests=error -R '^ctcompile_(inventories|native_runtime|exception_recovery|host_contract|escape_analysis_arrays|type_inference)$'
+~/.lit-venv/bin/lit -v build/ctcompile/test --filter='^ctcompile :: (Target/Cpp/const-bindings[.]mlir|CTJS/Transforms/resolve-globals[.]mlir|CTNative/PartialEvaluation/heap-evaluation[.]mlir|CTNative/Lowering/Maps/(map-presence-proof|object-key-proof)[.]mlir|CTNative/HostContract/(prefix[.]test|Provider/mutations[.]test)|CTNative/Fixtures/Scalars/string[.]test)$'
+```
+
+Required `tools/format.sh --check` reports **16** existing diagnostics in four
+untouched files: `ctdrive.cpp`, `ProviderPaths.h`, `Heap.h` and `Symbolic/Facts.cpp`.
+Formatting the two affected files that previously failed removed four old
+diagnostics. All changed files pass scoped formatting and whitespace checks.
+Full CTest/compiler lit, broad corpus/matrix, WPT/test262 and sanitizers were
+skipped. No push. **Next integration boundary remains:** confined Bootstrap
+`R.find` spread/concat with an explicit element, then separately proved document
+roots and ownership. Full Bootstrap initialization and the application driver
+remain unfinished.
+
 ## Shared DOM intrinsic membership, 2026-09-20 UTC
 
 **65273121** replaces the duplicated name-comparison chains in `Contract.cpp`
