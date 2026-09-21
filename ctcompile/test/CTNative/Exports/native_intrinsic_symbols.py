@@ -407,6 +407,22 @@ SIGNED_SLICES = {
 }
 """,
 }
+SIGNED_CHARAT = {
+    # Preserve the complete former negative-index refusal as its first positive.
+    "string-charat-negative": "function bad(text, index) { return text.charAt(-1); }\n",
+    "string-signed-charat": """function stringSignedCharAt(text, first) {
+  return text.charAt(-1) === '' && text.charAt(-4294967295) === '' &&
+    text.charAt(-0) === first && text.charAt(0) === first;
+}
+""",
+    "description-capture-signed-charat": """function descriptionCaptureSignedCharAt(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function unit() { return text !== undefined ? text.charAt(-1) + text.charAt(-0) : ':absent'; }
+  return unit();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -442,6 +458,9 @@ PARAMETER_TYPES = {
     "string-slice-end-negative": ["string", "number"],
     "string-signed-slices": ["string", "string", "string", "string"],
     "description-capture-signed-slice": ["symbol"],
+    "string-charat-negative": ["string", "number"],
+    "string-signed-charat": ["string", "string"],
+    "description-capture-signed-charat": ["symbol"],
 }
 CASES = {
     "state": (
@@ -965,6 +984,59 @@ CASES["description-capture-signed-slice"] = (
 """,
     "true\n",
 )
+CASES["string-charat-negative"] = (
+    SIGNED_CHARAT["string-charat-negative"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string, ctnative::js_num)>);
+    assert(@ENTRY@(js_string{""}, ctnative::js_num{0.0}).value().empty());
+    assert(@ENTRY@(js_string{"a"}, ctnative::js_num{1.0}).value().empty());
+    assert(@ENTRY@(js_string{"abc"}, ctnative::js_num{2.0}).value().empty());
+    assert(@ENTRY@(js_string{"a\0b"}, ctnative::js_num{3.0}).value().empty());
+    assert(@ENTRY@(js_string{"\xc3\x89"}, ctnative::js_num{0.0}).value().empty());
+    assert(@ENTRY@(js_string{"\xf0\x90\x90\x80"}, ctnative::js_num{0.0}).value().empty());
+    assert(@ENTRY@(js_string{"\xed\xa0\x80"}, ctnative::js_num{0.0}).value().empty());
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["string-signed-charat"] = (
+    SIGNED_CHARAT["string-signed-charat"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_boolean_t (*)(js_string, js_string)>);
+    assert(@ENTRY@(js_string{""}, js_string{""}));
+    assert(@ENTRY@(js_string{"a"}, js_string{"a"}));
+    assert(@ENTRY@(js_string{"abc"}, js_string{"a"}));
+    assert(@ENTRY@(js_string{"\0ab"}, js_string{"\0"}));
+    assert(@ENTRY@(js_string{"\xc3\x89xy"}, js_string{"\xc3\x89"}));
+    assert(@ENTRY@(js_string{"\xf0\x90\x90\x80x"}, js_string{"\xed\xa0\x81"}));
+    assert(@ENTRY@(js_string{"\xed\xa0\x80xy"}, js_string{"\xed\xa0\x80"}));
+    assert(@ENTRY@(js_string{"\xed\xb0\x80xy"}, js_string{"\xed\xb0\x80"}));
+    assert(!@ENTRY@(js_string{"abc"}, js_string{""}));
+    assert(!@ENTRY@(js_string{"abc"}, js_string{"b"}));
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["description-capture-signed-charat"] = (
+    SIGNED_CHARAT["description-capture-signed-charat"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_symbol_t)>);
+    assert(@ENTRY@(Symbol()).value() == ":absent");
+    assert(@ENTRY@(Symbol(undefined_t{})).value() == ":absent");
+    assert(@ENTRY@(Symbol(js_string{""})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"abc"})).value() == "a");
+    assert(@ENTRY@(Symbol(js_string{"\0ab"})).value() == std::string("\0", 1));
+    assert(@ENTRY@(Symbol(js_string{"\xc3\x89xy"})).value() == "\xc3\x89");
+    assert(@ENTRY@(Symbol(js_string{"\xf0\x90\x90\x80x"})).value() == "\xed\xa0\x81");
+    assert(@ENTRY@(Symbol(js_string{"\xed\xa0\x80xy"})).value() == "\xed\xa0\x80");
+    assert(@ENTRY@(Symbol.iterator).value() == "S");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -1063,6 +1135,15 @@ def oracle(args):
             for name, body in SIGNED_SLICES.items()
             if name not in ("string-slice-negative", "string-slice-end-negative")
         )
+        + "".join(body for name, body in SIGNED_CHARAT.items() if name != "string-charat-negative")
+        + "function observeNegativeCharAt() {\n"
+        + SIGNED_CHARAT["string-charat-negative"]
+        + r"""
+  return bad('', 0) === '' && bad('a', 1) === '' && bad('abc', 2) === '' &&
+    bad('a\u0000b', 3) === '' && bad('\u00c9', 0) === '' &&
+    bad('\ud801\udc00', 0) === '' && bad('\ud800', 0) === '';
+}
+"""
         + "function observeNegativeSlice() {\n"
         + SIGNED_SLICES["string-slice-negative"]
         + r"""
@@ -1276,6 +1357,22 @@ var symbol64StringUTF16SignedSlices = stringSignedSlices('\u00c9xy', 'y', '\u00c
   descriptionCaptureSignedSlice(Symbol('\u00c9xyz')) === 'xy' &&
   descriptionCaptureSignedSlice(Symbol('\ud801\udc00xy')) === '\udc00x' &&
   descriptionCaptureSignedSlice(Symbol('A\ud800xy')) === '\ud800x';
+var symbol65StringCharAtNegative = observeNegativeCharAt();
+var symbol66StringSignedCharAt = stringSignedCharAt('', '') && stringSignedCharAt('a', 'a') &&
+  stringSignedCharAt('abc', 'a') && stringSignedCharAt('\u0000ab', '\u0000') &&
+  !stringSignedCharAt('abc', '') && !stringSignedCharAt('abc', 'b');
+var symbol67DescriptionCaptureSignedCharAt = descriptionCaptureSignedCharAt(Symbol()) === ':absent' &&
+  descriptionCaptureSignedCharAt(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureSignedCharAt(Symbol('')) === '' &&
+  descriptionCaptureSignedCharAt(Symbol('abc')) === 'a' &&
+  descriptionCaptureSignedCharAt(Symbol('\u0000ab')) === '\u0000' &&
+  descriptionCaptureSignedCharAt(Symbol.iterator) === 'S';
+var symbol68StringUTF16SignedCharAt = stringSignedCharAt('\u00c9xy', '\u00c9') &&
+  stringSignedCharAt('\ud801\udc00x', '\ud801') && stringSignedCharAt('\ud800xy', '\ud800') &&
+  stringSignedCharAt('\udc00xy', '\udc00') &&
+  descriptionCaptureSignedCharAt(Symbol('\u00c9xy')) === '\u00c9' &&
+  descriptionCaptureSignedCharAt(Symbol('\ud801\udc00x')) === '\ud801' &&
+  descriptionCaptureSignedCharAt(Symbol('\ud800xy')) === '\ud800';
 """
     )
     vm = args.work / "oracle.js"
@@ -1340,6 +1437,10 @@ var symbol64StringUTF16SignedSlices = stringSignedSlices('\u00c9xy', 'y', '\u00c
         "StringSignedSlices",
         "DescriptionCaptureSignedSlice",
         "StringUTF16SignedSlices",
+        "StringCharAtNegative",
+        "StringSignedCharAt",
+        "DescriptionCaptureSignedCharAt",
+        "StringUTF16SignedCharAt",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1352,7 +1453,7 @@ var symbol64StringUTF16SignedSlices = stringSignedSlices('\u00c9xy', 'y', '\u00c
     ).replace("symbol59StringUTF16SliceBounds=true", "symbol59StringUTF16SliceBounds=false")
     vm_expected = vm_expected.replace(
         "symbol64StringUTF16SignedSlices=true", "symbol64StringUTF16SignedSlices=false"
-    )
+    ).replace("symbol68StringUTF16SignedCharAt=true", "symbol68StringUTF16SignedCharAt=false")
     actual = run([args.reference, str(vm)]).stdout
     if actual != vm_expected:
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
@@ -1481,7 +1582,12 @@ def main():
         )
         if (
             name
-            in DESCRIPTION_GUARDS | STRING_METHODS | STRING_INDICES | STRING_SLICES | SIGNED_SLICES
+            in DESCRIPTION_GUARDS
+            | STRING_METHODS
+            | STRING_INDICES
+            | STRING_SLICES
+            | SIGNED_SLICES
+            | SIGNED_CHARAT
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -1680,6 +1786,7 @@ def main():
         *STRING_INDICES,
         *STRING_SLICES,
         *SIGNED_SLICES,
+        *SIGNED_CHARAT,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -1754,7 +1861,6 @@ def main():
         raise RuntimeError("changed String method accepted a stale fingerprint")
 
     for name, body in {
-        "charat-negative": "return text.charAt(-1);",
         "charat-fraction": "return text.charAt(1.5);",
         "slice-fraction": "return text.slice(1.5);",
         "charat-large": "return text.charAt(4294967296);",
@@ -1875,6 +1981,47 @@ def main():
         raise RuntimeError("signed String slice fingerprint control did not change its start")
     if "fingerprint mismatch" not in refuse(changed, contract, "signed-slice-stale"):
         raise RuntimeError("changed signed String slice accepted a stale fingerprint")
+
+    for name, body in {
+        "fraction": "return text.charAt(-1.5);",
+        "large": "return text.charAt(-4294967296);",
+        "infinity": "return text.charAt(-1e999);",
+        "dynamic": "return text.charAt(-index);",
+        "coercion": "return text.charAt(-'1');",
+        "object": "return text.charAt(-{valueOf() { return 1; }});",
+        "nested-negation": "return text.charAt(-(-1));",
+        "negation-escape": "const bound=-1; text.charAt(bound); return bound;",
+        "replacement": "String.prototype.charAt=0; return text.charAt(-1);",
+        "first-unit-authority": "return text.charAt(-1).toLowerCase();",
+        "negative-zero-authority": "return text.charAt(-0).toLowerCase();",
+        "extra-bound": "return text.charAt(0, -1);",
+        "extra-argument": "return text.charAt(-1, 0);",
+        "detached": "const method=text.charAt; return method(-1);",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "signed-charat-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"signed-charat-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-signed-charat"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"signed-charat-budget-{budget}", max_steps=budget)
+    changed = args.work / "signed-charat-stale.mlir"
+    # Change the literal magnitude 1 to 2 while retaining its original Neg.
+    changed.write_text(
+        ir.read_text().replace(
+            "#ctjs.number<4607182418800017408>", "#ctjs.number<4611686018427387904>", 1
+        )
+    )
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("signed charAt fingerprint control did not change its index")
+    if "fingerprint mismatch" not in refuse(changed, contract, "signed-charat-stale"):
+        raise RuntimeError("changed signed charAt accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

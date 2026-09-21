@@ -38,10 +38,10 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
     {"remove", {Kind::removeClass, HostDOMMethod::removeClass}},
 };
 
-std::optional<double> stringIndex(mlir::Value value, bool slice) {
+std::optional<double> stringIndex(mlir::Value value) {
     bool negative = false;
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
-        slice && unary && unary.getKind() == ctjs::UnaryKind::Neg) {
+        unary && unary.getKind() == ctjs::UnaryKind::Neg) {
         negative = true;
         value = unary.getOperand();
     }
@@ -52,7 +52,7 @@ std::optional<double> stringIndex(mlir::Value value, bool slice) {
     const double offset = negative ? -number.getDouble() : number.getDouble();
     // ponytail: uint32 magnitudes fit size_t on every native target; broader
     // inputs need their own ToIntegerOrInfinity and representability proof.
-    if (!std::isfinite(offset) || offset < (slice ? -4294967295.0 : 0.0) || offset > 4294967295.0 ||
+    if (!std::isfinite(offset) || offset < -4294967295.0 || offset > 4294967295.0 ||
         std::floor(offset) != offset) {
         return std::nullopt;
     }
@@ -64,8 +64,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
         if (!spend()) { return false; }
-        if (!stringIndex(unary.getResult(), true)) {
-            refusal = "DOM String slice negation requires one bounded integer literal";
+        if (!stringIndex(unary.getResult())) {
+            refusal = "DOM String indexing negation requires one bounded integer literal";
             return false;
         }
         unsigned bounds = 0;
@@ -75,16 +75,17 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
             auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                : ctjs::GetPropertyOp{};
+            auto key = method ? ctjs::constantKey(method.getKey()) : llvm::StringRef{};
             if (!method || method.getObject() != call.getReceiver() ||
-                ctjs::constantKey(method.getKey()) != "slice" || use.getOperandNumber() < 2 ||
-                use.getOperandNumber() > 3) {
-                refusal = "DOM String slice literal negation escapes its bounds";
+                (key != "slice" && key != "charAt") || use.getOperandNumber() < 2 ||
+                use.getOperandNumber() > (key == "charAt" ? 2U : 3U)) {
+                refusal = "DOM String indexing literal negation escapes its bounds";
                 return false;
             }
             ++bounds;
         }
         if (!bounds) {
-            refusal = "DOM String slice literal negation has no bound use";
+            refusal = "DOM String indexing literal negation has no bound use";
             return false;
         }
         values[unary.getResult()] = Kind::number;
@@ -444,7 +445,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             }
             for (mlir::Value argument : arguments) {
                 if (!spend()) { return false; }
-                if (!stringIndex(argument, !first)) {
+                if (!stringIndex(argument)) {
                     refusal = "DOM String indexing requires bounded integer literals";
                     return false;
                 }
@@ -455,7 +456,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[invoke.getResult()] = Kind::string;
             auto literal = arguments.front().getDefiningOp<ctjs::ConstantOp>();
             if (arguments.size() == 1 && literal &&
-                *stringIndex(arguments.front(), !first) == (first ? 0 : 1)) {
+                *stringIndex(arguments.front()) == (first ? 0 : 1)) {
                 if (!spend()) { return false; }
                 (first ? firstUnits : stringTails)[invoke.getResult()] = invoke.getReceiver();
             }
