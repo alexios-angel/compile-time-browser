@@ -35,12 +35,41 @@ QUERY_SOURCE = """function query(anchor, expected) {
 }
 """
 
+CURRENT_DOCUMENT_CHECKS = r"""
+        bool unbound = false;
+        try { (void)ctnative::document.documentElement(); }
+        catch (const std::logic_error &) { unbound = true; }
+        assert(unbound); // The previous lifetime left no binding behind.
+        atom_table outer_atoms;
+        ctbrowser::document outer_document{outer_atoms};
+        style::engine outer_selectors{outer_atoms};
+        const auto outer_root = outer_document.create_element(outer_atoms.intern("html"));
+        outer_document.set_document_element(outer_root);
+        const element_ref outer_element{&outer_document, outer_root};
+        const ctnative::document_scope outer_scope{outer_document, outer_selectors};
+        const auto assert_outer_document = [&] {
+            const auto root = ctnative::document.documentElement();
+            assert(root && root->value() == outer_element);
+        };
+        assert_outer_document();
+        const auto in_outer_document = [&](auto && call) {
+            try {
+                auto result = call();
+                assert_outer_document();
+                return result;
+            } catch (...) {
+                assert_outer_document();
+                throw;
+            }
+        };
+"""
+
 CHECK_PREFIX = r"""
         (void)pressed;
         style::engine selectors{atoms};
         const auto invoke = [&](element_ref anchor, element_ref expected,
                                 style::engine & engine) {
-            return @ENTRY@(@ARGUMENTS@, engine);
+            return in_outer_document([&] { return @ENTRY@(@ARGUMENTS@, engine); });
         };
         assert(doc.remove_child(button)); // A detached input still identifies its document.
         (void)doc.take_writes();
@@ -135,21 +164,24 @@ INPUT_CHECKS = r"""
 OWNED_CHECKS = r"""
         @ENTRY@_session session;
         auto & owned = session.document();
+        const auto invoke_owned = [&](element_ref first, element_ref second) {
+            return in_outer_document([&] { return session.invoke(first, second); });
+        };
         const auto owned_node = owned.create_element(owned.atoms().intern("button"));
         const element_ref input{&owned, owned_node};
-        assert(!session.invoke(input, input));
+        assert(!invoke_owned(input, input));
         owned.set_document_element(owned_node);
-        assert(session.invoke(input, input));
+        assert(invoke_owned(input, input));
         owned.remove_document_element();
-        assert(!session.invoke(input, input));
+        assert(!invoke_owned(input, input));
         const auto owned_replacement = owned.create_element(owned.atoms().intern("button"));
         owned.set_document_element(owned_replacement);
         const element_ref expected{&owned, owned_replacement};
-        assert(session.invoke(@OWNED_ARGUMENTS@));
+        assert(invoke_owned(@OWNED_ARGUMENTS@));
         owned.log_writes(true);
         (void)owned.take_writes();
         bool foreign_rejected = false;
-        try { (void)session.invoke(foreign, foreign); }
+        try { (void)invoke_owned(foreign, foreign); }
         catch (const std::invalid_argument &) { foreign_rejected = true; }
         assert(foreign_rejected && owned.take_writes().empty());
 """
@@ -208,12 +240,21 @@ def main():
             for optimize in (False, True):
                 name = f"document-{case}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
+                text = native.read_text()
+                method = "querySelector" if case == "query" else "documentElement"
                 if (
-                    '"ctnative::js_document_t"' not in native.read_text()
-                    or "ctcompile/CTNative/Runtime/Browser.hpp" not in native.read_text()
+                    "ctnative::document_scope" not in text
+                    or f"ctnative::document.{method}" not in text
+                    or "ctcompile/CTNative/Runtime/Browser.hpp" not in text
                 ):
-                    raise RuntimeError(f"{name}: source document bypassed its typed browser view")
-                client = CHECK_PREFIX + checks + INPUT_CHECKS + (OWNED_CHECKS if owned else "")
+                    raise RuntimeError(f"{name}: source document bypassed its scoped global object")
+                client = (
+                    CURRENT_DOCUMENT_CHECKS
+                    + CHECK_PREFIX
+                    + checks
+                    + INPUT_CHECKS
+                    + (OWNED_CHECKS if owned else "")
+                )
                 client = client.replace(
                     "@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected"
                 ).replace("@OWNED_ARGUMENTS@", "expected, input" if anchor else "input, expected")

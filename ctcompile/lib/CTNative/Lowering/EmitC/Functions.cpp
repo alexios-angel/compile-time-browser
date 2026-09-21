@@ -225,6 +225,14 @@ void lowering::lower(ctjs::FuncOp fn) {
                     mlir::ValueRange{parameter, domStyles.lookup(parameter)});
             }
         }
+        if (domDocumentParameter && domDocumentParameter.getOwner() == &body) {
+            // A lexical RAII declaration must survive unused-call cleanup and
+            // top-declaration printing. Bind only after every input validates.
+            ec::VerbatimOp::create(
+                at, made.getLoc(),
+                "const ctnative::document_scope ctn_document_scope(*{}.owner, {});",
+                mlir::ValueRange{domDocumentParameter, domStyles.lookup(domDocumentParameter)});
+        }
     }
 
     // AND NOTHING OF THE ctjs DIALECT SURVIVED, WHICH IS THE WHOLE CLAIM.

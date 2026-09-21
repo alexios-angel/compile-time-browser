@@ -212,27 +212,17 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (documentRoot || documentAll ||
         (documentCall != domCalls.end() &&
          documentCall->second.kind == HostDOMMethod::documentQuerySelector)) {
-        const auto documentType = ec::OpaqueType::get(context, "ctbrowser::document");
-        auto owner = ec::MemberOp::create(at, where, ec::PointerType::get(documentType), "owner",
-                                          domDocumentParameter);
-        auto document = ec::DereferenceOp::create(at, where, ec::LValueType::get(documentType),
-                                                  owner.getResult());
-        auto view = callWithConstValueOperands(
-            at, where, mlir::TypeRange{ec::OpaqueType::get(context, "ctnative::js_document_t")},
-            at.getStringAttr("ctnative::js_document_t"),
-            mlir::ValueRange{document.getResult(), domStyles.lookup(domDocumentParameter)});
         mlir::ValueRange arguments;
         if (!documentRoot) { arguments = llvm::cast<ctjs::CallOp>(operation).getArgs(); }
-        auto result = ec::MemberCallOpaqueOp::create(
+        auto result = callWithConstValueOperands(
             at, where,
             mlir::TypeRange{ec::OpaqueType::get(
                 context, documentAll ? llvm::StringRef(kDOMElementViewVectorType)
                                      : "std::optional<ctnative::js_element_t>")},
-            view.getResult(0),
-            at.getStringAttr(documentRoot  ? "documentElement"
-                             : documentAll ? "querySelectorAll"
-                                           : "querySelector"),
-            mlir::ArrayAttr{}, mlir::ArrayAttr{}, arguments);
+            at.getStringAttr(documentRoot  ? "ctnative::document.documentElement"
+                             : documentAll ? "ctnative::document.querySelectorAll"
+                                           : "ctnative::document.querySelector"),
+            arguments);
         mlir::Value value = result.getResult(0);
         if (!documentAll) {
             value = callWithConstValueOperands(

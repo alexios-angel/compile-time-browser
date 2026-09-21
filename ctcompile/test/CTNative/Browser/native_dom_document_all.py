@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 
 from CTNative.Browser import native_dom as dom
-from CTNative.Browser.native_dom_document import INPUT_CHECKS
+from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 from CTNative.Browser.native_dom_query_all import REFUSALS as ELEMENT_REFUSALS
 from CTNative.harness import find_compilers
 
@@ -37,7 +37,7 @@ CHECKS = r"""
         style::engine selectors{atoms};
         const auto invoke = [&](element_ref anchor, element_ref expected,
                                 style::engine & engine) {
-            return @ENTRY@(@ARGUMENTS@, engine);
+            return in_outer_document([&] { return @ENTRY@(@ARGUMENTS@, engine); });
         };
         const auto position = atoms.intern("data-index");
         const auto hovered = atoms.intern("data-hovered");
@@ -134,7 +134,7 @@ OWNED_CHECKS = r"""
         @ENTRY@_session session;
         auto & owned = session.document();
         const auto invoke_owned = [&](element_ref anchor, element_ref expected) {
-            return session.invoke(@ARGUMENTS@);
+            return in_outer_document([&] { return session.invoke(@ARGUMENTS@); });
         };
         const auto parent = owned.create_element(owned.atoms().intern("button"));
         const auto nested = owned.create_element(owned.atoms().intern("button"));
@@ -224,14 +224,18 @@ def main():
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
                 text = native.read_text()
                 if (
-                    '"ctnative::js_document_t"' not in text
+                    "ctnative::document_scope" not in text
+                    or "ctnative::document.querySelectorAll" not in text
                     or "std::vector<ctnative::js_element_t>" not in text
                     or "std::vector<ctbrowser::element_ref>" in text
                 ):
                     raise RuntimeError(f"{name}: document snapshot lost its typed browser views")
-                client = (CHECKS + INPUT_CHECKS + (OWNED_CHECKS if owned else "")).replace(
-                    "@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected"
-                )
+                client = (
+                    CURRENT_DOCUMENT_CHECKS
+                    + CHECKS
+                    + INPUT_CHECKS
+                    + (OWNED_CHECKS if owned else "")
+                ).replace("@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected")
                 dom.standalone(args, native, name, client, compilers, includes, libraries)
                 missing = dict(manifest)
                 del missing["current_document_parameter"]
