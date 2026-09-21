@@ -207,8 +207,11 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     };
     const auto documentCall = domCalls.find(operation);
     const bool documentRoot = domDocumentRoots.contains(operation);
-    if (documentRoot || (documentCall != domCalls.end() &&
-                         documentCall->second.kind == HostDOMMethod::documentQuerySelector)) {
+    const bool documentAll = documentCall != domCalls.end() &&
+                             documentCall->second.kind == HostDOMMethod::documentQuerySelectorAll;
+    if (documentRoot || documentAll ||
+        (documentCall != domCalls.end() &&
+         documentCall->second.kind == HostDOMMethod::documentQuerySelector)) {
         const auto documentType = ec::OpaqueType::get(context, "ctbrowser::document");
         auto owner = ec::MemberOp::create(at, where, ec::PointerType::get(documentType), "owner",
                                           domDocumentParameter);
@@ -222,14 +225,23 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         if (!documentRoot) { arguments = llvm::cast<ctjs::CallOp>(operation).getArgs(); }
         auto result = ec::MemberCallOpaqueOp::create(
             at, where,
-            mlir::TypeRange{ec::OpaqueType::get(context, "std::optional<ctnative::js_element_t>")},
-            view.getResult(0), at.getStringAttr(documentRoot ? "documentElement" : "querySelector"),
+            mlir::TypeRange{ec::OpaqueType::get(
+                context, documentAll ? llvm::StringRef(kDOMElementViewVectorType)
+                                     : "std::optional<ctnative::js_element_t>")},
+            view.getResult(0),
+            at.getStringAttr(documentRoot  ? "documentElement"
+                             : documentAll ? "querySelectorAll"
+                                           : "querySelector"),
             mlir::ArrayAttr{}, mlir::ArrayAttr{}, arguments);
-        auto value = callWithConstValueOperands(
-            at, where, mlir::TypeRange{carrierType(context, carrier::domElement)},
-            at.getStringAttr("ctnative::element_or_null"), mlir::ValueRange{result.getResult(0)});
-        domStyles[value.getResult(0)] = domStyles.lookup(domDocumentParameter);
-        operation->getResult(0).replaceAllUsesWith(value.getResult(0));
+        mlir::Value value = result.getResult(0);
+        if (!documentAll) {
+            value = callWithConstValueOperands(
+                        at, where, mlir::TypeRange{carrierType(context, carrier::domElement)},
+                        at.getStringAttr("ctnative::element_or_null"), mlir::ValueRange{value})
+                        .getResult(0);
+        }
+        domStyles[value] = domStyles.lookup(domDocumentParameter);
+        operation->getResult(0).replaceAllUsesWith(value);
         eraseIfUnused(operation);
         return true;
     }
@@ -282,20 +294,32 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     }
     if (domStringVectorIndices.contains(operation) || domElementVectorIndices.contains(operation)) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
+        const bool typedElements =
+            read.getObject().getType() == ec::OpaqueType::get(context, kDOMElementViewVectorType);
         auto index = ec::CastOp::create(at, where, ec::OpaqueType::get(context, "std::size_t"),
                                         convertScalar(at, where, read.getKey(), at.getF64Type()));
-        auto value = ec::MemberCallOpaqueOp::create(
-            at, where,
-            mlir::TypeRange{domStringVectorIndices.contains(operation)
-                                ? mlir::Type(rawString)
-                                : read.getResult().getType()},
-            read.getObject(), at.getStringAttr("at"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-            mlir::ValueRange{index.getResult()});
+        mlir::Value value =
+            ec::MemberCallOpaqueOp::create(
+                at, where,
+                mlir::TypeRange{domStringVectorIndices.contains(operation) ? mlir::Type(rawString)
+                                : typedElements ? mlir::Type(ec::OpaqueType::get(
+                                                      context, "ctnative::js_element_t"))
+                                                : read.getResult().getType()},
+                read.getObject(), at.getStringAttr("at"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                mlir::ValueRange{index.getResult()})
+                .getResult(0);
+        if (typedElements) {
+            value = ec::MemberCallOpaqueOp::create(
+                        at, where, mlir::TypeRange{read.getResult().getType()}, value,
+                        at.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                        mlir::ValueRange{})
+                        .getResult(0);
+        }
         if (domElementVectorIndices.contains(operation)) {
-            domStyles[value.getResult(0)] = domStyles.lookup(read.getObject());
+            domStyles[value] = domStyles.lookup(read.getObject());
         }
         read.getResult().replaceAllUsesWith(
-            convertScalar(at, where, value.getResult(0), read.getResult().getType()));
+            convertScalar(at, where, value, read.getResult().getType()));
         read.erase();
         return true;
     }

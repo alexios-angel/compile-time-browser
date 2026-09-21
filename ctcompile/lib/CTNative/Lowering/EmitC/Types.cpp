@@ -55,6 +55,14 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         if (auto call = domCalls.find(v.getDefiningOp());
+            call != domCalls.end() &&
+            call->second.kind == HostDOMMethod::documentQuerySelectorAll) {
+            // The local snapshot owns typed views. Existing proved indexed
+            // uses extract a raw element only where it is consumed.
+            v.setType(ec::OpaqueType::get(context, kDOMElementViewVectorType));
+            return;
+        }
+        if (auto call = domCalls.find(v.getDefiningOp());
             call != domCalls.end() && !call->second.returnsBoolean() &&
             !call->second.returnsElement() && !call->second.returnsNumber() &&
             !call->second.returnsSymbol() && !call->second.returnsString() &&

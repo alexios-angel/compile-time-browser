@@ -10,6 +10,8 @@ class OwnedGlobalRoots;
 namespace ctcompile::ctnative::lowering_detail {
 
 inline constexpr llvm::StringLiteral kDOMOptionalStringType = "std::optional<std::string>";
+inline constexpr llvm::StringLiteral kDOMElementViewVectorType =
+    "std::vector<ctnative::js_element_t>";
 
 // Only for the compiler-owned helper ABIs below: non-lvalue operands are
 // accepted by value or const reference. Mutable binding arguments (vec_push's

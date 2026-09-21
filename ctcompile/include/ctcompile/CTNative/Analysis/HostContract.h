@@ -154,6 +154,7 @@ enum class HostDOMMethod {
     querySelector,
     querySelectorAll,
     documentQuerySelector,
+    documentQuerySelectorAll,
     number,
     numberToString,
     symbol,
@@ -188,7 +189,8 @@ struct HostDOMCall {
         return kind == HostDOMMethod::datasetKeys || kind == HostDOMMethod::filterStrings;
     }
     [[nodiscard]] bool returnsElementVector() const {
-        return kind == HostDOMMethod::querySelectorAll;
+        return kind == HostDOMMethod::querySelectorAll ||
+               kind == HostDOMMethod::documentQuerySelectorAll;
     }
     [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
     [[nodiscard]] bool returnsSymbol() const {

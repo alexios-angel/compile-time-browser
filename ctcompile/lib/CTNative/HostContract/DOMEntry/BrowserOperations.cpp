@@ -223,9 +223,12 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 provedDocumentRoots.insert(read);
                 return true;
             }
-            if (key == "querySelector") {
-                values[read.getResult()] = Kind::documentQuerySelector;
-                provedMethods.try_emplace(read, HostDOMMethod::documentQuerySelector);
+            if (key == "querySelector" || key == "querySelectorAll") {
+                const bool all = key == "querySelectorAll";
+                values[read.getResult()] =
+                    all ? Kind::documentQuerySelectorAll : Kind::documentQuerySelector;
+                provedMethods.try_emplace(read, all ? HostDOMMethod::documentQuerySelectorAll
+                                                    : HostDOMMethod::documentQuerySelector);
                 return true;
             }
         }
@@ -509,11 +512,14 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             refusal = "DOM call does not preserve its proved method receiver";
             return false;
         }
-        if (hasKind(invoke.getCallee(), Kind::documentQuerySelector) && arguments.size() == 1 &&
-            hasKind(arguments[0], Kind::string)) {
-            provedCalls.push_back(
-                {invoke, HostDOMMethod::documentQuerySelector, documentParameter});
-            values[invoke.getResult()] = Kind::nullableElement;
+        const bool documentAll = hasKind(invoke.getCallee(), Kind::documentQuerySelectorAll);
+        if ((documentAll || hasKind(invoke.getCallee(), Kind::documentQuerySelector)) &&
+            arguments.size() == 1 && hasKind(arguments[0], Kind::string)) {
+            provedCalls.push_back({invoke,
+                                   documentAll ? HostDOMMethod::documentQuerySelectorAll
+                                               : HostDOMMethod::documentQuerySelector,
+                                   documentParameter});
+            values[invoke.getResult()] = documentAll ? Kind::elementVector : Kind::nullableElement;
             return true;
         }
         if ((hasKind(invoke.getCallee(), Kind::symbolToString) ||

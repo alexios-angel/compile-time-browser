@@ -25,6 +25,7 @@ enum class Kind {
     nullableElement,
     document,
     documentQuerySelector,
+    documentQuerySelectorAll,
     tokenList,
     dataset,
     elementIntrinsic,
