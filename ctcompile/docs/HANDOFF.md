@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Multi-slot holders and intrinsic Strings, 2026-09-21 UTC
+
+Continued clean **c2dc4554** from the recorded Data holder boundary.
+**95c290a2** expands called Map-holder siblings in their owning entry block
+before the existing constructor registration proof. Complete fixed-cell, slot,
+constructor-capture and initialization-order checks precede expansion;
+publication and concrete record-owner checks remain unchanged. Four new bodies
+cover registration, saved aliases, removal and a keyed inherited base.
+**8e6e2e4d** admits already-proved ASCII-prefix `startsWith` and
+`charAt(0).toLowerCase()` in intrinsic exports through existing String/Core paths.
+
+Focused devbox validation passes: **one exact CTest and three distinct lit cases**
+across corrected runs. Class checks measure **82 source observations, 184 main
+native executions, 164 unprepared refusals and 97 preparation refusals**;
+four new admissions add 32 executions. Intrinsic exports measure **328 native
+executions, 314 refusals and two mutations**, with **49 Node/VM agreements and
+two explicit known VM ASCII-casing differences**. Native/Node Unicode expectations
+remain intact. All **seven final code/test hashes** match the devbox. Scoped
+formatting passes; repository formatting retains 16 existing diagnostics.
+Full suites, broad corpus/matrices, full Bootstrap, WPT/test262, Windows and
+new sanitizers were skipped. No browser or runtime implementation changed.
+
+**Next:** original Data's three-argument registration, conditional nested Maps,
+conflict reporting, nullable lookup and child/empty-parent cleanup still need
+complete owner, observer, exception and reentry proofs. Original B/Data+B,
+the unused second holder slot and captured outer key remain unchanged refusals.
+This slice handles called siblings in their owning entry block. Broader families,
+method-frame operations, intrinsic String methods/indices, conditional callees,
+branch-mutated boxed locals, String ordering, document views and the application
+driver remain unfinished. No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-multi-slot-holders-intrinsic-strings.md).
+
 ## Keyed publication and description guards, 2026-09-21 UTC
 
 Continued clean **210bbb2d** from its constructor-holder/Data boundary.
