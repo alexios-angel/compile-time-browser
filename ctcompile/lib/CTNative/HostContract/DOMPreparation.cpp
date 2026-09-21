@@ -69,15 +69,110 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
     if (contract.provider == HostContract::Provider::ctbrowserIntrinsics) {
-        // Prove the untouched source before cloning or hashing it here. This
-        // entry has no browser inputs, handlers or helper-call normalization.
+        // Exact local helpers reuse the DOM normalizer, but not its prototype
+        // or initialization premises. Check those boundaries on original source;
+        // complete typed/effect proof follows expansion on a private candidate.
         mlir::OwningOpRef<mlir::ModuleOp> prepared;
         unsigned remaining = maxSteps;
+        const auto spend = [&] {
+            if (!remaining) { return false; }
+            --remaining;
+            return true;
+        };
+        bool helpers = false;
+        for (mlir::Operation & operation : module.getBody()->getOperations()) {
+            if (!spend()) { return refuse("native intrinsic helper work budget exhausted"); }
+            auto function = llvm::dyn_cast<ctjs::FuncOp>(operation);
+            helpers |=
+                function && function.getSymName() != contract.entry && functionIndex(function) != 0;
+        }
+        mlir::OwningOpRef<mlir::ModuleOp> expanded;
+        auto sourceModule = module;
+        HostContract sourceContract = contract;
+        if (helpers) {
+            bool unsupported = false;
+            const auto scanned = module.walk([&](mlir::Operation * operation) {
+                // Reserve source inspection, clone and original fingerprint.
+                uint64_t cost = 3 * (uint64_t(1) + operation->getNumOperands() +
+                                     operation->getNumResults() + operation->getAttrs().size());
+                for (mlir::Region & region : operation->getRegions()) {
+                    for (mlir::Block & block : region) {
+                        cost += 3 * (uint64_t(1) + block.getNumArguments());
+                    }
+                }
+                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                remaining -= static_cast<unsigned>(cost);
+                if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
+                    unsupported |= function.getUpvalueCount() != 0;
+                }
+                if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
+                    unsupported |= !closure.getUpvalues().empty();
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+                    unsupported |= load.getName() != "Symbol" && load.getName() != "undefined";
+                }
+                unsupported |= llvm::isa<ctjs::CreateObjectOp, ctjs::SetPropertyOp>(operation);
+                return mlir::WalkResult::advance();
+            });
+            if (scanned.wasInterrupted()) {
+                return refuse("native intrinsic helper work budget exhausted");
+            }
+            if (contract.moduleSha256 != hostContractFingerprint(module) ||
+                module->hasAttr("ctjs.skipped")) {
+                return refuse("native intrinsic entry: fingerprint mismatch or incomplete source");
+            }
+            if (unsupported) {
+                return refuse("native intrinsic helpers require uncaptured primitive source");
+            }
+            auto target = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
+            if (!target) { return refuse("native intrinsic entry function is missing"); }
+            for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
+                if (!spend()) { return refuse("native intrinsic helper work budget exhausted"); }
+                if (functionIndex(function) == 0 &&
+                    !host_detail::isInertEntryDeclaration(function, target, spend)) {
+                    return refuse("native intrinsic helper wrapper is not an inert declaration");
+                }
+                if (function == target || functionIndex(function) == 0 ||
+                    function.getBody().empty()) {
+                    continue;
+                }
+                for (auto argument :
+                     function.getBody().front().getArguments().take_front(std::min<unsigned>(
+                         ctjs::implicit_arguments, function.getBody().front().getNumArguments()))) {
+                    for (mlir::Operation * use : argument.getUsers()) {
+                        if (!spend()) {
+                            return refuse("native intrinsic helper work budget exhausted");
+                        }
+                        if (!llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use)) {
+                            return refuse("native intrinsic helper observes an implicit argument");
+                        }
+                    }
+                }
+            }
+            expanded = module.clone();
+            unsigned expansionSteps = 0;
+            if (auto error =
+                    expandDOMHelpers(*expanded, contract.entry, remaining, &expansionSteps)) {
+                return refuse("native intrinsic helper: " + llvm::toString(std::move(error)));
+            }
+            remaining -= expansionSteps;
+            const auto counted = expanded->walk([&](mlir::Operation * operation) {
+                const uint64_t cost = uint64_t(1) + operation->getNumOperands();
+                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                remaining -= static_cast<unsigned>(cost);
+                return mlir::WalkResult::advance();
+            });
+            if (counted.wasInterrupted()) {
+                return refuse("native intrinsic helper fingerprint work budget exhausted");
+            }
+            sourceModule = *expanded;
+            sourceContract.moduleSha256 = hostContractFingerprint(sourceModule);
+        }
         {
-            const DOMEntryAnalysis source(module, contract, remaining);
+            const DOMEntryAnalysis source(sourceModule, sourceContract, remaining);
             if (!source.proved()) { return refuse("native intrinsic entry: " + source.reason()); }
             remaining -= source.steps();
-            const auto counted = module.walk([&](mlir::Operation * operation) {
+            const auto counted = sourceModule.walk([&](mlir::Operation * operation) {
                 // Reserve the clone, cleanup walks and refreshed fingerprint.
                 uint64_t cost = uint64_t(1) + operation->getNumOperands() +
                                 operation->getNumResults() + operation->getAttrs().size();
@@ -94,7 +189,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             if (counted.wasInterrupted()) {
                 return refuse("native intrinsic entry preparation work budget exhausted");
             }
-            prepared = module.clone();
+            prepared = sourceModule.clone();
             if (auto wrapper = source.wrapper()) {
                 prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
             }

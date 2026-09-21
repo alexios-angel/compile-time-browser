@@ -112,6 +112,43 @@ PARAMETER_DESCRIPTION = "function parameterDescription(key) { return key.descrip
 PARAMETER_TEXT = "function parameterText(text) { return text; }\n"
 PARAMETER_NUMBER = "function parameterNumber(value) { return value; }\n"
 PARAMETER_BOOLEAN = "function parameterBoolean(value) { return value; }\n"
+HELPER_STATE = """function helperState(first, second, text, count, enabled) {
+  function select(left, right, takeRight) {
+    function copy(value) { return value; }
+    return takeRight ? copy(right) : copy(left);
+  }
+  function cycle(left, right, limit) {
+    let key = left;
+    for (let i = 0; i < limit; i++) key = key === left ? right : left;
+    return key;
+  }
+  function make(description) { return Symbol(description); }
+  const key = cycle(first, second, count);
+  return enabled ? make(text) : select(key, first, false);
+}
+"""
+HELPER_DESCRIPTION = """function helperDescription(key) {
+  function describe(value) { return value.description; }
+  return describe(key);
+}
+"""
+HELPER_UNDEFINED = """function helperUndefined(key) {
+  function missing(value) { return value; }
+  return missing();
+}
+"""
+HELPER_TYPES = """function helperTypes(key, text, number, flag) {
+  function copy(value) { return value; }
+  function first(left, right) { return left; }
+  let after = text;
+  const before = first(after, after = 'changed');
+  return (copy(key) === key ? 'symbol' : 'wrong') +
+    (copy(text) === text ? ':string' : ':wrong') +
+    (copy(number) < 1 ? ':number' : ':wrong') +
+    (copy(flag) ? ':wrong' : ':boolean') +
+    (before === text && after === 'changed' ? ':evaluation' : ':wrong');
+}
+"""
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -119,6 +156,10 @@ PARAMETER_TYPES = {
     "parameter-number": ["number"],
     "parameter-boolean": ["boolean"],
     "parameters": ["symbol"],
+    "helper-state": ["symbol", "symbol", "string", "number", "boolean"],
+    "helper-description": ["symbol"],
+    "helper-undefined": ["symbol"],
+    "helper-types": ["symbol", "string", "number", "boolean"],
 }
 CASES = {
     "state": (
@@ -294,6 +335,29 @@ CASES = {
         "true\n",
     ),
 }
+CASES["helper-state"] = (HELPER_STATE, *CASES["parameter-state"][1:])
+CASES["helper-description"] = (HELPER_DESCRIPTION, *CASES["parameter-description"][1:])
+CASES["helper-undefined"] = (
+    HELPER_UNDEFINED,
+    r"""
+    static_assert(std::is_same_v<decltype(&@ENTRY@), void (*)(ctnative::js_symbol_t)>);
+    @ENTRY@(ctnative::Symbol.iterator);
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["helper-types"] = (
+    HELPER_TYPES,
+    r"""
+    static_assert(std::is_same_v<decltype(&@ENTRY@), ctnative::js_string (*)(
+        ctnative::js_symbol_t, ctnative::js_string, ctnative::js_num, ctnative::js_boolean_t)>);
+    const auto key = ctnative::Symbol();
+    assert(@ENTRY@(key, ctnative::js_string{"a\0b"}, ctnative::js_num{-0.0},
+                  ctnative::js_boolean_t{false}).value() == "symbol:string:number:boolean:evaluation");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -366,6 +430,10 @@ def oracle(args):
         + PARAMETER_TEXT
         + PARAMETER_NUMBER
         + PARAMETER_BOOLEAN
+        + HELPER_STATE
+        + HELPER_DESCRIPTION
+        + HELPER_UNDEFINED
+        + HELPER_TYPES
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -408,6 +476,21 @@ symbol17ParameterNumber = parameterNumber(42.5) === 42.5 && nanInput !== nanInpu
 symbol18ParameterBoolean = parameterBoolean(true) === true && parameterBoolean(false) === false;
 }}
 observeParameters();
+function observeHelpers() {{
+const key = Symbol('input');
+const other = Symbol('input');
+symbol19HelperState = helperState(key, other, 'fresh', 0, false) === key &&
+  helperState(key, other, 'fresh', 1, false) === other &&
+  helperState(key, other, 'fresh', 2, false) === key &&
+  helperState(key, other, 'fresh', 1, true).description === 'fresh' &&
+  helperState(key, other, 'fresh', 1, true) !== helperState(key, other, 'fresh', 1, true);
+symbol20HelperDescription = helperDescription(Symbol()) === undefined &&
+  helperDescription(Symbol('a\\u0000b')) === 'a\\u0000b' &&
+  helperDescription(Symbol.iterator) === 'Symbol.iterator';
+symbol21HelperTypes = helperTypes(key, 'a\\u0000b', -0, false) === 'symbol:string:number:boolean:evaluation';
+symbol22HelperUndefined = helperUndefined(key) === undefined;
+}}
+observeHelpers();
 """
     )
     vm = args.work / "oracle.js"
@@ -431,6 +514,10 @@ observeParameters();
         "ParameterText",
         "ParameterNumber",
         "ParameterBoolean",
+        "HelperState",
+        "HelperDescription",
+        "HelperTypes",
+        "HelperUndefined",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -547,7 +634,12 @@ def main():
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
     for name, (source, checks, expected) in CASES.items():
-        ir, contract = prepare(args, name, source, parameter_types=PARAMETER_TYPES.get(name))
+        entry_name = (
+            re.search(r"function (\w+)\(", source)[1] if name.startswith("helper-") else None
+        )
+        ir, contract = prepare(
+            args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
+        )
         accepted[name] = ir, contract
         for optimize in (False, True):
             output_name = f"{name}-{optimize}"
@@ -576,6 +668,37 @@ def main():
         entry = "Symbol" if name == "intrinsic-declaration" else "bad"
         ir, contract = prepare(args, name, source, entry_name=entry)
         refuse(ir, contract, name + "-refused")
+
+    helper_refusals = {
+        "capture": "function helper() { return key; } return helper();",
+        "recursive": "function helper(value) { return helper(value); } return helper(key);",
+        "write": "function helper(value) { saved=value; return value; } return helper(key);",
+        "unknown": "function helper(value) { unknown(); return value; } return helper(key);",
+        "discarded-argument": "function helper(value) { return Symbol.iterator; } return helper(unknown());",
+        "mixed-return": "function helper(value) { return value ? value : 1; } return helper(key);",
+        "missing-argument": "function helper(value) { return value.description; } return helper();",
+        "extra-argument": "function helper(value) { return value; } return helper(key, key);",
+        "escape": "function helper(value) { return value; } return helper;",
+        "indirect": "function helper(value) { return value(); } return helper(key);",
+        "receiver": "function helper(value) { return this; } return helper(key);",
+        "object-field": "function helper(value) { const item={key:value}; return item.key; } return helper(key);",
+        "dead-effect": "function helper(value) { if (false) unknown(); return value; } return helper(key);",
+        "unused-effect": "function helper(value) { unknown(); return value; } return key;",
+        "shadowed-intrinsic": "function helper(Symbol) { return Symbol.iterator; } return helper(key);",
+    }
+    for name, body in helper_refusals.items():
+        ir, contract = prepare(
+            args,
+            "helper-" + name,
+            f"function bad(key) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["symbol"],
+        )
+        for optimize in (False, True):
+            refuse(ir, contract, f"helper-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["helper-state"]
+    for budget in (0, 1, 100, 500):
+        refuse(ir, contract, f"helper-budget-{budget}", max_steps=budget)
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
@@ -658,7 +781,7 @@ def main():
     )
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
-        f"Symbol exports: typed parameters, branch/loop return and primitive transcript agree with Node/VM; "
+        f"Symbol exports: typed parameters/helpers, branch/loop return and primitive transcript agree with Node/VM; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

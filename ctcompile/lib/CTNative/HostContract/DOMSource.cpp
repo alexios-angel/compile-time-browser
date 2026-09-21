@@ -11,6 +11,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <optional>
@@ -57,8 +58,12 @@ bool host_detail::isLowercaseReplacement(ctjs::FuncOp function, llvm::function_r
     return true;
 }
 
-llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps) {
+llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps,
+                             unsigned * workSteps) {
     DOMSource source(maxSteps);
+    const llvm::scope_exit recordSteps([&] {
+        if (workSteps) { *workSteps = maxSteps - source.remaining; }
+    });
     candidate.walk([&](mlir::Operation * operation) {
         if (!source.step()) { return mlir::WalkResult::interrupt(); }
         ++source.operationCount;

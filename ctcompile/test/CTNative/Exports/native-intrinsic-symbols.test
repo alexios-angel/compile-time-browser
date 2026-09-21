@@ -1,2 +1,2 @@
-# A Symbol-only entry transports exact primitive parameters without DOM inputs or a launcher.
+# A Symbol-only entry transports exact primitive parameters and local helpers without DOM inputs.
 # RUN: python3 %S/native_intrinsic_symbols.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference
