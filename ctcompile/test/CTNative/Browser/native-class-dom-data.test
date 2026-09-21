@@ -1,0 +1,2 @@
+# Complete vendor Data preparation does not imply a native document owner.
+# RUN: python3 %S/native_class_dom_data.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t

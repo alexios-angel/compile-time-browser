@@ -28,6 +28,24 @@ OBSERVATIONS.update(VENDOR_DATA_OBSERVATIONS)
 POSITIVES.update(
     {"class-map-record-nested-vendor-holder", "class-map-record-nested-vendor-constructor"}
 )
+OBSERVATIONS.update(
+    {
+        "class-map-record-nested-object-holder": (15927, 15927),
+        "class-map-record-nested-object-distinct": (7553, 7553),
+        "class-map-record-nested-object-returned-key": (15927, 15927),
+        "class-map-record-nested-object-number-key": (15927, 15927),
+        "class-map-record-nested-object-changing-key": (15929, 15929),
+        "class-map-record-nested-object-unused-observer": (15927, 15927),
+    }
+)
+POSITIVES.update(
+    {
+        "class-map-record-nested-object-holder",
+        "class-map-record-nested-object-distinct",
+        "class-map-record-nested-object-changing-key",
+        "class-map-record-nested-nullable-object-key",
+    }
+)
 
 POSITIVES.update(
     {
@@ -335,6 +353,8 @@ def main():
     for name in (
         "class-map-record-nested-vendor-holder",
         "class-map-record-nested-vendor-constructor",
+        "class-map-record-nested-object-holder",
+        "class-map-record-nested-object-distinct",
     ):
         if data not in (args.fixtures / f"{name}.js").read_text():
             raise RuntimeError(f"{name}: complete vendor Data declaration changed")
@@ -649,6 +669,7 @@ def main():
             "class-map-record-nested-nullable-direct",
             "class-map-record-nested-conflict-direct",
             "class-map-record-nested-vendor-holder",
+            "class-map-record-nested-object-holder",
         ):
             prepare(
                 args,
@@ -706,6 +727,9 @@ def main():
                 "class-map-record-nested-conflict-constructor": 4,
                 "class-map-record-nested-vendor-holder": 4,
                 "class-map-record-nested-vendor-constructor": 4,
+                "class-map-record-nested-object-holder": 4,
+                "class-map-record-nested-object-distinct": 5,
+                "class-map-record-nested-object-changing-key": 4,
             }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -991,6 +1015,7 @@ def main():
             "class-map-record-nested-nullable-direct",
             "class-map-record-nested-conflict-direct",
             "class-map-record-nested-vendor-holder",
+            "class-map-record-nested-object-holder",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

@@ -76,6 +76,12 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     if (!entry || !functionIndex(entry)) {
         return refuse("class initialization requires a source entry");
     }
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession &&
+        (entry.getBody().empty() ||
+         entry.getBody().front().getNumArguments() !=
+             ctjs::implicit_arguments + contract.elementParameters.size())) {
+        return refuse("class DOM preparation requires every entry element input");
+    }
     for (mlir::Operation & op : module.getBody()->getOperations()) {
         if (!step()) { return false; }
         auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
@@ -96,7 +102,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         // helper. DOM preparation defers these uses to its final typed proof.
         for (mlir::BlockArgument argument :
              entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
-            if (!step() || (!domEntry && !argument.use_empty())) {
+            if (!step() || (!domEntry &&
+                            contract.provider != HostContract::Provider::ctbrowserDOMDataSession &&
+                            !argument.use_empty())) {
                 return refuse("class initialization requires unused entry parameters");
             }
         }
@@ -201,7 +209,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             if (!step()) { return false; }
             auto scope = call->getParentOfType<ctjs::FuncOp>();
             if (scopes.insert(scope).second &&
-                (!normalizeCapturedMapHelpers(scope) || !normalizeNestedMaps(scope))) {
+                (!normalizeCapturedMapHelpers(scope) || !normalizeNestedMaps(scope, contract))) {
                 return false;
             }
         }
@@ -209,6 +217,20 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             if (!step()) { return false; }
             if (functions.contains(helper)) {
                 return refuse("constructor registration requires complete captured Map expansion");
+            }
+        }
+    }
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+        // Only the consumed outer-key operations may observe a host input.
+        // Any remaining property, coercion, capture or call needs a separate
+        // source/effect proof before class setup can be normalized.
+        for (mlir::BlockArgument input :
+             entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+            for (mlir::OpOperand * use : sourceUses(input)) {
+                if (!step()) { return false; }
+                if (!llvm::isa<ctjs::RootOp>(use->getOwner())) {
+                    return refuse("class DOM input has an observer outside its proved Map keys");
+                }
             }
         }
     }
@@ -390,7 +412,10 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
                 (constructors.contains(fn) &&
                  llvm::isa<mlir::scf::IfOp, mlir::scf::YieldOp, mlir::arith::ConstantOp,
                            mlir::ub::PoisonOp, ctjs::BinaryStaticOp>(op)) ||
-                (domEntry && fn == entry && llvm::isa<mlir::scf::IfOp, mlir::scf::YieldOp>(op));
+                ((domEntry ||
+                  contract.provider == HostContract::Provider::ctbrowserDOMDataSession) &&
+                 fn == entry &&
+                 llvm::isa<mlir::scf::IfOp, mlir::scf::YieldOp, mlir::arith::ConstantOp>(op));
             if (accepted && llvm::isa<mlir::scf::IndexSwitchOp>(op)) {
                 dispatchMethods.insert(op->getParentOfType<ctjs::FuncOp>());
             }

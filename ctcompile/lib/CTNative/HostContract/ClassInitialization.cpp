@@ -42,7 +42,8 @@ struct CTNativeSpecializeClassInitializationPass
             module.emitError("class initialization host fingerprint mismatch");
             return signalPassFailure();
         }
-        if (contract->provider != HostContract::Provider::closedSource ||
+        if ((contract->provider != HostContract::Provider::closedSource &&
+             contract->provider != HostContract::Provider::ctbrowserDOMDataSession) ||
             !llvm::is_contained(contract->initialIntrinsics, host_detail::classDefinedIntrinsic) ||
             llvm::any_of(contract->initialIntrinsics,
                          [](const auto & name) {

@@ -93,9 +93,9 @@ bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> ma
 
 } // namespace
 
-bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
-    // ponytail: literal outer keys and statically selected Map-only branches.
-    // Dynamic topology needs path-sensitive origins and an owner proof.
+bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostContract & contract) {
+    // ponytail: literal/fresh keys and one exact DOM input per outer Map.
+    // Multiple DOM inputs need alias partitions, not distinct SSA identities.
     auto & entry = scope.getBody().front();
     const auto entryPosition = [&](mlir::Operation * op) {
         while (op->getBlock() != &entry && llvm::isa<mlir::scf::IfOp>(op->getParentOp())) {
@@ -206,7 +206,8 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                 operations.insert(call);
             }
         }
-        llvm::StringMap<mlir::Value> entries;
+        llvm::DenseMap<std::pair<mlir::Attribute, mlir::Value>, mlir::Value> entries;
+        mlir::Value elementKey;
         llvm::MapVector<mlir::Operation *, mlir::Attribute> constants;
         llvm::MapVector<mlir::Value, mlir::Value> children;
         llvm::MapVector<mlir::scf::IfOp, bool> branches;
@@ -559,10 +560,33 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                     entries.clear();
                     continue;
                 }
-                auto key = resolved(call.getArgs()[0]).getDefiningOp<ctjs::ConstantOp>();
+                auto origin = resolved(call.getArgs()[0]);
+                auto key = origin.getDefiningOp<ctjs::ConstantOp>();
                 auto text =
                     key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
-                if (!text) { return refuse("class nested Map requires literal String keys"); }
+                std::pair<mlir::Attribute, mlir::Value> identity{text, {}};
+                if (!text) {
+                    auto fresh = origin.getDefiningOp<ctjs::CreateObjectOp>();
+                    auto input = llvm::dyn_cast<mlir::BlockArgument>(origin);
+                    const bool element =
+                        contract.provider == HostContract::Provider::ctbrowserDOMDataSession &&
+                        scope.getSymName() == contract.entry && input &&
+                        input.getOwner() == &entry &&
+                        input.getArgNumber() >= ctjs::implicit_arguments &&
+                        llvm::is_contained(contract.elementParameters,
+                                           input.getArgNumber() - ctjs::implicit_arguments);
+                    if ((!fresh || fresh->getBlock() != &entry) && !element) {
+                        return refuse("class nested Map requires literal String, fresh object "
+                                      "or exact DOM input keys");
+                    }
+                    if (element) {
+                        if (elementKey && elementKey != input) {
+                            return refuse("class nested Map DOM inputs require an alias proof");
+                        }
+                        elementKey = input;
+                    }
+                    identity.second = origin;
+                }
                 if (action == "set") {
                     auto value = resolved(call.getArgs()[1]);
                     auto child = localMap(value);
@@ -571,15 +595,15 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                          !llvm::is_contained(created, child))) {
                         return refuse("class nested Map requires a selected child owner");
                     }
-                    entries[text.getValue()] = child.getResult();
+                    entries[identity] = child.getResult();
                 } else if (action == "get") {
-                    auto child = entries.lookup(text.getValue());
+                    auto child = entries.lookup(identity);
                     if (!child) { return refuse("class nested Map get requires a present child"); }
                     children[call.getResult()] = child;
                 } else {
-                    const bool present = entries.count(text.getValue()) != 0;
+                    const bool present = entries.count(identity) != 0;
                     constants[&op] = ctjs::BooleanAttr::get(module.getContext(), present);
-                    if (action == "delete") { entries.erase(text.getValue()); }
+                    if (action == "delete") { entries.erase(identity); }
                 }
             }
             return true;
