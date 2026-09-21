@@ -204,8 +204,13 @@ def main():
         for optimize in (False, True):
             name = f"query-all-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            if '"ctnative::Element.prototype.querySelectorAll.call"' not in native.read_text():
-                raise RuntimeError("querySelectorAll bypassed its native method object")
+            emitted = native.read_text()
+            if (
+                '"ctnative::Element.prototype.querySelectorAll.call"' not in emitted
+                or "std::vector<ctnative::js_element_t>" not in emitted
+                or "std::vector<ctbrowser::element_ref>" in emitted
+            ):
+                raise RuntimeError("querySelectorAll lost its typed browser snapshot")
             dom.standalone(
                 args,
                 native,

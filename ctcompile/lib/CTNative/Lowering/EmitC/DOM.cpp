@@ -717,7 +717,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
     }
-    if (edge.kind == HostDOMMethod::matches || edge.returnsElement()) {
+    if (edge.kind == HostDOMMethod::matches || edge.returnsElement() ||
+        edge.returnsElementVector()) {
         auto receiver = callWithConstValueOperands(
             at, where, mlir::TypeRange{ec::OpaqueType::get(context, "ctnative::js_element_t")},
             at.getStringAttr("ctnative::js_element_t"),
@@ -764,7 +765,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         const mlir::Type type =
             edge.returnsOptionalString()  ? ec::OpaqueType::get(context, kDOMOptionalStringType)
             : edge.returnsStringVector()  ? ec::OpaqueType::get(context, kStringVectorType)
-            : edge.returnsElementVector() ? ec::OpaqueType::get(context, kDOMElementVectorType)
+            : edge.returnsElementVector() ? ec::OpaqueType::get(context, kDOMElementViewVectorType)
             : edge.returnsElement()       ? carrierType(context, carrier::domElement)
             : edge.returnsNumber()        ? carrierType(context, carrier::number)
             : edge.returnsString()        ? carrierType(context, carrier::string)
