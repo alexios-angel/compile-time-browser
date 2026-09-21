@@ -25,6 +25,68 @@ using namespace ctcompile::test::host_contract;
 
 namespace {
 
+void checkIntrinsicParameters(mlir::MLIRContext & context) {
+    using namespace ctcompile::ctnative;
+    constexpr const char * source = R"MLIR(
+module {
+  ctjs.func @entry$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %key: !ctjs.value, %text: !ctjs.value, %number: !ctjs.value, %flag: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    ctjs.return %key
+  }
+})MLIR";
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    check(static_cast<bool>(module), "intrinsic parameter fixture parses");
+    if (!module) { return; }
+    const std::string json = "{\"version\":1,\"provider\":\"ctbrowser-intrinsics-v1\","
+                             "\"module_sha256\":\"" +
+                             hostContractFingerprint(*module) +
+                             "\",\"entry\":\"entry$1\",\"initial_intrinsics\":[\"Symbol\"],"
+                             "\"parameter_types\":[\"symbol\",\"string\",\"number\",\"boolean\"]}";
+    auto parsed = parseHostContract(json);
+    check(parsed && parsed->intrinsicParameters == std::vector{HostIntrinsicParameter::symbol,
+                                                               HostIntrinsicParameter::string,
+                                                               HostIntrinsicParameter::number,
+                                                               HostIntrinsicParameter::boolean},
+          "intrinsic parameter categories retain their exact source order");
+    if (!parsed) {
+        llvm::consumeError(parsed.takeError());
+        return;
+    }
+    auto function = module->lookupSymbol<ctjs::FuncOp>("entry$1");
+    const auto key = function.getBody().front().getArgument(ctjs::implicit_arguments);
+    const DOMEntryAnalysis proved(*module, *parsed);
+    check(proved.proved() && proved.intrinsicParameter(key) == HostIntrinsicParameter::symbol &&
+              !proved.intrinsicParameter(function.getBody().front().getArgument(0)) &&
+              proved.parameters().empty(),
+          "live intrinsic proof exposes only explicit category facts, without DOM handles");
+    for (llvm::StringRef field : {"null", "{}", "\"symbol\"", "[null]", "[0]", "[\"Symbol\"]",
+                                  "[\"object\"]", "[\"undefined\"]", "[[\"symbol\",\"string\"]]"}) {
+        auto invalid = parseHostContract(
+            replaced(json, "[\"symbol\",\"string\",\"number\",\"boolean\"]", field));
+        check(!invalid, "intrinsic schema rejects non-array, unknown and union categories");
+        if (!invalid) { llvm::consumeError(invalid.takeError()); }
+    }
+    for (llvm::StringRef field : {"[]", "[\"symbol\",\"symbol\"]"}) {
+        auto valid = parseHostContract(
+            replaced(json, "[\"symbol\",\"string\",\"number\",\"boolean\"]", field));
+        check(static_cast<bool>(valid), "intrinsic schema permits empty and repeated categories");
+        if (!valid) {
+            llvm::consumeError(valid.takeError());
+            continue;
+        }
+        const DOMEntryAnalysis wrongArity(*module, *valid);
+        check(!wrongArity.proved() && !wrongArity.intrinsicParameter(key),
+              "incorrect explicit arity withholds every parameter fact");
+    }
+    auto invalid = *parsed;
+    invalid.intrinsicParameters[0] = static_cast<HostIntrinsicParameter>(99);
+    const DOMEntryAnalysis unknown(*module, invalid);
+    check(!unknown.proved() && !unknown.intrinsicParameter(key),
+          "programmatic contracts cannot bypass parameter category validation");
+    const DOMEntryAnalysis exhausted(*module, *parsed, 0);
+    check(!exhausted.proved() && exhausted.exhausted() && !exhausted.intrinsicParameter(key),
+          "budget exhaustion withholds intrinsic parameter authority");
+}
+
 void checkSessionProvider(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     auto module = mlir::parseSourceString<mlir::ModuleOp>(callableFixture, &context);
@@ -852,6 +914,11 @@ int main() {
     HostContractAnalysis invalidProvider(*module, invalidIntrinsic);
     check(!invalidProvider.proved() && !invalidProvider.property(read),
           "typed API cannot bypass supported initial intrinsic identities");
+    auto invalidParameters = contractFor(*module);
+    invalidParameters.intrinsicParameters = {ctcompile::ctnative::HostIntrinsicParameter::symbol};
+    check(!HostContractAnalysis(*module, invalidParameters).proved() &&
+              !ctcompile::ctnative::DOMEntryAnalysis(*module, invalidParameters).proved(),
+          "typed API cannot add intrinsic parameters to a closed-source provider");
     auto invalidRealm = contractFor(*module);
     invalidRealm.realmOwnDataProperties = {"slot"};
     HostContractAnalysis orphanRealmSlots(*module, invalidRealm);
@@ -887,6 +954,7 @@ int main() {
     checkDOMPrototypeQuery(context);
     checkDOMSnapshotLengths(context);
     checkSessionProvider(context);
+    checkIntrinsicParameters(context);
     if (ctbrowser_test_failures == 0) { std::puts("host contract live proof queries passed"); }
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

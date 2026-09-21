@@ -100,6 +100,26 @@ DESCRIPTION_TRANSCRIPT = (
     "absent:undefined:type:empty:empty-type:empty-false:false:snapshot:changed:join:"
     "missing-join:loop:known:nul:unicode:loose:not-null"
 )
+PARAMETER_STATE = """function parameterState(first, second, text, count, enabled) {
+  let key = first;
+  for (let i = 0; i < count; i++) {
+    key = key === first ? second : first;
+  }
+  return enabled ? Symbol(text) : key;
+}
+"""
+PARAMETER_DESCRIPTION = "function parameterDescription(key) { return key.description; }\n"
+PARAMETER_TEXT = "function parameterText(text) { return text; }\n"
+PARAMETER_NUMBER = "function parameterNumber(value) { return value; }\n"
+PARAMETER_BOOLEAN = "function parameterBoolean(value) { return value; }\n"
+PARAMETER_TYPES = {
+    "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
+    "parameter-description": ["symbol"],
+    "parameter-text": ["string"],
+    "parameter-number": ["number"],
+    "parameter-boolean": ["boolean"],
+    "parameters": ["symbol"],
+}
 CASES = {
     "state": (
         STATE,
@@ -179,6 +199,100 @@ CASES = {
 """,
         "true\n",
     ),
+    "parameter-state": (
+        PARAMETER_STATE,
+        r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@),
+        js_symbol_t (*)(js_symbol_t, js_symbol_t, js_string, ctnative::js_num, js_boolean_t)>);
+    const auto first = Symbol(js_string{"same"});
+    const auto second = Symbol(js_string{"same"});
+    const auto known = Symbol.iterator;
+    js_string text{"a\0b"};
+    assert(@ENTRY@(first, second, text, ctnative::js_num{0.0}, js_boolean_t{false}) == first);
+    assert(@ENTRY@(first, second, text, ctnative::js_num{1.0}, js_boolean_t{false}) == second);
+    assert(@ENTRY@(first, second, text, ctnative::js_num{2.0}, js_boolean_t{false}) == first);
+    assert(@ENTRY@(known, first, text, ctnative::js_num{3.0}, js_boolean_t{false}) == first);
+    assert(@ENTRY@(first, first, text, ctnative::js_num{3.0}, js_boolean_t{false}) == first);
+    assert(@ENTRY@(first, second, text, ctnative::js_num{-1.0}, js_boolean_t{false}) == first);
+    assert(@ENTRY@(first, second, text, ctnative::js_num{ctnative::js_nan_t{}}, js_boolean_t{false}) == first);
+    const auto made = @ENTRY@(first, second, text, ctnative::js_num{1.0}, js_boolean_t{true});
+    assert(made != first && made != second);
+    assert(made != @ENTRY@(first, second, text, ctnative::js_num{1.0}, js_boolean_t{true}));
+    text = js_string{"changed"};
+    assert(made.description() == js_string{"a\0b"});
+    assert(first.description() == js_string{"same"});
+    std::cout << "true\n";
+""",
+        "true\n",
+    ),
+    "parameter-description": (
+        PARAMETER_DESCRIPTION,
+        r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), nullable_string (*)(js_symbol_t)>);
+    assert(@ENTRY@(Symbol()).tag == nullable_string::kind::undefined);
+    const auto empty = @ENTRY@(Symbol(js_string{""}));
+    assert(empty.tag == nullable_string::kind::string && empty.value.empty());
+    auto key = Symbol(js_string{"a\0b"});
+    const auto saved = @ENTRY@(key);
+    key = Symbol(js_string{"changed"});
+    assert(saved.tag == nullable_string::kind::string && saved.value == std::string("a\0b", 3));
+    assert(@ENTRY@(key).value == "changed");
+    assert(@ENTRY@(Symbol.iterator).value == "Symbol.iterator");
+    assert(@ENTRY@(Symbol(js_string{"\xed\xa0\x80"})).value == "\xed\xa0\x80");
+    std::cout << "true\n";
+""",
+        "true\n",
+    ),
+    "parameter-text": (
+        PARAMETER_TEXT,
+        r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string)>);
+    js_string input{"a\0b"};
+    const auto saved = @ENTRY@(input);
+    input = js_string{"changed"};
+    assert(saved.value() == std::string("a\0b", 3));
+    assert(@ENTRY@(input).value() == "changed");
+    assert(@ENTRY@(js_string{""}).value().empty());
+    assert(@ENTRY@(js_string{"\xed\xa0\x80"}).value() == "\xed\xa0\x80");
+    std::cout << "true\n";
+""",
+        "true\n",
+    ),
+    "parameter-number": (
+        PARAMETER_NUMBER,
+        r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), ctnative::js_num (*)(ctnative::js_num)>);
+    assert(@ENTRY@(ctnative::js_num{42.5}).value() == 42.5);
+    assert(std::isnan(@ENTRY@(ctnative::js_num{ctnative::js_nan_t{}}).value()));
+    assert(@ENTRY@(ctnative::js_num{std::numeric_limits<double>::infinity()}).value() == INFINITY);
+    assert(@ENTRY@(ctnative::js_num{-std::numeric_limits<double>::infinity()}).value() == -INFINITY);
+    assert(@ENTRY@(ctnative::js_num{-0.0}).value() == 0 && std::signbit(@ENTRY@(ctnative::js_num{-0.0}).value()));
+    assert(!std::signbit(@ENTRY@(ctnative::js_num{0.0}).value()));
+    std::cout << "true\n";
+""",
+        "true\n",
+    ),
+    "parameter-boolean": (
+        PARAMETER_BOOLEAN,
+        r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_boolean_t (*)(js_boolean_t)>);
+    assert(@ENTRY@(js_boolean_t{true}));
+    assert(!@ENTRY@(js_boolean_t{false}));
+    std::cout << "true\n";
+""",
+        "true\n",
+    ),
+    # The original parameter refusal source now has an explicit category contract.
+    "parameters": (
+        "function bad(value) { return Symbol.iterator; }",
+        'assert(@ENTRY@(ctnative::Symbol()) == ctnative::Symbol.iterator); std::cout << "true\\n";',
+        "true\n",
+    ),
 }
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
@@ -231,15 +345,28 @@ FORBIDDEN = re.compile(
 )
 
 
-def prepare(args, name, source, *, entry_name=None):
+def prepare(args, name, source, *, entry_name=None, parameter_types=None):
     ir, contract = dom.prepare(args, name, source, 0, entry_name=entry_name)
     del contract["element_parameters"]
     contract.update(provider="ctbrowser-intrinsics-v1", initial_intrinsics=["Symbol"])
+    if parameter_types is not None:
+        contract["parameter_types"] = parameter_types
     return ir, contract
 
 
 def oracle(args):
-    source = STATE + OBSERVE + CONSTRUCT + METHODS + DESCRIPTIONS + f"""
+    source = (
+        STATE
+        + OBSERVE
+        + CONSTRUCT
+        + METHODS
+        + DESCRIPTIONS
+        + PARAMETER_STATE
+        + PARAMETER_DESCRIPTION
+        + PARAMETER_TEXT
+        + PARAMETER_NUMBER
+        + PARAMETER_BOOLEAN
+        + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
 var symbol03Observe = observe() === {json.dumps(TRANSCRIPT)};
@@ -251,7 +378,38 @@ var symbol08KnownText = Symbol.iterator.toString() === 'Symbol(Symbol.iterator)'
 var symbol09Descriptions = descriptions() === {json.dumps(DESCRIPTION_TRANSCRIPT)};
 var symbol10AbsentDescription = Symbol().description === undefined;
 var symbol11KnownDescription = Symbol.iterator.description === 'Symbol.iterator';
+function observeParameters() {{
+const firstInput = Symbol('same');
+const secondInput = Symbol('same');
+symbol12ParameterIdentity = parameterState(firstInput, secondInput, 'x', 0, false) === firstInput &&
+  parameterState(firstInput, secondInput, 'x', 1, false) === secondInput &&
+  parameterState(firstInput, secondInput, 'x', 2, false) === firstInput &&
+  parameterState(Symbol.iterator, firstInput, 'x', 3, false) === firstInput &&
+  parameterState(firstInput, firstInput, 'x', 3, false) === firstInput &&
+  parameterState(firstInput, secondInput, 'x', -1, false) === firstInput &&
+  parameterState(firstInput, secondInput, 'x', 0 / 0, false) === firstInput;
+let textInput = 'a\\u0000b';
+const createdInput = parameterState(firstInput, secondInput, textInput, 1, true);
+symbol13ParameterFresh = createdInput !== firstInput && createdInput !== secondInput &&
+  createdInput !== parameterState(firstInput, secondInput, textInput, 1, true);
+textInput = 'changed';
+symbol14ParameterSnapshot = createdInput.description === 'a\\u0000b' &&
+  firstInput.description === 'same';
+symbol15ParameterDescription = parameterDescription(Symbol()) === undefined &&
+  parameterDescription(Symbol('')) === '' && parameterDescription(Symbol('a\\u0000b')) === 'a\\u0000b' &&
+  parameterDescription(Symbol.iterator) === 'Symbol.iterator' &&
+  parameterDescription(Symbol('\\ud800')) === '\\ud800';
+symbol16ParameterText = parameterText('a\\u0000b') === 'a\\u0000b' &&
+  parameterText('') === '' && parameterText('\\ud800') === '\\ud800';
+const nanInput = parameterNumber(0 / 0);
+symbol17ParameterNumber = parameterNumber(42.5) === 42.5 && nanInput !== nanInput &&
+  parameterNumber(1 / 0) === 1 / 0 && parameterNumber(-1 / 0) === -1 / 0 &&
+  1 / parameterNumber(-0) === -1 / 0 && 1 / parameterNumber(0) === 1 / 0;
+symbol18ParameterBoolean = parameterBoolean(true) === true && parameterBoolean(false) === false;
+}}
+observeParameters();
 """
+    )
     vm = args.work / "oracle.js"
     vm.write_text(source)
     observations = (
@@ -266,6 +424,13 @@ var symbol11KnownDescription = Symbol.iterator.description === 'Symbol.iterator'
         "Descriptions",
         "AbsentDescription",
         "KnownDescription",
+        "ParameterIdentity",
+        "ParameterFresh",
+        "ParameterSnapshot",
+        "ParameterDescription",
+        "ParameterText",
+        "ParameterNumber",
+        "ParameterBoolean",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -296,7 +461,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
     deduced = args.work / f"{name}.deduced.mlir"
     run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
     client = (
-        "\n#include <cassert>\n#include <iostream>\n#include <type_traits>\nint main() {\n"
+        "\n#include <cassert>\n#include <cmath>\n#include <limits>\n#include <iostream>\n#include <type_traits>\nint main() {\n"
         + checks.replace("@ENTRY@", entries[0])
         + "}\n"
     )
@@ -382,7 +547,7 @@ def main():
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
     for name, (source, checks, expected) in CASES.items():
-        ir, contract = prepare(args, name, source)
+        ir, contract = prepare(args, name, source, parameter_types=PARAMETER_TYPES.get(name))
         accepted[name] = ir, contract
         for optimize in (False, True):
             output_name = f"{name}-{optimize}"
@@ -402,7 +567,6 @@ def main():
         for optimize in (False, True):
             refuse(ir, contract, name + str(optimize), optimize=optimize)
     source_refusals = {
-        "parameters": "function bad(value) { return Symbol.iterator; }",
         "wrapper-effect": "var changed=1; function bad() { return Symbol.iterator; }",
         "wrapper-replacement": "Symbol=0; function bad() { return Symbol.iterator; }",
         "intrinsic-declaration": "function Symbol() { return 1; }",
@@ -423,6 +587,13 @@ def main():
         "elements": {"element_parameters": []},
         "datasets": {"dataset_parameters": []},
         "realm": {"realm_global_this": True},
+        "parameter-object": {"parameter_types": ["object"]},
+        "parameter-union": {"parameter_types": [["symbol", "string"]]},
+        "parameter-unknown": {"parameter_types": ["Symbol"]},
+        "parameter-undefined": {"parameter_types": ["undefined"]},
+        "parameter-null": {"parameter_types": ["null"]},
+        "parameter-boolean-value": {"parameter_types": [True]},
+        "parameter-no-array": {"parameter_types": "symbol"},
     }.items():
         refuse(ir, dict(contract, **fields), "schema-" + name)
     missing = dict(contract)
@@ -452,8 +623,42 @@ def main():
     forged.write_text(text)
     manifest["module_sha256"] = fingerprint(args.opt, forged)
     refuse(forged, manifest, "forged-refused")
+    ir, contract = accepted["parameter-state"]
+    missing = dict(contract)
+    del missing["parameter_types"]
+    refuse(ir, missing, "parameter-missing-types")
+    for name, types in {
+        "short": contract["parameter_types"][:-1],
+        "long": contract["parameter_types"] + ["boolean"],
+        "reordered": ["string", "symbol", "symbol", "number", "boolean"],
+        "wrong-loop": ["symbol", "symbol", "string", "symbol", "boolean"],
+    }.items():
+        refuse(ir, dict(contract, parameter_types=types), "parameter-" + name)
+    refuse(ir, contract, "parameter-zero-budget", max_steps=0)
+    for name, body in {
+        "coercion": "return +key;",
+        "mutation": "key.toString=0; return key;",
+        "publication": "saved=key; return key;",
+        "call": "return key();",
+        "browser": "return key.classList;",
+    }.items():
+        ir, manifest = prepare(
+            args,
+            "parameter-" + name,
+            f"function bad(key) {{ {body} }}\n",
+            parameter_types=["symbol"],
+        )
+        for optimize in (False, True):
+            refuse(ir, manifest, f"parameter-{name}-{optimize}", optimize=optimize)
+    ir, manifest = prepare(
+        args,
+        "parameter-shadow",
+        "function bad(Symbol) { return Symbol.iterator; }\n",
+        parameter_types=["symbol"],
+    )
+    refuse(ir, manifest, "parameter-shadow-refused")
     print(
-        f"Symbol exports: typed branch/loop return and primitive transcript agree with Node/VM; "
+        f"Symbol exports: typed parameters, branch/loop return and primitive transcript agree with Node/VM; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

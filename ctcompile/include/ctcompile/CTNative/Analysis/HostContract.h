@@ -21,6 +21,13 @@ struct HostRootRequest {
     std::vector<std::string> properties;
 };
 
+enum class HostIntrinsicParameter {
+    boolean,
+    number,
+    string,
+    symbol
+};
+
 // Driver input, never an IR proof annotation. closed-source-v1 starts with
 // ordinary own global bindings and unmodified intrinsic prototypes; all
 // subsequent source mutations/calls still require the analysis below.
@@ -43,7 +50,8 @@ struct HostContract {
         // The host proof establishes provenance, not document lifetime;
         // native ownership refuses until storage is confined to that owner.
         ctbrowserDOMDataSession,
-        // A parameterless named native export in an isolated standard realm.
+        // A named native export in an isolated standard realm, with exact
+        // primitive parameter categories supplied by its native caller.
         // Only Symbol and undefined are fixed; the complete source proof permits
         // primitive operations and proved Symbol calls, without browser inputs,
         // arbitrary calls, global publication or external script reentry.
@@ -65,6 +73,9 @@ struct HostContract {
     // Explicit subset whose namespace is HTML or SVG, checked at native entry.
     // Other namespaces need public namespace URI ownership before admission.
     std::vector<unsigned> datasetParameters;
+    // ctbrowser-intrinsics-v1 only: one exact category per explicit parameter.
+    // Values remain runtime inputs; no identity, description or truth is promised.
+    std::vector<HostIntrinsicParameter> intrinsicParameters;
     std::vector<HostRootRequest> roots;
     std::vector<std::string> observations;
     std::vector<std::string> absentBindings;
@@ -229,6 +240,7 @@ public:
     [[nodiscard]] llvm::ArrayRef<ctjs::FuncOp> callbacks() const { return checkedCallbacks; }
     [[nodiscard]] ctjs::FuncOp callback(ctjs::CreateClosureOp closure) const;
     [[nodiscard]] bool isCallbackParameter(mlir::Value value) const;
+    [[nodiscard]] std::optional<HostIntrinsicParameter> intrinsicParameter(mlir::Value value) const;
     [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> parameters() const { return elements; }
     [[nodiscard]] bool isElement(mlir::Value value) const;
     // Validated parameters or nullable closest results, for equality only.
@@ -283,6 +295,7 @@ private:
     std::vector<ctjs::FuncOp> checkedCallbacks;
     std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> callbackClosures;
     std::vector<mlir::BlockArgument> elements;
+    llvm::DenseMap<mlir::Value, HostIntrinsicParameter> intrinsicParameters;
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;

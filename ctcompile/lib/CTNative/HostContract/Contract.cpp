@@ -109,8 +109,8 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                      "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1, "
                      "ctbrowser-dom-data-session-v1 or ctbrowser-intrinsics-v1");
     }
-    if (intrinsics ? !keys(*object,
-                           {"version", "provider", "module_sha256", "entry", "initial_intrinsics"})
+    if (intrinsics ? !keys(*object, {"version", "provider", "module_sha256", "entry",
+                                     "initial_intrinsics", "parameter_types"})
         : dom ? !keys(*object, {"version", "provider", "module_sha256", "entry",
                                 "element_parameters", "initial_intrinsics", "dataset_parameters"})
               : !keys(*object,
@@ -140,6 +140,25 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         }
         if (result.initialIntrinsics.size() != 1 || result.initialIntrinsics.front() != "Symbol") {
             return error("intrinsic entry requires only the standard Symbol identity");
+        }
+        if (const auto * requested = object->get("parameter_types")) {
+            const auto * parameters = requested->getAsArray();
+            if (!parameters) { return error("intrinsic parameter_types must be an array"); }
+            for (const auto & parameter : *parameters) {
+                const auto name = parameter.getAsString();
+                if (name == "boolean") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::boolean);
+                } else if (name == "number") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::number);
+                } else if (name == "string") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::string);
+                } else if (name == "symbol") {
+                    result.intrinsicParameters.push_back(HostIntrinsicParameter::symbol);
+                } else {
+                    return error("intrinsic parameter_types supports only boolean, number, "
+                                 "string and symbol");
+                }
+            }
         }
         return result;
     }
@@ -399,6 +418,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
     if ((contract.provider != HostContract::Provider::closedSource &&
          contract.provider != HostContract::Provider::closedSourceSession &&
          contract.provider != HostContract::Provider::ctbrowserDOMDataSession) ||
+        !contract.intrinsicParameters.empty() ||
         (contract.provider != HostContract::Provider::ctbrowserDOMDataSession &&
          !contract.elementParameters.empty())) {
         return "closed-source analysis requires a closed-source host provider";

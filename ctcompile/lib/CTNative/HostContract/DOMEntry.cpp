@@ -53,6 +53,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
          contract.provider != HostContract::Provider::ctbrowserDOMSession && !intrinsicEntry) ||
         (intrinsicEntry ? !contract.elementParameters.empty()
                         : contract.elementParameters.empty()) ||
+        (!intrinsicEntry && !contract.intrinsicParameters.empty()) ||
         (intrinsicEntry &&
          (!contract.datasetParameters.empty() || contract.initialIntrinsics.size() != 1 ||
           contract.initialIntrinsics.front() != "Symbol")) ||
@@ -131,9 +132,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         return;
     }
     auto & targetBlock = target.getBody().front();
-    if (contract.elementParameters.size() !=
+    if ((intrinsicEntry ? contract.intrinsicParameters.size()
+                        : contract.elementParameters.size()) !=
         targetBlock.getNumArguments() - ctjs::implicit_arguments) {
-        refusal = intrinsicEntry ? "intrinsic entry must have no explicit parameters"
+        refusal = intrinsicEntry ? "intrinsic entry must declare every explicit parameter type"
                                  : "DOM entry must declare every explicit parameter as an element";
         return;
     }
@@ -160,6 +162,23 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     }
 
     using Kind = dom_entry_detail::Kind;
+    llvm::DenseMap<mlir::Value, HostIntrinsicParameter> provedIntrinsicParameters;
+    llvm::DenseMap<mlir::Value, Kind> intrinsicKinds;
+    for (const auto [index, parameter] : llvm::enumerate(contract.intrinsicParameters)) {
+        if (!spend()) { return; }
+        Kind kind;
+        switch (parameter) {
+        case HostIntrinsicParameter::boolean: kind = Kind::boolean; break;
+        case HostIntrinsicParameter::number: kind = Kind::number; break;
+        case HostIntrinsicParameter::string: kind = Kind::string; break;
+        case HostIntrinsicParameter::symbol: kind = Kind::symbol; break;
+        default: refusal = "intrinsic entry parameter has an unsupported category"; return;
+        }
+        auto argument =
+            targetBlock.getArgument(static_cast<unsigned>(index) + ctjs::implicit_arguments);
+        provedIntrinsicParameters[argument] = parameter;
+        intrinsicKinds[argument] = kind;
+    }
     std::vector<ctjs::GetPropertyOp> provedTokens, provedDatasets, provedStringVectorLengths,
         provedStringVectorIndices;
     llvm::DenseSet<ctjs::GetPropertyOp> provedElementVectorLengths, provedElementVectorIndices;
@@ -262,7 +281,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             }
             values[argument] = argument.getArgNumber() < ctjs::implicit_arguments ? Kind::implicit
                                : callbackBody                                     ? Kind::string
-                                                                                  : Kind::element;
+                               : intrinsicEntry ? intrinsicKinds.lookup(argument)
+                                                : Kind::element;
         }
 
         // Both arms are checked. Loop-carried values have invariant scalar
@@ -428,6 +448,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     undefinedReturn = provedUndefinedReturn;
     checkedWrapper = declaration;
     elements = std::move(provedElements);
+    intrinsicParameters = std::move(provedIntrinsicParameters);
     tokenLists = std::move(provedTokens);
     datasets = std::move(provedDatasets);
     stringVectorLengths = std::move(provedStringVectorLengths);
@@ -467,6 +488,13 @@ bool DOMEntryAnalysis::isCallbackParameter(mlir::Value value) const {
     return llvm::any_of(checkedCallbacks, [&](ctjs::FuncOp callback) {
         return callback.getBody().front().getArgument(ctjs::implicit_arguments) == value;
     });
+}
+
+std::optional<HostIntrinsicParameter> DOMEntryAnalysis::intrinsicParameter(
+    mlir::Value value) const {
+    const auto found = intrinsicParameters.find(value);
+    if (found == intrinsicParameters.end()) { return {}; }
+    return found->second;
 }
 
 bool DOMEntryAnalysis::isElement(mlir::Value value) const {

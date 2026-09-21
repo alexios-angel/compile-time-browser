@@ -400,11 +400,25 @@ void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
-    const mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
-                                ? mlir::Type(DOMElementType::get(value.getContext()))
-                            : domEntry_ && domEntry_->isCallbackParameter(value)
-                                ? mlir::Type(StrType::get(value.getContext(), StrEncoding::UTF8))
-                                : mlir::Type(BoxedType::get(value.getContext()));
+    mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
+                          ? mlir::Type(DOMElementType::get(value.getContext()))
+                      : domEntry_ && domEntry_->isCallbackParameter(value)
+                          ? mlir::Type(StrType::get(value.getContext(), StrEncoding::UTF8))
+                          : mlir::Type(BoxedType::get(value.getContext()));
+    if (domEntry_) {
+        if (const auto parameter = domEntry_->intrinsicParameter(value)) {
+            switch (*parameter) {
+            case HostIntrinsicParameter::boolean: type = BoolType::get(value.getContext()); break;
+            case HostIntrinsicParameter::number:
+                type = NumType::getDouble(value.getContext());
+                break;
+            case HostIntrinsicParameter::string:
+                type = StrType::get(value.getContext(), StrEncoding::UTF8);
+                break;
+            case HostIntrinsicParameter::symbol: type = SymbolType::get(value.getContext()); break;
+            }
+        }
+    }
     propagateIfChanged(lattice, lattice->join(TypeValue{type}));
 }
 
