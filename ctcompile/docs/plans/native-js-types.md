@@ -55,8 +55,8 @@ Bootstrap `R.find` omitted/undefined default receiver now works under a source
 document-root guard with length observations and canonical indexed element loops.
 The copied result retains the proxy spread cap, while original NodeList aliases
 remain uncapped. Proved `for…of` consumers now use native indexed loops over those
-typed vectors. Custom iterator protocols, nested opens, general array behavior
-and the application driver need work.
+typed vectors, including nested queries with live owner/Style association. Custom
+iterator protocols, general array behavior and the application driver need work.
 Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
@@ -485,10 +485,16 @@ own length before rebinding to the original query snapshot. Live proof recognize
 the exact `min(snapshot.length, 16777216)` bound, verifies unit-step indices and
 retains ordinary owner/Style borrowing. Original NodeList length aliases remain
 uncapped. Element `for…of` now removes the proved importer protocol alternative
-and uses the existing native indexed loop lowering. Private prefix proofs retain
-document guards, observe length without returning borrowed views, and charge
-nested spread normalization. Complete live reproof still controls admission.
-Literal C++ range-for emission, custom protocols, nested opens, unguarded defaults,
+and uses the existing native indexed loop lowering. Nested queries stay in their
+original bodies. A private whole-entry proof checks input producers, scalar
+backedges, owner/Style association and effects before and after materialization
+caps. Exact for-of arms keep separate spreads distinct; materialized reads need
+their own length guard. Document guards retain their original scope. Immutable
+Bootstrap helper holders allow repeated reads inside structured loops while
+retaining unique unconditional slot initialization and complete escape checks.
+Exact bounded members can select an explicit helper receiver over its undefined
+default; complete mapped index proof supplies that fact, never nullable results.
+Literal C++ range-for emission, custom protocols, unguarded defaults,
 general array behavior and the application driver remain unfinished.
 
 The focused indexed `R.find` fixture passes **48 native executions/114 refusals**.
@@ -739,9 +745,9 @@ existing `auto`/template deduction.
 4. **Document/element views in progress.** Borrowed/owned entries now emit typed
    selectors, optional element results, explicitly bound document root/query calls
    and document/element query-all snapshots. Guarded Bootstrap default-root calls
-   and bounded indexed/`for…of` result consumers are proved. Extend loop-nested
-   iterator proofs and connect an application driver. A C++ accessor alone never
-   broadens source admission.
+   and bounded indexed/`for…of` result consumers, including nested queries, are
+   proved. Extend custom iterable proofs and connect an application driver.
+   A C++ accessor alone never broadens source admission.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
    reads, absent/String construction, direct primitive methods and branch/loop/

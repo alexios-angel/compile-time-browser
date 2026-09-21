@@ -466,28 +466,43 @@ protocols remain refused.
 existing native loop lowering over `std::vector<js_element_t>`:
 
 ```javascript
-for (const button of element.querySelectorAll('.selected')) {
-  button.classList.remove('selected');
+for (const group of element.querySelectorAll('.group')) {
+  for (const button of group.querySelectorAll('.selected')) {
+    button.classList.remove('selected');
+  }
 }
 ```
 
 The manifest must additionally promise original `Array`, `Element`,
 `__ctbrowser_for_of_open`, `__ctbrowser_iter_next` and `__ctbrowser_iter_close`
-identities. The compiler proves each iterator input using a private prefix,
-retaining enclosing conditions so a guarded Bootstrap default retains its root
-authority. That proof observes length rather than returning a borrowed snapshot.
-It then removes the importer’s protocol alternative and reproves the complete
-live entry, including all effects and element uses. Emission uses ordinary C++
+identities. The compiler provisionally selects exact importer materialization
+arms in a private candidate, then proves every surviving input producer and the
+complete entry. Original loop bodies, backedges and document-root guards stay in
+place. Nested queries therefore see DOM writes from earlier iterations and retain
+their outer element's owner and live Style. After inserting the NodeList cap,
+the complete entry is proved again before publication. Emission uses ordinary C++
 indexed loops and checked vector access; it does not yet print range-for syntax.
 There is no VM iterator or generic runtime value.
+
+Unchanged Bootstrap `R.find` may be called inside either loop. Its immutable
+helper holder permits repeated reads across structured loops; callable slots
+still require unique unconditional initialization, preceding each read. Slot
+replacement, conditional initialization and holder escape remain refused.
+An exact bounded member cannot equal `undefined`, so the helper's default arm
+is removed privately. The mapped member must still receive complete typed index
+evidence. Nullable selector results receive no such fact.
 
 Direct NodeList iteration and spread/concat both preserve the VM’s 2^24 proxy
 materialization cap. Separate observations of the original NodeList remain
 uncapped. The vector owns membership; each member borrows its document and live
-Style. Supported DOM writes do not change saved membership. Sequential and
-conditional iterator opens are supported; opens nested inside another loop need
-an additional prefix/state proof. Custom hooks, snapshot mutation or escape,
-missing intrinsic guarantees and unguarded default roots remain diagnostics.
+Style. Each materialized index must use that materialization's own length guard;
+the original NodeList's uncapped length cannot authorize the read. A separate
+spread of the same NodeList retains its own confined-copy proof. Supported DOM
+writes do not change saved membership. Sequential, conditional and nested opens
+are supported with invariant scalar loop state. Custom hooks, snapshot mutation
+or escape, missing intrinsic guarantees and unguarded default roots remain
+diagnostics. A later constant fold that would erase an already recorded input
+also refuses, keeping operation identities valid until reproof.
 
 A confined spread into an empty concat receiver supports `.length` and canonical
 indexed element loops:

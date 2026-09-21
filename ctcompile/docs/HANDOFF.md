@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nested DOM and Bootstrap iteration, 2026-09-21 UTC
+
+Continued clean **ac5c984a** and its recorded nested-iteration boundary.
+**44b2e8f6** admits nested `for…of` over direct query snapshots and unchanged
+Bootstrap `R.find`, including guarded default outer roots and explicit inner
+receivers. Private complete-entry proofs retain original loop state, query
+placement, document guards, effects and owner/Style association. Materialized
+indices need their own length guard; direct iteration and concat retain the
+2^24 cap while original NodeList aliases stay uncapped.
+
+Immutable helper holders now permit repeated reads inside structured loops,
+with unique unconditional slot initialization and escape checks. Exact bounded
+members select explicit helper receivers over their undefined defaults only
+after complete mapped index reproof. Nullable values gain no such fact.
+Generated C++ uses typed vectors, indexed loops and public DOM/Style calls;
+literal range-for printing remains unfinished. No browser/shared implementation
+or runtime type changed, and native output has no Script dependency.
+
+Final focused checks pass: exact host-contract CTest **1/1, 0.63 s total** and
+selected nested-iteration/dataset lit **2/2, 136.90 s**. Nested traversal completed
+**48 native executions, two formerly refused source checks and 94 refusals**.
+Dataset completed **112 Node/VM source-double observations**, eight GCC/Clang
+binaries, its lifetime sanitizer and **432 refusals**. Earlier affected flat,
+indexed and default-root cases passed **64/116**, **48/114** and **32/92**;
+their accompanying nested failures were fixed before the final run. All eight
+code/test hashes match devbox. Scoped checks pass; required formatting retains
+16 untouched diagnostics. Full suites and broad replays were skipped.
+
+**Next browser boundary:** prove a closed custom iterator's callable, typed `next`
+result, state, effects, escape and abrupt-close behavior. Add a valid iterator
+fixture while retaining the current custom-protocol refusal. Literal range-for
+emission, unguarded default roots, broader Array behavior and the application
+driver also remain unfinished.
+Full Bootstrap is not admitted. No above-cap collection or new element-specific
+Node/VM differential execution was measured.
+
+[Exact checks and next boundary](handoff/2026-09-21-nested-element-iteration.md).
+
 ## Native element for-of, 2026-09-21 UTC
 
 Continued clean **a4db6abb** and its recorded element-iteration boundary.
