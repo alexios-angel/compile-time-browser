@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Complete vendor Data holders and division String indices, 2026-09-21 UTC
+
+Continued clean **29057f08**. **a96d7d2a** preserves the complete Data conflict
+observer arm until every invocation proves it unreachable. **fb5b8173** removes
+only the redundant guard on an unread arrow receiver. Two native fixtures now
+retain the entire vendor Data declaration, including its arrow getter and
+early-return removal, with literal String element keys. Live receiver reads,
+unused observers and reachable conflicts still refuse. **cd8fb905** admits one
+division of Number literals as a UTF-16 String index, normalizing NaN to zero;
+direct-literal casing/dataset authority is unchanged.
+
+Three selected lit cases pass. Captured helpers measured **235 observations,
+464 main native executions, 470 unprepared and 311 preparation refusals** before
+the arrow extension. Its final focused selector passes **32 native executions,
+12 unprepared and 11 preparation refusals**, with vendor budget **5952**.
+Final String checks pass **48 executions, 678 refusals, 106 Node/VM agreements
+and 11 known differences**. Final host-contract CTest passes 1/1; all eight final
+code/test hashes match the devbox. Scoped checks pass; repository formatting
+retains 16 existing diagnostics. No browser/runtime code changed. Full suites,
+broad corpus/matrices, full Bootstrap, WPT/test262, Windows and new sanitizers
+were skipped; the complete class selection was not replayed after the arrow-only
+extension.
+
+**Next:** actual DOM element-key identity and ownership through public
+DOM/HostContract APIs. The original B/Data+B specimen still refuses; reachable
+conflicts, broader String operations, conditional callees, mutable cells, String
+ordering, document views and the application driver remain. No full-Bootstrap
+admission or new corpus coverage measurement is claimed.
+
+[Exact checks, corrected probes and next boundary](handoff/2026-09-21-data-conflicts-division-indices.md).
+
 ## Nullable Data getters and primitive String indices, 2026-09-21 UTC
 
 Continued clean **b2d1a4af** from its recorded nullable Data boundary.
