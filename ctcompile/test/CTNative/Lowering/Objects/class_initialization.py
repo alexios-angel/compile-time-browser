@@ -831,6 +831,7 @@ def main():
             "class-map-inherited-chain",
             "class-map-inherited-mixed-captures",
             "class-map-record-constructor-inherited",
+            "class-map-inherited-base-arithmetic",
             "inherited-own-fields-iterate-forward-inherited",
             "inherited-own-fields-iterate-borrow-inherited",
             "inherited-own-fields-iterate-method-nearest",
