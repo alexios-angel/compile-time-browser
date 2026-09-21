@@ -11,5 +11,7 @@ target_sources(ctbrowser-core PUBLIC FILE_SET HEADERS FILES
   number_format.hpp
   scheduler.hpp
   slab.hpp
+  symbol.hpp
   uri.hpp
+  well_known_symbols.def
 )

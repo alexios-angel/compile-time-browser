@@ -38,8 +38,7 @@ void install_symbol(context & cx) {
     method(cx, symbol_proto, "toString", 0, [this_symbol](context & c, std::span<value>) {
         const value self = this_symbol(c, "Symbol.prototype.toString");
         if (!self.is_kind(heap_kind::symbol)) { return value::undefined(); }
-        return c.string("Symbol(" + static_cast<symbol_object *>(self.as_heap())->description +
-                        ")");
+        return c.string(static_cast<symbol_object *>(self.as_heap())->to_string());
     });
     method(cx, symbol_proto, "valueOf", 0, [this_symbol](context & c, std::span<value>) {
         return this_symbol(c, "Symbol.prototype.valueOf");
@@ -52,12 +51,9 @@ void install_symbol(context & cx) {
             cx, "get description", [this_symbol](context & c, std::span<value>) {
                 const value self = this_symbol(c, "Symbol.prototype.description");
                 if (!self.is_kind(heap_kind::symbol)) { return value::undefined(); }
-                auto * sym = static_cast<symbol_object *>(self.as_heap());
-                if (sym->key.starts_with(symbol_key_prefix) &&
-                    sym->key.find(':', symbol_key_prefix.size()) == std::string::npos) {
-                    return value::undefined();
-                }
-                return c.string(sym->description);
+                const auto description =
+                    static_cast<symbol_object *>(self.as_heap())->description_value();
+                return description ? c.string(std::string{*description}) : value::undefined();
             });
         detail::install_arity(cx, getter, 0);
         symbol_proto->define_accessor("description", value::object(getter), value::undefined(),
@@ -96,9 +92,9 @@ void install_symbol(context & cx) {
             if (described && !stringable_arg(c, a[0])) { return value::undefined(); }
             const std::string description = described ? c.to_string(a[0]) : std::string{};
             if (c.throw_pending()) { return value::undefined(); }
-            std::string key = std::string{symbol_key_prefix} + std::to_string((*counter)++);
-            if (described) { key += ":" + description; }
-            return value::object(c.allocate<symbol_object>(description, key));
+            return value::object(c.allocate<symbol_object>(ctbrowser::make_symbol(
+                (*counter)++,
+                described ? std::optional<std::string_view>{description} : std::nullopt)));
         });
     // It KEEPS [[Construct]] (20.4.1: `new Symbol()` is a TypeError from the
     // body, not "not a constructor" - IsConstructor(Symbol) is true).
@@ -106,33 +102,15 @@ void install_symbol(context & cx) {
     // configurable (20.4.2), and enumerable would put `iterator` in
     // `Object.keys(Symbol)`. Its [[Description]] is "Symbol.iterator" (the
     // table in 6.1.5.1), which is what key_value rebuilds too.
-    const auto well_known = [&](const char * name, const char * key) {
+    const auto well_known = [&](const char * name, ctbrowser::well_known_symbol kind) {
         symbol->define(
-            name, value::object(cx.allocate<symbol_object>(std::string{"Symbol."} + name, key)),
+            name,
+            value::object(cx.allocate<symbol_object>(ctbrowser::make_well_known_symbol(kind))),
             attr_none);
     };
-    well_known("iterator", "@@iterator");
-    well_known("asyncIterator", "@@asyncIterator");
-    well_known("hasInstance", "@@hasInstance");
-    well_known("toPrimitive", "@@toPrimitive");
-    well_known("toStringTag", "@@toStringTag");
-    well_known("unscopables", "@@unscopables");   // read by `with` (compile/with.cpp)
-    well_known("dispose", "@@dispose");           // DisposableStack, Iterator.prototype
-    well_known("asyncDispose", "@@asyncDispose"); // AsyncDisposableStack
-    // EVERY ONE OF THESE FIVE IS CONSULTED, which is the bar for being here:
-    // a well-known symbol that no operation reads is a promise the engine does
-    // not keep. IsRegExp (7.2.8) reads @@match to decide whether `includes`,
-    // `startsWith` and `endsWith` must refuse their argument, and since
-    // 2026-09-12 String.prototype's match, matchAll, replace, replaceAll,
-    // search and split each ask their argument for its own method first
-    // (string.cpp, symbol_dispatch). A real RegExp still carries none.
-    well_known("match", "@@match");
-    well_known("matchAll", "@@matchAll");
-    well_known("replace", "@@replace");
-    well_known("search", "@@search");
-    well_known("split", "@@split");
-    well_known("isConcatSpreadable", "@@isConcatSpreadable"); // read by Array.prototype.concat
-    well_known("species", "@@species"); // read by ArraySpeciesCreate (builtins/internal.hpp)
+#define CTBROWSER_WELL_KNOWN_SYMBOL(name) well_known(#name, ctbrowser::well_known_symbol::name);
+#include "ctbrowser/core/well_known_symbols.def"
+#undef CTBROWSER_WELL_KNOWN_SYMBOL
     // A REGISTRY, and it has to hold the SYMBOLS rather than mint a fresh one
     // per call. Two `Symbol.for('x')` produced two objects with the same key,
     // and `===` compares identity - so the one guarantee the registry exists to

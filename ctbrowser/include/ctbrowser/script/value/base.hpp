@@ -13,6 +13,7 @@
 #include <boost/multiprecision/cpp_int.hpp>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/core/symbol.hpp>
 
 // The JS value, in one 64-bit word: NaN-boxed, so every value is a machine
 // word passed in a register, with no allocation to represent a number.
@@ -194,7 +195,7 @@ struct string_object final : heap_object {
 // The spelling that marks a property key as a SYMBOL rather than a string:
 // the enumeration walk, the JSON writer and the code that mints them all
 // recognise it.
-inline constexpr std::string_view symbol_key_prefix = "@@sym:";
+using ctbrowser::symbol_key_prefix;
 // A PRIVATE NAME'S KEY. `#x` is a property of the object here, not a slot in
 // a per-class private environment - but its key is `@#x`, which no source
 // text can spell as a property name, so `o["#x"]`, `"#x" in o`,
@@ -218,11 +219,11 @@ inline constexpr std::string_view private_key_prefix = "@#";
 // What that trades away, said out loud: a symbol is not truly unforgeable - a
 // page that writes `o["@@iterator"]` reaches the same slot - and printing one
 // shows its key. `typeof` is still "symbol", which is what code branches on.
-struct symbol_object final : heap_object {
-    std::string description;
-    std::string key;
+struct symbol_object final : heap_object, ctbrowser::symbol_value {
     symbol_object(std::string d, std::string k)
-        : heap_object(heap_kind::symbol), description(std::move(d)), key(std::move(k)) {}
+        : heap_object(heap_kind::symbol), symbol_value(std::move(d), std::move(k)) {}
+    explicit symbol_object(ctbrowser::symbol_value symbol)
+        : heap_object(heap_kind::symbol), symbol_value(std::move(symbol)) {}
 };
 
 // AN ARBITRARY-PRECISION INTEGER. `boost::multiprecision::cpp_int` holds it,
@@ -263,8 +264,8 @@ struct bigint_object final : heap_object {
     // Object.getOwnPropertySymbols rebuilds from a table key is the one the
     // property was defined with.
     if (is_kind(heap_kind::symbol) && o.is_kind(heap_kind::symbol)) {
-        return static_cast<const symbol_object *>(as_heap())->key ==
-               static_cast<const symbol_object *>(o.as_heap())->key;
+        return *static_cast<const symbol_object *>(as_heap()) ==
+               *static_cast<const symbol_object *>(o.as_heap());
     }
     return false;
 }
