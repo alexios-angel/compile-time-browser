@@ -50,6 +50,48 @@ std::int32_t closureLifter::enclosingIndex(ctjs::CreateClosureOp c, unsigned i) 
     return indices[i];
 }
 
+// Match cell identity, never its current value or its source spelling.
+// ponytail: only existing direct sibling captures; deeper relays or missing
+// capture slots need an explicit environment propagation proof.
+std::optional<unsigned> closureLifter::siblingCaptureSlot(ctjs::CreateClosureOp closure,
+                                                          unsigned index,
+                                                          ctjs::CreateClosureOp holder) {
+    if (enclosingIndex(closure, index) >= 0 ||
+        !closure.getUpvalues()[index].getDefiningOp<ctjs::CreateCellOp>() ||
+        closure->getParentOfType<ctjs::FuncOp>() != holder->getParentOfType<ctjs::FuncOp>()) {
+        return std::nullopt;
+    }
+    for (unsigned slot = 0; slot < holder.getUpvalues().size(); ++slot) {
+        if (enclosingIndex(holder, slot) < 0 &&
+            holder.getUpvalues()[slot] == closure.getUpvalues()[index]) {
+            return slot;
+        }
+    }
+    return std::nullopt;
+}
+
+mlir::Value closureLifter::siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
+                                                ctjs::CreateClosureOp holder) {
+    if (!lifted.contains(holder.getOperation())) { return {}; }
+    const auto slot = siblingCaptureSlot(closure, index, holder);
+    auto target = targetOf(holder);
+    const auto captures = target ? target->getAttrOfType<mlir::IntegerAttr>("ctnative.captures")
+                                 : mlir::IntegerAttr{};
+    if (!slot || !captures || static_cast<int64_t>(*slot) >= captures.getInt() ||
+        target.getBody().empty()) {
+        return {};
+    }
+    const unsigned argument = captureArgument(*slot);
+    const auto cells = target->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
+    const bool carried =
+        cells && llvm::is_contained(cells.asArrayRef(), static_cast<int32_t>(argument));
+    if (argument >= target.getBody().front().getNumArguments() ||
+        slotIsCarried(closure, index) != carried) {
+        return {};
+    }
+    return target.getBody().front().getArgument(argument);
+}
+
 // THE VALUE A LIFTED CALL PASSES FOR CAPTURE SLOT i, or null when the slot
 // is neither shape a lift carries. Two shapes, and both hold the VALUE of a
 // binding, never the box:
@@ -324,6 +366,20 @@ std::optional<std::string> closureLifter::whyUpvalueReadsDoNotLift(ctjs::CreateC
 std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c) {
     if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
+    if (const auto found = boundCaptureCalls.find(target.getOperation());
+        found != boundCaptureCalls.end()) {
+        for (const boundCaptureCall & site : found->second) {
+            for (unsigned i = 0; i < c.getUpvalues().size(); ++i) {
+                mlir::Value value = siblingCapturedValue(c, i, site.holder);
+                if (!value ||
+                    value.getParentRegion()->getParentOfType<ctjs::FuncOp>() !=
+                        site.call->getParentOfType<ctjs::FuncOp>() ||
+                    !dominance.properlyDominates(value, site.call.operator->())) {
+                    return "a sibling caller has not lifted the identical captured binding";
+                }
+            }
+        }
+    }
     mlir::Block & entry = target.getBody().front();
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
     // CONDITION 4: every use of the closure VALUE is a call this lowers.

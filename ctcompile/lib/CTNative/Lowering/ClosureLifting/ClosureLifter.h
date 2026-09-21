@@ -66,6 +66,13 @@ struct closureLifter {
 
     llvm::SmallVector<ctjs::CreateClosureOp> closures;
     llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> uniqueClosureByTarget;
+    struct boundCaptureCall {
+        ctjs::CallDirectOp call;
+        ctjs::CreateClosureOp holder;
+    };
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<boundCaptureCall>> boundCaptureCalls;
+    llvm::DenseSet<mlir::Operation *> siblingBindingTargets;
+    bool allowSiblingCaptures = false;
 
     // --- PHASE 59 SLICE 2 STEP 1: A BINDING WITH ONE DOMINATING WRITE -------
     //
@@ -271,8 +278,10 @@ struct closureLifter {
     //  5. AND THE CAPTURES REACH THE CALLS THIS STEP WRITES ITSELF. A call in
     //     ANOTHER function is one lifting has nothing to prepend at - the
     //     METHODCAP argument, one binding along - so a binding read from a
-    //     nested function may hold only a closure whose every capture is
-    //     ITSELF a binding this step erases. That is not the empty condition
+    //     nested function may hold a closure whose every capture is
+    //     ITSELF a binding this step erases, or the identical cell already
+    //     captured by its sibling caller. The latter is passed through the
+    //     caller's ordinary lifted capture parameter. That is not the empty condition
     //     it looks like: a bundle's helpers close over each other, and the
     //     recursive `var f = function () { ... f(); }` is exactly the case
     //     where the one capture is the binding being defined.
@@ -511,11 +520,17 @@ struct closureLifter {
     std::optional<std::string> examineFunctionBinding(ctjs::CreateCellOp cell,
                                                       functionBinding & plan);
 
-    void makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target);
+    void makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target, ctjs::CreateClosureOp holder);
+
+    static std::optional<unsigned> siblingCaptureSlot(ctjs::CreateClosureOp closure, unsigned index,
+                                                      ctjs::CreateClosureOp holder);
+
+    mlir::Value siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
+                                     ctjs::CreateClosureOp holder);
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
 
-    void bindLocalFunctions(liftReport & out);
+    bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 
     std::string whyNotABoundFunction(ctjs::CellSetOp store);
 

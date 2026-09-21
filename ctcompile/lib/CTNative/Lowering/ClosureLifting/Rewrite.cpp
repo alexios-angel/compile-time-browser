@@ -23,6 +23,35 @@ liftReport closureLifter::run() {
     // walks, which is why they are a function of their own now.
     indexAndNewTargets();
     specializeCallbacks(out);
+    if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
+        // Erasing a sibling's callable binding is valid only when both sides
+        // lift. Keep refused CTJS executable by publishing the whole attempt
+        // only after that private proof; otherwise use the original rule.
+        mlir::OwningOpRef<mlir::ModuleOp> prepared(module.clone());
+        closureLifter trial{*prepared, censusOn};
+        trial.allowSiblingCaptures = true;
+        liftReport result = trial.run();
+        const bool complete =
+            llvm::all_of(trial.siblingBindingTargets, [&](mlir::Operation * target) {
+                auto closure = trial.uniqueClosureByTarget.lookup(target);
+                return closure && trial.lifted.contains(closure.getOperation()) &&
+                       llvm::all_of(trial.boundCaptureCalls.lookup(target),
+                                    [&](const boundCaptureCall & site) {
+                                        return trial.lifted.contains(site.holder.operator->());
+                                    });
+            });
+        if (complete) {
+            result.calls += out.calls;
+            result.callbackCalls += out.callbackCalls;
+            result.callbackParameters += out.callbackParameters;
+            module->setAttrs((*prepared)->getAttrs());
+            module.getBodyRegion().takeBody(prepared->getBodyRegion());
+            trial.module = module;
+            trial.dominance.invalidate();
+            *this = std::move(trial);
+            return result;
+        }
+    }
     bindLocalFunctions(out);
     // Expose proved uncaptured object literals before the argument/receiver
     // census. A separate census owns the store pointers this rewrite erases;
@@ -573,6 +602,33 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             ++out.calls;
         }
         return;
+    }
+
+    if (captures != 0) {
+        const auto found = boundCaptureCalls.find(target.getOperation());
+        if (found != boundCaptureCalls.end()) {
+            for (boundCaptureCall & site : found->second) {
+                llvm::SmallVector<mlir::Value> arguments;
+                for (unsigned i = 0; i < captures; ++i) {
+                    const mlir::Value value = siblingCapturedValue(made.front(), i, site.holder);
+                    if (!value) {
+                        llvm::report_fatal_error("ctnative lowering: a proved sibling capture no "
+                                                 "longer reaches its call");
+                    }
+                    arguments.push_back(value);
+                }
+                arguments.append(site.call.getArgs().begin(), site.call.getArgs().end());
+                site.call.getArgsMutable().assign(arguments);
+                if (!cellArgs.empty()) {
+                    site.call->setAttr("ctnative.cell_args",
+                                       mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
+                }
+                if (!objectArgs.empty()) {
+                    site.call->setAttr("ctnative.object_args",
+                                       mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
+                }
+            }
+        }
     }
 
     for (ctjs::CreateClosureOp c : made) {

@@ -28,7 +28,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index-switch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=INDEX-SWITCH --implicit-check-not=ctnative.not_native --implicit-check-not=scf.index_switch --implicit-check-not=ctjs.func
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-sibling.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=NESTED-SIBLING
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-sibling.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=NESTED-SIBLING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 
 # RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::number_string">>
 # RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::boolean_string">>
@@ -49,7 +49,7 @@
 # REFUSED: ctnative.not_native =
 # INDEX-SWITCH: emitc.func @numberCell_1
 # INDEX-SWITCH-SAME: !emitc.opaque<"ctnative::number_string">
-# NESTED-SIBLING: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases
+# NESTED-SIBLING: emitc.func @nestedCell_1
 
 #--- values.js
 function numberCell(mode, text, number) {
