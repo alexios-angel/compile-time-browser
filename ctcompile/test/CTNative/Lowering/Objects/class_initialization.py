@@ -107,6 +107,45 @@ def check_borrowed_helper_inputs(args, prepared):
     return len(variants)
 
 
+def check_captured_key_inputs(args, source, manifest):
+    text = source.read_text()
+    symbol = re.search(
+        r"ctjs.func private @(class_map_record_constructor_dynamic_key\$\d+)\(", text
+    )[1]
+    call = re.search(r"ctjs.call_direct @" + re.escape(symbol) + r"\(([^\n]+)\)", text)
+    if not call:
+        raise RuntimeError("captured key control lost its original wrapper caller")
+    operands = call[1].split(", ")
+    wrong = list(operands)
+    wrong[2] = operands[0]
+    variants = {
+        "module-reference": text.replace(
+            "module attributes {", f"module attributes {{test.key_ref = @{symbol}, ", 1
+        ),
+        "public-wrapper": text.replace(f"ctjs.func private @{symbol}(", f"ctjs.func @{symbol}(", 1),
+        "wrong-callee": text[: call.start()]
+        + f"ctjs.call_direct @{symbol}({', '.join(wrong)})"
+        + text[call.end() :],
+    }
+    # A non-call symbol use inside a function is separate from module attributes.
+    variants["operation-reference"], count = re.subn(
+        r"(ctjs.constant #ctjs.undefined)(\n)", rf"\1 {{test.key_ref = @{symbol}}}\2", text, count=1
+    )
+    if count != 1 or any(changed == text for changed in variants.values()):
+        raise RuntimeError("captured key mutation did not change its source")
+    for label, changed in variants.items():
+        path = args.work / f"captured-key-{label}.mlir"
+        path.write_text(changed)
+        prepare(
+            args,
+            f"captured-key-{label}",
+            path,
+            dict(manifest, module_sha256=host.fingerprint(args.opt, path)),
+            success=False,
+        )
+    return len(variants)
+
+
 def check_record_map_inputs(args, prepared):
     text = prepared.read_text()
     keys = dict(re.findall(r'(%\w+) = ctjs.constant #ctjs.string<"([^"]*)">', text))
@@ -512,6 +551,8 @@ def main():
             diagnostic=diagnostic,
         )
         preparation_refusals += name not in POSITIVES | PREPARED_ONLY
+        if name == "class-map-record-constructor-dynamic-key":
+            preparation_refusals += check_captured_key_inputs(args, structured, manifest)
         if name == "class-map-record-direct":
             check_record_map_inputs(args, prepared)
         if name.startswith("class-map-record-") and name in POSITIVES:
@@ -799,6 +840,7 @@ def main():
             "class-map-record-alias-snapshot-overwrite-delete",
             "class-map-record-constructor-keyed-holder",
             "class-map-record-constructor-multislot-keyed",
+            "class-map-record-constructor-dynamic-key",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

@@ -90,7 +90,10 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
                 continue;
             }
             auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
-            if (!first || !closure || use.getOperandNumber() < 2) {
+            // A parameter initializes its cell directly. The later capture
+            // proof must still establish its value and every consumer.
+            if ((!first && !llvm::isa<mlir::BlockArgument>(cell.getInitial())) || !closure ||
+                use.getOperandNumber() < 2) {
                 return refuse("class local cell escapes its fixed reads and captures");
             }
             // The exact class method and every captured read are checked
@@ -989,7 +992,7 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
             entries.clear();
             continue;
         }
-        auto key = operation.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
+        auto key = sourceValue(operation.getArgs().front()).getDefiningOp<ctjs::ConstantOp>();
         auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
         if (!text) { return refuse("class retained Map requires literal string keys"); }
         if (action == "set") {

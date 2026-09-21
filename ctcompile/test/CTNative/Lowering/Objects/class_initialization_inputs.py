@@ -16,6 +16,19 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-constructor-captured-key-literal": (707, 707),
+    "class-map-record-constructor-captured-key-repeated": (7777, 7777),
+    "class-map-record-constructor-captured-key-reversed": (707, 707),
+    "class-map-record-constructor-captured-key-overwrite-delete": (5960, 5960),
+    "class-map-record-constructor-captured-key-different": (7777, 7777),
+    "class-map-record-constructor-captured-key-missing": (707, 707),
+    "class-map-record-constructor-captured-key-number": (707, 707),
+    "class-map-record-constructor-captured-key-object": (707, 707),
+    "class-map-record-constructor-captured-key-computed": (707, 707),
+    "class-map-record-constructor-captured-key-escaped": (707, 707),
+    "class-map-record-constructor-captured-key-changing": (707, 707),
+    "class-map-record-constructor-captured-key-ambient": (707, 707),
+    "class-map-record-constructor-captured-key-after-publication": (707, 707),
     "class-map-record-constructor-multislot-keyed": (2711, 2711),
     "class-map-record-constructor-multislot-overwrite": (59592, 59592),
     "class-map-inherited-multislot-holder": (3032, 3032),
@@ -679,6 +692,11 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-constructor-dynamic-key",
+    "class-map-record-constructor-captured-key-literal",
+    "class-map-record-constructor-captured-key-repeated",
+    "class-map-record-constructor-captured-key-reversed",
+    "class-map-record-constructor-captured-key-overwrite-delete",
     "class-map-record-constructor-multislot-keyed",
     "class-map-record-constructor-multislot-overwrite",
     "class-map-inherited-multislot-holder",

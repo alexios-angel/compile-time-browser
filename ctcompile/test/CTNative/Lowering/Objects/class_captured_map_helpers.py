@@ -32,8 +32,9 @@ check.OBSERVATIONS = {
             "class-map-record-constructor-holder-",
             "class-map-record-constructor-keyed-",
             "class-map-record-constructor-multislot-",
+            "class-map-record-constructor-captured-key-",
         )
     )
 }
-assert len(check.OBSERVATIONS) == len(SELECTED) + 66
+assert len(check.OBSERVATIONS) == len(SELECTED) + 79
 check.main()

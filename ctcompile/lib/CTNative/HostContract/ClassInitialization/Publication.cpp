@@ -1,9 +1,194 @@
 #include "Proof.hpp"
+#include "llvm/ADT/ScopeExit.h"
 
 namespace ctcompile::ctnative::class_detail {
 
+bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp constructor,
+                                                  const HostContract & contract) {
+    // ponytail: one Map and one immutable String key. Distinct caller keys need
+    // per-call specialization; nested Maps still need their own lifetime proof.
+    auto function = target(constructor);
+    auto scope = constructor->getParentOfType<ctjs::FuncOp>();
+    if (contract.provider != HostContract::Provider::closedSource ||
+        constructor.getUpvalues().size() != 2 || function.getUpvalueCount() != 2 ||
+        !function.getBody().hasOneBlock() || !scope.getBody().hasOneBlock() ||
+        constructor->getBlock() != &scope.getBody().front() ||
+        earlyCaptures.contains(constructor) ||
+        (constructor.getEnclosingIndicesAttr() &&
+         llvm::any_of(constructor.getEnclosingIndicesAttr().asArrayRef(),
+                      [](int32_t index) { return index >= 0; }))) {
+        return true;
+    }
+    unsigned mapIndex = 0;
+    if (!maps.contains(sourceValue(cells.lookup(constructor.getUpvalues()[0])))) { mapIndex = 1; }
+    const unsigned keyIndex = 1 - mapIndex;
+    auto mapCell = constructor.getUpvalues()[mapIndex];
+    auto keyCell = constructor.getUpvalues()[keyIndex];
+    if (!cells.contains(mapCell) || !cells.contains(keyCell) ||
+        !maps.contains(sourceValue(cells.lookup(mapCell)))) {
+        return true;
+    }
+    auto key = sourceValue(cells.lookup(keyCell));
+    auto literal = key.getDefiningOp<ctjs::ConstantOp>();
+    auto value =
+        literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+    auto parameter = llvm::dyn_cast<mlir::BlockArgument>(key);
+    if (!value) {
+        if (!parameter || parameter.getOwner() != &scope.getBody().front() ||
+            parameter.getArgNumber() < ctjs::implicit_arguments ||
+            scope.getSymName() == contract.entry || scope.getUpvalueCount() != 0 ||
+            mlir::SymbolTable::getSymbolVisibility(scope) !=
+                mlir::SymbolTable::Visibility::Private) {
+            return true;
+        }
+        ctjs::CreateClosureOp source;
+        auto scanned = module.walk([&](ctjs::CreateClosureOp closure) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (target(closure) == scope) { source = closure; }
+            return mlir::WalkResult::advance();
+        });
+        if (scanned.wasInterrupted()) { return false; }
+        if (!source || !source.getUpvalues().empty()) { return true; }
+        ctjs::StoreGlobalOp declaration;
+        for (mlir::OpOperand & use : source.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            if (direct && use.getOperandNumber() == 2 && direct.getTarget() == scope) { continue; }
+            auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(use.getOwner());
+            if (!store || declaration || globals.lookup(store.getName()) != store) { return true; }
+            declaration = store;
+        }
+        if (declaration) {
+            // Precharge the shared hoisting/declaration proof's module/use scans.
+            scanned = module.walk([&](mlir::Operation * op) {
+                const uint64_t cost = uint64_t(2) + op->getNumOperands();
+                if (cost > remaining) {
+                    refuse("class initialization work budget exhausted");
+                    return mlir::WalkResult::interrupt();
+                }
+                remaining -= static_cast<unsigned>(cost);
+                return mlir::WalkResult::advance();
+            });
+            if (scanned.wasInterrupted()) { return false; }
+            if (!closedDeclaration(declaration, scope, module)) { return true; }
+            for (const auto & root : contract.roots) {
+                if (!step()) { return false; }
+                if (root.binding == declaration.getName()) { return true; }
+            }
+        }
+        llvm::DenseSet<mlir::Operation *> callers;
+        bool exact = true;
+        scanned = module.walk([&](ctjs::CallDirectOp call) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (call.getTarget() != scope) { return mlir::WalkResult::advance(); }
+            auto loaded = call.getCalleeValue().getDefiningOp<ctjs::LoadGlobalOp>();
+            auto actual =
+                call->getNumOperands() == scope.getBody().front().getNumArguments()
+                    ? call->getOperand(parameter.getArgNumber()).getDefiningOp<ctjs::ConstantOp>()
+                    : ctjs::ConstantOp{};
+            auto text =
+                actual ? llvm::dyn_cast<ctjs::StringAttr>(actual.getValue()) : ctjs::StringAttr{};
+            exact &= (call.getCalleeValue() == source.getResult() ||
+                      (loaded && declaration && loaded.getName() == declaration.getName())) &&
+                     text && (!value || value == text);
+            value = text;
+            callers.insert(call);
+            return mlir::WalkResult::advance();
+        });
+        if (scanned.wasInterrupted()) { return false; }
+        if (!exact || callers.empty()) { return true; }
+        // The resolver's diagnostic table is not a caller. Every actual
+        // declaration/callee was rechecked above; all other symbol attributes
+        // still participate. Restore the report even when this proof refuses.
+        auto report = module->removeAttr("ctjs.globals");
+        llvm::scope_exit restoreReport([&] {
+            if (report) { module->setAttr("ctjs.globals", report); }
+        });
+        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+            if (!uses) { return true; }
+            for (const auto & use : *uses) {
+                if (!step()) { return false; }
+                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                        use.getUser(), use.getSymbolRef()) != scope) {
+                    continue;
+                }
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                if (!call || !callers.contains(call) ||
+                    use.getSymbolRef() != call.getCalleeAttr()) {
+                    return true;
+                }
+            }
+        }
+    }
+    llvm::SmallVector<ctjs::LoadUpvalueOp> keys, mapReads;
+    auto & body = function.getBody().front();
+    for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
+        if (!step()) { return false; }
+        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+        auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+        if (!load || load->getBlock() != &body ||
+            (load.getIndex() != keyIndex && load.getIndex() != mapIndex)) {
+            return true;
+        }
+        (load.getIndex() == keyIndex ? keys : mapReads).push_back(load);
+    }
+    if (keys.empty() || mapReads.empty()) { return true; }
+    // No symbolic caller may retain the old environment layout.
+    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+        if (!uses) { return true; }
+        for (const auto & use : *uses) {
+            if (!step()) { return false; }
+            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                    use.getUser(), use.getSymbolRef()) == function) {
+                return true;
+            }
+        }
+    }
+    // Charge substitutions/cleanup before mutation; the enclosing pass rolls
+    // back this private candidate if any later source or ownership proof fails.
+    for (mlir::Value old : {key, mlir::Value(body.getArgument(ctjs::arg_callee))}) {
+        for (mlir::OpOperand & use : old.getUses()) {
+            (void)use;
+            if (!step()) { return false; }
+        }
+    }
+    for (ctjs::LoadUpvalueOp load : keys) {
+        for (mlir::OpOperand & use : load.getResult().getUses()) {
+            (void)use;
+            if (!step()) { return false; }
+        }
+    }
+    const uint64_t cost = uint64_t(2) * (keys.size() + 1) + cells.size();
+    if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
+    remaining -= static_cast<unsigned>(cost);
+    if (parameter) {
+        mlir::OpBuilder at(&scope.getBody().front(), scope.getBody().front().begin());
+        auto constant = ctjs::ConstantOp::create(at, scope.getLoc(), value);
+        parameter.replaceAllUsesWith(constant);
+        for (auto & [cell, initial] : cells) {
+            (void)cell;
+            if (initial == key) { initial = constant; }
+        }
+    }
+    for (ctjs::LoadUpvalueOp load : keys) {
+        mlir::OpBuilder at(load);
+        auto constant = ctjs::ConstantOp::create(at, load.getLoc(), value);
+        load.getResult().replaceAllUsesWith(constant);
+        load.erase();
+    }
+    for (ctjs::LoadUpvalueOp load : mapReads) { load.setIndex(0); }
+    constructor.getUpvaluesMutable().assign(mapCell);
+    constructor.removeEnclosingIndicesAttr();
+    function.setUpvalueCount(1);
+    return true;
+}
+
 bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp constructor,
                                                      const HostContract & contract) {
+    if (!normalizePublicationKey(constructor, contract)) { return false; }
     // ponytail: one pure registration helper, direct or in one exact holder slot.
     // Shared helpers and earlier publication need a complete observer proof.
     auto function = target(constructor);
