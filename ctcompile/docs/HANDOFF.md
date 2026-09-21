@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Child Map cleanup and explicit undefined String indices, 2026-09-21 UTC
+
+Continued clean **d8ec7a5a** from the recorded child cleanup boundary.
+**0bdef7c9** proves literal-key child `has`, `size` and `delete` observations
+for guarded removal and empty-parent cleanup. Child operations remain for the
+existing owner proof; both branch arms and every saved/captured alias are checked.
+Shared children published to another outer Map remain refused. The new budget
+regression also exposed invalidated LLVM DenseSet iteration; `remove_if` now
+removes dead-arm operations safely, with three identical **6217** budget replays.
+**17509a81** admits proved explicit undefined String indices, preserving zero
+starts and omitted ends through the existing UTF-16 path. Three original refusal
+bodies now execute unchanged; direct-literal method authority is unchanged.
+
+Focused validation: **one exact CTest, three distinct lit cases and targeted
+intrinsic exports**. Captured classes measure **207 source observations, 416 main
+native executions, 414 unprepared and 273 preparation refusals**. String checks completed **64 native
+executions** before a new refusal expectation was corrected; the final proof-only
+rerun passes **596 refusals, 98 Node/VM agreements and nine known differences**.
+No final whole-export-fixture pass is claimed. All eight final code/test hashes
+match the devbox; all 46 earlier class sources are byte-identical. Scoped checks
+pass; repository formatting retains 16 existing diagnostics in untouched files.
+No browser/runtime implementation changed. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** original Data's nullable getter, then conflict reporting and actual
+DOM element-key ownership. The getter must retain selected-child identity and
+record-or-null results; the conflict observer arm must remain intact. Original
+B/Data+B still refuses with complete sources. Dynamic/coercing String indices,
+NaN origins, broader methods, conditional callees, mutable cells, String ordering,
+document views and the application driver remain. No full-Bootstrap admission or
+coverage gain is claimed.
+
+[Exact checks, corrected failures and next proof seam](handoff/2026-09-21-child-cleanup-undefined-indices.md).
+
 ## Inherited Data publication and omitted String indices, 2026-09-21 UTC
 
 Continued clean **97f32ae8** from its recorded inherited Data boundary.
