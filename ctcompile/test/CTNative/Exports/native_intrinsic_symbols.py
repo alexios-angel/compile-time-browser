@@ -258,6 +258,54 @@ function describeGlobalLocal(value) {
   return describe(value);
 }
 """
+# Preserve the three complete former capture refusals as native witnesses.
+CAPTURE_WITNESSES = {
+    "local": "function bad(key) { function helper() { return key; } return helper(); }\n",
+    "global": "function helper(value) { function nested() { return value; } return nested(); } function bad(key) { return helper(key); }",
+    "global-local": "function bad(key) { return helper(key); }\nfunction helper(value) { function local() { return value; } return local(); }\n",
+}
+CAPTURE_SELECTED = """function captureState(first, second, text, count, enabled) {
+  function cycle() {
+    let key = first;
+    for (let i = 0; i < count; i++) key = key === first ? second : first;
+    return key;
+  }
+  function make() { return Symbol(text); }
+  return enabled ? make() : cycle();
+}
+"""
+# Conditional callee transport remains a separate refusal. Exercise the
+# same captured inputs through exact calls and ordinary result branches.
+CAPTURE_MUTABLE_RESULT = CAPTURE_SELECTED.replace(
+    "  return enabled ? make() : cycle();",
+    "  let key = cycle();\n  if (enabled) key = make();\n  return key;",
+)
+CAPTURE_STATE = CAPTURE_SELECTED.replace(
+    "  return enabled ? make() : cycle();",
+    "  const cycled = cycle();\n  const made = make();\n  return enabled ? made : cycled;",
+)
+CAPTURE_TYPES = """function captureTypes(key, text, number, flag) {
+  const saved = text;
+  function observe() {
+    return (key === key.valueOf() ? 'symbol' : 'wrong') +
+      (saved === text ? ':string' : ':wrong') +
+      (number < 1 ? ':number' : ':wrong') +
+      (flag ? ':wrong' : ':boolean');
+  }
+  function first(left, right) { return left; }
+  let after = text;
+  const result = first(observe(), after = 'changed');
+  return result + (after === 'changed' ? ':evaluation' : ':wrong');
+}
+"""
+CAPTURE_DESCRIPTION = """function captureDescription(key) {
+  function outer() {
+    function describe() { return key.description; }
+    return describe();
+  }
+  return outer();
+}
+"""
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -277,6 +325,9 @@ PARAMETER_TYPES = {
     "global-local-state": ["symbol", "symbol", "string", "number", "boolean"],
     "global-local-types": ["symbol", "string", "number", "boolean"],
     "global-local-description": ["symbol"],
+    "capture-state": ["symbol", "symbol", "string", "number", "boolean"],
+    "capture-types": ["symbol", "string", "number", "boolean"],
+    "capture-description": ["symbol"],
 }
 CASES = {
     "state": (
@@ -528,6 +579,24 @@ CASES["global-local-declaration"] = (GLOBAL_LOCAL_DECLARATION, *CASES["global-he
 CASES["global-local-state"] = (GLOBAL_LOCAL_STATE, *CASES["parameter-state"][1:])
 CASES["global-local-types"] = (GLOBAL_LOCAL_TYPES, *CASES["helper-types"][1:])
 CASES["global-local-description"] = (GLOBAL_LOCAL_DESCRIPTION, *CASES["parameter-description"][1:])
+for name, source in CAPTURE_WITNESSES.items():
+    name = "capture-witness-" + name
+    PARAMETER_TYPES[name] = ["symbol"]
+    CASES[name] = (
+        source,
+        r"""
+    static_assert(std::is_same_v<decltype(&@ENTRY@), ctnative::js_symbol_t (*)(ctnative::js_symbol_t)>);
+    const auto key = ctnative::Symbol(ctnative::js_string{"same"});
+    const auto other = ctnative::Symbol(ctnative::js_string{"same"});
+    assert(@ENTRY@(key) == key && @ENTRY@(other) == other && @ENTRY@(key) != @ENTRY@(other));
+    assert(@ENTRY@(ctnative::Symbol.iterator) == ctnative::Symbol.iterator);
+    std::cout << "true\n";
+""",
+        "true\n",
+    )
+CASES["capture-state"] = (CAPTURE_STATE, *CASES["parameter-state"][1:])
+CASES["capture-types"] = (CAPTURE_TYPES, *CASES["helper-types"][1:])
+CASES["capture-description"] = (CAPTURE_DESCRIPTION, *CASES["parameter-description"][1:])
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -614,6 +683,9 @@ def oracle(args):
         + GLOBAL_LOCAL_STATE
         + GLOBAL_LOCAL_TYPES
         + GLOBAL_LOCAL_DESCRIPTION
+        + CAPTURE_STATE
+        + CAPTURE_TYPES
+        + CAPTURE_DESCRIPTION
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -691,6 +763,17 @@ symbol37GlobalLocalDescription = globalLocalDescription(Symbol()) === undefined 
   globalLocalDescription(Symbol('a\\u0000b')) === 'a\\u0000b' &&
   globalLocalDescription(Symbol('\\ud800')) === '\\ud800' &&
   globalLocalDescription(Symbol.iterator) === 'Symbol.iterator';
+symbol41CaptureState = captureState(key, other, 'fresh', 0, false) === key &&
+  captureState(key, other, 'fresh', 1, false) === other &&
+  captureState(key, other, 'fresh', 2, false) === key &&
+  captureState(key, other, 'fresh', 1, true).description === 'fresh' &&
+  captureState(key, other, 'fresh', 1, true) !== captureState(key, other, 'fresh', 1, true);
+symbol42CaptureTypes = captureTypes(key, 'a\\u0000b', -0, false) === 'symbol:string:number:boolean:evaluation';
+symbol43CaptureDescription = captureDescription(Symbol()) === undefined &&
+  captureDescription(Symbol('')) === '' &&
+  captureDescription(Symbol('a\\u0000b')) === 'a\\u0000b' &&
+  captureDescription(Symbol('\\ud800')) === '\\ud800' &&
+  captureDescription(Symbol.iterator) === 'Symbol.iterator';
 }}
 observeHelpers();
 var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, false, 1) &&
@@ -699,6 +782,14 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
         + "".join(
             f"\nvar symbol{i}Equality{name} = scalarEquality({inputs}) === '{expected}';"
             for i, (name, inputs, _, expected) in enumerate(EQUALITY_INPUTS, 23)
+        )
+        + "".join(
+            f"\nfunction observeCapture{i}() {{ {body}\n"
+            "const key = Symbol('same'); const other = Symbol('same');\n"
+            "return bad(key) === key && bad(other) === other && bad(key) !== bad(other) && "
+            "bad(Symbol.iterator) === Symbol.iterator; }\n"
+            f"var symbol{i}Capture{name.title().replace('-', '')} = observeCapture{i}();\n"
+            for i, (name, body) in enumerate(CAPTURE_WITNESSES.items(), 38)
         )
     )
     vm = args.work / "oracle.js"
@@ -736,6 +827,12 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
         "GlobalLocalState",
         "GlobalLocalTypes",
         "GlobalLocalDescription",
+        "CaptureLocal",
+        "CaptureGlobal",
+        "CaptureGlobalLocal",
+        "CaptureState",
+        "CaptureTypes",
+        "CaptureDescription",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -852,7 +949,11 @@ def main():
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
     for name, (source, checks, expected) in CASES.items():
-        entry_name = "bad" if name == "global-helper" else re.search(r"function (\w+)\(", source)[1]
+        entry_name = (
+            "bad"
+            if name == "global-helper" or name.startswith("capture-witness-")
+            else re.search(r"function (\w+)\(", source)[1]
+        )
         ir, contract = prepare(
             args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
         )
@@ -877,6 +978,7 @@ def main():
     source_refusals = {
         "wrapper-effect": "var changed=1; function bad() { return Symbol.iterator; }",
         "wrapper-replacement": "Symbol=0; function bad() { return Symbol.iterator; }",
+        "wrapper-capture": "const key=Symbol.iterator; function bad() { function helper() { return key; } return helper(); }",
         "intrinsic-declaration": "function Symbol() { return 1; }",
     }
     for name, source in source_refusals.items():
@@ -900,7 +1002,6 @@ def main():
         "foreign-global": "function helper(value) { return saved; } function bad(key) { return helper(key); }",
         "receiver": "function helper(value) { return this; } function bad(key) { return helper(key); }",
         "receiver-call": "function helper(value) { return value; } function bad(key) { return helper.call(key, key); }",
-        "capture": "function helper(value) { function nested() { return value; } return nested(); } function bad(key) { return helper(key); }",
         "transitive-write": "function helper(value) { return other(value); } function other(value) { saved=value; return value; } function bad(key) { return helper(key); }",
         "extra-argument": "function helper(value) { return value; } function bad(key) { return helper(key, key); }",
     }.items():
@@ -911,7 +1012,6 @@ def main():
             refuse(ir, contract, f"global-{name}-{optimize}", optimize=optimize)
 
     helper_refusals = {
-        "capture": "function helper() { return key; } return helper();",
         "recursive": "function helper(value) { return helper(value); } return helper(key);",
         "write": "function helper(value) { saved=value; return value; } return helper(key);",
         "unknown": "function helper(value) { unknown(); return value; } return helper(key);",
@@ -940,7 +1040,6 @@ def main():
     for name, body in {
         "receiver": "function local(input) { return this; } return local(value);",
         "unused-receiver": "function local(input) { return this; } return value;",
-        "capture": "function local() { return value; } return local();",
         "recursive": "function local(input) { return local(input); } return local(value);",
         "escape": "function local(input) { return input; } return local;",
         "discarded-argument": "function local(input) { return Symbol.iterator; } return local(unknown());",
@@ -956,6 +1055,39 @@ def main():
         )
         for optimize in (False, True):
             refuse(ir, contract, f"global-local-{name}-{optimize}", optimize=optimize)
+    for name, body in {
+        "outer-write": "let value=key; function helper() { return value; } const saved=helper(); value=Symbol.iterator; return saved === helper();",
+        "inner-write": "function helper() { key=Symbol.iterator; return key; } return helper();",
+        "sibling-write": "function read() { return key; } function write() { key=Symbol.iterator; } write(); return read();",
+        "early-call": "function helper() { return value; } const saved=helper(); const value=key; return saved;",
+        "escape": "function helper() { return key; } return helper;",
+        "identity": "function helper() { return key; } return helper === helper;",
+        "receiver": "function helper() { return this || key; } return helper();",
+        "recursive": "function helper() { return key && helper(); } return helper();",
+        "unused": "function helper() { return key; } return key;",
+        "unused-effect": "function helper() { unknown(); return key; } return key;",
+        "discarded-argument": "function helper(value) { return key; } return helper(unknown());",
+        "coercion": "function helper() { return +key; } return helper();",
+        "shadowed-intrinsic": "const Symbol=key; function helper() { return Symbol.iterator; } return helper();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "capture-" + name,
+            f"function bad(key) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["symbol"],
+        )
+        for optimize in (False, True):
+            refuse(ir, contract, f"capture-{name}-{optimize}", optimize=optimize)
+    for name, source, entry, types in (
+        ("capture-selected", CAPTURE_SELECTED, "captureState", "capture-state"),
+        ("capture-mutable-result", CAPTURE_MUTABLE_RESULT, "captureState", "capture-state"),
+    ):
+        ir, contract = prepare(
+            args, name, source, entry_name=entry, parameter_types=PARAMETER_TYPES[types]
+        )
+        for optimize in (False, True):
+            refuse(ir, contract, f"{name}-{optimize}", optimize=optimize)
     for name, body in {
         "strict-symbol": "return number === Symbol.iterator;",
         "loose-symbol": "return number == Symbol.iterator;",
@@ -998,6 +1130,22 @@ def main():
         raise RuntimeError("global local helper fingerprint control did not change its body")
     if "fingerprint mismatch" not in refuse(changed, contract, "global-local-stale"):
         raise RuntimeError("changed global local helper body accepted a stale fingerprint")
+    ir, contract = accepted["capture-types"]
+    for budget in (0, 1, 100, 500):
+        refuse(ir, contract, f"capture-budget-{budget}", max_steps=budget)
+    changed = args.work / "capture-stale.mlir"
+    changed.write_text(ir.read_text().replace('"symbol"', '"changed"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("capture helper fingerprint control did not change its body")
+    if "fingerprint mismatch" not in refuse(changed, contract, "capture-stale"):
+        raise RuntimeError("changed captured helper body accepted a stale fingerprint")
+    ir, contract = accepted["capture-witness-local"]
+    captures = [
+        name for name in dom.FUNCTION.findall(ir.read_text()) if name.rsplit("$", 1)[0] == "helper"
+    ]
+    if len(captures) != 1:
+        raise RuntimeError("captured entry control did not find the source helper")
+    refuse(ir, dict(contract, entry=captures[0], parameter_types=[]), "captured-entry")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
@@ -1080,7 +1228,7 @@ def main():
     )
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
-        f"Symbol exports: typed parameters/local and global helpers, scalar equality and branch/loop return agree with Node/VM; "
+        f"Symbol exports: typed parameters/local and global helpers with captures, scalar equality and branch/loop return agree with Node/VM; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

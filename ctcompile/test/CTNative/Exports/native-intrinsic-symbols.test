@@ -1,2 +1,2 @@
-# Symbol-only entries preserve primitive equality, exact parameters and local helpers without DOM inputs.
+# Symbol-only entries preserve primitive equality, exact parameters and captured helpers without DOM inputs.
 # RUN: python3 %S/native_intrinsic_symbols.py --translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --work %t --nm %nm --node %node --reference %native_reference

@@ -261,12 +261,6 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 if (cost > remaining) { return mlir::WalkResult::interrupt(); }
                 remaining -= static_cast<unsigned>(cost);
                 sourceSize += static_cast<unsigned>(cost / 3);
-                if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
-                    unsupported |= function.getUpvalueCount() != 0;
-                }
-                if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
-                    unsupported |= !closure.getUpvalues().empty();
-                }
                 unsupported |= llvm::isa<ctjs::CreateObjectOp, ctjs::SetPropertyOp>(operation);
                 return mlir::WalkResult::advance();
             });
@@ -277,9 +271,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 module->hasAttr("ctjs.skipped")) {
                 return refuse("native intrinsic entry: fingerprint mismatch or incomplete source");
             }
-            if (unsupported) {
-                return refuse("native intrinsic helpers require uncaptured primitive source");
-            }
+            if (unsupported) { return refuse("native intrinsic helpers require primitive source"); }
             auto target = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
             if (!target) { return refuse("native intrinsic entry function is missing"); }
             for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
@@ -291,11 +283,17 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 for (auto argument :
                      function.getBody().front().getArguments().take_front(std::min<unsigned>(
                          ctjs::implicit_arguments, function.getBody().front().getNumArguments()))) {
-                    for (mlir::Operation * use : argument.getUsers()) {
+                    for (mlir::OpOperand & use : argument.getUses()) {
                         if (!spend()) {
                             return refuse("native intrinsic helper work budget exhausted");
                         }
-                        if (!llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use)) {
+                        // Only exact callee-slot reads may reach the existing
+                        // immutable-cell/call census. Receiver/new.target
+                        // observations and capture writes remain unsupported.
+                        auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+                        if (!llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use.getOwner()) &&
+                            !(load && argument.getArgNumber() == ctjs::arg_callee &&
+                              use.getOperandNumber() == 0)) {
                             return refuse("native intrinsic helper observes an implicit argument");
                         }
                     }
