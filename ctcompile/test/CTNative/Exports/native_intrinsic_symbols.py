@@ -630,6 +630,42 @@ PRIMITIVE_INDICES = {
 }
 """,
 }
+DIVISION_WITNESSES = {
+    # Keep both complete former arithmetic-index refusal bodies unchanged.
+    "wide-index-charat-nan-expression": (
+        "function bad(text, index) { return text.charAt(0 / 0); }\n",
+        ("", "a", "a"),
+    ),
+    "wide-index-slice-infinity-expression": (
+        "function bad(text, index) { return text.slice(1 / 0); }\n",
+        ("", "", ""),
+    ),
+}
+DIVISION_INDICES = {
+    **{name: source for name, (source, _) in DIVISION_WITNESSES.items()},
+    "string-division-indices": """function stringDivisionIndices(text, first, middle, tail) {
+  const missing = 0 / 0;
+  return text.charAt(missing) === first && text.slice(missing) === text &&
+    text.slice(0, missing) === '' && text.slice(undefined, missing) === '' &&
+    text.charAt(1e999 / 1e999) === first && text.slice(1e999 / 1e999) === text &&
+    text.slice(missing, 1) === first && text.charAt(3 / 2) === middle &&
+    text.slice(3 / 2, 2) === middle && text.slice(2, 1e999 / 1) === tail &&
+    text.slice(3 / 2) === middle + tail && text.charAt(1 / 0) === '' &&
+    text.slice(1 / 0, missing) === '' && text.slice(0 / 1e999) === text;
+}
+""",
+    "description-capture-division-index": """function descriptionCaptureDivisionIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const missing = 0 / 0;
+    return text !== undefined ? text.charAt(missing) + text.slice(3 / 2) +
+      text.slice(0, missing) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -685,6 +721,9 @@ PARAMETER_TYPES = {
     **{name: ["string"] for name in PRIMITIVE_WITNESSES},
     "string-primitive-indices": ["string", "string", "string", "string"],
     "description-capture-primitive-index": ["symbol"],
+    **{name: ["string", "number"] for name in DIVISION_WITNESSES},
+    "string-division-indices": ["string", "string", "string", "string"],
+    "description-capture-division-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1261,7 +1300,9 @@ CASES["description-capture-signed-charat"] = (
 """,
     "true\n",
 )
-for name, (source, expected) in (FRACTIONAL_WITNESSES | WIDE_WITNESSES | DEFAULT_WITNESSES).items():
+for name, (source, expected) in (
+    FRACTIONAL_WITNESSES | WIDE_WITNESSES | DEFAULT_WITNESSES | DIVISION_WITNESSES
+).items():
     CASES[name] = (
         source,
         """
@@ -1344,6 +1385,14 @@ CASES["string-primitive-indices"] = (
 )
 CASES["description-capture-primitive-index"] = (
     PRIMITIVE_INDICES["description-capture-primitive-index"],
+    *CASES["description-type-guard"][1:],
+)
+CASES["string-division-indices"] = (
+    DIVISION_INDICES["string-division-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-division-index"] = (
+    DIVISION_INDICES["description-capture-division-index"],
     *CASES["description-type-guard"][1:],
 )
 # The complete former refused programs now execute unchanged.
@@ -1456,6 +1505,7 @@ def oracle(args):
         + "".join(
             body for name, body in PRIMITIVE_INDICES.items() if name not in PRIMITIVE_WITNESSES
         )
+        + "".join(body for name, body in DIVISION_INDICES.items() if name not in DIVISION_WITNESSES)
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -1815,6 +1865,32 @@ var symbol112StringUTF16PrimitiveIndices = stringPrimitiveIndices('\u00c9xy', '\
   stringPrimitiveIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringPrimitiveIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeDivision{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}DivisionWitness{i} = observeDivision{i}();\n"
+            for i, (body, expected) in enumerate(DIVISION_WITNESSES.values(), 113)
+        )
+        + r"""
+var symbol115StringDivisionIndices = stringDivisionIndices('', '', '', '') &&
+  stringDivisionIndices('a', 'a', '', '') && stringDivisionIndices('abcd', 'a', 'b', 'cd') &&
+  stringDivisionIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringDivisionIndices('abc', 'a', 'bc', 'c') && !stringDivisionIndices('abc', 'a', 'b', 'bc');
+var symbol116DescriptionCaptureDivisionIndex = descriptionCaptureDivisionIndex(Symbol()) === ':absent' &&
+  descriptionCaptureDivisionIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureDivisionIndex(Symbol('')) === '' &&
+  descriptionCaptureDivisionIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureDivisionIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureDivisionIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureDivisionIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol117StringUTF16DivisionIndices = stringDivisionIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringDivisionIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringDivisionIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringDivisionIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -1901,6 +1977,10 @@ var symbol112StringUTF16PrimitiveIndices = stringPrimitiveIndices('\u00c9xy', '\
         "StringPrimitiveIndices",
         "DescriptionCapturePrimitiveIndex",
         "StringUTF16PrimitiveIndices",
+        *(f"DivisionWitness{i}" for i in range(113, 115)),
+        "StringDivisionIndices",
+        "DescriptionCaptureDivisionIndex",
+        "StringUTF16DivisionIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1921,6 +2001,9 @@ var symbol112StringUTF16PrimitiveIndices = stringPrimitiveIndices('\u00c9xy', '\
         "symbol107StringUTF16UndefinedIndices=true", "symbol107StringUTF16UndefinedIndices=false"
     ).replace(
         "symbol112StringUTF16PrimitiveIndices=true", "symbol112StringUTF16PrimitiveIndices=false"
+    )
+    vm_expected = vm_expected.replace(
+        "symbol117StringUTF16DivisionIndices=true", "symbol117StringUTF16DivisionIndices=false"
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -2061,6 +2144,7 @@ def main():
             | DEFAULT_INDICES
             | UNDEFINED_INDICES
             | PRIMITIVE_INDICES
+            | DIVISION_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -2265,6 +2349,7 @@ def main():
         *DEFAULT_INDICES,
         *UNDEFINED_INDICES,
         *PRIMITIVE_INDICES,
+        *DIVISION_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -2521,8 +2606,6 @@ def main():
         "slice-nan-global": "return text.slice(0, NaN);",
         "charat-infinity-global": "return text.charAt(Infinity);",
         "slice-infinity-global": "return text.slice(-Infinity);",
-        "charat-nan-expression": "return text.charAt(0 / 0);",
-        "slice-infinity-expression": "return text.slice(1 / 0);",
         "coercion": "return text.charAt('1e999');",
         "object": "return text.slice(0, {valueOf() { return 1e999; }});",
         "negation-escape": "const bound=-1e999; text.slice(bound); return bound;",
@@ -2667,6 +2750,44 @@ def main():
         raise RuntimeError("primitive index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "primitive-index-stale"):
         raise RuntimeError("changed primitive index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-dividend": "return text.charAt(index / 0);",
+        "dynamic-divisor": "return text.slice(0 / index);",
+        "coercion": "return text.charAt('0' / 0);",
+        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} / 0);",
+        "nested-expression": "return text.charAt((0 / 0) / 1);",
+        "negated-expression": "return text.slice(-(0 / 0));",
+        "other-arithmetic": "return text.charAt(1e999 - 1e999);",
+        "result-escape": "const missing=0 / 0; text.charAt(missing); return missing;",
+        "unused-result": "const missing=0 / 0; return text.charAt(0);",
+        "extra-argument": "return text.charAt(0, 0 / 0);",
+        "charat-authority": "return text.charAt(0 / 0).toLowerCase();",
+        "slice-authority": "return text.slice(1 / 1).toLowerCase();",
+        "replacement": "String.prototype.slice=0; return text.slice(0 / 0);",
+        "detached": "const method=text.charAt; return method(0 / 0);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(0 / 0);",
+        "description-unguarded": "return Symbol(text).description.charAt(0 / 0);",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "division-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"division-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-division-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"division-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "division-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("division index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "division-index-stale"):
+        raise RuntimeError("changed division index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

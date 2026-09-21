@@ -554,7 +554,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                 at.getStringAttr("ctbrowser::wtf8_to_utf16"),
                                                 mlir::ValueRange{rawText(call.getReceiver())});
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
-        // The host proof admits Number/Boolean/null literals and undefined.
+        // The host proof admits Number/Boolean/null literals, undefined and
+        // one division of Number literals, including a proved NaN result.
         // Null selects zero; undefined retains the default slice end.
         const auto numericIndex = [](mlir::Value argument) {
             return isNumberCarrier(argument.getType()) || argument.getType().isF64() ||
@@ -575,12 +576,17 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         const auto offset = [&](mlir::Value argument) -> mlir::Value {
             // Truncate before testing the sign: -0.5 selects index zero, not
             // the end of the String, for both charAt and slice.
-            auto number =
+            auto truncated =
                 callWithConstValueOperands(
                     at, where, mlir::TypeRange{at.getF64Type()}, at.getStringAttr("std::trunc"),
                     mlir::ValueRange{convertScalar(at, where, argument, at.getF64Type())})
                     .getResult(0);
             auto zero = ec::ConstantOp::create(at, where, at.getF64Type(), at.getF64FloatAttr(0.0));
+            auto nan = callWithConstValueOperands(at, where, mlir::TypeRange{at.getI1Type()},
+                                                  at.getStringAttr("std::isnan"),
+                                                  mlir::ValueRange{truncated});
+            auto number = ec::ConditionalOp::create(at, where, at.getF64Type(), nan.getResult(0),
+                                                    zero, truncated);
             auto negative =
                 ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, number, zero);
             auto negated = ec::UnaryMinusOp::create(at, where, at.getF64Type(), number);

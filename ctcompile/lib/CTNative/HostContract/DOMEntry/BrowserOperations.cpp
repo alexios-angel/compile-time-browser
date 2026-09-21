@@ -39,6 +39,19 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
 };
 
 std::optional<double> stringIndex(mlir::Value value) {
+    if (auto division = value.getDefiningOp<ctjs::BinaryOp>();
+        division && division.getKind() == ctjs::BinaryKind::Div) {
+        auto left = division.getLhs().getDefiningOp<ctjs::ConstantOp>();
+        auto right = division.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        auto lhs = left ? llvm::dyn_cast<ctjs::NumberAttr>(left.getValue()) : ctjs::NumberAttr{};
+        auto rhs = right ? llvm::dyn_cast<ctjs::NumberAttr>(right.getValue()) : ctjs::NumberAttr{};
+        if (!lhs || !rhs || std::isnan(lhs.getDouble()) || std::isnan(rhs.getDouble())) {
+            return std::nullopt;
+        }
+        // Both operands are already Numbers; no coercion or user code can run.
+        // Nested expressions and globals still need their own origin proof.
+        return lhs.getDouble() / rhs.getDouble();
+    }
     bool negative = false;
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
@@ -51,22 +64,25 @@ std::optional<double> stringIndex(mlir::Value value) {
     if (!number) { return std::nullopt; }
     const double offset = negative ? -number.getDouble() : number.getDouble();
     // Size and infinity clamp before unsigned conversion in lowering. NaN has
-    // no Number-literal source spelling; its global/arithmetic origins need proof.
+    // no Number-literal source spelling; only the division above proves its origin.
     if (std::isnan(offset)) { return std::nullopt; }
     return offset;
 }
 } // namespace
 
 std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
-    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
-        unary && unary.getKind() == ctjs::UnaryKind::Neg) {
+    auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+    auto division = llvm::dyn_cast<ctjs::BinaryOp>(operation);
+    if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
+        (division && division.getKind() == ctjs::BinaryKind::Div)) {
         if (!spend()) { return false; }
-        if (!stringIndex(unary.getResult())) {
-            refusal = "DOM String indexing negation requires one Number literal";
+        const auto result = operation.getResult(0);
+        if (!stringIndex(result)) {
+            refusal = "DOM String indexing negation/division requires direct Number literals";
             return false;
         }
         unsigned bounds = 0;
-        for (mlir::OpOperand & use : unary.getResult().getUses()) {
+        for (mlir::OpOperand & use : result.getUses()) {
             if (!spend()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
@@ -76,16 +92,16 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (!method || method.getObject() != call.getReceiver() ||
                 (key != "slice" && key != "charAt") || use.getOperandNumber() < 2 ||
                 use.getOperandNumber() > (key == "charAt" ? 2U : 3U)) {
-                refusal = "DOM String indexing literal negation escapes its bounds";
+                refusal = "DOM String indexing literal expression escapes its bounds";
                 return false;
             }
             ++bounds;
         }
         if (!bounds) {
-            refusal = "DOM String indexing literal negation has no bound use";
+            refusal = "DOM String indexing literal expression has no bound use";
             return false;
         }
-        values[unary.getResult()] = Kind::number;
+        values[result] = Kind::number;
         return true;
     }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
@@ -446,8 +462,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 const bool primitive =
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
-                    refusal = "DOM String indexing requires Number, Boolean or null literals "
-                              "or proved undefined";
+                    refusal = "DOM String indexing requires primitive literals, proved undefined "
+                              "or one Number-literal division";
                     return false;
                 }
             }
