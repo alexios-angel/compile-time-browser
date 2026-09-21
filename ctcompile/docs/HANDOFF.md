@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor holders and intrinsic captures, 2026-09-21 UTC
+
+Continued clean **1cae9bf5** from its constructor-holder/Data boundary.
+**6fcfbbbf** proves terminal constructor publication through one exact captured
+holder slot. Complete holder, helper and cell-use checks run before normalization;
+existing Map identity and concrete record-owner proofs remain unchanged.
+**7fde70e4** admits exact local primitive/Symbol captures through the
+existing immutable-cell and closure proof, including nested captures inside
+closed global helpers. Generated values and runtime implementations are unchanged.
+
+Focused devbox validation passes: **one exact CTest and four distinct lit cases**
+across the selected runs. The holder fixture checks **55 source observations,
+120 main native executions, 110 unprepared refusals and 62 preparation refusals**;
+three new admissions add 24 executions. Intrinsic exports check
+**280 native executions, 252 refusals and two mutations**, with **43 Node/VM observations**.
+All **eight final code/test hashes** match the devbox. Scoped formatting passes;
+required repository formatting retains 16 existing diagnostics. Full suites,
+broad corpus/matrices, full Bootstrap, Windows and new sanitizers were skipped.
+No browser or runtime implementation changed.
+
+**Next:** compose Data's multiple holder slots and keyed base-constructor calls with
+conditional outer/nested Map creation, conflict checks, nullable lookup and
+child/empty-parent cleanup. Prove every concrete owner, observer, exception and
+reentry path; preserve the complete original B/Data+B bodies, which still refuse.
+The new holder slice requires one ordinary slot, a literal String registration key
+and terminal publication by one constructor. Intrinsic conditional callees,
+branch-mutated boxed locals, description String-method narrowing, String
+ordering, document views and the application driver remain unfinished.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-constructor-holders-intrinsic-captures.md).
+
 ## Local Map holders and global helper declarations, 2026-09-21 UTC
 
 Continued **ab3fe6c6**, recovering drafts through two process interruptions.

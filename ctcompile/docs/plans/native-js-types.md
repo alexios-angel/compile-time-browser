@@ -182,19 +182,22 @@ The complete bounded entry proof assigns exact categories without promising a
 particular identity, description, truth value or Number range. Generated signatures
 use the existing typed values by value, preserving Symbol identities, owning
 String snapshots, signed zero and NaN. No document, DOM input, owned root or
-script runtime is needed. Exact uncaptured local and global helpers expand on a
-charged private copy, followed by complete typed entry reproof. Global helpers
+script runtime is needed. Exact local helpers and uncaptured global helpers
+expand on a charged private copy, followed by complete typed entry reproof. Global helpers
 require unique inert declarations and a complete direct-callee use census.
 **7660166b** admits their exact local declarations through the existing complete
 closure proof when the original receiver has no observable use; receiver-observing
 direct helpers retain their restricted path. Mutation, identity observations
-and escaping functions remain refused.
+and escaping functions remain refused. **7fde70e4** admits exact immutable local
+primitive/Symbol captures, including nested captures inside global helpers,
+through the existing complete cell and closure proof. Original implicit arguments,
+initialization order, unused bodies and final typed proof remain checked.
 Multiple invocations may supply
 different primitive kinds; original argument evaluation order remains intact.
 The frontend pads missing arguments with undefined, which still requires a valid
 use and can produce a void export. Top-level effects,
-captures, nullable/union/object entry parameters, extra host fields and other
-intrinsics remain refused.
+ambient/wrapper captures, nullable/union/object entry parameters, extra host fields
+and other intrinsics remain refused.
 
 **Ordinary class tests are implemented:** the class initialization proof admits
 `value instanceof Constructor` for exact same-block source constructions and
@@ -227,12 +230,13 @@ mixed null/description joins remain separate proofs.
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
 remain typed. With global/local helper composition, the export fixture checks
-232 native executions, 221 refusals and two mutations, with 37 Node/VM
+280 native executions, 252 refusals and two mutations, with 43 Node/VM
 observations; no runtime implementation changed.
+[Exact capture and constructor-holder evidence](../handoff/2026-09-21-constructor-holders-intrinsic-captures.md).
 
-**Next source slice:** prove captured helper identities within the intrinsic entry
-contract. Description String-method narrowing, mixed primitive unions and object
-coercion retain their separate admission boundaries.
+**Next source slice:** description String-method narrowing. Conditional callee
+transport and branch-mutated boxed locals remain separate from immutable captures;
+mixed primitive unions and object coercion retain their own admission boundaries.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
 
@@ -618,8 +622,9 @@ existing `auto`/template deduction.
    and primitive methods now have a shared Core/native API. Direct well-known
    reads, absent/String construction, direct primitive methods and branch/loop/
    return transport now emit in proved DOM and primitive-only entries. Source
-   `.description` preserves owning undefined/String results. Next prove useful
-   intrinsic helper calls; exact primitive/Symbol parameters are implemented.
+   `.description` preserves owning undefined/String results. Exact primitive/Symbol
+   parameters and local/global helper calls, including immutable local captures,
+   are implemented. Description String-method narrowing remains next.
    Registry, symbol-keyed fields and hooks remain
    separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.
