@@ -107,6 +107,18 @@ void test_a_surrogate_pair_can_be_split_and_rejoined() {
 // WebIDL's legacy platform object: indices and exposed names are own
 // properties, `item` is inherited and an expando may shadow it.
 void test_a_collection_owns_its_indices_and_names() {
+    // Numeric access uses the actual collection length. Large absent indices
+    // and overflowing/noncanonical keys must remain harmless reads.
+    is(R"JS((function () {
+        var list = document.querySelectorAll('p');
+        return list.length === 1 && list[0] === list.item(0) &&
+               list[1] === undefined && list[1000000] === undefined &&
+               list[1000001] === undefined && list[9007199254740991] === undefined &&
+               list['18446744073709551616'] === undefined &&
+               list['01'] === undefined && list[' 0'] === undefined &&
+               list['+0'] === undefined && list['0.0'] === undefined;
+    })())JS",
+       "true");
     is(R"JS((function () {
         var list = document.getElementsByTagName('p');
         var keys = Object.getOwnPropertyNames(list).sort().join(' ');
