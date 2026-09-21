@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor identity keys and multiplication indices, 2026-09-21 UTC
+
+Continued clean **4b10fb96**. **37bfa1f5** preserves exact fresh-object or declared
+DOM outer keys through terminal constructor Data registration. The second key
+stays a literal String; a key formal with any other direct observer cannot be
+removed. Original evaluation, helper expansion, child/record owners and complete
+callee/symbol proofs remain. The old constructor-object-key source now executes
+unchanged. Three complete-vendor object witnesses execute, and two DOM constructor
+witnesses prepare. **Native DOM session emission still refuses.**
+**0a9755ee** adds one direct Number-literal multiplication as a UTF-16 String bound,
+including produced NaN, overflow and underflow through the existing path.
+
+Focused checks pass: exact host-contract CTest **1/1**; final DOM preparation lit
+with **24 native object-key executions**, four prepared entries, 30 preparation
+and eight session refusals; constructor selector **56 main native executions,
+38 unprepared and 26 preparation refusals**; String selector **40 executions,
+768 proof refusals, 112 Node/VM agreements and 13 known differences**. All seven
+final hashes match the devbox; scoped checks pass and repository formatting
+retains 16 pre-existing diagnostics. All 51 earlier class sources and 101 prior
+complete intrinsic cases are preserved. Full suites, complete captured/export
+execution replays, DOM Strings replay, broad corpus/matrices, full Bootstrap,
+WPT/test262, Windows and new sanitizers were skipped. No browser/runtime
+implementation changed.
+
+**Next:** compose the local class/Map proof with a real published DOM Data family.
+Class preparation currently consumes all DOM key uses, while the session requires
+a completed captured input family and actual factory/root publication. Its source
+census also rejects the retained constructors. Preserve all three checks; start
+with scalar-result publication through the existing real wrapper/factory shape.
+Multiple DOM inputs, original B/Data+B, broader Strings, conditional callees,
+mutable cells, document views and the application driver remain unfinished.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks, corrected setup and next boundary](handoff/2026-09-21-constructor-identity-keys.md).
+
 ## Object keys, DOM Data preparation and subtraction indices, 2026-09-21 UTC
 
 Continued clean **c455efb0**. **1add0418** proves fresh object outer-key identity
