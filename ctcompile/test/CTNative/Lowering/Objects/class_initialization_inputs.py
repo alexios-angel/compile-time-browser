@@ -16,6 +16,26 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-cleanup-direct": (594413, 594413),
+    "class-map-record-nested-cleanup-shared-outer-child": (107, 107),
+    "class-map-record-nested-cleanup-object-key": (7, 7),
+    "class-map-record-nested-cleanup-number-key": (117, 117),
+    "class-map-record-nested-cleanup-region-owner": (7, 7),
+    "class-map-record-nested-cleanup-holder": (5911, 5911),
+    "class-map-record-nested-cleanup-shortcircuit": (5712, 5712),
+    "class-map-record-nested-cleanup-dynamic-key": (717, 717),
+    "class-map-record-nested-cleanup-dynamic-branch": (717, 717),
+    "class-map-record-nested-cleanup-outer-escaped": (7, 7),
+    "class-map-record-nested-cleanup-child-escaped": (7, 7),
+    "class-map-record-nested-cleanup-record-escaped": (7, 7),
+    "class-map-record-nested-cleanup-dead-call": (7, 7),
+    "class-map-record-nested-cleanup-dead-coercion": (7, 7),
+    "class-map-record-nested-cleanup-unused-slot": (7, 7),
+    "class-map-record-nested-cleanup-holder-escaped": (7, 7),
+    "class-map-record-nested-cleanup-exception": (109, 109),
+    "class-map-record-nested-cleanup-reentry": (7, 7),
+    "class-map-record-nested-cleanup-missing-inner": (107, 107),
+    "class-map-record-nested-cleanup-observed-dead-set": (107, 107),
     "class-map-record-nested-inherited-direct": (599645, 599645),
     "class-map-record-nested-inherited-holder": (51961, 51961),
     "class-map-record-nested-inherited-shortcircuit": (5934, 5934),
@@ -784,6 +804,9 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-cleanup-direct",
+    "class-map-record-nested-cleanup-holder",
+    "class-map-record-nested-cleanup-shortcircuit",
     "class-map-record-nested-inherited-direct",
     "class-map-record-nested-inherited-holder",
     "class-map-record-nested-inherited-shortcircuit",

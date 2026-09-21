@@ -599,6 +599,7 @@ def main():
             "class-map-record-nested-captured-direct",
             "class-map-record-nested-constructor-direct",
             "class-map-record-nested-inherited-direct",
+            "class-map-record-nested-cleanup-direct",
         ):
             prepare(
                 args,
@@ -645,6 +646,9 @@ def main():
                 "class-map-record-nested-inherited-direct": 6,
                 "class-map-record-nested-inherited-holder": 4,
                 "class-map-record-nested-inherited-shortcircuit": 3,
+                "class-map-record-nested-cleanup-direct": 6,
+                "class-map-record-nested-cleanup-holder": 4,
+                "class-map-record-nested-cleanup-shortcircuit": 4,
             }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -926,6 +930,7 @@ def main():
             "class-map-record-nested-captured-direct",
             "class-map-record-nested-constructor-direct",
             "class-map-record-nested-inherited-direct",
+            "class-map-record-nested-cleanup-direct",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",
