@@ -594,21 +594,24 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::startsWith) && arguments.size() == 1) {
-            llvm::SmallVector<mlir::Value, 2> pieces{arguments[0]};
-            if (auto add = arguments[0].getDefiningOp<ctjs::BinaryOp>();
-                add && add.getKind() == ctjs::BinaryKind::Add) {
-                pieces = {add.getLhs(), add.getRhs()};
-            }
-            // ponytail: one literal concatenation keeps the ASCII proof bounded.
+            llvm::SmallVector<std::pair<mlir::Value, unsigned>, 4> pieces{{arguments[0], 0}};
+            // ponytail: two concatenation levels keep the ASCII proof bounded.
             // General prefixes need separate origin and UTF-16 proofs.
-            for (mlir::Value piece : pieces) {
+            while (!pieces.empty()) {
+                const auto [piece, depth] = pieces.pop_back_val();
                 if (!spend()) { return false; }
+                if (auto add = piece.getDefiningOp<ctjs::BinaryOp>();
+                    add && add.getKind() == ctjs::BinaryKind::Add && depth < 2) {
+                    pieces.emplace_back(add.getLhs(), depth + 1);
+                    pieces.emplace_back(add.getRhs(), depth + 1);
+                    continue;
+                }
                 auto literal = piece.getDefiningOp<ctjs::ConstantOp>();
                 auto text = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
                                     : ctjs::StringAttr{};
                 if (!text) {
-                    refusal = "DOM startsWith requires ASCII literals with at most one "
-                              "concatenation";
+                    refusal = "DOM startsWith requires ASCII literals with at most two "
+                              "concatenation levels";
                     return false;
                 }
                 for (unsigned char c : text.getValue()) {

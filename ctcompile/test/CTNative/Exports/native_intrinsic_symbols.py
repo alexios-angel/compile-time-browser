@@ -333,6 +333,11 @@ DESCRIPTION_GUARDS = {
 }
 """,
 }
+NESTED_PREFIX_WITNESSES = {
+    # Preserve both complete former nested-concatenation refusal sources.
+    "concatenated-prefix-nested-left": "function bad(key, text) { return text.startsWith(('b' + 's') + 'Config'); }\n",
+    "concatenated-prefix-nested-right": "function bad(key, text) { return text.startsWith('b' + ('s' + 'Config')); }\n",
+}
 STRING_METHODS = {
     "string-prefix": r"""function stringPrefix(text) {
   return (text.startsWith('bs') ? 'prefix' : 'other') +
@@ -374,6 +379,31 @@ STRING_METHODS = {
   const saved = prefix;
   return (text.startsWith(saved) ? saved : 'other') +
     (saved === 'bs' ? ':same' : ':wrong');
+}
+""",
+    **NESTED_PREFIX_WITNESSES,
+    "string-nested-prefix": r"""function stringNestedPrefix(text) {
+  return (text.startsWith(('b' + '') + ('' + 's')) ? 'prefix' : 'other') +
+    (text.startsWith(('' + '') + '') ? ':empty' : ':wrong') +
+    (text.startsWith('a' + ('' + '\u0000')) ? ':nul' : ':plain');
+}
+""",
+    "description-capture-nested-prefix": """function descriptionCaptureNestedPrefix(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function check() {
+    const prefix = ('b' + '') + ('' + 's');
+    return text !== undefined ? text.startsWith(prefix) : false;
+  }
+  return check();
+}
+""",
+    "string-nested-prefix-reuse": """function stringNestedPrefixReuse(text) {
+  const part = 'b' + 's';
+  const prefix = part + part;
+  const saved = prefix;
+  return (text.startsWith(saved) ? saved : 'other') +
+    (saved === 'bsbs' ? ':same' : ':wrong');
 }
 """,
 }
@@ -1106,6 +1136,10 @@ PARAMETER_TYPES = {
     "string-concatenated-prefix": ["string"],
     "description-capture-concatenated-prefix": ["symbol"],
     "string-concatenated-prefix-reuse": ["string"],
+    **{name: ["symbol", "string"] for name in NESTED_PREFIX_WITNESSES},
+    "string-nested-prefix": ["string"],
+    "description-capture-nested-prefix": ["symbol"],
+    "string-nested-prefix-reuse": ["string"],
     "string-indices": ["string", "string", "string"],
     "description-slice": ["symbol"],
     "description-capture-index": ["symbol"],
@@ -1530,6 +1564,45 @@ CASES["string-concatenated-prefix-reuse"] = (
     assert(@ENTRY@(js_string{"bs\xc3\xa9"}).value() == "bs:same");
     assert(@ENTRY@(js_string{"b"}).value() == "other:same");
     assert(@ENTRY@(js_string{"Bs"}).value() == "other:same");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+for name, source in NESTED_PREFIX_WITNESSES.items():
+    CASES[name] = (
+        source,
+        r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_boolean_t (*)(js_symbol_t, js_string)>);
+    assert(!@ENTRY@(Symbol(), js_string{""}));
+    assert(!@ENTRY@(Symbol.iterator, js_string{"bs"}));
+    assert(@ENTRY@(Symbol(), js_string{"bsConfig"}));
+    assert(@ENTRY@(Symbol.iterator, js_string{"bsConfig\0", 9}));
+    assert(@ENTRY@(Symbol(), js_string{"bsConfig\xc3\xa9"}));
+    assert(!@ENTRY@(Symbol(), js_string{"BsConfig"}));
+    std::cout << "true\n";
+""",
+        "true\n",
+    )
+CASES["string-nested-prefix"] = (
+    STRING_METHODS["string-nested-prefix"],
+    *CASES["string-prefix"][1:],
+)
+CASES["description-capture-nested-prefix"] = (
+    STRING_METHODS["description-capture-nested-prefix"],
+    *CASES["description-capture-prefix"][1:],
+)
+CASES["string-nested-prefix-reuse"] = (
+    STRING_METHODS["string-nested-prefix-reuse"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string)>);
+    assert(@ENTRY@(js_string{""}).value() == "other:same");
+    assert(@ENTRY@(js_string{"bs"}).value() == "other:same");
+    assert(@ENTRY@(js_string{"bsbs"}).value() == "bsbs:same");
+    assert(@ENTRY@(js_string{"bsbs\0", 5}).value() == "bsbs:same");
+    assert(@ENTRY@(js_string{"bsbs\xc3\xa9"}).value() == "bsbs:same");
+    assert(@ENTRY@(js_string{"Bsbs"}).value() == "other:same");
     std::cout << "true\n";
 """,
     "true\n",
@@ -2041,7 +2114,9 @@ def oracle(args):
         + CAPTURE_TYPES
         + CAPTURE_DESCRIPTION
         + "".join(DESCRIPTION_GUARDS.values())
-        + "".join(STRING_METHODS.values())
+        + "".join(
+            body for name, body in STRING_METHODS.items() if name not in NESTED_PREFIX_WITNESSES
+        )
         + "".join(STRING_INDICES.values())
         + "".join(body for name, body in STRING_SLICES.items() if name != "string-slice-end")
         + "".join(
@@ -2696,6 +2771,37 @@ var symbol177StringUnicodeConcatenatedPrefix = stringConcatenatedPrefix('bs\u00e
   stringConcatenatedPrefix('\ud801\udc00') === 'other:empty:plain' &&
   stringConcatenatedPrefix('\ud800') === 'other:empty:plain';
 """
+        + "".join(
+            f"\nfunction observeNestedPrefix{i}() {{ {body}\nreturn "
+            "!bad(Symbol(), '') && !bad(Symbol.iterator, 'bs') && "
+            "bad(Symbol(), 'bsConfig') && bad(Symbol.iterator, 'bsConfig\\u0000') && "
+            "bad(Symbol(), 'bsConfig\\u00e9') && !bad(Symbol(), 'BsConfig'); "
+            f"}}\nvar symbol{i}NestedPrefixWitness{i} = observeNestedPrefix{i}();\n"
+            for i, body in enumerate(NESTED_PREFIX_WITNESSES.values(), 178)
+        )
+        + r"""
+var symbol180StringNestedPrefix = stringNestedPrefix('') === 'other:empty:plain' &&
+  stringNestedPrefix('bs') === 'prefix:empty:plain' &&
+  stringNestedPrefix('a\u0000b') === 'other:empty:nul' &&
+  stringNestedPrefix('a') === 'other:empty:plain' &&
+  stringNestedPrefix('Bs') === 'other:empty:plain';
+var symbol181DescriptionCaptureNestedPrefix = !descriptionCaptureNestedPrefix(Symbol()) &&
+  !descriptionCaptureNestedPrefix(Symbol(undefined)) &&
+  !descriptionCaptureNestedPrefix(Symbol('')) &&
+  descriptionCaptureNestedPrefix(Symbol('bs')) &&
+  descriptionCaptureNestedPrefix(Symbol('bs\u0000')) &&
+  !descriptionCaptureNestedPrefix(Symbol('Bs')) &&
+  !descriptionCaptureNestedPrefix(Symbol.iterator);
+var symbol182StringNestedPrefixReuse = stringNestedPrefixReuse('') === 'other:same' &&
+  stringNestedPrefixReuse('bs') === 'other:same' &&
+  stringNestedPrefixReuse('bsbs') === 'bsbs:same' &&
+  stringNestedPrefixReuse('bsbs\u0000') === 'bsbs:same' &&
+  stringNestedPrefixReuse('bsbs\u00e9') === 'bsbs:same' &&
+  stringNestedPrefixReuse('Bsbs') === 'other:same';
+var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'prefix:empty:plain' &&
+  stringNestedPrefix('\ud801\udc00') === 'other:empty:plain' &&
+  stringNestedPrefix('\ud800') === 'other:empty:plain';
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -2822,6 +2928,11 @@ var symbol177StringUnicodeConcatenatedPrefix = stringConcatenatedPrefix('bs\u00e
         "DescriptionCaptureConcatenatedPrefix",
         "StringConcatenatedPrefixReuse",
         "StringUnicodeConcatenatedPrefix",
+        *(f"NestedPrefixWitness{i}" for i in range(178, 180)),
+        "StringNestedPrefix",
+        "DescriptionCaptureNestedPrefix",
+        "StringNestedPrefixReuse",
+        "StringUnicodeNestedPrefix",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -3345,8 +3456,6 @@ def main():
         raise RuntimeError("changed String method accepted a stale fingerprint")
 
     for name, body in {
-        "nested-left": "return text.startsWith(('b' + 's') + 'Config');",
-        "nested-right": "return text.startsWith('b' + ('s' + 'Config'));",
         "unicode-left": "return text.startsWith('\u00e9' + 's');",
         "unicode-right": "return text.startsWith('b' + '\u00e9');",
         "surrogate": "return text.startsWith('b' + '\\ud800');",
@@ -3382,6 +3491,46 @@ def main():
         raise RuntimeError("concatenated prefix fingerprint control did not change its operand")
     if "fingerprint mismatch" not in refuse(changed, contract, "concatenated-prefix-stale"):
         raise RuntimeError("changed concatenated prefix accepted a stale fingerprint")
+
+    for name, body in {
+        "deeper-left": "return text.startsWith((('b' + 's') + 'Con') + 'fig');",
+        "deeper-right": "return text.startsWith('b' + ('s' + ('Con' + 'fig')));",
+        "deeper-shared": "const part='b' + 's'; const pair=part + part; return text.startsWith(pair + pair);",
+        "unicode-first": "return text.startsWith(('\u00e9' + 's') + ('C' + 'fg'));",
+        "unicode-second": "return text.startsWith(('b' + '\u00e9') + ('C' + 'fg'));",
+        "unicode-third": "return text.startsWith(('b' + 's') + ('\u00e9' + 'fg'));",
+        "unicode-fourth": "return text.startsWith(('b' + 's') + ('C' + '\u00e9'));",
+        "surrogate": "return text.startsWith(('b' + 's') + ('C' + '\\ud800'));",
+        "dynamic-string": "return text.startsWith(('b' + 's') + ('' + text));",
+        "number": "return text.startsWith(('b' + 's') + (1 + 2));",
+        "coercion": "return text.startsWith(('b' + 's') + ('' + {toString() { return 'Config'; }}));",
+        "optional-description": "return text.startsWith(('b' + 's') + ('' + key.description));",
+        "conditional": "const part=text ? 'b' : 's'; return text.startsWith((part + '') + ('' + 's'));",
+        "detached": "const method=text.startsWith; return method(('b' + 's') + ('Con' + 'fig'));",
+        "prototype-write": "String.prototype.startsWith=0; return text.startsWith(('b' + 's') + ('Con' + 'fig'));",
+        "discarded-effect": "unknown(); return text.startsWith(('b' + 's') + ('Con' + 'fig'));",
+        "prefix-publication": "const prefix=('b' + 's') + ('Con' + 'fig'); saved=prefix; return text.startsWith(prefix);",
+        "position": "return text.startsWith(('b' + 's') + ('Con' + 'fig'), 0);",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "nested-prefix-" + name,
+            f"function bad(key, text) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["symbol", "string"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"nested-prefix-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-nested-prefix"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"nested-prefix-budget-{budget}", max_steps=budget)
+    changed = args.work / "nested-prefix-stale.mlir"
+    changed.write_text(ir.read_text().replace('"b"', '"other"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("nested prefix fingerprint control did not change its operand")
+    if "fingerprint mismatch" not in refuse(changed, contract, "nested-prefix-stale"):
+        raise RuntimeError("changed nested prefix accepted a stale fingerprint")
 
     for name, body in {
         "charat-dynamic": "return text.charAt(index);",
