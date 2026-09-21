@@ -122,7 +122,11 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
         llvm::MapVector<mlir::Value, mlir::Value> children;
         llvm::MapVector<mlir::scf::IfOp, bool> branches;
         llvm::DenseMap<mlir::Value, mlir::Value> branchValues;
-        llvm::DenseMap<mlir::Value, llvm::StringSet<>> childEntries;
+        llvm::DenseMap<mlir::Value, llvm::StringMap<mlir::Value>> childEntries;
+        llvm::DenseMap<mlir::Value, bool> lookupTruth;
+        llvm::DenseMap<mlir::Value, mlir::Value> lookupOwners;
+        llvm::DenseSet<mlir::Operation *> lookupTests;
+        llvm::SmallVector<ctjs::CallOp> missingReads;
         llvm::DenseSet<mlir::Value> observedChildren;
         llvm::SmallVector<ctjs::ConstructOp> created;
         llvm::DenseSet<mlir::Operation *> visited;
@@ -145,6 +149,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
             return {};
         };
         const auto truth = [](mlir::Attribute value) -> std::optional<bool> {
+            if (llvm::isa_and_nonnull<ctjs::NullAttr, ctjs::UndefinedAttr>(value)) { return false; }
             if (auto flag = llvm::dyn_cast_or_null<ctjs::BooleanAttr>(value)) {
                 return flag.getValue();
             }
@@ -153,6 +158,10 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                 return n != 0 && n == n;
             }
             return std::nullopt;
+        };
+        const auto valueTruth = [&](mlir::Value value) -> std::optional<bool> {
+            auto found = lookupTruth.find(resolved(value));
+            return found == lookupTruth.end() ? truth(constant(value)) : found->second;
         };
         // This is only a candidate origin for the both-arm effect census.
         // The ordered visit must still resolve an actually present child.
@@ -178,6 +187,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
             }
             return true;
         };
+        llvm::SmallVector<mlir::Value> observations;
         const auto childBranches = scope.walk([&](ctjs::GetPropertyOp read) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (!mapCandidate(mapCandidate, read.getObject(), 0)) {
@@ -187,6 +197,9 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                 refuse("class nested Map child requires ordered entry operations");
                 return mlir::WalkResult::interrupt();
             }
+            if (ctjs::constantKey(read.getKey()) == "get") {
+                observations.push_back(read.getResult());
+            }
             for (auto * parent = read->getParentOp(); parent != scope;
                  parent = parent->getParentOp()) {
                 if (!step()) { return mlir::WalkResult::interrupt(); }
@@ -195,6 +208,43 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
             return mlir::WalkResult::advance();
         });
         if (childBranches.wasInterrupted() || !reason.empty()) { return false; }
+        // A getter's final || null follows its inner && rather than enclosing
+        // the Map reads. Include that result flow in the same both-arm census.
+        llvm::DenseSet<mlir::Value> observed;
+        while (!observations.empty()) {
+            auto value = observations.pop_back_val();
+            if (!observed.insert(value).second) { continue; }
+            for (mlir::OpOperand * use : sourceUses(value)) {
+                if (!step()) { return false; }
+                auto * op = use->getOwner();
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    if (use->getOperandNumber() == 0 && read &&
+                        call.getReceiver() == read.getObject() &&
+                        mapCandidate(mapCandidate, read.getObject(), 0)) {
+                        observations.push_back(call.getResult());
+                    }
+                } else if (llvm::isa<ctjs::TruthyOp, ctjs::FromBoolOp, ctjs::UnaryOp,
+                                     ctjs::CompareOp>(op)) {
+                    observations.push_back(op->getResult(0));
+                } else {
+                    auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
+                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
+                        branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+                    }
+                    if (!branch) { continue; }
+                    if (entryPosition(branch)->getBlock() != &entry) {
+                        return refuse("class nested Map result requires ordered entry branches");
+                    }
+                    for (auto * parent = branch.getOperation(); parent != scope;
+                         parent = parent->getParentOp()) {
+                        if (!step()) { return false; }
+                        conditional.insert(parent);
+                    }
+                    llvm::append_range(observations, branch.getResults());
+                }
+            }
+        }
         // Check both arms before discarding either. These operations cannot
         // retain cached class/cell/closure facts or invoke user code.
         for (mlir::Operation * op : conditional) {
@@ -282,7 +332,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                 visited.insert(&op);
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
                     branch && conditional.contains(branch)) {
-                    auto known = truth(constant(branch.getCondition()));
+                    auto known = valueTruth(branch.getCondition());
                     if (!known) {
                         return refuse("class nested Map branch condition is not proved");
                     }
@@ -311,8 +361,12 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                     if (made != map) { childEntries.try_emplace(made.getResult()); }
                 }
                 if (auto test = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
-                    if (auto flag = truth(constant(test.getValue()))) {
+                    if (auto flag = valueTruth(test.getValue())) {
                         constants[&op] = ctjs::BooleanAttr::get(module.getContext(), *flag);
+                        if (lookupTruth.contains(resolved(test.getValue()))) {
+                            lookupTests.insert(&op);
+                            observedChildren.insert(lookupOwners.lookup(resolved(test.getValue())));
+                        }
                     }
                 } else if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(op)) {
                     if (auto value = constant(boxed.getBit())) { constants[&op] = value; }
@@ -370,8 +424,15 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                         return refuse("class nested Map child requires literal String keys");
                     }
                     if (action == "set") {
-                        contents.insert(key.getValue());
-                    } else if (action != "get") {
+                        contents[key.getValue()] = resolved(call.getArgs()[1]);
+                    } else if (action == "get") {
+                        auto record = contents.lookup(key.getValue());
+                        if (!record || record.getDefiningOp<ctjs::ConstructOp>()) {
+                            lookupTruth[call.getResult()] = bool(record);
+                            lookupOwners[call.getResult()] = child.getResult();
+                            if (!record) { missingReads.push_back(call); }
+                        }
+                    } else {
                         constants[&op] = ctjs::BooleanAttr::get(module.getContext(),
                                                                 contents.contains(key.getValue()));
                         observedChildren.insert(child.getResult());
@@ -466,10 +527,10 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                 }
             }
         }
-        // Scalar facts are used only to choose arms. Their original operations
-        // remain; only outer observations need materialized replacements.
+        // Keep child operations for ownership proof. Only outer observations
+        // and proved lookup truth tests need materialized replacements.
         for (auto at = constants.begin(); at != constants.end();) {
-            if (!operations.contains(at->first)) {
+            if (!operations.contains(at->first) && !lookupTests.contains(at->first)) {
                 at = constants.erase(at);
             } else {
                 ++at;
@@ -482,6 +543,20 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
             if (constants.contains(op) && (!step() || !step())) { return false; }
             for (mlir::OpOperand & use : op->getResult(0).getUses()) {
                 (void)use;
+                if (!step()) { return false; }
+            }
+        }
+        for (mlir::Operation * op : lookupTests) {
+            if (!step() || !step()) { return false; }
+            for (mlir::Operation * user : op->getUsers()) {
+                (void)user;
+                if (!step()) { return false; }
+            }
+        }
+        for (ctjs::CallOp read : missingReads) {
+            if (!step()) { return false; }
+            for (mlir::Operation * user : read->getUsers()) {
+                (void)user;
                 if (!step()) { return false; }
             }
         }
@@ -543,7 +618,13 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
         for (auto [read, child] : children) { read.replaceAllUsesWith(child); }
         for (auto [op, value] : constants) {
             mlir::OpBuilder at(op);
-            auto literal = ctjs::ConstantOp::create(at, op->getLoc(), value);
+            mlir::Value literal;
+            if (lookupTests.contains(op)) {
+                literal = mlir::arith::ConstantIntOp::create(
+                    at, op->getLoc(), llvm::cast<ctjs::BooleanAttr>(value).getValue(), 1);
+            } else {
+                literal = ctjs::ConstantOp::create(at, op->getLoc(), value);
+            }
             children[op->getResult(0)] = literal;
             op->getResult(0).replaceAllUsesWith(literal);
         }
@@ -551,6 +632,17 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
         for (auto & [cell, initial] : cells) {
             (void)cell;
             if (auto replacement = children.lookup(initial)) { initial = replacement; }
+        }
+        for (mlir::Operation * op : lookupTests) { eraseRooted(op); }
+        // Missing lookup results may disappear only after every observer was
+        // discharged. Present reads retain the existing record/lifetime proof.
+        for (ctjs::CallOp read : missingReads) {
+            if (llvm::all_of(read->getUsers(), [](mlir::Operation * user) {
+                    return llvm::isa<ctjs::RootOp>(user);
+                })) {
+                mapOperations.erase(read);
+                eraseRooted(read);
+            }
         }
         for (mlir::Operation * op : operations) {
             if (llvm::isa<ctjs::GetPropertyOp>(op)) { continue; }

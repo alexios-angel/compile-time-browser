@@ -16,6 +16,23 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-nullable-direct": (594414, 594414),
+    "class-map-record-nested-nullable-holder": (15927, 15927),
+    "class-map-record-nested-nullable-constructor": (59112, 59112),
+    "class-map-record-nested-nullable-raw-undefined": (1107, 1107),
+    "class-map-record-nested-nullable-null-payload": (107, 107),
+    "class-map-record-nested-nullable-undefined-payload": (107, 107),
+    "class-map-record-nested-nullable-dynamic-key": (107007, 107007),
+    "class-map-record-nested-nullable-dynamic-element": (107007, 107007),
+    "class-map-record-nested-nullable-object-key": (7, 7),
+    "class-map-record-nested-nullable-shared-child": (107, 107),
+    "class-map-record-nested-nullable-child-escaped": (7, 7),
+    "class-map-record-nested-nullable-record-escaped": (7, 7),
+    "class-map-record-nested-nullable-region-owner": (7, 7),
+    "class-map-record-nested-nullable-unused-slot": (7, 7),
+    "class-map-record-nested-nullable-holder-escaped": (7, 7),
+    "class-map-record-nested-nullable-dead-present-call": (107, 107),
+    "class-map-record-nested-nullable-dead-fallback-call": (7, 7),
     "class-map-record-nested-cleanup-direct": (594413, 594413),
     "class-map-record-nested-cleanup-shared-outer-child": (107, 107),
     "class-map-record-nested-cleanup-object-key": (7, 7),
@@ -804,6 +821,9 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-nullable-direct",
+    "class-map-record-nested-nullable-holder",
+    "class-map-record-nested-nullable-constructor",
     "class-map-record-nested-cleanup-direct",
     "class-map-record-nested-cleanup-holder",
     "class-map-record-nested-cleanup-shortcircuit",

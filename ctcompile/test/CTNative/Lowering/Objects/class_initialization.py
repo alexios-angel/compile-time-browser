@@ -560,6 +560,7 @@ def main():
             "inherited-method-shadow": "class method is observed or shadowed",
             "bootstrap-base": "class own-key snapshot constructor observes its receiver",
             "bootstrap-base-data": "class own-key snapshot constructor observes its receiver",
+            "class-map-record-nested-nullable-raw-undefined": "class retained Map get requires a present record",
             "class-map-inherited-early-snapshot": "class construction method observes an own-key snapshot",
             "method-counter-ambient": "unknown call, binding or reflective effect",
             "method-dispatch-ambient": "unknown call, binding or reflective effect",
@@ -600,6 +601,7 @@ def main():
             "class-map-record-nested-constructor-direct",
             "class-map-record-nested-inherited-direct",
             "class-map-record-nested-cleanup-direct",
+            "class-map-record-nested-nullable-direct",
         ):
             prepare(
                 args,
@@ -649,6 +651,9 @@ def main():
                 "class-map-record-nested-cleanup-direct": 6,
                 "class-map-record-nested-cleanup-holder": 4,
                 "class-map-record-nested-cleanup-shortcircuit": 4,
+                "class-map-record-nested-nullable-direct": 6,
+                "class-map-record-nested-nullable-holder": 4,
+                "class-map-record-nested-nullable-constructor": 4,
             }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -931,6 +936,7 @@ def main():
             "class-map-record-nested-constructor-direct",
             "class-map-record-nested-inherited-direct",
             "class-map-record-nested-cleanup-direct",
+            "class-map-record-nested-nullable-direct",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",
