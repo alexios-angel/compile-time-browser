@@ -72,6 +72,10 @@ std::optional<double> stringIndex(mlir::Value value) {
     bool negative = false;
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
+        if (unary.getOperand().getDefiningOp<ctjs::BinaryOp>()) {
+            const auto offset = stringIndex(unary.getOperand());
+            return offset ? std::optional<double>{-*offset} : std::nullopt;
+        }
         negative = true;
         value = unary.getOperand();
     }
@@ -107,6 +111,14 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         for (mlir::OpOperand & use : result.getUses()) {
             if (!spend()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (auto negation = llvm::dyn_cast<ctjs::UnaryOp>(use.getOwner());
+                binary && negation && negation.getKind() == ctjs::UnaryKind::Neg &&
+                stringIndex(negation.getResult())) {
+                // This one outer sign is checked by the same complete bound-use
+                // census when its operation is visited; no arithmetic chain escapes.
+                ++bounds;
+                continue;
+            }
             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
             auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                : ctjs::GetPropertyOp{};
@@ -485,7 +497,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
                     refusal = "DOM String indexing requires primitive literals, proved undefined "
-                              "or one Number-literal arithmetic expression";
+                              "or one optionally negated Number-literal arithmetic expression";
                     return false;
                 }
             }
