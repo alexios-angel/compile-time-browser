@@ -48,11 +48,16 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     }
     llvm::StringSet<> intrinsicNames;
     const auto & supportedIntrinsics = host_detail::domInitialIntrinsics();
+    const bool intrinsicEntry = contract.provider == HostContract::Provider::ctbrowserIntrinsics;
     if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
-         contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
-        contract.elementParameters.empty() || !contract.roots.empty() ||
-        !contract.observations.empty() || !contract.absentBindings.empty() ||
-        !contract.undefinedBindings.empty() ||
+         contract.provider != HostContract::Provider::ctbrowserDOMSession && !intrinsicEntry) ||
+        (intrinsicEntry ? !contract.elementParameters.empty()
+                        : contract.elementParameters.empty()) ||
+        (intrinsicEntry &&
+         (!contract.datasetParameters.empty() || contract.initialIntrinsics.size() != 1 ||
+          contract.initialIntrinsics.front() != "Symbol")) ||
+        !contract.roots.empty() || !contract.observations.empty() ||
+        !contract.absentBindings.empty() || !contract.undefinedBindings.empty() ||
         contract.initialIntrinsics.size() > supportedIntrinsics.size() ||
         llvm::any_of(contract.initialIntrinsics,
                      [&](const auto & name) {
@@ -62,7 +67,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                      }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.realmOwnDataProperties.empty()) {
-        refusal = "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
+        refusal = intrinsicEntry ? "intrinsic entry requires an isolated Symbol-only declaration"
+                                 : "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
         return;
     }
     const auto spend = [&] {
@@ -78,6 +84,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     auto target = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!target || target.getBody().empty()) {
         refusal = "DOM entry function is missing or external";
+        return;
+    }
+    if (intrinsicEntry && functionIndex(target) == 0) {
+        refusal = "intrinsic entry requires a named function export";
         return;
     }
     ctjs::FuncOp declaration;
@@ -96,6 +106,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             return;
         }
         if (function != target && functionIndex(function) != 0) {
+            if (intrinsicEntry) {
+                refusal = "intrinsic entry permits only its named function and inert declaration";
+                return;
+            }
             auto index = functionIndex(function);
             if (!index || !indexedCallbacks.try_emplace(*index, function).second ||
                 function.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1) {
@@ -119,7 +133,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     auto & targetBlock = target.getBody().front();
     if (contract.elementParameters.size() !=
         targetBlock.getNumArguments() - ctjs::implicit_arguments) {
-        refusal = "DOM entry must declare every explicit parameter as an element";
+        refusal = intrinsicEntry ? "intrinsic entry must have no explicit parameters"
+                                 : "DOM entry must declare every explicit parameter as an element";
         return;
     }
     std::vector<mlir::BlockArgument> provedElements;
@@ -332,6 +347,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     }
     if (usedCallbacks.size() != callbackFunctions.size()) {
         refusal = "DOM entry contains an uninvoked callback function";
+        return;
+    }
+    if (intrinsicEntry && (!provedJSONObjects.empty() || !provedCalls.empty())) {
+        refusal = "intrinsic entry permits only primitive values and well-known Symbol reads";
         return;
     }
     // Joins and source spreads copy trees by value. A mutable target must

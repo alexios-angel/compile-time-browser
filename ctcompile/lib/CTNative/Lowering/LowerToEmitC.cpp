@@ -212,7 +212,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         std::unique_ptr<DOMEntryAnalysis> domEntry;
         if (hostContract &&
             (hostContract->provider == HostContract::Provider::ctbrowserDOM ||
-             hostContract->provider == HostContract::Provider::ctbrowserDOMSession)) {
+             hostContract->provider == HostContract::Provider::ctbrowserDOMSession ||
+             hostContract->provider == HostContract::Provider::ctbrowserIntrinsics)) {
             if (auto error = prepareDOMEntry(module, *hostContract, hostMaxSteps)) {
                 module.emitError() << llvm::toString(std::move(error));
                 return signalPassFailure();

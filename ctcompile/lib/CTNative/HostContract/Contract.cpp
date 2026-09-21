@@ -96,18 +96,22 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     const bool dom = domSession || object->getString("provider") == "ctbrowser-dom-v1";
     const bool domData = object->getString("provider") == "ctbrowser-dom-data-session-v1";
     const bool session = object->getString("provider") == "closed-source-session-v1";
-    if (!dom && !domData && !session && object->getString("provider") != "closed-source-v1") {
+    const bool intrinsics = object->getString("provider") == "ctbrowser-intrinsics-v1";
+    if (!dom && !domData && !session && !intrinsics &&
+        object->getString("provider") != "closed-source-v1") {
         return error("unsupported host provider; expected closed-source-v1, "
-                     "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1 or "
-                     "ctbrowser-dom-data-session-v1");
+                     "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1, "
+                     "ctbrowser-dom-data-session-v1 or ctbrowser-intrinsics-v1");
     }
-    if (dom ? !keys(*object, {"version", "provider", "module_sha256", "entry", "element_parameters",
-                              "initial_intrinsics", "dataset_parameters"})
-            : !keys(*object,
-                    {"version", "provider", "module_sha256", "entry", "roots", "observations",
-                     "absent_bindings", "undefined_bindings", "initial_intrinsics",
-                     "realm_global_this", "entry_receiver", "element_parameters"}) ||
-                  (!dom && !domData && object->get("element_parameters"))) {
+    if (intrinsics ? !keys(*object,
+                           {"version", "provider", "module_sha256", "entry", "initial_intrinsics"})
+        : dom ? !keys(*object, {"version", "provider", "module_sha256", "entry",
+                                "element_parameters", "initial_intrinsics", "dataset_parameters"})
+              : !keys(*object,
+                      {"version", "provider", "module_sha256", "entry", "roots", "observations",
+                       "absent_bindings", "undefined_bindings", "initial_intrinsics",
+                       "realm_global_this", "entry_receiver", "element_parameters"}) ||
+                    (!dom && !domData && object->get("element_parameters"))) {
         return error("host contract must be an object with only supported fields");
     }
     const auto digest = object->getString("module_sha256");
@@ -116,13 +120,23 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     if (!digest || digest->size() != 64 ||
         !llvm::all_of(*digest,
                       [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) ||
-        !entry || entry->empty() || (!dom && (roots == nullptr || roots->empty()))) {
+        !entry || entry->empty() || (!dom && !intrinsics && (roots == nullptr || roots->empty()))) {
         return error("host contract requires a lowercase SHA-256, entry symbol and roots");
     }
     HostContract result;
     if (session) { result.provider = HostContract::Provider::closedSourceSession; }
     result.moduleSha256 = digest->str();
     result.entry = entry->str();
+    if (intrinsics) {
+        result.provider = HostContract::Provider::ctbrowserIntrinsics;
+        if (auto failure = names(*object, "initial_intrinsics", result.initialIntrinsics, false)) {
+            return std::move(failure);
+        }
+        if (result.initialIntrinsics.size() != 1 || result.initialIntrinsics.front() != "Symbol") {
+            return error("intrinsic entry requires only the standard Symbol identity");
+        }
+        return result;
+    }
     if (dom || domData) {
         result.provider = domData      ? HostContract::Provider::ctbrowserDOMDataSession
                           : domSession ? HostContract::Provider::ctbrowserDOMSession

@@ -42,7 +42,12 @@ struct HostContract {
         // Explicit DOM inputs may be retained only as outer Data Map keys.
         // The host proof establishes provenance, not document lifetime;
         // native ownership refuses until storage is confined to that owner.
-        ctbrowserDOMDataSession
+        ctbrowserDOMDataSession,
+        // A parameterless named native export in an isolated standard realm.
+        // Only Symbol and undefined are fixed; the complete source proof permits
+        // primitive operations and well-known identities, without browser inputs,
+        // arbitrary calls, global publication or external script reentry.
+        ctbrowserIntrinsics
     };
     Provider provider = Provider::closedSource;
     std::string moduleSha256;

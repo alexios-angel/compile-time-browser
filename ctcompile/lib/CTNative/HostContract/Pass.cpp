@@ -121,6 +121,9 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
             case HostContract::Provider::ctbrowserDOMDataSession:
                 provider = "ctbrowser-dom-data-session-v1";
                 break;
+            case HostContract::Provider::ctbrowserIntrinsics:
+                provider = "ctbrowser-intrinsics-v1";
+                break;
             }
             llvm::json::Object document{
                 {"provider", provider},

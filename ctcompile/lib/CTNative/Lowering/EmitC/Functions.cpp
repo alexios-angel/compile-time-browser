@@ -43,9 +43,10 @@ void lowering::applyDeclarativeRules(ctjs::FuncOp fn) {
 }
 
 void lowering::lower(ctjs::FuncOp fn) {
-    const bool isEntry = !needsDOM && isScriptEntry(fn);
+    const bool hostEntry = hasHostEntry || needsDOM;
+    const bool isEntry = !hostEntry && isScriptEntry(fn);
     mlir::Block & entry = fn.getBody().front();
-    if (needsDOM) {
+    if (hostEntry) {
         // The complete entry proof has no collector or retained values. Drop
         // bookkeeping before choosing carriers so dead undefined placeholders
         // cannot pull a scalar value model into an ordinary DOM action.

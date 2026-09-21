@@ -68,6 +68,58 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
     const auto refuse = [](const llvm::Twine & reason) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
+    if (contract.provider == HostContract::Provider::ctbrowserIntrinsics) {
+        // Prove the untouched source before cloning or hashing it here. This
+        // entry has no browser inputs, handlers or helper-call normalization.
+        mlir::OwningOpRef<mlir::ModuleOp> prepared;
+        unsigned remaining = maxSteps;
+        {
+            const DOMEntryAnalysis source(module, contract, remaining);
+            if (!source.proved()) { return refuse("native intrinsic entry: " + source.reason()); }
+            remaining -= source.steps();
+            const auto counted = module.walk([&](mlir::Operation * operation) {
+                // Reserve the clone, cleanup walks and refreshed fingerprint.
+                uint64_t cost = uint64_t(1) + operation->getNumOperands() +
+                                operation->getNumResults() + operation->getAttrs().size();
+                for (mlir::Region & region : operation->getRegions()) {
+                    for (mlir::Block & block : region) {
+                        cost += uint64_t(1) + block.getNumArguments();
+                    }
+                }
+                cost *= 4;
+                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                remaining -= static_cast<unsigned>(cost);
+                return mlir::WalkResult::advance();
+            });
+            if (counted.wasInterrupted()) {
+                return refuse("native intrinsic entry preparation work budget exhausted");
+            }
+            prepared = module.clone();
+            if (auto wrapper = source.wrapper()) {
+                prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
+            }
+        }
+        prepared->walk([](ctjs::LoadGlobalOp load) {
+            if (load.getName() != "undefined") { return; }
+            mlir::OpBuilder at(load);
+            auto constant = ctjs::ConstantOp::create(at, load.getLoc(),
+                                                     ctjs::UndefinedAttr::get(load.getContext()));
+            load.getResult().replaceAllUsesWith(constant.getResult());
+            load.erase();
+        });
+        prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+        prepared->lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
+        HostContract transformed = contract;
+        transformed.moduleSha256 = hostContractFingerprint(*prepared);
+        const DOMEntryAnalysis checked(*prepared, transformed, remaining);
+        if (!checked.proved()) {
+            return refuse("native intrinsic entry preparation: " + checked.reason());
+        }
+        module->setAttrs((*prepared)->getAttrs());
+        module.getBodyRegion().takeBody(prepared->getBodyRegion());
+        contract = std::move(transformed);
+        return llvm::Error::success();
+    }
     if (contract.moduleSha256 != hostContractFingerprint(module) ||
         module->hasAttr("ctjs.skipped")) {
         return refuse("native DOM entry: fingerprint mismatch or incomplete source");

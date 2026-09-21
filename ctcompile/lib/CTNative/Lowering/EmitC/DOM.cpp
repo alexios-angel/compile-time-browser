@@ -25,7 +25,8 @@ std::string lowering::domDataDefinition() const {
 
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
-    needsDOM = true;
+    hasHostEntry = true;
+    needsDOM |= !entry.parameters().empty();
     if (entry.returnsUndefined()) {
         resultTypes[entry.entry().getSymName()] = mlir::NoneType::get(context);
     }
