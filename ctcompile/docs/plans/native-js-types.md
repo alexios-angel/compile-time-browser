@@ -174,12 +174,16 @@ primitive or absence joins remain refused. GCC 13's inactive String-arm warning
 is suppressed only around `js_symbol_t`; caller warnings remain enabled.
 
 **Primitive-only exports are implemented:** `ctbrowser-intrinsics-v1` accepts
-exactly `version`, `provider`, `module_sha256`, `entry` and
-`initial_intrinsics: ["Symbol"]`. The fingerprinted named export takes no
-parameters and may have an inert declaration wrapper. It reuses the complete
-bounded entry proof and permits primitive computations and well-known Symbol
-transport without any document, DOM input, owned root or script runtime.
-Top-level effects, helpers, extra host fields and other intrinsics remain refused.
+`version`, `provider`, `module_sha256`, `entry`, `initial_intrinsics: ["Symbol"]`
+and optional `parameter_types`. The ordered array names every explicit parameter
+as `"boolean"`, `"number"`, `"string"` or `"symbol"`; omitted/empty means no
+parameters. The fingerprinted named export may have an inert declaration wrapper.
+The complete bounded entry proof assigns exact categories without promising a
+particular identity, description, truth value or Number range. Generated signatures
+use the existing typed values by value, preserving Symbol identities, owning
+String snapshots, signed zero and NaN. No document, DOM input, owned root or
+script runtime is needed. Top-level effects, helpers, nullable/union/object
+parameters, extra host fields and other intrinsics remain refused.
 
 **Ordinary class tests are implemented:** the class initialization proof admits
 `value instanceof Constructor` for exact same-block source constructions and
@@ -208,8 +212,7 @@ Equality, truthiness, `typeof`, branches, loops and returns preserve that distin
 saved descriptions survive later Symbol assignments. String-method narrowing and
 mixed null/description joins remain separate proofs.
 
-**Next source slice:** extend the intrinsic entry contract for useful parameters
-and helper calls.
+**Next source slice:** prove helper calls within the intrinsic entry contract.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
 
@@ -238,6 +241,13 @@ method transcript. The DOM fixture now runs 32 native executions and 36 refusals
 Each fixture includes an identity mutation. Two exact CTests and three distinct
 Symbol lit cases pass across corrected runs; no new sanitizer run was made.
 [Construction and sibling-capture evidence](../handoff/2026-09-21-symbol-construction-sibling-captures.md).
+
+Exact intrinsic parameters extend the export fixture to **120 native executions,
+107 refusals and two mutations**. Eighteen Node/VM observations cover identity,
+loop selection, owning String/description snapshots, signed zero, NaN and infinities;
+C++ assertions pin each exact signature. The former unused-parameter refusal
+source now runs unchanged with an explicit Symbol parameter contract.
+[Parameter and helper-publication evidence](../handoff/2026-09-21-helper-publication-intrinsic-parameters.md).
 
 ## Operators and JavaScript semantics
 
@@ -583,7 +593,8 @@ existing `auto`/template deduction.
    reads, absent/String construction, direct primitive methods and branch/loop/
    return transport now emit in proved DOM and primitive-only entries. Source
    `.description` preserves owning undefined/String results. Next prove useful
-   intrinsic parameters/helpers. Registry, symbol-keyed fields and hooks remain
+   intrinsic helper calls; exact primitive/Symbol parameters are implemented.
+   Registry, symbol-keyed fields and hooks remain
    separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.
 

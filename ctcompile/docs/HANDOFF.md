@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor helper publication and intrinsic parameters, 2026-09-21 UTC
+
+Continued clean **ef37639a**, preserving drafts through interruptions.
+**7b2f93f8** admits the unchanged constructor-helper Map publication source:
+complete helper/cell/symbol-use proof precedes normalization, then existing
+terminal-registration and stack-owner checks apply. Hoisted captures remain
+deferred until that proof discharges them; other early captures stay refused.
+**a35e18ef** adds exact Boolean, Number, String and Symbol parameters to the
+strict intrinsic-export contract through existing typed values.
+
+Focused devbox validation passes: **two exact CTests and three distinct lit
+cases** across corrected runs. The class gate checks **33 observations and
+96 main native executions**; three newly admitted helper sources add 24.
+Intrinsic exports check **120 executions, 107 refusals and two mutations**.
+All **17 code/test hashes** match the devbox. Scoped formatting passes; required
+repository formatting retains 16 existing diagnostics. Full suites, broad
+corpus/matrices, new sanitizers and full Bootstrap were skipped. No browser or
+runtime implementation changed.
+
+**Next:** original base publication before leaf completion, beginning with the
+unchanged file-30 `class-map-record-constructor-inherited.js`; prove partial
+initialization, exceptions/reentry and lifetime. Original B/Data+B also requires
+captured outer/nested Data Map origins, conflicts, nullable gets and cleanup.
+Shared/effectful helper publication and intrinsic helper calls remain separate.
+String ordering, document views and the application driver remain unfinished.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and corrections](handoff/2026-09-21-helper-publication-intrinsic-parameters.md).
+
 ## Inherited leaf publication and Symbol descriptions, 2026-09-21 UTC
 
 Continued clean **97e96751**. **744ebe85** proves an inherited leaf's terminal
