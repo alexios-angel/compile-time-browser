@@ -81,7 +81,9 @@ undefined/String snapshots through comparisons, branches, loops and returns;
 its proof remains separate from DOM null/String. Intrinsic entries now accept
 exact Boolean, Number, String and Symbol parameters with typed value signatures;
 input identities, owning snapshots, NaN and signed zero remain runtime values.
-Helper calls, nullable/union/object parameters, general scripts, registry operations
+Exact uncaptured local helpers now expand under the same complete typed proof,
+preserving argument evaluation and undefined padding. Global/captured helpers,
+nullable/union/object entry parameters, general scripts, registry operations
 and hook dispatch remain unfinished. BigInt still needs a public
 non-Script implementation. Add these with their corresponding type/prototype
 milestones rather than treating the external inventory as exhaustive.

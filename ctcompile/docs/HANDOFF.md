@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Base publication and intrinsic helpers, 2026-09-21 UTC
+
+Continued clean **d45c82d4**. **9e0c7f05** admits the unchanged file-30
+inherited-publication source: one unconstructed base, one leaf and only literal
+own-field writes after publication. Both constructor environments retire together;
+existing Map identity, observer and stack-owner proofs remain required.
+**990b752f** admits exact uncaptured local helpers in intrinsic exports using
+charged private expansion and complete typed reproof, preserving argument order,
+Symbol identities, descriptions and undefined padding.
+
+Focused devbox validation passes: **two exact CTests and three distinct lit
+cases** across corrected runs. The class gate checks **50 observations and
+128 main native executions**; four newly admitted cases add 32. Intrinsic exports
+check **152 executions, 141 refusals and two mutations**. All **13 code/test hashes**
+match the devbox. Scoped formatting passes; required repository formatting retains
+16 existing diagnostics. Full suites, broad corpus/matrices, new sanitizers and
+full Bootstrap were skipped. No browser or runtime implementation changed.
+
+**Next:** original B/Data+B captured outer/nested Data Map origins, helper
+publication, conflicts, nullable gets, cleanup and owner lifetime. File 33 retains
+nonliteral child work, shared/deeper base families and a prepared String-field
+refusal. Global/captured intrinsic helpers, provider Number/Boolean equality and
+description narrowing remain separate. String ordering, document views and the
+application driver remain unfinished. No full-Bootstrap admission or coverage gain
+is claimed.
+
+[Exact checks and corrections](handoff/2026-09-21-base-publication-intrinsic-helpers.md).
+
 ## Constructor helper publication and intrinsic parameters, 2026-09-21 UTC
 
 Continued clean **ef37639a**, preserving drafts through interruptions.

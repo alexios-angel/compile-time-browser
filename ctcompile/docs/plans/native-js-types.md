@@ -36,8 +36,8 @@ owning descriptions and `toString`/`valueOf` methods. Fingerprinted DOM entries 
 emit direct well-known Symbol reads, fresh construction with absent/String
 descriptions, direct `toString`/`valueOf`, owning `.description` reads, identity
 equality, truthiness and `typeof`, including branches, loops and typed returns.
-Parameterless Symbol-only exports use the same operations through a separate intrinsic contract without
-DOM inputs. Same-cell sibling calls now forward existing lifted capture
+Symbol-only exports use the same operations through a separate intrinsic contract,
+with exact primitive parameters and local helper calls, without DOM inputs. Same-cell sibling calls now forward existing lifted capture
 parameters after both functions pass the lift proof. Ordinary `instanceof`
 on exact local class constructions now folds under the complete class/prototype
 proof, preserving nominal identity and constructor effects. Broader Symbol
@@ -105,7 +105,7 @@ implement every prototype up front.
 | `js_array_t<T>` | The interface for an admitted JavaScript Array, with `length()`, indexed operations and methods such as `push`, `pop` and `filter`. Use dense storage only under the existing density/content proof. Preserve reference identity, presence, mutation and eager evaluation. |
 | `js_object_t` | A non-virtual interface/tag for generated closed-shape objects. Concrete generated classes keep concrete fields and checked methods; no generic property dictionary, universal payload or slicing through this base. |
 | `js_bigint_t` | Owning arbitrary-precision integer with JavaScript BigInt semantics. Requires a public non-Script numeric implementation; a fixed-width integer or floating-point stand-in is insufficient. |
-| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. DOM and primitive-only entries admit direct well-known reads, absent/String construction, direct primitive methods, identity equality, truthiness, `typeof`, branches, loops and returns. Source `.description`, `Symbol.for`/`keyFor` and hook dispatch need further proofs. |
+| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. DOM and primitive-only entries admit direct well-known reads, absent/String construction, direct primitive methods, identity equality, truthiness, `typeof`, branches, loops and returns. Source `.description` preserves owning undefined/String results. `Symbol.for`/`keyFor` and hook dispatch need further proofs. |
 | `js_document_t` | An explicit borrowed document interface over a public `ctbrowser::document` and its live `style::engine`. Exposes methods/accessors through ordinary `document.member(...)` syntax. A containing session owns the resources when ownership is required. |
 | `js_element_t` | The corresponding borrowed element interface, retaining document/node identity and its proved Style association. It enables receiver-only prototype calls without exposing a VM context. |
 
@@ -182,8 +182,13 @@ The complete bounded entry proof assigns exact categories without promising a
 particular identity, description, truth value or Number range. Generated signatures
 use the existing typed values by value, preserving Symbol identities, owning
 String snapshots, signed zero and NaN. No document, DOM input, owned root or
-script runtime is needed. Top-level effects, helpers, nullable/union/object
-parameters, extra host fields and other intrinsics remain refused.
+script runtime is needed. Exact uncaptured local helpers expand on a charged private
+copy, followed by complete typed entry reproof. Multiple invocations may supply
+different primitive kinds; original argument evaluation order remains intact.
+The frontend pads missing arguments with undefined, which still requires a valid
+use and can produce a void export. Top-level effects/global helper publications,
+captures, nullable/union/object entry parameters, extra host fields and other
+intrinsics remain refused.
 
 **Ordinary class tests are implemented:** the class initialization proof admits
 `value instanceof Constructor` for exact same-block source constructions and
@@ -212,7 +217,9 @@ Equality, truthiness, `typeof`, branches, loops and returns preserve that distin
 saved descriptions survive later Symbol assignments. String-method narrowing and
 mixed null/description joins remain separate proofs.
 
-**Next source slice:** prove helper calls within the intrinsic entry contract.
+**Next source slice:** prove global or captured helper identities within the
+intrinsic entry contract. Number/Boolean equality in this provider and description
+String-method narrowing also retain their separate admission boundaries.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
 
@@ -248,6 +255,12 @@ loop selection, owning String/description snapshots, signed zero, NaN and infini
 C++ assertions pin each exact signature. The former unused-parameter refusal
 source now runs unchanged with an explicit Symbol parameter contract.
 [Parameter and helper-publication evidence](../handoff/2026-09-21-helper-publication-intrinsic-parameters.md).
+
+**990b752f** extends the intrinsic fixture to **152 native executions, 141 refusals,
+two mutations and 22 Node/VM observations** with local helpers. The combined
+base-publication/helper slice passes two exact CTests and three distinct selected
+lit cases across corrected runs; full suites were skipped.
+[Exact helper and base-publication evidence](../handoff/2026-09-21-base-publication-intrinsic-helpers.md).
 
 ## Operators and JavaScript semantics
 
