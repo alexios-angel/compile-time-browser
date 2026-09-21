@@ -33,9 +33,12 @@ Shared variables and nested capture pointers now carry those unions with owning
 snapshots and observable absence. `js_symbol_t` and the native `Symbol` object now
 provide fresh identities, immutable well-known keys such as `Symbol.hasInstance`,
 owning descriptions and `toString`/`valueOf` methods. Fingerprinted DOM entries now
-emit direct well-known Symbol reads, identity equality, truthiness and `typeof`,
-including branches, loops and typed returns. Parameterless Symbol-only exports
-now use a separate intrinsic contract without DOM inputs. Ordinary `instanceof`
+emit direct well-known Symbol reads, fresh construction with absent/String
+descriptions, direct `toString`/`valueOf`, identity equality, truthiness and
+`typeof`, including branches, loops and typed returns. Parameterless Symbol-only
+exports use the same operations through a separate intrinsic contract without
+DOM inputs. Same-cell sibling calls now forward existing lifted capture
+parameters after both functions pass the lift proof. Ordinary `instanceof`
 on exact local class constructions now folds under the complete class/prototype
 proof, preserving nominal identity and constructor effects. Broader Symbol
 operations, custom hooks and nonconstant `instanceof` still require proofs.
@@ -102,7 +105,7 @@ implement every prototype up front.
 | `js_array_t<T>` | The interface for an admitted JavaScript Array, with `length()`, indexed operations and methods such as `push`, `pop` and `filter`. Use dense storage only under the existing density/content proof. Preserve reference identity, presence, mutation and eager evaluation. |
 | `js_object_t` | A non-virtual interface/tag for generated closed-shape objects. Concrete generated classes keep concrete fields and checked methods; no generic property dictionary, universal payload or slicing through this base. |
 | `js_bigint_t` | Owning arbitrary-precision integer with JavaScript BigInt semantics. Requires a public non-Script numeric implementation; a fixed-width integer or floating-point stand-in is insufficient. |
-| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. DOM and primitive-only entries admit direct well-known reads, identity equality, truthiness, `typeof`, branches, loops and returns; source construction, `Symbol.for`/`keyFor` and hook dispatch need further proofs. |
+| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. DOM and primitive-only entries admit direct well-known reads, absent/String construction, direct primitive methods, identity equality, truthiness, `typeof`, branches, loops and returns. Source `.description`, `Symbol.for`/`keyFor` and hook dispatch need further proofs. |
 | `js_document_t` | An explicit borrowed document interface over a public `ctbrowser::document` and its live `style::engine`. Exposes methods/accessors through ordinary `document.member(...)` syntax. A containing session owns the resources when ownership is required. |
 | `js_element_t` | The corresponding borrowed element interface, retaining document/node identity and its proved Style association. It enables receiver-only prototype calls without exposing a VM context. |
 
@@ -190,8 +193,18 @@ and cross-block construction remain refused. No runtime wrapper is needed for
 these constant answers. Six Node/VM cases pass in 48 native executions, with
 26 refusal controls, including inheritance, aliases and retained effects.
 
-**Next source slice:** prove fresh construction and primitive Symbol methods,
-then extend the intrinsic entry contract for useful parameters and helper calls.
+**Fresh source construction and primitive methods are implemented:** the same
+fingerprinted entry proof admits `Symbol()`, `Symbol(undefined)` and
+`Symbol(exactString)`, including an immutable constructor alias. Each call emits
+the existing native factory and produces a distinct identity. Direct zero-argument
+`.toString()` and `.valueOf()` calls require the exact Symbol receiver and
+original prototype. Generated code uses ordinary `js_symbol_t` values and methods;
+the earlier fresh/method refusal sources now execute unchanged.
+
+**Next source slice:** `.description` needs distinct undefined/String transport.
+Its native API already returns `optional<js_string>`, but the DOM nullable String
+carrier currently means null/String; reusing it would change absence semantics.
+Then extend the intrinsic entry contract for useful parameters and helper calls.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
 
@@ -213,6 +226,13 @@ one identity mutation. The new intrinsic export fixture adds 16 native execution
 and 56 refusals. Three selected Symbol lit cases and two exact CTests pass;
 a generated Symbol loop also passes GCC ASan/UBSan.
 [Transport and export evidence](../handoff/2026-09-21-native-symbol-transport.md).
+
+Fresh construction and methods extend the existing export fixture to 48 native
+executions and 74 refusals, including eight Node/VM observations and a 14-part
+method transcript. The DOM fixture now runs 32 native executions and 36 refusals.
+Each fixture includes an identity mutation. Two exact CTests and three distinct
+Symbol lit cases pass across corrected runs; no new sanitizer run was made.
+[Construction and sibling-capture evidence](../handoff/2026-09-21-symbol-construction-sibling-captures.md).
 
 ## Operators and JavaScript semantics
 
@@ -520,7 +540,14 @@ existing `auto`/template deduction.
    body. Unused union slots receive their destination type. The preserved
    `index-switch.js` now executes unchanged: `return-dispatch.test` checks eight
    observations in six native modes, mutation, budget and rollback controls.
-   Next resolve the separate `nested-sibling.js` captured-function binding refusal.
+   The original `nested-sibling.js` now lowers unchanged: a bound sibling call
+   forwards captures only when both closures already capture the identical cell
+   in the same frame. The existing immutable-value/shared-pointer proof remains
+   authoritative. A disposable whole-lift attempt publishes only after both
+   caller and callee lift; otherwise the original binding remains executable.
+   Five observations in four native executions, four refusals, a mutation and
+   a boxed refusal execution pass. Missing captures, deeper relays and escaping
+   callers remain separate proofs.
    Broader unions and mixed container payloads remain separate; never stringify
    both sides unconditionally.
    Keep numeric relational conversion separate from String lexicographic ordering
@@ -548,9 +575,11 @@ existing `auto`/template deduction.
    broaden source admission merely because a C++ accessor exists.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
-   reads and branch/loop/return transport now emit in proved DOM and primitive-only
-   entries. Next prove fresh source construction and primitive methods; registry,
-   symbol-keyed fields and hooks remain separate. BigInt still needs its public non-Script core and ownership
+   reads, absent/String construction, direct primitive methods and branch/loop/
+   return transport now emit in proved DOM and primitive-only entries. Next prove
+   source `.description` with undefined/String transport, then useful intrinsic
+   parameters/helpers. Registry, symbol-keyed fields and hooks remain separate.
+   BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.
 
 ## Focused acceptance criteria

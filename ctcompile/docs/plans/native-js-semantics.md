@@ -75,8 +75,10 @@ snapshots and explicit formatting shared with the VM through public Core. The
 well-known Symbol reads and preserve identity comparisons, truthiness and `typeof`
 while driving browser operations. Well-known identities now survive branches,
 loops and returns; a strict primitive-only export contract needs no DOM input.
-General scripts, fresh source construction, registry operations and hook dispatch
-remain unfinished. BigInt still needs a public
+Those entries now admit fresh construction with absent/String descriptions and
+direct `toString`/`valueOf` calls. General scripts, source `.description` with
+undefined/String transport, registry operations and hook dispatch remain
+unfinished. BigInt still needs a public
 non-Script implementation. Add these with their corresponding type/prototype
 milestones rather than treating the external inventory as exhaustive.
 
@@ -157,10 +159,12 @@ General String UTF-16 length/index/casing alignment also remains separate.
    with Node, VM and native checks. Shared-cell writes and nested capture pointers
    now preserve these unions, owning snapshots and observable absence. The
    unchanged `shared-mixed.js` and 44 new observations pass the cell fixture.
-   Next normalize ordinary return dispatch from its retained `index-switch.js`
-   source with the existing bounded, transactional `normalizeStructuredExits`.
-   The captured sibling-function refusal, object hooks, String ordering and
-   general Unicode alignment remain separate.
+   The retained `index-switch.js` now executes through bounded, transactional
+   `normalizeStructuredExits`. The retained `nested-sibling.js` also lowers:
+   sibling calls forward identical existing captures only after both functions
+   lift; a failed attempt preserves executable boxed closures. Deeper capture
+   relays, object hooks, String ordering and general Unicode alignment remain
+   separate.
 3. **Array/object/prototype semantics.** Add concrete wrappers and proved
    `ToPrimitive`/property-key paths, then boxed primitives and `Symbol.hasInstance`.
    Pair every admitted hook with replaced/unknown/throwing-hook controls.

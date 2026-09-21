@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Symbol construction and sibling captures, 2026-09-21 UTC
+
+Continued **aebfa918**, including the interrupted in-flight work.
+**cb07719d** admits fresh Symbol construction with absent/String descriptions
+and direct `toString`/`valueOf` calls through the existing fingerprinted DOM and
+intrinsic entry proofs. Generated C++ uses the existing native factory and typed
+methods. **46ae2476** admits the unchanged `nested-sibling.js`: bound sibling
+calls forward identical existing captures only after both functions lift. A
+failed attempt retains executable closure bindings.
+
+Focused devbox validation passes: **two distinct CTests and seven distinct lit
+cases** across corrected runs. Symbol exports check **48 native executions,
+74 refusals and one mutation**; DOM Symbols check **32 executions, 36 refusals
+and one mutation**. Sibling captures check **five observations in four native
+executions**, four refusals, a mutation and execution of all four boxed entries
+for a refused closure. All **16 code/test hashes** match the devbox. Scoped
+formatting passes; required repository formatting retains 16 existing diagnostics.
+Full suites, broad corpus/matrix, new sanitizers and full Bootstrap were skipped.
+No browser or runtime implementation changed.
+[Exact checks and corrections](handoff/2026-09-21-symbol-construction-sibling-captures.md).
+
+**Next:** Symbol `.description` needs undefined/String transport distinct from
+DOM null/String, then useful intrinsic parameters/helpers. Bootstrap's original
+B/Data+B still needs constructor registration through helpers and inheritance,
+followed by captured outer/nested Data Map origins, conflict checks, nullable
+gets, cleanup and owner lifetime. Preserve its original bodies. Deeper sibling
+relays, custom Symbol hooks, String ordering, document views and the application
+driver remain unfinished. No full-Bootstrap gain is claimed.
+
 ## Symbol transport, intrinsic exports and class tests, 2026-09-21 UTC
 
 Continued clean **2e505136**, resuming the retained Symbol transport witnesses.
