@@ -16,6 +16,20 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-shortcircuit-repeat": (5991, 5991),
+    "class-map-record-nested-shortcircuit-distinct": (5961, 5961),
+    "class-map-record-nested-shortcircuit-cached": (5131, 5131),
+    "class-map-record-nested-shortcircuit-dynamic-branch": (77, 77),
+    "class-map-record-nested-shortcircuit-returned-outer": (7, 7),
+    "class-map-record-nested-shortcircuit-boxed-outer": (7, 7),
+    "class-map-record-nested-shortcircuit-observed-dead-set": (107, 107),
+    "class-map-record-nested-shortcircuit-dead-call": (7, 7),
+    "class-map-record-nested-shortcircuit-dead-coercion": (7, 7),
+    "class-map-record-nested-shortcircuit-missing-outer": (107, 107),
+    "class-map-record-nested-shortcircuit-missing-inner": (107, 107),
+    "class-map-record-nested-shortcircuit-captured-observer": (7, 7),
+    "class-map-record-nested-shortcircuit-region-owner": (7, 7),
+    "class-map-record-nested-shortcircuit-record-escaped": (7, 7),
     "class-map-record-nested-conditional-repeat": (551, 551),
     "class-map-record-nested-conditional-distinct": (5961, 5961),
     "class-map-record-nested-conditional-recreate": (5931, 5931),
@@ -719,6 +733,9 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-shortcircuit-repeat",
+    "class-map-record-nested-shortcircuit-distinct",
+    "class-map-record-nested-shortcircuit-cached",
     "class-map-record-nested-conditional-repeat",
     "class-map-record-nested-conditional-distinct",
     "class-map-record-nested-conditional-recreate",

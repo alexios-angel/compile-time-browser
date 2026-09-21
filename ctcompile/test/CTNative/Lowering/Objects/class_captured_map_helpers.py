@@ -37,5 +37,5 @@ check.OBSERVATIONS = {
         )
     )
 }
-assert len(check.OBSERVATIONS) == len(SELECTED) + 106
+assert len(check.OBSERVATIONS) == len(SELECTED) + 120
 check.main()

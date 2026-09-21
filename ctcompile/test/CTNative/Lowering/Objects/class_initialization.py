@@ -560,6 +560,7 @@ def main():
         if name in (
             "class-map-record-nested-direct",
             "class-map-record-nested-conditional-repeat",
+            "class-map-record-nested-shortcircuit-repeat",
         ):
             prepare(
                 args,
@@ -585,7 +586,10 @@ def main():
             if name.startswith("class-map-record-nested-"):
                 # Exact routing erases only the outer Map, preserving all owners.
                 constructions -= 1
-            if name == "class-map-record-nested-conditional-repeat":
+            if name in (
+                "class-map-record-nested-conditional-repeat",
+                "class-map-record-nested-shortcircuit-repeat",
+            ):
                 # The second registration's false branch never allocates its child.
                 constructions -= 1
             if constructions != prepared.read_text().count("ctjs.construct"):
@@ -863,6 +867,7 @@ def main():
             "class-map-record-constructor-dynamic-key",
             "class-map-record-nested-direct",
             "class-map-record-nested-conditional-repeat",
+            "class-map-record-nested-shortcircuit-repeat",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",
