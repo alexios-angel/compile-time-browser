@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed browser views and DOM key lifetimes, 2026-09-21 UTC
+
+Continued clean **4b76250f** and finished the alias thread left by a steering
+interruption. **dee4ff0a** adds borrowed C++ `js_document_t`/`js_element_t` views over
+public ctbrowser DOM/Style, with explicit null-only results, snapshots and receiver-only
+prototype selectors. **32f5311b** emits proved `matches` calls through the typed
+receiver and `js_string`. Ownership remains ordinary C++; no Script/VM fallback.
+
+**c90e4545** permits sequential DOM-input Map keys after the prior key is retired,
+while retaining saved child aliases and all original class/Data observations.
+Four complete sources execute for equal/distinct inputs with results **15927,
+59112, 15939 and 15951**. The provider admits fully unobserved declared inputs,
+but native sessions still validate every input before effects. The two original
+alias-dependent witnesses remain refused: distinct inputs throw before publication.
+
+Focused validation: alias fixture **32 native executions, 23 refusals, six Node/VM
+observations, four preparations and four provider proofs**; final alias/DOM-input
+lit selection **2/2, 51.58 s**. Prototype-selector lit passes **64 executions and
+100 refusals**. Exact native-runtime/host-contract CTests pass **2/2, 0.57 s**;
+later host-contract check **1/1, 0.55 s**. All eleven code/test hashes match the
+devbox. Scoped checks pass; required repository formatting retains 16 untouched
+diagnostics. Full suites and broad replays were skipped. No browser/shared edits.
+
+**Next browser boundary:** prove an explicit source `document` binding and guarded
+root/query results through the new C++ view, reusing the live document/Style owner.
+The application driver and remaining typed selector-result emission are incomplete.
+Overlapping DOM-key lifetimes, original B/Data+B, object-valued fields, tagged Map
+snapshots, broader Strings, conditional callees and mutable cells remain. Full
+Bootstrap is unfinished.
+
+[Exact checks and next source-document boundary](handoff/2026-09-21-browser-views-dom-key-lifetimes.md).
+
 ## Native Bootstrap results and browser prototype calls, 2026-09-21 UTC
 
 Continued clean **d74968ab**, then resumed the saved draft after an interruption.
