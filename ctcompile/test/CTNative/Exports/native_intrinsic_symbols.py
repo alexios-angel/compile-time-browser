@@ -550,6 +550,45 @@ DEFAULT_INDICES = {
 }
 """,
 }
+UNDEFINED_WITNESSES = {
+    # Preserve the three complete former explicit-undefined refusal bodies.
+    "default-index-charat-undefined": (
+        "function bad(text) { return text.charAt(undefined); }\n",
+        ("", "a", "a"),
+    ),
+    "default-index-slice-undefined": (
+        "function bad(text) { return text.slice(undefined); }\n",
+        ("", "a", "abc"),
+    ),
+    "string-slice-end-undefined": (
+        "function bad(text, index) { return text.slice(0, undefined); }\n",
+        ("", "a", "abc"),
+    ),
+}
+UNDEFINED_INDICES = {
+    **{name: source for name, (source, _) in UNDEFINED_WITNESSES.items()},
+    "string-undefined-indices": """function stringUndefinedIndices(text, first, middle, tail) {
+  const absent = undefined;
+  return text.charAt(absent) === first && text.slice(absent) === text &&
+    text.slice(absent, absent) === text && text.slice(absent, 1) === first &&
+    text.slice(1, absent) === middle + tail && text.slice(2, absent) === tail &&
+    text.slice(absent, 0) === '' && text.slice(absent, -1) === text.slice(0, -1) &&
+    text.slice(-1, absent) === text.slice(-1) && text.slice(-0.5, absent) === text &&
+    text.slice(-1e999, absent) === text && text.slice(1e999, absent) === '';
+}
+""",
+    "description-capture-undefined-index": """function descriptionCaptureUndefinedIndex(key) {
+  const text = key.description;
+  const absent = undefined;
+  key = Symbol('changed');
+  function restore() {
+    return text !== absent ? text.slice(absent, absent).charAt(absent) +
+      text.slice(1, absent) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -597,6 +636,11 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in DEFAULT_WITNESSES},
     "string-default-indices": ["string", "string"],
     "description-capture-default-index": ["symbol"],
+    "default-index-charat-undefined": ["string"],
+    "default-index-slice-undefined": ["string"],
+    "string-slice-end-undefined": ["string", "number"],
+    "string-undefined-indices": ["string", "string", "string", "string"],
+    "description-capture-undefined-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1221,6 +1265,21 @@ CASES["description-capture-default-index"] = (
     DEFAULT_INDICES["description-capture-default-index"],
     *CASES["description-type-guard"][1:],
 )
+for name, (source, _) in UNDEFINED_WITNESSES.items():
+    # The former charAt/slice default refusals have one source parameter.
+    method = "charat" if name == "default-index-charat-undefined" else "slice"
+    checks = CASES[f"string-index-{method}-missing"][1]
+    if len(PARAMETER_TYPES[name]) == 1:
+        checks = checks.replace(", ctnative::js_num)", ")").replace(", ctnative::js_num{0.0}", "")
+    CASES[name] = source, checks, "true\n"
+CASES["string-undefined-indices"] = (
+    UNDEFINED_INDICES["string-undefined-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-undefined-index"] = (
+    UNDEFINED_INDICES["description-capture-undefined-index"],
+    *CASES["description-type-guard"][1:],
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -1325,6 +1384,9 @@ def oracle(args):
         )
         + "".join(body for name, body in WIDE_INDICES.items() if name not in WIDE_WITNESSES)
         + "".join(body for name, body in DEFAULT_INDICES.items() if name not in DEFAULT_WITNESSES)
+        + "".join(
+            body for name, body in UNDEFINED_INDICES.items() if name not in UNDEFINED_WITNESSES
+        )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -1632,6 +1694,32 @@ var symbol101StringUTF16DefaultIndices = stringDefaultIndices('\u00c9xy', '\u00c
   stringDefaultIndices('\ud801\udc00x', '\ud801') && stringDefaultIndices('\ud800xy', '\ud800') &&
   stringDefaultIndices('\udc00xy', '\udc00');
 """
+        + "".join(
+            f"\nfunction observeUndefined{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}UndefinedWitness{i} = observeUndefined{i}();\n"
+            for i, (body, expected) in enumerate(UNDEFINED_WITNESSES.values(), 102)
+        )
+        + r"""
+var symbol105StringUndefinedIndices = stringUndefinedIndices('', '', '', '') &&
+  stringUndefinedIndices('a', 'a', '', '') && stringUndefinedIndices('abcd', 'a', 'b', 'cd') &&
+  stringUndefinedIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringUndefinedIndices('abc', 'a', 'bc', 'c') && !stringUndefinedIndices('abc', 'a', 'b', 'bc');
+var symbol106DescriptionCaptureUndefinedIndex = descriptionCaptureUndefinedIndex(Symbol()) === ':absent' &&
+  descriptionCaptureUndefinedIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureUndefinedIndex(Symbol('')) === '' &&
+  descriptionCaptureUndefinedIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureUndefinedIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureUndefinedIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureUndefinedIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol107StringUTF16UndefinedIndices = stringUndefinedIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringUndefinedIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringUndefinedIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringUndefinedIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -1710,6 +1798,10 @@ var symbol101StringUTF16DefaultIndices = stringDefaultIndices('\u00c9xy', '\u00c
         "StringDefaultIndices",
         "DescriptionCaptureDefaultIndex",
         "StringUTF16DefaultIndices",
+        *(f"UndefinedWitness{i}" for i in range(102, 105)),
+        "StringUndefinedIndices",
+        "DescriptionCaptureUndefinedIndex",
+        "StringUTF16UndefinedIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1726,6 +1818,9 @@ var symbol101StringUTF16DefaultIndices = stringDefaultIndices('\u00c9xy', '\u00c
     vm_expected = vm_expected.replace(
         "symbol71StringUTF16FractionalIndices=true", "symbol71StringUTF16FractionalIndices=false"
     ).replace("symbol101StringUTF16DefaultIndices=true", "symbol101StringUTF16DefaultIndices=false")
+    vm_expected = vm_expected.replace(
+        "symbol107StringUTF16UndefinedIndices=true", "symbol107StringUTF16UndefinedIndices=false"
+    )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
@@ -1863,6 +1958,7 @@ def main():
             | FRACTIONAL_INDICES
             | WIDE_INDICES
             | DEFAULT_INDICES
+            | UNDEFINED_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -2065,6 +2161,7 @@ def main():
         *FRACTIONAL_INDICES,
         *WIDE_INDICES,
         *DEFAULT_INDICES,
+        *UNDEFINED_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -2173,7 +2270,6 @@ def main():
     for name, body in {
         "end-dynamic": "return text.slice(0, index);",
         "end-coercion": "return text.slice(0, '2');",
-        "end-undefined": "return text.slice(0, undefined);",
         "end-object": "return text.slice(0, {valueOf() { return 2; }});",
         "end-effect": "return text.slice(0, unknown());",
         "start-dynamic": "return text.slice(index, 2);",
@@ -2369,8 +2465,6 @@ def main():
         refuse(changed, contract, f"wide-index-nan-literal-{optimize}", optimize=optimize)
 
     for name, body in {
-        "charat-undefined": "return text.charAt(undefined);",
-        "slice-undefined": "return text.slice(undefined);",
         "charat-detached": "const method=text.charAt; return method();",
         "slice-detached": "const method=text.slice; return method();",
         "charat-replacement": "String.prototype.charAt=0; return text.charAt();",
@@ -2399,6 +2493,40 @@ def main():
         raise RuntimeError("default index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "default-index-stale"):
         raise RuntimeError("changed default index accepted a stale fingerprint")
+
+    for name, body in {
+        "charat-coercion": "return text.charAt(null);",
+        "slice-coercion": "return text.slice(undefined, null);",
+        "end-dynamic": "return text.slice(undefined, text);",
+        "extra": "return text.slice(undefined, undefined, 1);",
+        "charat-authority": "return text.charAt(undefined).toLowerCase();",
+        "slice-authority": "return text.slice(1, undefined).toLowerCase();",
+        "charat-detached": "const method=text.charAt; return method(undefined);",
+        "slice-replacement": "String.prototype.slice=0; return text.slice(undefined);",
+        "changed-local": "let index=undefined; index=text; return text.slice(index);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(undefined);",
+        "description-unguarded": "return Symbol(text).description.slice(undefined);",
+        "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice(undefined) : '';",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "undefined-index-" + name,
+            f"function bad(text) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"undefined-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-undefined-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"undefined-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "undefined-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("undefined index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "undefined-index-stale"):
+        raise RuntimeError("changed undefined index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

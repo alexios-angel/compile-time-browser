@@ -554,8 +554,15 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                 at.getStringAttr("ctbrowser::wtf8_to_utf16"),
                                                 mlir::ValueRange{rawText(call.getReceiver())});
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
+        // The host proof admits only Number literals and undefined. Retain
+        // undefined's default without converting it to a numeric NaN.
+        const auto numericIndex = [](mlir::Value argument) {
+            return isNumberCarrier(argument.getType()) || argument.getType().isF64();
+        };
+        const bool startIndex = !call.getArgs().empty() && numericIndex(call.getArgs().front());
+        const bool endIndex = call.getArgs().size() == 2 && numericIndex(call.getArgs()[1]);
         mlir::Value length;
-        if (!call.getArgs().empty()) {
+        if (startIndex || endIndex) {
             length = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{indexType},
                                                     units.getResult(0), at.getStringAttr("size"),
                                                     mlir::ArrayAttr{}, mlir::ArrayAttr{},
@@ -605,15 +612,14 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             auto fromEnd = ec::SubOp::create(at, where, indexType, length, clamped);
             return ec::ConditionalOp::create(at, where, indexType, negative, fromEnd, clamped);
         };
-        mlir::Value start =
-            call.getArgs().empty()
-                ? ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"))
-                : offset(call.getArgs().front());
+        mlir::Value start = !startIndex ? ec::ConstantOp::create(at, where, indexType,
+                                                                 ec::OpaqueAttr::get(context, "0"))
+                                        : offset(call.getArgs().front());
         llvm::SmallVector<mlir::Value> range{start};
         if (edge.kind == HostDOMMethod::stringCharAt) {
             range.push_back(
                 ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1")));
-        } else if (call.getArgs().size() == 2) {
+        } else if (endIndex) {
             auto end = offset(call.getArgs()[1]);
             auto reversed = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, end,
                                               range.front());
