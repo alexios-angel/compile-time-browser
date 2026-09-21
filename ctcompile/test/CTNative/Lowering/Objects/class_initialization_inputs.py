@@ -16,6 +16,22 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-conditional-repeat": (551, 551),
+    "class-map-record-nested-conditional-distinct": (5961, 5961),
+    "class-map-record-nested-conditional-recreate": (5931, 5931),
+    "class-map-record-nested-conditional-dynamic-branch": (97, 97),
+    "class-map-record-nested-conditional-outer-escaped": (7, 7),
+    "class-map-record-nested-conditional-captured-observer": (7, 7),
+    "class-map-record-nested-conditional-dynamic-key": (7, 7),
+    "class-map-record-nested-conditional-missing-outer": (107, 107),
+    "class-map-record-nested-conditional-missing-inner": (107, 107),
+    "class-map-record-nested-conditional-child-escaped": (7, 7),
+    "class-map-record-nested-conditional-record-escaped": (7, 7),
+    "class-map-record-nested-conditional-exception": (8, 8),
+    "class-map-record-nested-conditional-dead-escape": (7, 7),
+    "class-map-record-nested-conditional-dead-coercion": (7, 7),
+    "class-map-record-nested-conditional-region-owner": (7, 7),
+    "class-map-record-nested-conditional-reentry": (7, 7),
     "class-map-record-nested-direct": (711, 711),
     "class-map-record-nested-distinct": (5961, 5961),
     "class-map-record-nested-overwrite-delete": (59596, 59596),
@@ -703,6 +719,9 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-conditional-repeat",
+    "class-map-record-nested-conditional-distinct",
+    "class-map-record-nested-conditional-recreate",
     "class-map-record-nested-direct",
     "class-map-record-nested-distinct",
     "class-map-record-nested-overwrite-delete",

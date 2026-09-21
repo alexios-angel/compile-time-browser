@@ -308,6 +308,8 @@ def main():
             reference_output += "count=3\n"
         if name == "static-error-replaced":
             reference_output = "Error=9\n" + reference_output
+        if name == "class-map-record-nested-conditional-dead-escape":
+            reference_output += "retained=undefined\n"
         if reference_expected is not None and reference.stdout != reference_output:
             raise RuntimeError(
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
@@ -555,7 +557,10 @@ def main():
             preparation_refusals += check_captured_key_inputs(args, structured, manifest)
         if name == "class-map-record-direct":
             check_record_map_inputs(args, prepared)
-        if name == "class-map-record-nested-direct":
+        if name in (
+            "class-map-record-nested-direct",
+            "class-map-record-nested-conditional-repeat",
+        ):
             prepare(
                 args,
                 name + "-stale",
@@ -579,6 +584,9 @@ def main():
             )
             if name.startswith("class-map-record-nested-"):
                 # Exact routing erases only the outer Map, preserving all owners.
+                constructions -= 1
+            if name == "class-map-record-nested-conditional-repeat":
+                # The second registration's false branch never allocates its child.
                 constructions -= 1
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -854,6 +862,7 @@ def main():
             "class-map-record-constructor-multislot-keyed",
             "class-map-record-constructor-dynamic-key",
             "class-map-record-nested-direct",
+            "class-map-record-nested-conditional-repeat",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",
