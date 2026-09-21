@@ -227,11 +227,13 @@ with undefined or String. Its proof kind remains distinct from DOM null/String.
 Equality, truthiness, `typeof`, branches, loops and returns preserve that distinction;
 saved descriptions survive later Symbol assignments. Exact `typeof` String/undefined
 guards and equality with undefined now narrow the same saved value within its
-proved String arm. Under an explicit String identity, `charAt(0)` and `slice(1)`
-reuse the existing UTF-16 operations and owning String extraction.
+proved String arm. Under an explicit String identity, `charAt` and `slice` with
+nonnegative uint32 integer literal indices reuse the existing UTF-16 operations
+and owning String extraction (**2e6dc90a**). Offsets clamp to the UTF-16 length.
 **8e6e2e4d** also admits constant ASCII-prefix `startsWith` and
 `charAt(0).toLowerCase()` through their existing proofs and public Core helpers.
-Whole-string lowercase, non-ASCII prefixes and broader indices remain separate.
+Whole-string lowercase, non-ASCII prefixes and negative/dynamic/coercing indices
+remain separate. Dataset reconstruction and first-unit lowercase keep index 0/1 proofs.
 Empty String remains present; truthiness, another description read and uses after
 the guard grant no String authority. Mixed null/description joins remain separate.
 
@@ -239,14 +241,14 @@ the guard grant no String authority. Mixed null/description joins remain separat
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
 remain typed. With global/local helper composition, description guards and
-**8e6e2e4d** proved String calls, the export fixture checks **328 native executions,
-314 refusals and two mutations**, with **49 Node/VM agreements and two known VM
-ASCII-casing differences**. Native/Node Unicode expectations remain intact;
+**2e6dc90a** literal String indices, the export fixture checks **352 native executions,
+356 refusals and two mutations**, with **52 Node/VM agreements and three known VM
+casing/indexing differences**. Native/Node Unicode expectations remain intact;
 no runtime implementation changed.
-[Exact intrinsic-String and multi-slot-holder evidence](../handoff/2026-09-21-multi-slot-holders-intrinsic-strings.md).
+[Exact captured-key and String-index evidence](../handoff/2026-09-21-captured-keys-string-indices.md).
 
-**Next source slice:** broader String methods/indices and conditional callee
-transport. Branch-mutated boxed locals remain separate from immutable captures;
+**Next source slice:** broader String methods, negative/dynamic/coercing indices
+and conditional callee transport. Branch-mutated boxed locals remain separate from immutable captures;
 mixed primitive unions and object coercion retain their own admission boundaries.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
@@ -509,8 +511,9 @@ existing `auto`/template deduction.
    raw `std::string` with explicit adapters; callback parameters and results
    cross that boundary too. Printing and deduced-type pins retain exact types.
    General String length still counts stored bytes (ND-1), as does the current
-   VM. Existing admitted DOM `charAt(0)`, `slice(1)` and isolated-unit lowercase
-   keep their separate public Core UTF-16 operations and recorded VM differences.
+   VM. Admitted DOM/intrinsic `charAt`/`slice` with literal uint32 indices and
+   isolated-first-unit lowercase keep their public Core UTF-16 operations and
+   recorded VM differences.
    The class has no general length/index/casing API yet. Do not normalize all
    constructor bytes or silently broaden the ASCII-prefix admission.
    Exact String unary `+`/`-` now calls `.to_number() -> js_num`; the Number
@@ -635,9 +638,9 @@ existing `auto`/template deduction.
    return transport now emit in proved DOM and primitive-only entries. Source
    `.description` preserves owning undefined/String results. Exact primitive/Symbol
    parameters and local/global helper calls, including immutable local captures,
-   are implemented. Exact description guards now permit `charAt(0)` and `slice(1)`
-   with explicit String identity, including ASCII-prefix checks and isolated-unit
-   lowercase; broader methods and indices remain separate.
+   are implemented. Exact description guards permit literal uint32 `charAt`/`slice`
+   indices with explicit String identity, including ASCII-prefix checks and
+   isolated-first-unit lowercase; broader methods and indices remain separate.
    Registry, symbol-keyed fields and hooks remain
    separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.

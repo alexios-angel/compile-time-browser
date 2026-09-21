@@ -1120,6 +1120,10 @@ var symbol55StringUTF16Indices = stringIndices('\u00c9xy', 'x', 'y') &&
     )
     if run([args.node, str(node)]).stdout != expected:
         raise RuntimeError("Node Symbol export observations differ")
+    agreements = sum(
+        a == b for a, b in zip(expected.splitlines(), vm_expected.splitlines(), strict=True)
+    )
+    return agreements, len(observations) - agreements
 
 
 def standalone(args, native, name, checks, expected, compilers, includes, libraries):
@@ -1215,7 +1219,7 @@ def main():
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
-    oracle(args)
+    agreements, differences = oracle(args)
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args, core_only=True)
@@ -1621,7 +1625,7 @@ def main():
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
         f"Symbol exports: typed parameters/helpers/captures, guarded String methods, scalar equality and branch/loop return; "
-        f"49 Node/VM agreements, 2 known VM ASCII-case differences; "
+        f"{agreements} Node/VM agreements, {differences} known VM casing/index differences; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

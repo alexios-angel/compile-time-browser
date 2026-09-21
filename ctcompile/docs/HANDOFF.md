@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured keys and literal String indices, 2026-09-21 UTC
+
+Continued clean **641c8ee5** from the recorded Data/key boundary.
+**e7b45436** admits the unchanged file-30 captured outer-key witness. A constructor
+may capture one local Map and one immutable String key; a wrapper parameter must
+have the same literal String at every closed, visible call. Original callee,
+cell, symbol, publication and record-owner checks remain required.
+**2e6dc90a** admits literal uint32 `charAt`/`slice` indices through existing Core
+UTF-16 conversion and checked bounds. Dataset reconstruction and isolated-unit
+lowercase retain their original index-0/index-1 authority.
+
+Focused devbox validation passes: **one exact CTest, four distinct lit cases and
+one UTF-16 class subset**. Captured class checks measure **95 source observations,
+224 main native executions, 190 unprepared refusals and 118 preparation refusals**;
+the original witness plus four new bodies add 40 executions. Intrinsic exports
+measure **352 native executions, 356 refusals and two mutations**, with **52 Node/VM
+agreements and three explicit known casing/indexing differences**. The class
+subset measures 92 observations, eight native binaries and 404 refusals; the
+existing DOM String fixture also passes. All **11 code/test hashes** match the
+devbox. Scoped formatting passes; repository formatting retains 16 existing
+diagnostics. No browser/runtime implementation changed. Full suites, broad
+corpus/matrices, full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** original Data still needs its real three-argument registration using
+both key dimensions, conditional nested Maps, conflicts, nullable lookup and
+child/empty-parent cleanup, with complete owner, observer, exception and reentry
+proofs. Original B/Data+B and unused holder slots remain unchanged refusals.
+Different caller keys, computed keys, captured helper keys and broader families
+remain separate. Broader String methods/indices, conditional callees, branch-mutated
+boxed locals, String ordering, document views and the application driver remain.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-captured-keys-string-indices.md).
+
 ## Multi-slot holders and intrinsic Strings, 2026-09-21 UTC
 
 Continued clean **c2dc4554** from the recorded Data holder boundary.
