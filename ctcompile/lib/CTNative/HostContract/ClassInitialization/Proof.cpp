@@ -190,6 +190,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             mapOperations.insert(load);
         }
     }
+    if (!proveHeritage(contract)) { return false; }
     if (!maps.empty()) {
         llvm::SmallVector<unsigned> requiredHelpers;
         for (ctjs::CallOp call : calls) {
@@ -211,7 +212,6 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             }
         }
     }
-    if (!proveHeritage(contract)) { return false; }
     if (!heritage.empty()) {
         HostContract binding = contract;
         binding.provider = HostContract::Provider::closedSource;

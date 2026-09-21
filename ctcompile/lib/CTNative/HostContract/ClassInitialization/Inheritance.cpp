@@ -803,7 +803,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         auto baseClosure =
             sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>();
         if (!constructors.contains(target(baseClosure)) ||
-            !normalizeSuper(closure, baseClosure, contract)) {
+            (!normalizedSuper.contains(function) &&
+             !normalizeSuper(closure, baseClosure, contract))) {
             return false;
         }
     }

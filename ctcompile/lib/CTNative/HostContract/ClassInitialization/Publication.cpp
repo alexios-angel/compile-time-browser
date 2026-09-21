@@ -3,11 +3,85 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+bool classInitialization::publicationSuffix(ctjs::CallOp publication,
+                                            llvm::ArrayRef<ctjs::ConstructOp> instances,
+                                            bool allowFields) {
+    auto function = publication->getParentOfType<ctjs::FuncOp>();
+    auto & body = function.getBody().front();
+    auto self = body.getArgument(ctjs::arg_receiver);
+    llvm::DenseSet<mlir::Value> numbers;
+    if (allowFields) {
+        // A generic arithmetic opcode can invoke user coercion. Prove its
+        // operands from every exact construction, never from an observed run.
+        // ponytail: literal Number arguments; wider callers need typed source proof.
+        for (auto [index, argument] :
+             llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
+            bool numeric = !instances.empty();
+            for (ctjs::ConstructOp made : instances) {
+                if (!step()) { return false; }
+                auto actual = index < made.getArgs().size()
+                                  ? made.getArgs()[index].getDefiningOp<ctjs::ConstantOp>()
+                                  : ctjs::ConstantOp{};
+                numeric &= actual && llvm::isa<ctjs::NumberAttr>(actual.getValue());
+            }
+            if (numeric) { numbers.insert(argument); }
+        }
+        for (mlir::Operation & op : body) {
+            if (!step()) { return false; }
+            if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
+                if (llvm::isa<ctjs::NumberAttr>(literal.getValue())) {
+                    numbers.insert(literal.getResult());
+                }
+                continue;
+            }
+            bool numeric = llvm::isa<ctjs::BinaryStaticOp>(op);
+            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
+                switch (binary.getKind()) {
+                case ctjs::BinaryKind::Add:
+                case ctjs::BinaryKind::Sub:
+                case ctjs::BinaryKind::Mul:
+                case ctjs::BinaryKind::Div:
+                case ctjs::BinaryKind::Mod:
+                case ctjs::BinaryKind::Pow: numeric = true; break;
+                default: break;
+                }
+            }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
+                numeric = unary.getKind() == ctjs::UnaryKind::Neg ||
+                          unary.getKind() == ctjs::UnaryKind::Plus ||
+                          unary.getKind() == ctjs::UnaryKind::BitNot;
+            }
+            if (numeric && llvm::all_of(op.getOperands(), [&](mlir::Value operand) {
+                    return numbers.contains(operand);
+                })) {
+                numbers.insert(op.getResult(0));
+            }
+        }
+    }
+    for (mlir::Operation * op = publication->getNextNode(); op; op = op->getNextNode()) {
+        if (!step()) { return false; }
+        if (op->getNumResults() == 1 && numbers.contains(op->getResult(0))) { continue; }
+        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op); allowFields && write) {
+            auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
+            if (write.getObject() == self && ctjs::ordinaryKey(write.getKey()) &&
+                (numbers.contains(write.getValue()) ||
+                 (value && llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
+                                     ctjs::NumberAttr, ctjs::StringAttr>(value.getValue())))) {
+                continue;
+            }
+        }
+        if (!llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
+            return false;
+        }
+    }
+    return reason.empty();
+}
+
 bool classInitialization::sinkCapturedPublication(
     ctjs::CallOp setup, const HostContract & contract,
     llvm::SmallVectorImpl<unsigned> & requiredHelpers) {
-    // ponytail: terminal three-argument registration in an ordinary constructor.
-    // Inherited or partial publication still needs the family observer proof.
+    // ponytail: terminal registration, or one unconstructed base with one leaf.
+    // Shared/deeper families and observable suffixes need a wider publication proof.
     if (contract.provider != HostContract::Provider::closedSource || setup.getArgs().size() != 1) {
         return true;
     }
@@ -110,12 +184,6 @@ bool classInitialization::sinkCapturedPublication(
     }
     auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
     if (!returned || !undefined(returned.getValue())) { return true; }
-    for (mlir::Operation * op = invocation->getNextNode(); op; op = op->getNextNode()) {
-        if (!step()) { return false; }
-        if (!llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
-            return true;
-        }
-    }
     llvm::SmallVector<ctjs::ConstructOp> instances;
     for (mlir::OpOperand * use : sourceUses(constructor.getResult())) {
         if (!step()) { return false; }
@@ -128,13 +196,22 @@ bool classInitialization::sinkCapturedPublication(
                 return true;
             }
             if (use->getOperandNumber() == 0) { instances.push_back(made); }
+        } else if (heritageUse(*use, constructor.getResult())) {
+            continue;
         } else if (op != setup && !llvm::isa<ctjs::RootOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp,
                                              ctjs::DefineAccessorOp, ctjs::InstanceOfOp>(op)) {
-            // Includes ordinary calls and the original heritage intrinsic.
+            // Ordinary calls and unproved heritage retain the original body.
             return true;
         }
     }
-    if (instances.empty()) { return true; }
+    const bool isBase = baseClasses.contains(constructor.getResult());
+    if (isBase && (!instances.empty() || heritage.contains(constructor.getResult()))) {
+        return true;
+    }
+    if (!isBase && instances.empty()) { return true; }
+    if (!publicationSuffix(invocation, instances, normalizedSuper.contains(function))) {
+        return reason.empty();
+    }
     // sourceUses omits capture transport. A hidden caller must retain the
     // original constructor until a complete callable proof can account for it.
     for (auto [alias, initial] : cells) {
@@ -155,6 +232,53 @@ bool classInitialization::sinkCapturedPublication(
                 return true;
             }
         }
+    }
+    if (isBase) {
+        ctjs::CreateClosureOp leaf;
+        ctjs::CallOp leafSetup;
+        for (auto [derived, inherited] : heritage) {
+            if (!step()) { return false; }
+            if (sourceValue(inherited.getArgs()[1]) != constructor.getResult()) { continue; }
+            auto next = derived.getDefiningOp<ctjs::CreateClosureOp>();
+            if (leaf || !next || baseClasses.contains(derived) || !next.getUpvalues().empty()) {
+                return true;
+            }
+            leaf = next;
+        }
+        for (ctjs::CallOp call : calls) {
+            if (!step()) { return false; }
+            if (leaf && call.getArgs().size() == 1 && call.getArgs().front() == leaf.getResult()) {
+                leafSetup = call;
+            }
+        }
+        if (!leafSetup || !normalizeSuper(leaf, constructor, contract)) { return false; }
+        auto leafFunction = target(leaf);
+        ctjs::LoadUpvalueOp copied;
+        for (auto load : leafFunction.getBody().front().getOps<ctjs::LoadUpvalueOp>()) {
+            if (!step()) { return false; }
+            if (copied || load.getIndex() != 0) {
+                return refuse("inherited registration requires its sole original capture");
+            }
+            copied = load;
+        }
+        if (!copied) { return refuse("inherited registration lost its original capture"); }
+        // No capture records exist before the class census. Super substituted
+        // the base callee with undefined; restore this exact cell in the leaf.
+        copied->setOperand(0, leafFunction.getBody().front().getArgument(ctjs::arg_callee));
+        leaf.getUpvaluesMutable().assign(cell);
+        leafFunction.setUpvalueCount(1);
+        normalizedSuper.insert(leafFunction);
+        if (!sinkCapturedPublication(leafSetup, contract, requiredHelpers) ||
+            !leaf.getUpvalues().empty()) {
+            return refuse("inherited registration lacks a completed leaf publication proof");
+        }
+        eraseRooted(invocation);
+        if (selection) { eraseRooted(selection); }
+        eraseRooted(captured);
+        constructor.getUpvaluesMutable().clear();
+        constructor.removeEnclosingIndicesAttr();
+        function.setUpvalueCount(0);
+        return true;
     }
     llvm::SmallVector<ctjs::StringAttr> keys;
     for (ctjs::ConstructOp made : instances) {
@@ -747,70 +871,8 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
         if (!actual || !llvm::isa<ctjs::StringAttr>(actual.getValue())) { return true; }
         keys.push_back(actual);
     }
-    llvm::DenseSet<mlir::Value> numbers;
-    if (basePublication) {
-        // A generic arithmetic opcode can invoke user coercion. Prove its
-        // operands from every exact construction, never from an observed run.
-        // ponytail: literal Number arguments; wider callers need typed source proof.
-        for (auto [index, argument] :
-             llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
-            bool numeric = !instances.empty();
-            for (ctjs::ConstructOp made : instances) {
-                if (!step()) { return false; }
-                auto actual = index < made.getArgs().size()
-                                  ? made.getArgs()[index].getDefiningOp<ctjs::ConstantOp>()
-                                  : ctjs::ConstantOp{};
-                numeric &= actual && llvm::isa<ctjs::NumberAttr>(actual.getValue());
-            }
-            if (numeric) { numbers.insert(argument); }
-        }
-        for (mlir::Operation & op : body) {
-            if (!step()) { return false; }
-            if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
-                if (llvm::isa<ctjs::NumberAttr>(literal.getValue())) {
-                    numbers.insert(literal.getResult());
-                }
-                continue;
-            }
-            bool numeric = llvm::isa<ctjs::BinaryStaticOp>(op);
-            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
-                switch (binary.getKind()) {
-                case ctjs::BinaryKind::Add:
-                case ctjs::BinaryKind::Sub:
-                case ctjs::BinaryKind::Mul:
-                case ctjs::BinaryKind::Div:
-                case ctjs::BinaryKind::Mod:
-                case ctjs::BinaryKind::Pow: numeric = true; break;
-                default: break;
-                }
-            }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-                numeric = unary.getKind() == ctjs::UnaryKind::Neg ||
-                          unary.getKind() == ctjs::UnaryKind::Plus ||
-                          unary.getKind() == ctjs::UnaryKind::BitNot;
-            }
-            if (numeric && llvm::all_of(op.getOperands(), [&](mlir::Value operand) {
-                    return numbers.contains(operand);
-                })) {
-                numbers.insert(op.getResult(0));
-            }
-        }
-    }
-    for (mlir::Operation * op = publication->getNextNode(); op; op = op->getNextNode()) {
-        if (!step()) { return false; }
-        if (op->getNumResults() == 1 && numbers.contains(op->getResult(0))) { continue; }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op); basePublication && write) {
-            auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
-            if (write.getObject() == self && ctjs::ordinaryKey(write.getKey()) &&
-                (numbers.contains(write.getValue()) ||
-                 (value && llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
-                                     ctjs::NumberAttr, ctjs::StringAttr>(value.getValue())))) {
-                continue;
-            }
-        }
-        if (!llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
-            return true;
-        }
+    if (!publicationSuffix(publication, instances, bool(basePublication))) {
+        return reason.empty();
     }
     // This sole capture must have no other observer, including another class
     // or helper. Every remaining Map use stays in the completed-owner census.

@@ -45,6 +45,7 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
     llvm::DenseSet<mlir::Operation *> constructors;
+    llvm::DenseSet<mlir::Operation *> normalizedSuper;
     llvm::MapVector<mlir::Operation *, bool> instanceOfResults;
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
@@ -109,6 +110,8 @@ struct classInitialization {
     bool normalizePublicationHelper(ctjs::CreateClosureOp constructor,
                                     const HostContract & contract);
     bool normalizePublicationKey(ctjs::CreateClosureOp constructor, const HostContract & contract);
+    bool publicationSuffix(ctjs::CallOp publication, llvm::ArrayRef<ctjs::ConstructOp> instances,
+                           bool allowFields);
     bool sinkCapturedPublication(ctjs::CallOp setup, const HostContract & contract,
                                  llvm::SmallVectorImpl<unsigned> & requiredHelpers);
     bool normalizeCapturedMapHelpers(ctjs::FuncOp scope);

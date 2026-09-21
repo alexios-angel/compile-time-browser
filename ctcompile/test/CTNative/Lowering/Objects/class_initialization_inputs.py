@@ -16,6 +16,24 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-inherited-direct": (599645, 599645),
+    "class-map-record-nested-inherited-holder": (51961, 51961),
+    "class-map-record-nested-inherited-shortcircuit": (5934, 5934),
+    "class-map-record-nested-inherited-observer": (8, 8),
+    "class-map-record-nested-inherited-throw": (16, 16),
+    "class-map-record-nested-inherited-reentry": (7, 7),
+    "class-map-record-nested-inherited-return-object": (709, 709),
+    "class-map-record-nested-inherited-sibling": (207, 207),
+    "class-map-record-nested-inherited-deeper": (7, 7),
+    "class-map-record-nested-inherited-outer-number": (207, 207),
+    "class-map-record-nested-inherited-inner-number": (207, 207),
+    "class-map-record-nested-inherited-computed-super-key": (7, 7),
+    "class-map-record-nested-inherited-unused-slot": (7, 7),
+    "class-map-record-nested-inherited-child-escaped": (7, 7),
+    "class-map-record-nested-inherited-helper-effect": (7, 7),
+    "class-map-record-nested-inherited-coercion": (735, 735),
+    "class-map-record-nested-inherited-hidden-base": (207, 207),
+    "class-map-record-nested-inherited-hidden-leaf": (207, 207),
     "class-map-record-nested-constructor-direct": (599642, 599642),
     "class-map-record-nested-constructor-holder": (5131, 5131),
     "class-map-record-nested-constructor-shortcircuit": (5991, 5991),
@@ -766,6 +784,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-inherited-direct",
+    "class-map-record-nested-inherited-holder",
+    "class-map-record-nested-inherited-shortcircuit",
+    "class-map-record-nested-constructor-inherited",
     "class-map-record-nested-constructor-direct",
     "class-map-record-nested-constructor-holder",
     "class-map-record-nested-constructor-shortcircuit",
@@ -1278,9 +1300,10 @@ def check_super_roots(args, source, manifest, diagnostic):
 
 def check_proof_inputs(args, source, manifest, prepared, name):
     text = source.read_text()
+    generic = '"ctjs.func"(' in text
     nested = args.work / "nested.mlir"
     changed, count = re.subn(
-        r"(^[ \t]*ctjs.return [^\n]*\n)",
+        r'(^[ \t]*"ctjs.return"[^\n]*\n)' if generic else r"(^[ \t]*ctjs.return [^\n]*\n)",
         "    builtin.module {\n"
         "      ctjs.func private @external$999() -> !ctjs.value attributes {upvalue_count = 0 : i32}\n"
         "    }\n\\1",
@@ -1300,7 +1323,11 @@ def check_proof_inputs(args, source, manifest, prepared, name):
     )
     duplicate = args.work / "duplicate-closure.mlir"
     changed, count = re.subn(
-        r"(^[ \t]*)%\w+( = ctjs.create_closure[^\n]*\n)",
+        (
+            r'(^[ \t]*)%\w+( = "ctjs.create_closure"[^\n]*\n)'
+            if generic
+            else r"(^[ \t]*)%\w+( = ctjs.create_closure[^\n]*\n)"
+        ),
         r"\g<0>\1%duplicate\2",
         text,
         count=1,
@@ -1318,11 +1345,16 @@ def check_proof_inputs(args, source, manifest, prepared, name):
     )
     forged = args.work / "forged.mlir"
     changed, count = re.subn(
-        r"(\bctjs.func[^\n]*\battributes \{)",
-        r'\1ctnative.not_native = "forged", ctnative.forged = true, ',
+        r"(\bupvalue_count = )" if generic else r"(\bctjs.func[^\n]*\battributes \{)",
+        (
+            r'ctnative.not_native = "forged", ctnative.forged = true, \1'
+            if generic
+            else r'\1ctnative.not_native = "forged", ctnative.forged = true, '
+        ),
         text,
     )
-    if count != len(FUNCTION.findall(text)):
+    functions = text.count('"ctjs.func"(') if generic else len(FUNCTION.findall(text))
+    if not functions or count != functions:
         raise RuntimeError("forged annotation control did not mark every source function")
     forged.write_text(changed)
     signed = dict(manifest, module_sha256=host.fingerprint(args.opt, forged))

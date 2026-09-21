@@ -361,6 +361,7 @@ def main():
                     ["--mlir-print-op-generic"]
                     if name.startswith(("inherited-", "override-", "bootstrap-base"))
                     or name.startswith("class-map-inherited")
+                    or name.startswith("class-map-record-nested-inherited-")
                     or name
                     in (
                         "class-map-record-alias-method-inherited",
@@ -418,7 +419,13 @@ def main():
                 "__ctbrowser_iter_close",
             ]
         if name.startswith(
-            ("inherited", "override-", "bootstrap-base", "class-map-inherited")
+            (
+                "inherited",
+                "override-",
+                "bootstrap-base",
+                "class-map-inherited",
+                "class-map-record-nested-inherited-",
+            )
         ) or name in (
             "class-map-record-alias-method-inherited",
             "class-map-record-alias-snapshot-inherited",
@@ -591,6 +598,7 @@ def main():
             "class-map-record-nested-shortcircuit-repeat",
             "class-map-record-nested-captured-direct",
             "class-map-record-nested-constructor-direct",
+            "class-map-record-nested-inherited-direct",
         ):
             prepare(
                 args,
@@ -633,6 +641,10 @@ def main():
                 "class-map-record-nested-constructor-direct": 6,
                 "class-map-record-nested-constructor-holder": 4,
                 "class-map-record-nested-constructor-shortcircuit": 3,
+                "class-map-record-nested-constructor-inherited": 2,
+                "class-map-record-nested-inherited-direct": 6,
+                "class-map-record-nested-inherited-holder": 4,
+                "class-map-record-nested-inherited-shortcircuit": 3,
             }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -740,9 +752,10 @@ def main():
             )
             preparation_refusals += 1
             check_nested_helper_root(args, structured, manifest, "map-helper-root")
-        if name == "inherited-explicit":
+        if name in ("inherited-explicit", "class-map-record-nested-inherited-direct"):
             preparation_refusals += check_ancestry_inputs(args, structured, manifest)
-            preparation_refusals += check_super_inputs(args, structured, manifest)
+            if name == "inherited-explicit":
+                preparation_refusals += check_super_inputs(args, structured, manifest)
             check_super_roots(
                 args,
                 structured,
@@ -912,6 +925,7 @@ def main():
             "class-map-record-nested-shortcircuit-repeat",
             "class-map-record-nested-captured-direct",
             "class-map-record-nested-constructor-direct",
+            "class-map-record-nested-inherited-direct",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",
