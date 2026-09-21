@@ -195,7 +195,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         for (ctjs::CallOp call : calls) {
             if (!step()) { return false; }
             auto scope = call->getParentOfType<ctjs::FuncOp>();
-            if (scopes.insert(scope).second && !normalizeCapturedMapHelpers(scope)) {
+            if (scopes.insert(scope).second &&
+                (!normalizeNestedMaps(scope) || !normalizeCapturedMapHelpers(scope))) {
                 return false;
             }
         }

@@ -555,6 +555,15 @@ def main():
             preparation_refusals += check_captured_key_inputs(args, structured, manifest)
         if name == "class-map-record-direct":
             check_record_map_inputs(args, prepared)
+        if name == "class-map-record-nested-direct":
+            prepare(
+                args,
+                name + "-stale",
+                structured,
+                dict(manifest, module_sha256="0" * 64),
+                success=False,
+            )
+            preparation_refusals += 1
         if name.startswith("class-map-record-") and name in POSITIVES:
             # Super normalization removes the imported ReferenceError guards;
             # the inherited source still constructs its Map and leaf record.
@@ -568,6 +577,9 @@ def main():
                 )
                 else text.count("ctjs.construct")
             )
+            if name.startswith("class-map-record-nested-"):
+                # Exact routing erases only the outer Map, preserving all owners.
+                constructions -= 1
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
         if name.startswith("class-map-") and name in POSITIVES | PREPARED_ONLY:
@@ -841,6 +853,7 @@ def main():
             "class-map-record-constructor-keyed-holder",
             "class-map-record-constructor-multislot-keyed",
             "class-map-record-constructor-dynamic-key",
+            "class-map-record-nested-direct",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

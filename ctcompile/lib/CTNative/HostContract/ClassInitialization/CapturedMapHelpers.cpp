@@ -1,6 +1,210 @@
 #include "Proof.hpp"
 
+#include <bit>
+
 namespace ctcompile::ctnative::class_detail {
+
+bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
+    // ponytail: literal outer keys and preallocated children in one entry block.
+    // Conditional topology needs path-sensitive origins and an owner proof.
+    auto & entry = scope.getBody().front();
+    llvm::SmallVector<ctjs::ConstructOp> candidates;
+    for (auto made : entry.getOps<ctjs::ConstructOp>()) {
+        if (!step()) { return false; }
+        if (maps.contains(made.getResult())) { candidates.push_back(made); }
+    }
+    for (auto map : candidates) {
+        bool nested = false;
+        for (mlir::OpOperand * use : sourceUses(map.getResult())) {
+            if (!step()) { return false; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use->getOwner());
+            if (!call || use->getOperandNumber() != 1 || call.getArgs().size() != 2) { continue; }
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            nested |= read && ctjs::constantKey(read.getKey()) == "set" &&
+                      maps.contains(sourceValue(call.getArgs()[1]));
+        }
+        if (!nested) { continue; }
+        llvm::SmallVector<mlir::Value> bindings;
+        for (auto [cell, initial] : cells) {
+            if (!step()) { return false; }
+            if (sourceValue(initial) != map.getResult()) { continue; }
+            bindings.push_back(cell);
+            for (mlir::Operation * user : cell.getUsers()) {
+                if (!step()) { return false; }
+                if (!cellOperations.contains(user)) {
+                    return refuse("class nested Map cannot capture its outer owner");
+                }
+            }
+        }
+        llvm::DenseSet<mlir::Operation *> operations;
+        llvm::SmallVector<ctjs::GetPropertyOp> selections;
+        for (mlir::OpOperand * use : sourceUses(map.getResult())) {
+            if (!step()) { return false; }
+            auto * op = use->getOwner();
+            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (op->getBlock() != &entry || !map->isBeforeInBlock(op)) {
+                return refuse("class nested Map requires direct entry-block operations");
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                call && use->getOperandNumber() == 1) {
+                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (read && read.getObject() == call.getReceiver()) { continue; }
+            }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+            if (!read || use->getOperandNumber() != 0) {
+                return refuse("class nested Map outer owner escapes");
+            }
+            selections.push_back(read);
+            const auto key = ctjs::constantKey(read.getKey());
+            if (key == "size") {
+                operations.insert(read);
+                continue;
+            }
+            const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
+            if (key != "set" && key != "get" && key != "has" && key != "delete" && key != "clear") {
+                return refuse("class nested Map has an unproved member");
+            }
+            for (mlir::OpOperand & selected : read.getResult().getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
+                if (!call || selected.getOperandNumber() != 0 ||
+                    call.getReceiver() != read.getObject() || call.getArgs().size() != arity ||
+                    call->getBlock() != &entry) {
+                    return refuse("class nested Map method escapes its exact receiver call");
+                }
+                operations.insert(call);
+            }
+        }
+        llvm::StringMap<mlir::Value> entries;
+        llvm::MapVector<mlir::Operation *, mlir::Attribute> constants;
+        llvm::MapVector<mlir::Value, mlir::Value> children;
+        for (mlir::Operation & op : entry) {
+            if (!step()) { return false; }
+            if (!operations.contains(&op)) { continue; }
+            if (llvm::isa<ctjs::GetPropertyOp>(op)) {
+                constants[&op] = ctjs::NumberAttr::get(
+                    module.getContext(),
+                    std::bit_cast<uint64_t>(static_cast<double>(entries.size())));
+                continue;
+            }
+            auto call = llvm::cast<ctjs::CallOp>(op);
+            const auto action =
+                ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+            if (action == "clear" || action == "set") {
+                for (mlir::Operation * user : call->getUsers()) {
+                    if (!step()) { return false; }
+                    if (!llvm::isa<ctjs::RootOp>(user)) {
+                        return refuse("class nested Map mutation result escapes");
+                    }
+                }
+            }
+            if (action == "clear") {
+                entries.clear();
+                continue;
+            }
+            auto key = sourceValue(call.getArgs()[0]).getDefiningOp<ctjs::ConstantOp>();
+            auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+            if (!text) { return refuse("class nested Map requires literal String keys"); }
+            if (action == "set") {
+                auto value = sourceValue(call.getArgs()[1]);
+                if (auto saved = children.lookup(value)) { value = saved; }
+                auto child = value.getDefiningOp<ctjs::ConstructOp>();
+                if (!child || child == map || !maps.contains(child.getResult()) ||
+                    child->getBlock() != &entry || !child->isBeforeInBlock(call)) {
+                    return refuse("class nested Map requires preallocated child owners");
+                }
+                entries[text.getValue()] = child.getResult();
+            } else if (action == "get") {
+                auto child = entries.lookup(text.getValue());
+                if (!child) { return refuse("class nested Map get requires a present child"); }
+                children[call.getResult()] = child;
+            } else {
+                const bool present = entries.count(text.getValue()) != 0;
+                constants[&op] = ctjs::BooleanAttr::get(module.getContext(), present);
+                if (action == "delete") { entries.erase(text.getValue()); }
+            }
+        }
+        // Charge rewriting before mutation; the enclosing pass discards its
+        // private module if any later child/record/effect proof fails.
+        for (mlir::Operation * op : operations) {
+            if (!step()) { return false; }
+            if (constants.contains(op) && (!step() || !step())) { return false; }
+            for (mlir::OpOperand & use : op->getResult(0).getUses()) {
+                (void)use;
+                if (!step()) { return false; }
+            }
+        }
+        for (auto [cell, initial] : cells) {
+            (void)cell;
+            (void)initial;
+            if (!step()) { return false; }
+        }
+        for (mlir::Value cell : bindings) {
+            for (ctjs::CellGetOp read : cellReads) {
+                if (!step()) { return false; }
+                if (read.getCell() != cell) { continue; }
+                for (mlir::Operation * user : read->getUsers()) {
+                    (void)user;
+                    if (!step()) { return false; }
+                }
+            }
+            for (mlir::Operation * user : cell.getUsers()) {
+                (void)user;
+                if (!step()) { return false; }
+            }
+        }
+        if (!reason.empty()) { return false; }
+        for (auto [read, child] : children) { read.replaceAllUsesWith(child); }
+        for (auto [op, value] : constants) {
+            mlir::OpBuilder at(op);
+            auto literal = ctjs::ConstantOp::create(at, op->getLoc(), value);
+            children[op->getResult(0)] = literal;
+            op->getResult(0).replaceAllUsesWith(literal);
+        }
+        // Cell facts cache SSA values; RAUW alone does not update this table.
+        for (auto & [cell, initial] : cells) {
+            (void)cell;
+            if (auto replacement = children.lookup(initial)) { initial = replacement; }
+        }
+        for (mlir::Operation * op : operations) {
+            if (llvm::isa<ctjs::GetPropertyOp>(op)) { continue; }
+            mapOperations.erase(op);
+            eraseRooted(op);
+        }
+        for (ctjs::GetPropertyOp read : selections) {
+            mapOperations.erase(read);
+            eraseRooted(read);
+        }
+        // Fixed outer aliases are transport only; no captured observer remains.
+        for (mlir::Value cell : bindings) {
+            llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
+                if (read.getCell() != cell) { return false; }
+                cellOperations.erase(read);
+                read.getResult().replaceAllUsesWith(map.getResult());
+                eraseRooted(read);
+                return true;
+            });
+            for (mlir::Operation * user : llvm::make_early_inc_range(cell.getUsers())) {
+                cellOperations.erase(user);
+                user->erase();
+            }
+            cellOperations.erase(cell.getDefiningOp());
+            cells.erase(cell);
+            cell.getDefiningOp()->erase();
+        }
+        maps.erase(map.getResult());
+        mapOperations.erase(map);
+        auto load = map.getCallee().getDefiningOp();
+        eraseRooted(map);
+        if (llvm::all_of(load->getUsers(),
+                         [](mlir::Operation * user) { return llvm::isa<ctjs::RootOp>(user); })) {
+            mapOperations.erase(load);
+            eraseRooted(load);
+        }
+    }
+    return reason.empty();
+}
 
 bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
     // ponytail: straight-line helpers called in their owning entry block.

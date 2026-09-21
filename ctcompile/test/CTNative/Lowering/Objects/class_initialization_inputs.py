@@ -16,6 +16,17 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-direct": (711, 711),
+    "class-map-record-nested-distinct": (5961, 5961),
+    "class-map-record-nested-overwrite-delete": (59596, 59596),
+    "class-map-record-nested-outer-escaped": (7, 7),
+    "class-map-record-nested-child-escaped": (7, 7),
+    "class-map-record-nested-record-escaped": (7, 7),
+    "class-map-record-nested-missing-outer": (107, 107),
+    "class-map-record-nested-missing-inner": (107, 107),
+    "class-map-record-nested-branch-child": (7, 7),
+    "class-map-record-nested-captured-observer": (7, 7),
+    "class-map-record-nested-dynamic-outer-key": (7, 7),
     "class-map-record-constructor-captured-key-literal": (707, 707),
     "class-map-record-constructor-captured-key-repeated": (7777, 7777),
     "class-map-record-constructor-captured-key-reversed": (707, 707),
@@ -692,6 +703,9 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-direct",
+    "class-map-record-nested-distinct",
+    "class-map-record-nested-overwrite-delete",
     "class-map-record-constructor-dynamic-key",
     "class-map-record-constructor-captured-key-literal",
     "class-map-record-constructor-captured-key-repeated",
