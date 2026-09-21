@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 namespace ctnative {
 struct identity_object {};
@@ -855,5 +856,65 @@ int main() {
     ctbrowser::style::engine wrongStyles{otherAtoms};
     CHECK(rejects([&] { (void)js_document_t{dom, wrongStyles}; }));
     CHECK(rejects([&] { (void)js_element_t{{&dom, button}, wrongStyles}; }));
+
+    // The global facade follows a scoped binding; explicit views keep their owner.
+    static_assert(std::is_empty_v<document_object>);
+    static_assert(!std::is_default_constructible_v<document_scope>);
+    static_assert(!std::is_copy_constructible_v<document_scope>);
+    static_assert(!std::is_copy_assignable_v<document_scope>);
+    static_assert(!std::is_move_constructible_v<document_scope>);
+    static_assert(!std::is_move_assignable_v<document_scope>);
+    const auto unbound = [] {
+        try {
+            (void)ctnative::document.documentElement();
+        } catch (const std::logic_error &) { return true; }
+        return false;
+    };
+    CHECK(unbound());
+    otherDOM.set_document_element(otherRoot);
+    {
+        const document_scope outer{dom, styles};
+        const auto outerRoot = ctnative::document.documentElement();
+        const auto saved = ctnative::document.querySelectorAll(js_string{"*"});
+        CHECK(outerRoot == document.documentElement());
+        CHECK(ctnative::document.querySelector(js_string{"body"}) == outerRoot);
+        CHECK(saved == (std::vector<js_element_t>{outerRoot.value()}));
+        CHECK(rejects([&] { const document_scope invalid{otherDOM, wrongStyles}; }));
+        CHECK(ctnative::document.documentElement() == outerRoot);
+        {
+            const document_scope inner{otherDOM, styles};
+            CHECK(ctnative::document.documentElement() == otherElement);
+            CHECK(ctnative::document.querySelector(js_string{"html"}) == otherElement);
+            CHECK(!ctnative::document.querySelector(js_string{"body"}));
+            CHECK(document.documentElement() == outerRoot);
+            CHECK(saved.front() == outerRoot.value());
+        }
+        CHECK(ctnative::document.documentElement() == outerRoot);
+        CHECK(rejects([&] {
+            const document_scope inner{otherDOM, styles};
+            (void)ctnative::document.querySelector(js_string{"["});
+        }));
+        CHECK(ctnative::document.documentElement() == outerRoot);
+        bool workerUnbound = false, workerBound = false, workerRestored = false;
+        {
+            const std::jthread worker{[&] {
+                workerUnbound = unbound();
+                ctbrowser::atom_table workerAtoms;
+                ctbrowser::document workerDOM{workerAtoms};
+                ctbrowser::style::engine workerStyles{workerAtoms};
+                const auto workerRoot = workerDOM.create_element(workerAtoms.intern("html"));
+                workerDOM.set_document_element(workerRoot);
+                {
+                    const document_scope inner{workerDOM, workerStyles};
+                    workerBound = ctnative::document.documentElement()->value() ==
+                                  (ctbrowser::element_ref{&workerDOM, workerRoot});
+                }
+                workerRestored = unbound();
+            }};
+        }
+        CHECK(workerUnbound && workerBound && workerRestored);
+        CHECK(ctnative::document.documentElement() == outerRoot);
+    }
+    CHECK(unbound());
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

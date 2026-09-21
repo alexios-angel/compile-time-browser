@@ -1458,6 +1458,14 @@ struct element_constructor {
 };
 inline constexpr element_constructor Element{};
 
+// Browser.hpp binds this facade to a borrowed document for one native invocation.
+struct document_object {
+    std::optional<js_element_t> documentElement() const;
+    std::optional<js_element_t> querySelector(const js_string & selector) const;
+    std::vector<js_element_t> querySelectorAll(const js_string & selector) const;
+};
+inline constexpr document_object document{};
+
 // Existing callers retain the same method objects while emission migrates.
 inline constexpr const auto & matches = Element.prototype.matches;
 inline constexpr const auto & closest = Element.prototype.closest;

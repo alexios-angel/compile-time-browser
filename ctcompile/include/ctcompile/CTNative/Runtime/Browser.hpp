@@ -99,6 +99,43 @@ public:
     }
 };
 
+// Bind synchronous native calls on this thread; nested entries restore their
+// caller's document, including when they throw. The owner must outlive the scope.
+class document_scope {
+    inline static thread_local const js_document_t * current = nullptr;
+    js_document_t bound;
+    const js_document_t * previous;
+
+    friend struct document_object;
+    static const js_document_t & active() {
+        if (!current) { throw std::logic_error("No native document scope is active"); }
+        return *current;
+    }
+
+public:
+    document_scope(ctbrowser::document & borrowed, ctbrowser::style::engine & engine)
+        : bound(borrowed, engine), previous(current) {
+        current = &bound;
+    }
+    document_scope(const document_scope &) = delete;
+    document_scope & operator=(const document_scope &) = delete;
+    document_scope(document_scope &&) = delete;
+    document_scope & operator=(document_scope &&) = delete;
+    ~document_scope() { current = previous; }
+};
+
+inline std::optional<js_element_t> document_object::documentElement() const {
+    return document_scope::active().documentElement();
+}
+inline std::optional<js_element_t> document_object::querySelector(
+    const js_string & selector) const {
+    return document_scope::active().querySelector(selector);
+}
+inline std::vector<js_element_t> document_object::querySelectorAll(
+    const js_string & selector) const {
+    return document_scope::active().querySelectorAll(selector);
+}
+
 // Bridge the proved null-only view result to the existing native element carrier.
 inline ctbrowser::element_ref element_or_null(const std::optional<js_element_t> & element) {
     return element ? element->value() : ctbrowser::element_ref{};
