@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed Number bitwise operations and return dispatch, 2026-09-21 UTC
+
+Continued clean **0587aa5d**. **2526d714** extracts the VM's existing
+ToInt32/ToUint32 into public Core, with VM and Math adapters retaining coercion
+order. **827eadff** adds typed `js_num` bitwise operators and
+`.unsigned_shift_right(...)`; **279436f1** lowers proved primitive operands to
+those operations. Native output remains independent of Script.
+
+**b2c99d93** finishes the previous handoff's ordinary return-dispatch boundary.
+It reuses bounded normalization on a disposable clone, charges copying before
+allocation, reruns inference/admission and restores the original body on refusal.
+Unused String-union slots now receive their destination type. The preserved
+`index-switch.js` executes unchanged. **0636ced2** promotes the unchanged
+exception concatenation witness that earlier String arithmetic already admitted.
+
+Focused devbox validation passes: **three selected CTests and seven distinct
+selected lit cases** across corrected runs. Bitwise checks cover **76 observations
+in eight native modes**; return dispatch covers **eight observations in six modes**,
+mutation, budget and rollback controls. Existing primitive-cell and exception
+regressions pass, including the latter's focused sanitizer checks. All **19 final
+code/test hashes** match the devbox. Scoped C++/Python formatting and whitespace
+pass; required repository formatting retains 16 existing diagnostics. Full suites,
+broad corpus/matrix runs and full Bootstrap were not run.
+[Exact checks and corrections](handoff/2026-09-21-native-bitwise-return-dispatch.md).
+
+**Next:** the preserved `nested-sibling.js` captured-function binding refusal in
+`Closures/primitive-cells.test`. The next primitive type work is relational
+conversion and String ordering, preserving UTF-16 semantics and measured oracle
+boundaries. Broader unions, containers, object hooks, collections/document views,
+`Symbol.hasInstance`, NodeList indexing above 1,000,000 (separate from the 2^24
+spread cap), full Bootstrap and the application driver remain unfinished.
+
 ## Primitive union shared cells, 2026-09-21 UTC
 
 Continued clean **3a0fb32f**. **cdf2c0a5** carries the five admitted

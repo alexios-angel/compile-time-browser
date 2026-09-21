@@ -1,13 +1,15 @@
 # Native JavaScript types and prototype interfaces
 
-**Status: in progress, 2026-09-20.** `Element.prototype` composition is implemented
+**Status: in progress, 2026-09-21.** `Element.prototype` composition is implemented
 using the existing four selector method objects. Distinct `undefined_t` and
 `js_null_t` tokens construct the existing optional scalar carrier; its ABI is
 unchanged. `js_boolean_t` now carries JavaScript Boolean values through literals,
 comparisons, calls, fields, closures and Maps, with explicit conversion to C++
 conditions and numbers. `js_basic_num<double>` now supplies the `js_num` class
 for Number literals, arithmetic, comparisons, calls, fields, captures, conversions
-and browser counts. Raw Map/vector/JSON storage uses explicit adapters.
+and browser counts. Its bitwise operators now implement JavaScript 32-bit
+conversion and masked shifts through public Core; `>>>` uses
+`.unsigned_shift_right(...)`. Raw Map/vector/JSON storage uses explicit adapters.
 `js_nan_t` explicitly constructs Number NaN values and native binary64 NaN
 literals. `js_basic_string<char>` now supplies `js_string` for String literals,
 concatenation, calls, fields, captures and exceptions, with explicit raw storage
@@ -242,7 +244,15 @@ flat names retained as constant reference aliases. Distinct absence tokens now
 construct the existing nullable scalar, and `js_boolean_t` carries Boolean
 values. `Number.hpp` supplies `js_basic_num<double>` and its `js_num` alias;
 proved Number values and signatures use this class throughout lowering.
-`js_nan_t` supplies explicit NaN construction. `String.hpp` now supplies
+`js_nan_t` supplies explicit NaN construction. Number bitwise operators use
+`to_int32()`/`to_uint32()` backed by `ctbrowser/core/number.hpp`, shared with the
+VM and Math adapters. `&`, `|`, `^`, `~`, `<<`, `>>` and
+`.unsigned_shift_right(...)` return `js_num`, including unsigned results above
+2^31. The compiler converts admitted primitive operands through the existing
+Number boundary; objects, BigInt, Symbol and wider unions remain refused.
+`primitive-bitwise.test` checks 76 observations in eight native modes, the
+original two refusal witnesses on GCC/Clang, four refusals and two mutations.
+`String.hpp` now supplies
 `js_basic_string<char>` and `js_string`. Object/Array intrinsic prototype classes
 are not implemented yet.
 Public Core already supplies String/Unicode primitives. BigInt currently lives
@@ -385,11 +395,14 @@ existing `auto`/template deduction.
    across writes. The hoisted initial is omitted only when a write dominates
    every read, matching inference; observable undefined/null remain distinct.
    The original `shared-mixed.js` runs unchanged. `primitive-cells.test` checks
-   44 observations in eight native modes, five refusals and two mutations.
-   Next normalize ordinary return dispatch using its preserved `index-switch.js`
-   source. Reuse `normalizeStructuredExits` on a disposable clone under a work
-   budget; partial failure must not publish rewritten IR. Its separate
-   `nested-sibling.js` refusal still needs a captured-function binding proof.
+   44 observations in eight native modes, four remaining refusals and two mutations.
+   Ordinary return dispatch now reuses `normalizeStructuredExits` on a disposable
+   clone. Its work budget includes the initial copy; successful normalization
+   precedes fresh inference/admission, and later refusal restores the original
+   body. Unused union slots receive their destination type. The preserved
+   `index-switch.js` now executes unchanged: `return-dispatch.test` checks eight
+   observations in six native modes, mutation, budget and rollback controls.
+   Next resolve the separate `nested-sibling.js` captured-function binding refusal.
    Broader unions and mixed container payloads remain separate; never stringify
    both sides unconditionally.
    Keep numeric relational conversion separate from String lexicographic ordering

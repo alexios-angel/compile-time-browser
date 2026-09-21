@@ -530,8 +530,8 @@ ordering operation requests numeric conversion.
 | `typeof` | `"undefined"` | `"object"` | `"number"` |
 
 Calls, returns, fields, shared cells and control-flow edges preserve these
-values. Equality and `typeof` now lower. `void` and bitwise operations still
-have their own admission boundaries.
+values. Equality, `typeof` and primitive Number bitwise operations now lower.
+`void` retains its own admission boundary.
 
 Global storage joins every source store, including writes in callees. A closed
 scalar or nullable String carrier preserves its actual output tag. Definite
@@ -636,40 +636,43 @@ anchor.
 
 ## ND-9 — a bitwise operator is ToInt32, which is not a C++ cast
 
-**Status:** declared, **refused**. **Against:** the ctbrowser VM.
-**Introduced:** Phase 62½-C.
+**Status:** implemented for proved primitive Number conversion, 2026-09-21 UTC.
+**Against:** the ctbrowser VM. **Introduced:** Phase 62½-C.
 
 ### The divergence
 
 `x | 0` is `ToInt32(x)`: truncate toward zero, then reduce modulo 2^32 into a
 signed 32-bit range. `2147483648 | 0` is **-2147483648** in JavaScript.
-`static_cast<int32_t>(2147483648.0)` is **undefined behaviour** in C++ — the
-value is not representable, so the standard imposes nothing at all. The same
-is true of `NaN | 0` and `Infinity | 0`, which JavaScript answers `0` for.
-`>>>` adds a second wrap on top, to unsigned.
+`static_cast<int32_t>(2147483648.0)` is undefined behavior in C++ because the
+value is not representable. JavaScript maps NaN and infinities to zero.
+Shift counts use `ToUint32(count) & 31`; `>>>` returns an unsigned 32-bit value
+represented as a JavaScript Number.
 
 ### What the tier does about it
 
-Refuses, and the refusal comes from the **static** operator family: *"a static
-bitwise operator is not native yet"*. `BytecodeImport.cpp`'s `binary_rows`
-marks all six bitwise opcodes non-re-entering, so `&`, `|`, `^`, `<<`, `>>`
-and `>>>` all import as `ctjs.binary_static`.
+`ctbrowser/core/number.hpp` owns the existing VM conversion. VM operators and
+Math `clz32`/`imul` are adapters to it, retaining their coercion order.
+`js_num::to_int32()` and `to_uint32()` use the same public Core functions.
+Typed `~`, `&`, `|`, `^`, `<<` and `>>` return `js_num`; JavaScript `>>>`
+emits `.unsigned_shift_right(...)`. Left shift uses unsigned bits before the
+signed result conversion; right shift preserves sign.
 
-Owning UTF-8 strings have a native carrier. Exact/optional String and closed
-Boolean/String temporary arithmetic uses typed Number conversion. Addition with
-an exact String preserves Number, Boolean, nullable scalar and Boolean/String
-text through public Core and native classes. Generic optional/union addition
-requiring a String/Number result and object conversion hooks remain refused.
-This support does not change the bitwise refusal.
+Both static and ordinary binary IR use this lowering. The nine admitted
+primitive carriers first use existing typed Number conversion. Objects with
+conversion hooks, BigInt, Symbol and wider unions still require their own proof
+and remain refused. No Script symbol or boxed value enters the native program.
 
 ### The test
 
-`divergence-refusals.mlir`, the BITWISE case. The CONCAT case beside it now
-pins admitted typed Number/String addition; `string-coercions.test`,
-`string-arithmetic.test` and `string-union-coercions.test` check executable
-primitive results. The wrap is emittable — `(int32_t)(uint32_t)fmod(trunc(x), 4294967296.0)` and its NaN guard — and
-would be the same shape ND-4's guard has; until it is written, the operator is
-diagnosed rather than approximated.
+`Scalars/primitive-bitwise.test` checks 76 main Node/VM/native observations in
+eight C++ modes, including fractions, signed zero, non-finite values, wraparound,
+masked and negative shift counts, all primitive carrier families and evaluation
+order. The original `tilde.js` and `bits.js` execute unchanged on GCC/Clang;
+four refusal controls and two mutation controls pass. `refusal-operands.mlir`
+and `divergence-refusals.mlir` now pin the admitted typed operations.
+
+The native runtime CTest includes 23 conversion rows and operator/type checks.
+Focused browser `math_basics` and `vm_operators` CTests pass after extraction.
 
 ---
 
