@@ -2,6 +2,7 @@
 #include "../Lowering/Exceptions/Recovery.h"
 #include "Analysis.h"
 #include "Preparation.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -9,6 +10,162 @@
 #include "llvm/ADT/STLExtras.h"
 
 namespace ctcompile::ctnative {
+
+static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::StringRef entry,
+                                             unsigned & remaining, unsigned sourceSize) {
+    const auto refuse = [](llvm::StringRef reason) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+    };
+    const auto spend = [&](uint64_t cost = 1) {
+        if (cost > remaining) { return false; }
+        remaining -= static_cast<unsigned>(cost);
+        return true;
+    };
+    const auto undefined = [](mlir::Value value) {
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+    };
+    llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
+    ctjs::FuncOp wrapper;
+    auto target = module.lookupSymbol<ctjs::FuncOp>(entry);
+    for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
+        const auto index = functionIndex(function);
+        if (!spend() || !index || !functions.try_emplace(*index, function).second) {
+            return refuse("intrinsic helper function identity is ambiguous or over budget");
+        }
+        if (*index == 0) { wrapper = function; }
+    }
+    llvm::StringMap<ctjs::StoreGlobalOp> declarations;
+    llvm::SmallVector<ctjs::LoadGlobalOp> loads;
+    llvm::DenseMap<unsigned, unsigned> creations;
+    const auto scanned = module.walk([&](mlir::Operation * operation) {
+        if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
+            if (!wrapper || !wrapper.getBody().hasOneBlock() ||
+                wrapper.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
+                store->getParentOp() != wrapper ||
+                !declarations.try_emplace(store.getName(), store).second) {
+                return mlir::WalkResult::interrupt();
+            }
+        }
+        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) { loads.push_back(load); }
+        if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
+            closure && closure.getFunction() >= 0) {
+            ++creations[static_cast<unsigned>(closure.getFunction())];
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (scanned.wasInterrupted()) {
+        return refuse("intrinsic helper globals require unique wrapper declarations within budget");
+    }
+    llvm::StringMap<ctjs::FuncOp> helpers;
+    for (auto & declaration : declarations) {
+        if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+        auto store = declaration.second;
+        auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        auto function = closure && closure.getFunction() >= 0
+                            ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
+                            : ctjs::FuncOp{};
+        if (!function || function == wrapper || !function.isPrivate() ||
+            store.getName() == "Symbol" || store.getName() == "undefined" ||
+            store.getName() != function.getSymName().rsplit('$').first ||
+            closure->getParentOp() != wrapper || !closure->isBeforeInBlock(store) ||
+            closure.getEnclosingClosure() !=
+                wrapper.getBody().front().getArgument(ctjs::arg_callee) ||
+            (closure.getEnclosingThis() !=
+                 wrapper.getBody().front().getArgument(ctjs::arg_receiver) &&
+             !undefined(closure.getEnclosingThis())) ||
+            !closure.getUpvalues().empty() ||
+            creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1) {
+            return refuse("intrinsic helper requires an exact uncaptured declaration");
+        }
+        if (function == target) { continue; }
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!spend() || (use.getOwner() != store && !(llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                                                          use.getOperandNumber() == 1))) {
+                return refuse("intrinsic helper declaration has an observable closure use");
+            }
+        }
+        helpers[store.getName()] = function;
+    }
+    for (ctjs::LoadGlobalOp load : loads) {
+        if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+        if (load.getName() == "Symbol" || load.getName() == "undefined") { continue; }
+        auto function = helpers.lookup(load.getName());
+        if (!function) { return refuse("intrinsic helper reads an unproved global binding"); }
+        for (mlir::OpOperand & use : llvm::make_early_inc_range(load.getResult().getUses())) {
+            if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+            auto * operation = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(operation) && use.getOperandNumber() == 1) { continue; }
+            if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
+                if (use.getOperandNumber() == 2 && direct.getCallee() == function.getSymName() &&
+                    undefined(direct.getReceiver()) && undefined(direct.getNewTarget())) {
+                    continue;
+                }
+            } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                       call && use.getOperandNumber() == 0 && undefined(call.getReceiver())) {
+                if (!spend(uint64_t(3) + call->getNumOperands())) {
+                    return refuse("intrinsic helper call rewrite work budget exhausted");
+                }
+                mlir::OpBuilder at(call);
+                auto direct = ctjs::CallDirectOp::create(
+                    at, call.getLoc(), call.getType(),
+                    mlir::FlatSymbolRefAttr::get(function.getSymNameAttr()), call.getReceiver(),
+                    call.getReceiver(), load.getResult(), call.getArgs(), nullptr, nullptr);
+                for (mlir::OpOperand & resultUse :
+                     llvm::make_early_inc_range(call.getResult().getUses())) {
+                    if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+                    resultUse.set(direct.getResult());
+                }
+                call.erase();
+                continue;
+            }
+            return refuse("intrinsic helper global must remain an exact direct callee");
+        }
+    }
+    for (auto & helper : helpers) {
+        auto store = declarations.lookup(helper.first());
+        // ponytail: one charged complete census per declaration; index global
+        // uses if large helper sets exhaust the existing preparation budget.
+        if (uint64_t(2) * sourceSize > remaining) {
+            return refuse("intrinsic helper declaration work budget exhausted");
+        }
+        remaining -= 2 * sourceSize;
+        if (!closedDeclaration(store, helper.second, module)) {
+            return refuse("intrinsic helper declaration is not closed");
+        }
+    }
+    for (ctjs::LoadGlobalOp load : loads) {
+        if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+        if (!helpers.contains(load.getName())) { continue; }
+        if (!spend(2)) { return refuse("intrinsic helper load rewrite work budget exhausted"); }
+        mlir::OpBuilder at(load);
+        auto absent = ctjs::ConstantOp::create(at, load.getLoc(),
+                                               ctjs::UndefinedAttr::get(module.getContext()));
+        for (mlir::OpOperand & use : llvm::make_early_inc_range(load.getResult().getUses())) {
+            if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+            use.set(absent.getResult());
+        }
+        load.erase();
+    }
+    for (auto & helper : helpers) {
+        if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+        auto store = declarations.lookup(helper.first());
+        auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        store.erase();
+        // Preserve every root/frame operation for the existing inert-wrapper
+        // proof; only the unobserved callable value becomes its inert enclosure.
+        for (mlir::OpOperand & use : llvm::make_early_inc_range(closure.getResult().getUses())) {
+            if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
+            use.set(closure.getEnclosingClosure());
+        }
+        closure.erase();
+    }
+    if (wrapper && !host_detail::isInertEntryDeclaration(wrapper, target, spend)) {
+        return refuse("intrinsic helper wrapper is not an inert declaration");
+    }
+    return llvm::Error::success();
+}
 
 llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
     const auto refuse = [](const llvm::Twine & reason) {
@@ -69,7 +226,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
     if (contract.provider == HostContract::Provider::ctbrowserIntrinsics) {
-        // Exact local helpers reuse the DOM normalizer, but not its prototype
+        // Exact helpers reuse the DOM normalizer, but not its prototype
         // or initialization premises. Check those boundaries on original source;
         // complete typed/effect proof follows expansion on a private candidate.
         mlir::OwningOpRef<mlir::ModuleOp> prepared;
@@ -91,6 +248,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         HostContract sourceContract = contract;
         if (helpers) {
             bool unsupported = false;
+            unsigned sourceSize = 0;
             const auto scanned = module.walk([&](mlir::Operation * operation) {
                 // Reserve source inspection, clone and original fingerprint.
                 uint64_t cost = 3 * (uint64_t(1) + operation->getNumOperands() +
@@ -102,14 +260,12 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 }
                 if (cost > remaining) { return mlir::WalkResult::interrupt(); }
                 remaining -= static_cast<unsigned>(cost);
+                sourceSize += static_cast<unsigned>(cost / 3);
                 if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
                     unsupported |= function.getUpvalueCount() != 0;
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
                     unsupported |= !closure.getUpvalues().empty();
-                }
-                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
-                    unsupported |= load.getName() != "Symbol" && load.getName() != "undefined";
                 }
                 unsupported |= llvm::isa<ctjs::CreateObjectOp, ctjs::SetPropertyOp>(operation);
                 return mlir::WalkResult::advance();
@@ -128,10 +284,6 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             if (!target) { return refuse("native intrinsic entry function is missing"); }
             for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
                 if (!spend()) { return refuse("native intrinsic helper work budget exhausted"); }
-                if (functionIndex(function) == 0 &&
-                    !host_detail::isInertEntryDeclaration(function, target, spend)) {
-                    return refuse("native intrinsic helper wrapper is not an inert declaration");
-                }
                 if (function == target || functionIndex(function) == 0 ||
                     function.getBody().empty()) {
                     continue;
@@ -150,6 +302,10 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 }
             }
             expanded = module.clone();
+            if (auto error =
+                    normalizeIntrinsicGlobals(*expanded, contract.entry, remaining, sourceSize)) {
+                return refuse("native intrinsic helper: " + llvm::toString(std::move(error)));
+            }
             unsigned expansionSteps = 0;
             if (auto error =
                     expandDOMHelpers(*expanded, contract.entry, remaining, &expansionSteps)) {

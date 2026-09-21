@@ -176,6 +176,38 @@ HELPER_EQUALITY = """function helperEquality(number, flag, count) {
   return strict(matched, flag) && !strict(number, flag);
 }
 """
+# Preserve the complete former global-helper refusal as its first positive.
+GLOBAL_HELPER = "function helper() { return Symbol.iterator; } function bad() { return helper(); }"
+GLOBAL_STATE = """function globalState(first, second, text, count, enabled) {
+  const key = cycleGlobal(first, second, count);
+  return enabled ? makeGlobal(text) : selectGlobal(key, first, false);
+}
+function selectGlobal(left, right, takeRight) {
+  return takeRight ? copyGlobal(right) : copyGlobal(left);
+}
+function copyGlobal(value) { return value; }
+function cycleGlobal(left, right, limit) {
+  let key = left;
+  for (let i = 0; i < limit; i++) key = key === left ? right : left;
+  return key;
+}
+function makeGlobal(description) { return Symbol(description); }
+"""
+GLOBAL_TYPES = """function globalTypes(key, text, number, flag) {
+  let after = text;
+  const before = firstGlobal(after, after = 'changed');
+  return (copyTypeGlobal(key) === key ? 'symbol' : 'wrong') +
+    (copyTypeGlobal(text) === text ? ':string' : ':wrong') +
+    (copyTypeGlobal(number) < 1 ? ':number' : ':wrong') +
+    (copyTypeGlobal(flag) ? ':wrong' : ':boolean') +
+    (before === text && after === 'changed' ? ':evaluation' : ':wrong');
+}
+function firstGlobal(left, right) { return left; }
+function copyTypeGlobal(value) { return value; }
+"""
+GLOBAL_DESCRIPTION = """function globalDescription(key) { return describeGlobal(key); }
+function describeGlobal(value) { return value.description; }
+"""
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -189,6 +221,9 @@ PARAMETER_TYPES = {
     "helper-types": ["symbol", "string", "number", "boolean"],
     "scalar-equality": ["number", "number", "boolean", "boolean"],
     "helper-equality": ["number", "boolean", "number"],
+    "global-state": ["symbol", "symbol", "string", "number", "boolean"],
+    "global-types": ["symbol", "string", "number", "boolean"],
+    "global-description": ["symbol"],
 }
 CASES = {
     "state": (
@@ -423,6 +458,19 @@ CASES["helper-equality"] = (
 """,
     "true\n",
 )
+CASES["global-helper"] = (
+    GLOBAL_HELPER,
+    r"""
+    static_assert(std::is_same_v<decltype(@ENTRY@()), ctnative::js_symbol_t>);
+    assert(@ENTRY@() == ctnative::Symbol.iterator);
+    assert(@ENTRY@() == @ENTRY@());
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["global-state"] = (GLOBAL_STATE, *CASES["parameter-state"][1:])
+CASES["global-types"] = (GLOBAL_TYPES, *CASES["helper-types"][1:])
+CASES["global-description"] = (GLOBAL_DESCRIPTION, *CASES["parameter-description"][1:])
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -501,6 +549,10 @@ def oracle(args):
         + HELPER_TYPES
         + SCALAR_EQUALITY
         + HELPER_EQUALITY
+        + GLOBAL_HELPER
+        + GLOBAL_STATE
+        + GLOBAL_TYPES
+        + GLOBAL_DESCRIPTION
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -556,6 +608,16 @@ symbol20HelperDescription = helperDescription(Symbol()) === undefined &&
   helperDescription(Symbol.iterator) === 'Symbol.iterator';
 symbol21HelperTypes = helperTypes(key, 'a\\u0000b', -0, false) === 'symbol:string:number:boolean:evaluation';
 symbol22HelperUndefined = helperUndefined(key) === undefined;
+symbol30GlobalHelper = bad() === Symbol.iterator;
+symbol31GlobalState = globalState(key, other, 'fresh', 0, false) === key &&
+  globalState(key, other, 'fresh', 1, false) === other &&
+  globalState(key, other, 'fresh', 2, false) === key &&
+  globalState(key, other, 'fresh', 1, true).description === 'fresh' &&
+  globalState(key, other, 'fresh', 1, true) !== globalState(key, other, 'fresh', 1, true);
+symbol32GlobalTypes = globalTypes(key, 'a\\u0000b', -0, false) === 'symbol:string:number:boolean:evaluation';
+symbol33GlobalDescription = globalDescription(Symbol()) === undefined &&
+  globalDescription(Symbol('a\\u0000b')) === 'a\\u0000b' &&
+  globalDescription(Symbol.iterator) === 'Symbol.iterator';
 }}
 observeHelpers();
 var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, false, 1) &&
@@ -593,6 +655,10 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
         "HelperUndefined",
         *("Equality" + item[0] for item in EQUALITY_INPUTS),
         "HelperEquality",
+        "GlobalHelper",
+        "GlobalState",
+        "GlobalTypes",
+        "GlobalDescription",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -709,9 +775,7 @@ def main():
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
     for name, (source, checks, expected) in CASES.items():
-        entry_name = (
-            re.search(r"function (\w+)\(", source)[1] if name.startswith("helper-") else None
-        )
+        entry_name = "bad" if name == "global-helper" else re.search(r"function (\w+)\(", source)[1]
         ir, contract = prepare(
             args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
         )
@@ -737,12 +801,37 @@ def main():
         "wrapper-effect": "var changed=1; function bad() { return Symbol.iterator; }",
         "wrapper-replacement": "Symbol=0; function bad() { return Symbol.iterator; }",
         "intrinsic-declaration": "function Symbol() { return 1; }",
-        "helper": "function helper() { return Symbol.iterator; } function bad() { return helper(); }",
     }
     for name, source in source_refusals.items():
         entry = "Symbol" if name == "intrinsic-declaration" else "bad"
         ir, contract = prepare(args, name, source, entry_name=entry)
         refuse(ir, contract, name + "-refused")
+
+    for name, source in {
+        "replacement": "function helper(value) { return value; } function bad(key) { helper=key; return helper(key); }",
+        "late-replacement": "function helper(value) { return value; } function bad(key) { return helper(key); } helper=Symbol.iterator;",
+        "wrapper-call": "function helper(value) { return value; } helper(Symbol.iterator); function bad(key) { return helper(key); }",
+        "wrapper-effect": "var saved=1; function helper(value) { return value; } function bad(key) { return helper(key); }",
+        "identity": "function helper(value) { return value; } function bad(key) { return helper === helper; }",
+        "escape": "function helper(value) { return value; } function bad(key) { return helper; }",
+        "argument": "function helper(value) { return value; } function bad(key) { return helper(helper); }",
+        "recursive": "function helper(value) { return helper(value); } function bad(key) { return helper(key); }",
+        "mutual": "function helper(value) { return other(value); } function other(value) { return helper(value); } function bad(key) { return helper(key); }",
+        "unknown": "function helper(value) { unknown(); return value; } function bad(key) { return helper(key); }",
+        "discarded-argument": "function helper(value) { return value; } function bad(key) { return helper(unknown()); }",
+        "unused-effect": "function helper(value) { unknown(); return value; } function bad(key) { return key; }",
+        "foreign-global": "function helper(value) { return saved; } function bad(key) { return helper(key); }",
+        "receiver": "function helper(value) { return this; } function bad(key) { return helper(key); }",
+        "receiver-call": "function helper(value) { return value; } function bad(key) { return helper.call(key, key); }",
+        "capture": "function helper(value) { function nested() { return value; } return nested(); } function bad(key) { return helper(key); }",
+        "transitive-write": "function helper(value) { return other(value); } function other(value) { saved=value; return value; } function bad(key) { return helper(key); }",
+        "extra-argument": "function helper(value) { return value; } function bad(key) { return helper(key, key); }",
+    }.items():
+        ir, contract = prepare(
+            args, "global-" + name, source, entry_name="bad", parameter_types=["symbol"]
+        )
+        for optimize in (False, True):
+            refuse(ir, contract, f"global-{name}-{optimize}", optimize=optimize)
 
     helper_refusals = {
         "capture": "function helper() { return key; } return helper();",
@@ -795,6 +884,15 @@ def main():
     ir, contract = accepted["helper-state"]
     for budget in (0, 1, 100, 500):
         refuse(ir, contract, f"helper-budget-{budget}", max_steps=budget)
+    ir, contract = accepted["global-helper"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"global-budget-{budget}", max_steps=budget)
+    changed = args.work / "global-stale.mlir"
+    changed.write_text(ir.read_text().replace('"iterator"', '"hasInstance"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("global helper fingerprint control did not change its body")
+    if "fingerprint mismatch" not in refuse(changed, contract, "global-stale"):
+        raise RuntimeError("changed global helper body accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
@@ -877,7 +975,7 @@ def main():
     )
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
-        f"Symbol exports: typed parameters/helpers, scalar equality and branch/loop return agree with Node/VM; "
+        f"Symbol exports: typed parameters/local and global helpers, scalar equality and branch/loop return agree with Node/VM; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 
