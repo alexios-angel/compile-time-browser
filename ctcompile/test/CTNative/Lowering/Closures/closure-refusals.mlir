@@ -144,7 +144,7 @@
 // SHAREDRETURN-SAME: ctnative.cell_reason = "the closure that shares it is not lifted, so the binding needs a real box and not a variable in this frame - returned closure escapes or is inspected through `ctjs.store_global`"
 
 // A mutable string binding now has an owning carrier and a lifted pointer.
-// The mixed-carrier refusal is covered by native-strings.mlir's SHARED-MIXED.
+// Mixed primitive cell storage is covered by Scalars/strings.mlir's SHARED-MIXED.
 // SHAREDSTRING: emitc.func @tag_1() -> !emitc.opaque<"ctnative::js_num">
 // SHAREDSTRING: emitc.func @grow_2({{.*}}!emitc.ptr<!emitc.opaque<"ctnative::js_string">>) -> !emitc.opaque<"ctnative::js_num">
 // SHAREDSTRING-NOT: ctnative.not_native

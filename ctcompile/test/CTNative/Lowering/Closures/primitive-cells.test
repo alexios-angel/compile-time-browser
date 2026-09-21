@@ -1,0 +1,376 @@
+# Captured primitive unions share typed cells; reads own their String snapshots.
+# Each family writes through a closure and returns a snapshot after later stores.
+# The original shared-mixed witness executes unchanged in a separate program.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
+# RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name primitive_cells_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name primitive_cells_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name primitive_cells_runtime_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name primitive_cells_runtime_deduced_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name primitive_cells_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name primitive_cells_optimized_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name primitive_cells_optimized_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name primitive_cells_optimized_deduced_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name primitive_cells_numeric_mutation --mutate numericSnapshot --core-build %build 2>&1 | FileCheck %s --check-prefix=NUMERIC-MUTATION
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name primitive_cells_string_mutation --mutate nestedSnapshot --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=STRING-MUTATION
+# RUN: %node %t/witness-expected.cjs %t/shared-mixed.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/shared-mixed.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/shared-mixed.mlir --js %t/shared-mixed.js --work %t --name primitive_cells_witness_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/shared-mixed.mlir --js %t/shared-mixed.js --work %t --name primitive_cells_witness_clang --core-build %build
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index-switch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=INDEX-SWITCH
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-sibling.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=NESTED-SIBLING
+
+# RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::number_string">>
+# RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::boolean_string">>
+# RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::nullable_number_string">>
+# RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::nullable_boolean_string">>
+# RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::nullable_string">>
+# RUNTIME-DAG: call_opaque "ctnative::to_nullable_number_string"{{.*}} : (!emitc.opaque<"ctnative::number_string">)
+# RUNTIME-DAG: call_opaque "ctnative::to_nullable_number_string"{{.*}} : (!emitc.opaque<"ctnative::nullable_string">)
+# RUNTIME-DAG: call_opaque "ctnative::to_nullable_boolean_string"{{.*}} : (!emitc.opaque<"ctnative::boolean_string">)
+# RUNTIME-DAG: call_opaque "ctnative::to_nullable_boolean_string"{{.*}} : (!emitc.opaque<"ctnative::nullable_string">)
+# CPP-DAG: ctnative::number_string*
+# CPP-DAG: ctnative::boolean_string*
+# CPP-DAG: ctnative::nullable_number_string*
+# CPP-DAG: ctnative::nullable_boolean_string*
+# CPP-DAG: ctnative::nullable_string*
+# NUMERIC-MUTATION: global 'numericSnapshot' differs
+# STRING-MUTATION: global 'nestedSnapshot' differs
+# REFUSED: ctnative.not_native =
+# INDEX-SWITCH: ctnative.not_native = "`scf.index_switch` is not native yet"
+# NESTED-SIBLING: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases
+
+#--- values.js
+function numberCell(mode, text, number) {
+    var value = text;
+    function writeNumber() { value = number; }
+    function writeText() { value = text + "!"; }
+    var before = value;
+    writeNumber();
+    var middle = value;
+    writeText();
+    var selected = value;
+    if (mode === 0) { selected = before; }
+    if (mode === 1) { selected = middle; }
+    return selected;
+}
+function booleanCell(mode, text, boolean) {
+    var value = text;
+    function writeBoolean() { value = boolean; }
+    function writeText() { value = text + "!"; }
+    var before = value;
+    writeBoolean();
+    var middle = value;
+    writeText();
+    var selected = value;
+    if (mode === 0) { selected = before; }
+    if (mode === 1) { selected = middle; }
+    return selected;
+}
+function optionalNumberCell(mode, text, number) {
+    var value;
+    function write(step) {
+        var missing;
+        if (step === 0) { value = null; }
+        if (step === 1) { value = number; }
+        if (step === 2) { value = text; }
+        if (step === 3) { value = missing; }
+    }
+    var early = value;
+    write(0);
+    var nil = value;
+    write(1);
+    var scalar = value;
+    write(2);
+    var string = value;
+    write(3);
+    var selected = value;
+    if (mode === 0) { selected = early; }
+    if (mode === 1) { selected = nil; }
+    if (mode === 2) { selected = scalar; }
+    if (mode === 3) { selected = string; }
+    return selected;
+}
+function optionalBooleanCell(mode, text, boolean) {
+    var value;
+    function write(step) {
+        var missing;
+        if (step === 0) { value = null; }
+        if (step === 1) { value = boolean; }
+        if (step === 2) { value = text; }
+        if (step === 3) { value = missing; }
+    }
+    var early = value;
+    write(0);
+    var nil = value;
+    write(1);
+    var scalar = value;
+    write(2);
+    var string = value;
+    write(3);
+    var selected = value;
+    if (mode === 0) { selected = early; }
+    if (mode === 1) { selected = nil; }
+    if (mode === 2) { selected = scalar; }
+    if (mode === 3) { selected = string; }
+    return selected;
+}
+function optionalStringCell(mode, text) {
+    var value;
+    function write(step) {
+        var missing;
+        if (step === 0) { value = null; }
+        if (step === 1) { value = text; }
+        if (step === 2) { value = missing; }
+    }
+    var early = value;
+    write(0);
+    var nil = value;
+    write(1);
+    var string = value;
+    write(2);
+    var selected = value;
+    if (mode === 0) { selected = early; }
+    if (mode === 1) { selected = nil; }
+    if (mode === 2) { selected = string; }
+    return selected;
+}
+function widenNumberCell(mode, definite, optionalText) {
+    var value;
+    function writeUnion() { value = definite; }
+    function writeOptionalText() { value = optionalText; }
+    var early = value;
+    writeUnion();
+    var before = value;
+    writeOptionalText();
+    var after = value;
+    writeUnion();
+    var selected = after;
+    if (mode === 0) { selected = early; }
+    if (mode === 1) { selected = before; }
+    return selected;
+}
+function widenBooleanCell(mode, definite, optionalText) {
+    var value;
+    function writeUnion() { value = definite; }
+    function writeOptionalText() { value = optionalText; }
+    var early = value;
+    writeUnion();
+    var before = value;
+    writeOptionalText();
+    var after = value;
+    writeUnion();
+    var selected = after;
+    if (mode === 0) { selected = early; }
+    if (mode === 1) { selected = before; }
+    return selected;
+}
+function nestedCell(text, number) {
+    var value = text;
+    function read() { return value; }
+    function middle() {
+        function write() { value = number; }
+        write();
+        return value;
+    }
+    var before = read();
+    var after = middle();
+    return before + ":" + after + ":" + read();
+}
+
+var numberBefore = numberCell(0, "initial text that outlives the original cell", 7);
+var numberMiddle = numberCell(1, "initial text that outlives the original cell", 7);
+var numberAfter = numberCell(2, "initial text that outlives the original cell", 7);
+var numberNegativeZero = numberCell(1, "-0", -0);
+var numberNaN = numberCell(1, "NaN", 0 / 0);
+var numberNul = numberCell(0, "a\u0000b", 9);
+var booleanBefore = booleanCell(0, "false", false);
+var booleanMiddle = booleanCell(1, "false", false);
+var booleanAfter = booleanCell(2, "false", false);
+var booleanTrue = booleanCell(1, "true", true);
+var booleanEmpty = booleanCell(0, "", false);
+var optionalNumberEarly = optionalNumberCell(0, "7", 7);
+var optionalNumberNull = optionalNumberCell(1, "7", 7);
+var optionalNumberValue = optionalNumberCell(2, "7", 7);
+var optionalNumberText = optionalNumberCell(3, "7", 7);
+var optionalNumberUnset = optionalNumberCell(4, "7", 7);
+var optionalBooleanEarly = optionalBooleanCell(0, "false", false);
+var optionalBooleanNull = optionalBooleanCell(1, "false", false);
+var optionalBooleanValue = optionalBooleanCell(2, "false", false);
+var optionalBooleanText = optionalBooleanCell(3, "false", false);
+var optionalBooleanUnset = optionalBooleanCell(4, "false", false);
+var optionalStringEarly = optionalStringCell(0, "retained String snapshot after clearing its cell");
+var optionalStringNull = optionalStringCell(1, "retained String snapshot after clearing its cell");
+var optionalStringText = optionalStringCell(2, "retained String snapshot after clearing its cell");
+var optionalStringUnset = optionalStringCell(3, "retained String snapshot after clearing its cell");
+var nestedSnapshot = nestedCell("original", 7);
+var nestedNul = nestedCell("a\u0000b", 0);
+var numericSnapshot = +numberCell(1, "7", 7);
+var strictSnapshot = numberCell(0, "7", 7) === numberCell(1, "7", 7);
+var looseSnapshot = numberCell(0, "7", 7) == numberCell(1, "7", 7);
+var booleanSnapshot = !!booleanCell(1, "false", false);
+var textSnapshot = !!booleanCell(0, "false", false);
+
+var widenNumberEarly = widenNumberCell(0, numberCell(1, "7", 7), optionalStringCell(2, "saved optional String after a whole-union store"));
+var widenNumberScalar = widenNumberCell(1, numberCell(1, "7", 7), optionalStringCell(2, "saved optional String after a whole-union store"));
+var widenNumberText = widenNumberCell(1, numberCell(0, "7", 7), optionalStringCell(2, "saved optional String after a whole-union store"));
+var widenNumberMissing = widenNumberCell(2, numberCell(1, "7", 7), optionalStringCell(0, "saved optional String after a whole-union store"));
+var widenNumberNull = widenNumberCell(2, numberCell(1, "7", 7), optionalStringCell(1, "saved optional String after a whole-union store"));
+var widenNumberOptionalText = widenNumberCell(2, numberCell(1, "7", 7), optionalStringCell(2, "saved optional String after a whole-union store"));
+var widenBooleanEarly = widenBooleanCell(0, booleanCell(1, "false", false), optionalStringCell(2, "saved optional String after a whole-union store"));
+var widenBooleanScalar = widenBooleanCell(1, booleanCell(1, "false", false), optionalStringCell(2, "saved optional String after a whole-union store"));
+var widenBooleanText = widenBooleanCell(1, booleanCell(0, "false", false), optionalStringCell(2, "saved optional String after a whole-union store"));
+var widenBooleanMissing = widenBooleanCell(2, booleanCell(1, "false", false), optionalStringCell(0, "saved optional String after a whole-union store"));
+var widenBooleanNull = widenBooleanCell(2, booleanCell(1, "false", false), optionalStringCell(1, "saved optional String after a whole-union store"));
+var widenBooleanOptionalText = widenBooleanCell(2, booleanCell(1, "false", false), optionalStringCell(2, "saved optional String after a whole-union store"));
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    widenNumberEarly: undefined,
+    widenNumberScalar: 7,
+    widenNumberText: "7",
+    widenNumberMissing: undefined,
+    widenNumberNull: null,
+    widenNumberOptionalText: "saved optional String after a whole-union store",
+    widenBooleanEarly: undefined,
+    widenBooleanScalar: false,
+    widenBooleanText: "false",
+    widenBooleanMissing: undefined,
+    widenBooleanNull: null,
+    widenBooleanOptionalText: "saved optional String after a whole-union store",
+    numberBefore: "initial text that outlives the original cell",
+    numberMiddle: 7,
+    numberAfter: "initial text that outlives the original cell!",
+    numberNegativeZero: -0,
+    numberNaN: NaN,
+    numberNul: "a\u0000b",
+    booleanBefore: "false",
+    booleanMiddle: false,
+    booleanAfter: "false!",
+    booleanTrue: true,
+    booleanEmpty: "",
+    optionalNumberEarly: undefined,
+    optionalNumberNull: null,
+    optionalNumberValue: 7,
+    optionalNumberText: "7",
+    optionalNumberUnset: undefined,
+    optionalBooleanEarly: undefined,
+    optionalBooleanNull: null,
+    optionalBooleanValue: false,
+    optionalBooleanText: "false",
+    optionalBooleanUnset: undefined,
+    optionalStringEarly: undefined,
+    optionalStringNull: null,
+    optionalStringText: "retained String snapshot after clearing its cell",
+    optionalStringUnset: undefined,
+    nestedSnapshot: "original:7:7",
+    nestedNul: "a\u0000b:0:0",
+    numericSnapshot: 7,
+    strictSnapshot: false,
+    looseSnapshot: true,
+    booleanSnapshot: false,
+    textSnapshot: true
+};
+assert.equal(Object.keys(expected).length, 44);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("44 shared primitive-cell observations agree with JavaScript");
+
+#--- shared-mixed.js
+// String cells now have a carrier; a binding mixing strings and numbers
+// must still exercise the shared-cell carrier refusal.
+function mixedShared() {
+    var value = "a";
+    function change() { value = 1; return value; }
+    var before = value;
+    change();
+    return before === value ? 1 : 0;
+}
+var result = mixedShared();
+
+#--- witness-expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+assert.equal(scope.result, 0);
+
+#--- broad-union.js
+function cell(mode) {
+    var value = "before";
+    function change() { value = mode ? true : 7; }
+    change();
+    return value;
+}
+cell(0);
+cell(1);
+
+#--- object-union.js
+function cell() {
+    var value = "before";
+    function change() { value = {text: "after"}; }
+    change();
+    return value;
+}
+cell();
+
+#--- container.js
+function cell(mode) {
+    var value = "before";
+    function change() { value = mode ? true : "after"; }
+    change();
+    return [value];
+}
+cell(0);
+cell(1);
+
+#--- index-switch.js
+// Preserve the initial draft's separate control-flow boundary.
+function numberCell(mode, text, number) {
+    var value = text;
+    function writeNumber() { value = number; }
+    function writeText() { value = text + "!"; }
+    var before = value;
+    writeNumber();
+    var middle = value;
+    writeText();
+    if (mode === 0) { return before; }
+    if (mode === 1) { return middle; }
+    return value;
+}
+numberCell(0, "before", 7);
+
+#--- nested-sibling.js
+// Preserve the initial draft's captured-function binding boundary.
+function nestedCell(text, number) {
+    var value = text;
+    function read() { return value; }
+    function middle() {
+        function write() { value = number; }
+        write();
+        return read();
+    }
+    var before = read();
+    var after = middle();
+    return before + ":" + after + ":" + read();
+}
+
+nestedCell("before", 7);

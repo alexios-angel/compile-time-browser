@@ -542,12 +542,16 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto set = llvm::dyn_cast<CellSetOp>(o); set && namesASharedCell(set.getCell())) {
-        const carrier held = carrierOf(typeOf(set.getCell()));
-        const carrier stored = carrierOf(typeOf(set.getValue()));
-        if (held == carrier::none ||
-            (stored != held && !(held == carrier::nullable && isScalarCarrier(stored)))) {
-            return refuse("an assignment of " + printed(typeOf(set.getValue())) +
-                          " to a shared binding of type " + printed(typeOf(set.getCell())));
+        const auto cellType = typeOf(set.getCell()), valueType = typeOf(set.getValue());
+        const carrier held = carrierOf(cellType), stored = carrierOf(valueType);
+        // Widen only when the selected storage already represents every
+        // alternative. Sharing a nullable carrier does not make Number and
+        // Boolean interchangeable in their separate String unions.
+        const bool widens = isPrimitiveCarrier(held) && isPrimitiveCarrier(stored) &&
+                            carrierOf(meet(cellType, valueType)) == held;
+        if (held == carrier::none || (stored != held && !widens)) {
+            return refuse("an assignment of " + printed(valueType) +
+                          " to a shared binding of type " + printed(cellType));
         }
         return true;
     }

@@ -196,14 +196,10 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && admission::isCarriedCell(o)) {
         mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
-        if (llvm::cast<ec::LValueType>(local.getType()).getValueType() ==
-                carrierType(context, carrier::string) &&
-            cell.getInitial().getType() != carrierType(context, carrier::string)) {
-            if (!cell->hasAttr(kAssignedBeforeRead)) {
-                llvm::report_fatal_error("ctnative lowering: a string cell has an observable "
-                                         "non-string initial - admission should refuse it");
-            }
-        } else {
+        // Inference omits this initial only when a write dominates every
+        // read, including captured reads. A definite union then need not
+        // represent the hoisted undefined; observable initials still do.
+        if (!cell->hasAttr(kAssignedBeforeRead)) {
             ec::AssignOp::create(
                 b, where, local,
                 convertScalar(b, where, cell.getInitial(),

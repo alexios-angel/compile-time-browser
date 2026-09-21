@@ -9,7 +9,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=GLOBAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=FIELD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=SHARED-MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shared-mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=SHARED-MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 
 // NATIVE: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // NATIVE: emitc.func @main() -> i32
@@ -34,13 +34,11 @@
 // FIELD-NOT: ctnative.not_native
 // FIELD-NOT: ctjs.func
 // MIXED: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::number_string">
-// The union now has a scalar carrier; shared-cell assignments still require
-// a proved widening rule. Preserve the original before/call/after source.
-// SHARED-MIXED: ctjs.func private @mixedShared$1
-// SHARED-MIXED-SAME: ctnative.not_native = "an assignment of !ctnative.str<utf8> to a shared binding of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>"
-// SHARED-MIXED: ctjs.func private @change$2
-// SHARED-MIXED-SAME: ctnative.cell_args = array<i32: 3>
-// SHARED-MIXED-SAME: ctnative.not_native = "an assignment of !ctnative.num<i32> to a shared binding of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>"
+// Reads keep owning snapshots when captured functions overwrite the union cell.
+// The original source below also executes in Closures/primitive-cells.test.
+// SHARED-MIXED: emitc.func @mixedShared_1
+// SHARED-MIXED: call_opaque "ctnative::primitive_strict_equal"
+// SHARED-MIXED: emitc.func @change_2({{.*}}!emitc.ptr<!emitc.opaque<"ctnative::number_string">>{{.*}})
 
 //--- coercion.js
 // Keep a runtime String/Number addition even when its result is discarded.
