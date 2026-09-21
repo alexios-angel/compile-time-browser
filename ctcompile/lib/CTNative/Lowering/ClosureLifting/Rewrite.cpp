@@ -430,7 +430,8 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // gets: `%arg0` read at all. A constructor that never touches `this`
     // builds the empty shape, and passing it would be a use that opens it
     // for no gain.
-    const bool carriesReceiver = (method || constructor) && !entry.getArgument(0).use_empty();
+    const bool carriesReceiver =
+        (method || constructor) && (preserveReceiver || !entry.getArgument(0).use_empty());
     if (carriesReceiver) {
         target->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
         ++out.receivers;
@@ -451,10 +452,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         // to a frame-scope `ctn_X` variable like any other literal. Zero
         // allocation, and the object lives in the caller's frame.
         //
-        // $callee_value IS UNDEFINED, as it is in the method arm and for
-        // the same reason: the native call arm drops operand 2, this
-        // rewrite runs inside --ctnative-lower-to-emitc, and the boxed tier
-        // never sees the op. The closure is erased below.
+        // Host preparation retains the exact source callable for independent
+        // proof of the rewritten graph. Ordinary local lifting may erase it;
+        // native emission drops this unobserved implicit argument in both cases.
         for (ctjs::CreateClosureOp c : made) {
             c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));
             ++out.closures;
@@ -489,7 +489,8 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             auto direct = ctjs::CallDirectOp::create(
                 at, built.getLoc(), valueType,
                 mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-                carriesReceiver ? instance.getResult() : undefined, undefined, undefined, arguments,
+                carriesReceiver ? instance.getResult() : undefined, undefined,
+                preserveReceiver ? built.getCallee() : undefined, arguments,
                 /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
             if (carriesReceiver) {
                 direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));

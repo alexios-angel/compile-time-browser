@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reprove prepared class providers and scalar records; retain the native owner boundary."""
+"""Gate prepared class and record providers against real DOM Data session owners."""
 
 import argparse
 from pathlib import Path
@@ -156,6 +156,53 @@ int main() {
 """
 
 
+def check_record_executable(args, name, native, expected=15927, class_value=None):
+    client = RECORD_CLIENT.replace("15927", str(expected))
+    if class_value is not None:
+        client = client.replace(
+            "return std::array{", "return std::array{session.observe_classResult(), "
+        ).replace(
+            "auto check = [&] {",
+            "auto check = [&] {\n"
+            f"            assert(ctnative::global_number(session.observe_classResult()).value() == {class_value});",
+        )
+    compilers = find_compilers()
+    compilers[1] = args.clang
+    includes, libraries = dom.link_options(args)
+    executions = 0
+    deduced = args.work / f"{name}.deduced.mlir"
+    run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
+    for mode, module in (("explicit", native), ("deduced", deduced)):
+        cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
+        owner = re.findall(r"class (\w+_session) \{", cpp)
+        if (
+            len(owner) != 1
+            or dom.VM.search(cpp)
+            or re.search(
+                r"shared_ptr<ctnative::method_|shared_ptr<ctn_|invoke_callable|invoke_session|\bmain\s*\(",
+                cpp,
+            )
+        ):
+            raise RuntimeError(f"{name}: escaping runtime/table/callable")
+        if cpp.index("atom_table atoms_") > cpp.index("document document_"):
+            raise RuntimeError(f"{name}: document outlives its atoms")
+        path = args.work / f"{name}.{mode}.cpp"
+        path.write_text(cpp + client.replace("@OWNER@", owner[0]))
+        for index, compiler in enumerate(compilers):
+            binary = path.with_suffix(f".{index}")
+            result = run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
+            if (
+                result.stdout
+                or result.stderr
+                or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout)
+            ):
+                raise RuntimeError(f"{name}: native compilation/symbol gate failed")
+            if run([str(binary)]).stdout != "DOM record Data passed\n":
+                raise RuntimeError(f"{name}: real document observations incomplete")
+            executions += 1
+    return executions
+
+
 def published_prepare(args, name, text):
     ir, contract = dom.prepare(args, name, text, 1, entry_name="probe")
     contract.update(
@@ -282,6 +329,16 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
         "constructor-argument": text.replace(
             instance[0], instance[0].replace(", " + instance[2] + ")", ", %arg3)")
         ),
+        "constructor-callee": text.replace(
+            instance[0],
+            instance[0].replace("construct " + creation[1], "construct " + instance[2]),
+        ),
+        "constructor-new-target": text.replace(
+            instance[0], instance[0].replace("(" + creation[1] + ",", "(" + instance[2] + ",")
+        ),
+        "constructor-program": text.replace(
+            creation[0], creation[0].replace("create_closure %arg2", "create_closure %arg3")
+        ),
         "missing-get": text.replace(key, key.replace('"bs.item"', '"provider-missing"')),
         "unknown-map-method": text.replace(method_key, method_key.replace('"has"', '"clear"')),
         "map-receiver": text.replace(
@@ -316,6 +373,16 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
             raise RuntimeError(
                 f"{label}: forged success survived live provider reproof: {rejected}"
             )
+        if label in ("constructor-callee", "constructor-new-target", "constructor-program"):
+            for optimize in (False, True):
+                dom.lower(
+                    args,
+                    path,
+                    fresh,
+                    f"{name}-provider-{label}-native-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
     for label, request, options, reason in (
         ("stale", dict(contract, module_sha256="0" * 64), "", "fingerprint mismatch"),
         ("budget", contract, "max-steps=0", "budget"),
@@ -346,11 +413,94 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
     )
     if rechecked != report:
         raise RuntimeError("forged report changed the recomputed class provider proof")
-    print(f"class provider: {len(variants) + 2} prepared-IR refusals, forged report reproof passed")
+
+    # Model the constructor lift without any native proof annotations. Keep
+    # its actual callable, fresh instance and initialization at each source site.
+    sites = re.findall(
+        rf"(?m)^    (%\w+) = ctjs.construct {creation[1]}\({creation[1]}, (%\w+)\)$", text
+    )
+    if len(sites) != 2:
+        raise RuntimeError("lifted provider control lost its two constructor sites")
+    lifted = text
+    for index, (value, argument) in enumerate(sites):
+        lifted = lifted.replace(
+            f"    {value} = ctjs.construct {creation[1]}({creation[1]}, {argument})",
+            f"    {value} = ctjs.create_object\n"
+            f"    %initializer_undefined{index} = ctjs.constant #ctjs.undefined\n"
+            f"    %initializer_result{index} = ctjs.call_direct @Item${constructor[1]}"
+            f"({value}, %initializer_undefined{index}, {creation[1]}, {argument})",
+        )
+    first, argument = sites[0]
+    call = (
+        f"    %initializer_result0 = ctjs.call_direct @Item${constructor[1]}"
+        f"({first}, %initializer_undefined0, {creation[1]}, {argument})"
+    )
+    allocation = f"    {first} = ctjs.create_object"
+    early_key = '    %initializer_key = ctjs.constant #ctjs.string<"n">\n'
+    variants = {
+        "complete": lifted,
+        "callee": lifted.replace(
+            call, call.replace(", " + creation[1] + ",", ", %initializer_undefined0,")
+        ),
+        "receiver": lifted.replace(call, call.replace("(" + first + ",", "(%arg3,")),
+        "repeated": lifted.replace(
+            call, call + "\n" + call.replace("%initializer_result0", "%initializer_repeat")
+        ),
+        "read-before": lifted.replace(
+            allocation,
+            allocation
+            + "\n"
+            + early_key
+            + f"    %initializer_early = ctjs.get_property {first}[%initializer_key]",
+        ),
+        "write-before": lifted.replace(
+            allocation,
+            allocation
+            + "\n"
+            + early_key
+            + f"    ctjs.set_property {first}[%initializer_key], {argument}",
+        ),
+        "map-before": lifted.replace(call + "\n", "").replace(stored[0], stored[0] + "\n" + call),
+        "result-escape": lifted.replace(
+            call, call + '\n    ctjs.store_global "provider_escape", %initializer_result0'
+        ),
+    }
+    for label, changed in variants.items():
+        path = args.work / f"{name}-initializer-{label}.mlir"
+        path.write_text(changed)
+        fresh = dict(contract, module_sha256=host.fingerprint(args.opt, path))
+        checked, _, _ = host.analyze(args.opt, path, fresh, path.with_suffix(".check"))
+        if label == "complete":
+            if not checked["proved"] or checked["slots"][0]["proved_edges"] != 5:
+                raise RuntimeError(f"lifted initializer lost its live provider proof: {checked}")
+            for suffix, request, options in (
+                ("stale", contract, ""),
+                ("budget", fresh, "max-steps=0"),
+            ):
+                refused, _, _ = host.analyze(
+                    args.opt,
+                    path,
+                    request,
+                    args.work / f"{name}-initializer-{suffix}",
+                    options=options,
+                )
+                if refused["proved"] or any(slot["proved_edges"] for slot in refused["slots"]):
+                    raise RuntimeError(f"{suffix}: lifted initializer retained stale proof")
+        elif (
+            changed == lifted
+            or checked["proved"]
+            or not checked["reason"]
+            or any(slot["proved_edges"] for slot in checked["slots"])
+        ):
+            raise RuntimeError(f"{label}: changed initializer retained provider proof: {checked}")
+    print(
+        "class provider: 19 prepared-IR refusals, six native provenance refusals, "
+        "one lifted initializer proof, nine initializer refusals, forged report reproof passed"
+    )
 
 
 def published_families(args):
-    prepared_count = refusals = observed = 0
+    prepared_count = refusals = observed = executions = 0
     original = (
         published_source()
         .replace("host.slot.set(element, result)", "host.slot.set(element, 15927)")
@@ -387,10 +537,10 @@ def published_families(args):
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
         published_provider(args, name, prepared, checked)
         for optimize in (False, True):
-            dom.lower(
-                args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
+            native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
+            executions += check_record_executable(
+                args, f"{name}-{optimize}", native, expected, expected
             )
-            refusals += 1
         if label == "holder":
             for suffix, request, options in (
                 ("stale", dict(contract, module_sha256="0" * 64), ""),
@@ -455,7 +605,7 @@ def published_families(args):
             refusals += 1
     print(
         f"class public family: {observed} Node/VM observations, {prepared_count} preparations, "
-        f"{prepared_count} provider proofs, {refusals} refusals; native class ownership remains refused"
+        f"{prepared_count} provider proofs, {executions} native executions, {refusals} refusals"
     )
 
 
@@ -497,7 +647,7 @@ def published_class_fields(args):
             15927,
         ),
     }
-    refusals = 0
+    refusals = executions = 0
     for label, (text, expected, class_value) in sources.items():
         name = "class-field-" + label
         published_observation(
@@ -514,6 +664,12 @@ def published_class_fields(args):
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
         published_provider(args, name, prepared, checked)
         for optimize in (False, True):
+            if label in ("distinct-record", "arithmetic"):
+                native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
+                executions += check_record_executable(
+                    args, f"{name}-{optimize}", native, expected, class_value
+                )
+                continue
             dom.lower(
                 args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
             )
@@ -568,7 +724,7 @@ def published_class_fields(args):
         classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
         refusals += 1
     print(
-        f"class scalar fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {len(sources)} provider proofs, {refusals} refusals; native class ownership remains refused"
+        f"class scalar fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {len(sources)} provider proofs, {executions} native executions, {refusals} refusals"
     )
 
 
@@ -629,7 +785,7 @@ def published_constructor_fields(args):
             12927,
         ),
     }
-    refusals = 0
+    refusals = executions = 0
     for label, (text, expected, class_value) in sources.items():
         name = "class-constructor-field-" + label
         published_observation(
@@ -646,13 +802,37 @@ def published_constructor_fields(args):
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
         published_provider(args, name, prepared, checked, adversarial=label == "constructor-only")
         for optimize in (False, True):
+            if label == "number-instance":
+                native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
+                executions += check_record_executable(
+                    args, f"{name}-{optimize}", native, expected, class_value
+                )
+                continue
             diagnostic = dom.lower(
                 args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
             )
-            if label == "constructor-only" and (
-                "standard Map identity is unproved across an unknown constructor" not in diagnostic
-            ):
-                raise RuntimeError(f"{name}: complete source ownership regressed\n{diagnostic}")
+            if label == "constructor-only":
+                constructor = re.search(r"ctjs.func @Item\$(\d+)\(", body)
+                calls = re.findall(
+                    rf'"ctjs.call_direct"\((%\w+), %\w+, (%\w+), %\w+\) '
+                    rf"<\{{callee = @Item\${constructor[1]}\}}> \{{ctnative.receiver\}}",
+                    diagnostic,
+                )
+                if (
+                    "native DOM Data requires complete family admission" not in diagnostic
+                    or "!ctnative.map<!ctnative.dom_element, !ctnative.opt<!ctnative.num<i32>>>"
+                    not in diagnostic
+                    or diagnostic.count('"ctjs.construct"') != 3
+                    or len(calls) != 2
+                ):
+                    raise RuntimeError(f"{name}: constructor lifting regressed\n{diagnostic}")
+                for receiver, callee in calls:
+                    if f'{receiver} = "ctjs.create_object"()' not in diagnostic or not re.search(
+                        rf'{callee} = "ctjs.create_closure"[^\n]+function = '
+                        rf"{constructor[1]} : i32",
+                        diagnostic,
+                    ):
+                        raise RuntimeError(f"{name}: initializer lost its source identity")
             refusals += 1
         if label == "constructor-only":
             for suffix, request, options in (
@@ -696,7 +876,7 @@ def published_constructor_fields(args):
         classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
         refusals += 1
     print(
-        f"class constructor fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {len(sources)} provider proofs, {refusals} refusals; native class ownership remains refused"
+        f"class constructor fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {len(sources)} provider proofs, {executions} native executions, {refusals} refusals"
     )
 
 
@@ -726,9 +906,6 @@ def published_records(args):
             "saved = payload.n;", "saved = payload.n + 7;"
         ),
     }
-    compilers = find_compilers()
-    compilers[1] = args.clang
-    includes, libraries = dom.link_options(args)
     executions = refusals = 0
     for label, text in sources.items():
         name = "published-record-" + label
@@ -753,38 +930,7 @@ def published_records(args):
                 or len(dom.NATIVE.findall(native.read_text())) != 6
             ):
                 raise RuntimeError(f"{name}: incomplete source function family")
-            deduced = args.work / f"{name}-{optimize}.deduced.mlir"
-            run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
-            for mode, module in (("explicit", native), ("deduced", deduced)):
-                cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
-                owner = re.findall(r"class (\w+_session) \{", cpp)
-                if (
-                    len(owner) != 1
-                    or dom.VM.search(cpp)
-                    or re.search(
-                        r"shared_ptr<ctnative::method_|shared_ptr<ctn_|invoke_callable|invoke_session|\bmain\s*\(",
-                        cpp,
-                    )
-                ):
-                    raise RuntimeError(f"{name}: escaping runtime/table/callable")
-                if cpp.index("atom_table atoms_") > cpp.index("document document_"):
-                    raise RuntimeError(f"{name}: document outlives its atoms")
-                path = args.work / f"{name}-{optimize}.{mode}.cpp"
-                path.write_text(cpp + RECORD_CLIENT.replace("@OWNER@", owner[0]))
-                for index, compiler in enumerate(compilers):
-                    binary = path.with_suffix(f".{index}")
-                    result = run(
-                        [compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)]
-                    )
-                    if (
-                        result.stdout
-                        or result.stderr
-                        or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout)
-                    ):
-                        raise RuntimeError(f"{name}: native compilation/symbol gate failed")
-                    if run([str(binary)]).stdout != "DOM record Data passed\n":
-                        raise RuntimeError(f"{name}: real document observations incomplete")
-                    executions += 1
+            executions += check_record_executable(args, f"{name}-{optimize}", native)
         if label in ("field", "global-snapshot"):
             for suffix, changed, budget in (
                 ("stale", dict(contract, module_sha256="0" * 64), None),
@@ -865,7 +1011,7 @@ def published_records(args):
             dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
             refusals += 1
     print(
-        f"published DOM Data: {len(sources) + 2} Node/VM observations, {executions} native record executions, {refusals} refusals; complete vendor class publication remains refused"
+        f"published DOM Data: {len(sources) + 2} Node/VM observations, {executions} native record executions, {refusals} refusals; original composite-result publication remains refused"
     )
 
 
@@ -1072,7 +1218,7 @@ def main():
     print(
         f"class DOM Data: {observed} Node/VM observations, {prepared_count} prepared entries, "
         f"{refusals} preparation refusals, {native_refusals} incomplete-session refusals; "
-        f"{executions} native object-key executions; no native class DOM admission"
+        f"{executions} native object-key executions; unpublished class DOM sessions remain refused"
     )
     published_records(args)
 

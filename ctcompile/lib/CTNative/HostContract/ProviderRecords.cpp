@@ -17,6 +17,7 @@ std::string analyzer::localRecordProblem() {
     llvm::DenseSet<mlir::Operation *> operations, constructors, closures, maps;
     bool primitiveFields = true;
     llvm::DenseMap<mlir::Value, mlir::Value> origins;
+    llvm::DenseMap<mlir::Value, mlir::Operation *> initializers;
     llvm::DenseMap<mlir::Value, llvm::StringMap<PrimitiveAlternatives>> fields;
     llvm::DenseMap<mlir::Value, llvm::StringMap<mlir::Value>> entries;
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> scalars;
@@ -29,25 +30,50 @@ std::string analyzer::localRecordProblem() {
         return constant && ctjs::isPrimitiveAttr(constant.getValue()) ? constant.getValue()
                                                                       : mlir::Attribute{};
     };
-    for (ctjs::ConstructOp made : entry.getBody().front().getOps<ctjs::ConstructOp>()) {
+    for (mlir::Operation & operation : entry.getBody().front()) {
         if (!step()) { return reject(); }
-        auto closure = made.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+        auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation);
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+        auto instance = direct ? direct.getReceiver().getDefiningOp<ctjs::CreateObjectOp>()
+                               : ctjs::CreateObjectOp{};
+        auto callee = made ? made.getCallee() : instance ? direct.getCalleeValue() : mlir::Value{};
+        auto closure =
+            callee ? callee.getDefiningOp<ctjs::CreateClosureOp>() : ctjs::CreateClosureOp{};
         if (!closure) { continue; }
+        const auto owner = made ? made.getResult() : instance.getResult();
+        const auto actuals = made ? made.getArgs() : direct.getArgs();
         auto function = callable(closure.getResult());
         if (!function || function == entry || function->hasAttr("ctjs.skipped") ||
             !llvm::hasSingleElement(function.getBody()) || function.getUpvalueCount() != 0 ||
             !closure.getUpvalues().empty() ||
             !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(literal(closure.getEnclosingThis())) ||
-            closure->getParentOp() != entry || made.getNewTarget() != closure.getResult() ||
-            !dominance.properlyDominates(closure.getOperation(), made)) {
+            closure->getParentOp() != entry ||
+            !dominance.properlyDominates(closure.getOperation(), &operation)) {
             return reject();
+        }
+        if (made) {
+            if (made.getNewTarget() != closure.getResult()) { return reject(); }
+        } else {
+            // The emitted initializer is an ordinary call on its exact fresh
+            // receiver. Neither native markers nor the original proof can
+            // supply a callable identity or move initialization before a read.
+            if (!exactCall(direct) || instance->getParentOp() != entry ||
+                !dominance.properlyDominates(instance.getOperation(), direct) ||
+                !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(literal(direct.getNewTarget())) ||
+                !initializers.try_emplace(owner, direct.getOperation()).second) {
+                return reject();
+            }
+            for (mlir::Operation * user : direct.getResult().getUsers()) {
+                if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return reject(); }
+            }
+            operations.insert(instance);
         }
         auto & body = function.getBody().front();
-        if (body.getNumArguments() != ctjs::implicit_arguments + made.getArgs().size()) {
+        if (body.getNumArguments() != ctjs::implicit_arguments + actuals.size()) {
             return reject();
         }
-        for (mlir::Value actual : made.getArgs()) {
-            if (!step() || !literal(actual) || !dominance.dominates(actual, made)) {
+        for (mlir::Value actual : actuals) {
+            if (!step() || !literal(actual) || !dominance.dominates(actual, &operation)) {
                 return reject();
             }
         }
@@ -73,11 +99,11 @@ std::string analyzer::localRecordProblem() {
                         formal.getArgNumber() < ctjs::implicit_arguments) {
                         return reject();
                     }
-                    value = made.getArgs()[formal.getArgNumber() - ctjs::implicit_arguments];
+                    value = actuals[formal.getArgNumber() - ctjs::implicit_arguments];
                 }
                 auto initial = literal(value);
                 if (!initial) { return reject(); }
-                fields[made.getResult()][ctjs::constantKey(write.getKey())] =
+                fields[owner][ctjs::constantKey(write.getKey())] =
                     PrimitiveAlternatives::forTag(initial.getTypeID());
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
                 if (!literal(result.getValue())) { return reject(); }
@@ -89,11 +115,11 @@ std::string analyzer::localRecordProblem() {
             operations.insert(&op);
         }
         if (!returned) { return reject(); }
-        origins[made.getResult()] = made.getResult();
+        origins[owner] = owner;
         constructors.insert(function);
         closures.insert(closure);
         operations.insert(closure);
-        operations.insert(made);
+        operations.insert(&operation);
     }
     if (constructors.empty()) { return exhausted ? reject() : std::string{}; }
     const auto census = module.walk([&](ctjs::CreateClosureOp closure) {
@@ -105,6 +131,11 @@ std::string analyzer::localRecordProblem() {
         for (mlir::OpOperand & use : closure.getResult().getUses()) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                direct && use.getOperandNumber() == 2 &&
+                initializers.lookup(direct.getReceiver()) == direct.getOperation()) {
+                continue;
+            }
             auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
             if (!made || !operations.contains(made) || use.getOperandNumber() >= 2 ||
                 made.getCallee() != closure.getResult() ||
@@ -119,10 +150,13 @@ std::string analyzer::localRecordProblem() {
                               mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
         if (!uses) { return reject(); }
         for (const auto & use : *uses) {
-            if (!step() ||
-                constructors.contains(mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+            if (!step()) { return reject(); }
+            if (constructors.contains(mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
                     use.getUser(), use.getSymbolRef()))) {
-                return reject();
+                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                if (!direct || initializers.lookup(direct.getReceiver()) != direct.getOperation()) {
+                    return reject();
+                }
             }
         }
     }
@@ -289,7 +323,7 @@ std::string analyzer::localRecordProblem() {
     });
     if (ordered.wasInterrupted()) { return reject(); }
     for (auto [alias, owner] : origins) {
-        (void)owner;
+        const auto initializer = initializers.lookup(owner);
         for (mlir::OpOperand & use : alias.getUses()) {
             if (!step() || use.getOwner()->getParentOfType<ctjs::FuncOp>() != entry ||
                 !dominance.dominates(alias, use.getOwner())) {
@@ -297,7 +331,11 @@ std::string analyzer::localRecordProblem() {
             }
             auto * op = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+            if (initializer && op != initializer && !dominance.properlyDominates(initializer, op)) {
+                return reject();
+            }
             if (!operations.contains(op)) { return reject(); }
+            if (op == initializer && alias == owner && use.getOperandNumber() == 0) { continue; }
             if (use.getOperandNumber() == 0 &&
                 llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(op)) {
                 continue;

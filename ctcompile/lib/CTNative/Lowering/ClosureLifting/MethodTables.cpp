@@ -349,6 +349,35 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
         });
         for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
     }
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+        // The ordinary constructor guard cannot prove instances retained in
+        // local Maps. Use only this complete live graph, then let the caller
+        // reprove ownership of the rewritten allocations and initializer calls.
+        HostContract transformed = contract;
+        transformed.moduleSha256 = hostContractFingerprint(module);
+        const HostContractAnalysis host(module, transformed, maxSteps);
+        if (!host.proved()) { return std::nullopt; }
+        const auto & records = host.localRecords();
+        if (!records.constructors.empty() && !records.primitiveFields) { return std::nullopt; }
+        closureLifter locals{module};
+        locals.census();
+        locals.constructorCensus();
+        unsigned remaining = maxSteps - host.steps();
+        llvm::SmallVector<ctjs::CreateClosureOp> constructors;
+        for (ctjs::FuncOp function : records.constructors) {
+            if (!remaining) { return std::nullopt; }
+            --remaining;
+            // A previously lifted initializer already has its exact direct
+            // calls. Only original construction sites need this rewrite.
+            if (!locals.constructsOfTarget.contains(function)) { continue; }
+            auto closure = locals.uniqueClosureByTarget.lookup(function);
+            if (!closure || locals.whyTargetIsNotLiftable(closure)) { return std::nullopt; }
+            constructors.push_back(closure);
+        }
+        for (ctjs::CreateClosureOp closure : constructors) {
+            locals.lift(locals.targetOf(closure), {closure}, out, true);
+        }
+    }
     return out;
 }
 
