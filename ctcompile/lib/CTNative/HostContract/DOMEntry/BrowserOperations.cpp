@@ -312,8 +312,36 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 auto truth = flag ? flag.getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
                 auto compare =
                     truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
-                auto length = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>()
-                                      : ctjs::GetPropertyOp{};
+                mlir::Value bound = compare ? compare.getRhs() : mlir::Value{};
+                if (auto capped =
+                        bound ? bound.getDefiningOp<mlir::scf::IfOp>() : mlir::scf::IfOp{};
+                    capped && capped.getNumResults() == 1 && capped.getThenRegion().hasOneBlock() &&
+                    capped.getElseRegion().hasOneBlock() &&
+                    capped.getThenRegion().front().getOperations().size() == 1 &&
+                    capped.getElseRegion().front().getOperations().size() == 1) {
+                    if (!spend()) { return false; }
+                    auto test = capped.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                    auto less =
+                        test ? test.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
+                    auto cap =
+                        less ? less.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+                    auto number =
+                        cap ? llvm::dyn_cast<ctjs::NumberAttr>(cap.getValue()) : ctjs::NumberAttr{};
+                    auto yes =
+                        llvm::dyn_cast<mlir::scf::YieldOp>(capped.getThenRegion().front().back());
+                    auto no =
+                        llvm::dyn_cast<mlir::scf::YieldOp>(capped.getElseRegion().front().back());
+                    if (less && less.getKind() == ctjs::CompareKind::Lt && number &&
+                        number.getDouble() == double(1U << 24) && yes && no &&
+                        yes.getNumOperands() == 1 && no.getNumOperands() == 1 &&
+                        yes.getOperand(0) == less.getLhs() && no.getOperand(0) == less.getRhs()) {
+                        // min(snapshot.length, spread cap) is also an upper
+                        // bound for accesses to that immutable snapshot.
+                        bound = less.getLhs();
+                    }
+                }
+                auto length =
+                    bound ? bound.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
                 guarded |= compare && compare.getKind() == ctjs::CompareKind::Lt &&
                            compare.getLhs() == index && length &&
                            length.getObject() == read.getObject() &&

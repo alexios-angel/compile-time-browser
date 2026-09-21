@@ -4,6 +4,8 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 
+#include <bit>
+
 namespace ctcompile::test::host_contract {
 
 inline void checkDOMSnapshotLengths(mlir::MLIRContext & context) {
@@ -42,11 +44,31 @@ module {
   }
 }
 )MLIR";
+    const auto indexed = replaced(source, "    ctjs.return %answer",
+                                  R"MLIR(    %originalLength = ctjs.get_property %nodes[%lengthName]
+    %setName = ctjs.constant #ctjs.string<"setAttribute">
+    %attribute = ctjs.constant #ctjs.string<"data-visited">
+    %value = ctjs.constant #ctjs.string<"yes">
+    %count:2 = scf.while (%at = %zero, %sum = %zero) : (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {
+      %less = ctjs.compare lt %at, %answer
+      %test = ctjs.truthy %less
+      scf.condition(%test) %at, %sum : !ctjs.value, !ctjs.value
+    } do {
+    ^bb0(%at: !ctjs.value, %sum: !ctjs.value):
+      %member = ctjs.get_property %result[%at]
+      %set = ctjs.get_property %member[%setName]
+      %written = ctjs.call %set(%member, %attribute, %value)
+      %next = ctjs.binary_static add %at, %one
+      %total = ctjs.binary_static add %sum, %one
+      scf.yield %next, %total : !ctjs.value, !ctjs.value
+    }
+    %total = ctjs.binary_static add %count#1, %originalLength
+    ctjs.return %total)MLIR");
     HostContract contract;
     contract.entry = "count$0";
     contract.elementParameters = {0};
     contract.initialIntrinsics = {"Array", "Element"};
-    const auto query = [&](const std::string & text, bool expected) {
+    const auto query = [&](const std::string & text, bool expected, bool indexes = false) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(input), "independent snapshot length fixture parses");
         if (!input) { return; }
@@ -68,10 +90,19 @@ module {
         request.moduleSha256 = hostContractFingerprint(*input);
         DOMEntryAnalysis proof(*input, request);
         check(proof.proved(), "normalized count retains complete typed DOM evidence");
-        unsigned calls = 0, bounds = 0, removed = 0;
+        unsigned calls = 0, bounds = 0, removed = 0, loops = 0, indices = 0;
         input->walk([&](mlir::Operation * operation) {
             removed += llvm::isa<ctjs::CallSpreadOp, ctjs::IterableOp, ctjs::AppendOp,
-                                 ctjs::CreateArrayOp, mlir::scf::WhileOp>(operation);
+                                 ctjs::CreateArrayOp>(operation);
+            loops += llvm::isa<mlir::scf::WhileOp>(operation);
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                read && proof.isElementVectorIndex(read)) {
+                ++indices;
+                auto snapshot = read.getObject().getDefiningOp<ctjs::CallOp>();
+                check(snapshot && proof.call(snapshot) &&
+                          proof.call(snapshot)->returnsElementVector(),
+                      "bounded indices borrow the original owning query snapshot");
+            }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
                 const auto * edge = proof.call(call);
                 calls += edge && edge->returnsElementVector();
@@ -89,16 +120,19 @@ module {
                   "count retains the VM cap without truncating the original NodeList");
             ++bounds;
         });
-        check(calls == 1 && bounds == 1 && removed == 0,
+        check(calls == 1 && bounds == 1 && removed == 0 && loops == unsigned(indexes) &&
+                  indices == unsigned(indexes),
               "one real selector remains and only the confined spread machinery disappears");
     };
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         contract.provider = provider;
         query(source, true);
+        query(indexed, true, true);
         for (const auto & identities : {std::vector<std::string>{}, {"Array"}, {"Element"}}) {
             contract.initialIntrinsics = identities;
             query(source, false);
+            query(indexed, false);
         }
         contract.initialIntrinsics = {"Array", "Element"};
     }
@@ -129,28 +163,117 @@ module {
          }) {
         query(invalid, false);
     }
-    auto original = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    contract.moduleSha256 = hostContractFingerprint(*original);
-    unsigned complete = 0;
-    for (unsigned budget = 0; budget < 10000; ++budget) {
-        mlir::OwningOpRef<mlir::ModuleOp> input(original->clone());
-        auto failure = normalizeDOMSnapshotLengths(*input, contract, budget);
-        if (!failure) {
-            complete = budget;
-            break;
-        }
-        llvm::consumeError(std::move(failure));
-        check(hostContractFingerprint(*input) == contract.moduleSha256,
-              "every incomplete snapshot budget leaves the entire source untouched");
+    for (const auto & invalid : {
+             replaced(indexed, "%at = %zero", "%at = %one"),
+             replaced(indexed, "compare lt %at, %answer", "compare le %at, %answer"),
+             replaced(indexed, "compare lt %at, %answer", "compare lt %at, %one"),
+             replaced(indexed, "compare lt %at, %answer", "compare lt %at, %originalLength"),
+             replaced(indexed, "add %at, %one", "add %at, %zero"),
+             replaced(indexed, "scf.yield %next, %total", "scf.yield %at, %total"),
+             replaced(indexed, "%result[%at]", "%result[%one]"),
+             replaced(indexed, "%set(%member, %attribute, %value)",
+                      "%set(%member, %attribute, %member)"),
+             replaced(indexed, "#ctjs.string<\"setAttribute\">", "#ctjs.string<\"remove\">"),
+             replaced(indexed,
+                      "      %set =", "      ctjs.store_global \"saved\", %member\n      %set ="),
+             replaced(indexed, "      %set =",
+                      "      ctjs.set_property %result[%at], %element\n      %set ="),
+             replaced(indexed, "    %count:2 =",
+                      "    ctjs.set_property %result[%lengthName], %zero\n    %count:2 ="),
+             replaced(indexed,
+                      "    %count:2 =", "    ctjs.store_global \"saved\", %result\n    %count:2 ="),
+             replaced(indexed,
+                      "    %result =", "    ctjs.store_global \"Array\", %element\n    %result ="),
+         }) {
+        query(invalid, false);
     }
-    check(complete > 0, "snapshot normalization completes under a finite reproducible budget");
-    auto stale = contract;
-    stale.moduleSha256.assign(64, '0');
-    auto failure = normalizeDOMSnapshotLengths(*original, stale, 10000);
-    check(static_cast<bool>(failure), "stale fingerprint refuses snapshot normalization");
+    for (const auto & text : {source, indexed}) {
+        auto original = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        contract.moduleSha256 = hostContractFingerprint(*original);
+        unsigned complete = 0;
+        for (unsigned budget = 0; budget < 10000; ++budget) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(original->clone());
+            auto failure = normalizeDOMSnapshotLengths(*input, contract, budget);
+            if (!failure) {
+                complete = budget;
+                break;
+            }
+            llvm::consumeError(std::move(failure));
+            check(hostContractFingerprint(*input) == contract.moduleSha256,
+                  "every incomplete snapshot budget leaves the entire source untouched");
+        }
+        check(complete > 0, "snapshot normalization completes under a finite reproducible budget");
+        auto stale = contract;
+        stale.moduleSha256.assign(64, '0');
+        auto failure = normalizeDOMSnapshotLengths(*original, stale, 10000);
+        check(static_cast<bool>(failure), "stale fingerprint refuses snapshot normalization");
+        llvm::consumeError(std::move(failure));
+        check(hostContractFingerprint(*original) == contract.moduleSha256,
+              "stale request does not erase or replace source operations");
+    }
+
+    auto input = mlir::parseSourceString<mlir::ModuleOp>(indexed, &context);
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    auto failure = normalizeDOMSnapshotLengths(*input, contract, 10000);
+    const bool normalized = !failure;
+    check(normalized, "bounded indexed fixture normalizes for live proof controls");
     llvm::consumeError(std::move(failure));
-    check(hostContractFingerprint(*original) == contract.moduleSha256,
-          "stale request does not erase or replace source operations");
+    if (!normalized) { return; }
+    const auto noEvidence = [](mlir::ModuleOp module, const DOMEntryAnalysis & proof) {
+        bool empty = !proof.proved() && !proof.entry() && proof.parameters().empty();
+        module.walk([&](ctjs::CallOp call) { empty &= !proof.call(call); });
+        module.walk([&](ctjs::GetPropertyOp read) {
+            empty &= !proof.method(read) && !proof.isElementVectorLength(read) &&
+                     !proof.isElementVectorIndex(read);
+        });
+        return empty;
+    };
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    const DOMEntryAnalysis proof(*input, contract);
+    check(proof.proved() && DOMEntryAnalysis(*input, contract, proof.steps()).proved(),
+          "bounded index proof reproduces its exact completion budget");
+    for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+        const DOMEntryAnalysis limited(*input, contract, budget);
+        check(limited.exhausted() && noEvidence(*input, limited),
+              "every incomplete index proof withholds bounds and borrow evidence");
+    }
+    for (unsigned change = 0; change < 4; ++change) {
+        mlir::OwningOpRef<mlir::ModuleOp> changed(input->clone());
+        mlir::scf::IfOp bounded;
+        changed->walk([&](mlir::scf::IfOp branch) { bounded = branch; });
+        auto truth = bounded.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto compare = truth.getValue().getDefiningOp<ctjs::CompareOp>();
+        auto cap = compare.getRhs().getDefiningOp<ctjs::ConstantOp>();
+        auto yes = llvm::cast<mlir::scf::YieldOp>(bounded.getThenRegion().front().back());
+        auto no = llvm::cast<mlir::scf::YieldOp>(bounded.getElseRegion().front().back());
+        mlir::Builder builder(&context);
+        (*changed)->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+        bounded->setAttr("ctnative.dom_snapshot_bound", builder.getBoolAttr(true));
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*changed);
+        check(DOMEntryAnalysis(*changed, request).proved(),
+              "printed bounds reports do not replace the live source proof");
+        if (change == 0) {
+            cap.setValueAttr(
+                ctjs::NumberAttr::get(&context, std::bit_cast<uint64_t>(double((1U << 24) + 1))));
+        } else if (change == 1) {
+            const auto length = compare.getLhs();
+            compare->setOperand(0, compare.getRhs());
+            compare->setOperand(1, length);
+        } else if (change == 2) {
+            const auto length = yes.getOperand(0);
+            yes->setOperand(0, no.getOperand(0));
+            no->setOperand(0, length);
+        } else {
+            yes->setOperand(0, cap.getResult());
+        }
+        check(noEvidence(*changed, DOMEntryAnalysis(*changed, request)),
+              "changed cap or arm invalidates the stale index contract");
+        request.moduleSha256 = hostContractFingerprint(*changed);
+        check(mlir::succeeded(mlir::verify(*changed)) &&
+                  noEvidence(*changed, DOMEntryAnalysis(*changed, request)),
+              "fresh fingerprint and forged report cannot authorize a changed index bound");
+    }
 }
 
 } // namespace ctcompile::test::host_contract

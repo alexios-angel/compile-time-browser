@@ -92,7 +92,8 @@ struct HostContract {
     // original Array.prototype.concat, with no spreadability hooks on the fresh
     // empty receiver. Element includes inert query-result wrappers and their
     // complete prototype chains, with no Symbol.isConcatSpreadable hooks.
-    // These guarantees permit confined spread/concat length observations.
+    // These guarantees permit confined spread/concat lengths and bounded
+    // element observations, preserving the proxy materialization limit.
     // Array also promises
     // original Array iteration, including its Symbol.iterator/values method
     // and iterator-prototype chain, with no custom next or return hooks. Element

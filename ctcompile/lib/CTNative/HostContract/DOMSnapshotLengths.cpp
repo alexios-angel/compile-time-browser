@@ -143,16 +143,48 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
             !usesOnly(iterable, {length, read}) || !usesOnly(length, {compare})) {
             return error("DOM snapshot spread must copy every original indexed slot exactly once");
         }
-        llvm::SmallVector<ctjs::GetPropertyOp> observations;
+        llvm::SmallVector<ctjs::GetPropertyOp> observations, indices;
         for (mlir::Operation * user : call->getUsers()) {
             if (!spend()) { return error("DOM snapshot work budget exhausted"); }
             if (llvm::isa<ctjs::RootOp>(user)) { continue; }
             auto observation = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
-            if (!observation || observation.getObject() != call.getResult() ||
-                ctjs::constantKey(observation.getKey()) != "length") {
-                return error("DOM spread/concat result permits only length observations");
+            if (!observation || observation.getObject() != call.getResult()) {
+                return error("DOM spread/concat result permits only length and bounded indices");
             }
-            observations.push_back(observation);
+            if (ctjs::constantKey(observation.getKey()) == "length") {
+                observations.push_back(observation);
+                continue;
+            }
+            // Preserve the copied array's cap before aliasing its slots to the
+            // original, possibly longer NodeList. A guard of nodes.length alone
+            // cannot authorize copied[index]. Complete reproof checks the step.
+            bool guarded = false;
+            auto index = llvm::dyn_cast<mlir::BlockArgument>(observation.getKey());
+            for (auto * parent = observation->getParentOp(); parent && !guarded;
+                 parent = parent->getParentOp()) {
+                if (!spend()) { return error("DOM snapshot work budget exhausted"); }
+                auto consumer = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
+                if (!consumer || !index || !consumer.getAfter().hasOneBlock() ||
+                    !consumer.getBefore().hasOneBlock() ||
+                    index.getOwner() != &consumer.getAfter().front()) {
+                    continue;
+                }
+                auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(
+                    consumer.getBefore().front().getTerminator());
+                auto truth = condition ? condition.getCondition().getDefiningOp<ctjs::TruthyOp>()
+                                       : ctjs::TruthyOp{};
+                auto compare =
+                    truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
+                auto bound = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>()
+                                     : ctjs::GetPropertyOp{};
+                guarded = compare && compare.getKind() == ctjs::CompareKind::Lt && bound &&
+                          condition.getArgs().size() > index.getArgNumber() &&
+                          compare.getLhs() == condition.getArgs()[index.getArgNumber()] &&
+                          bound.getObject() == call.getResult() &&
+                          ctjs::constantKey(bound.getKey()) == "length";
+            }
+            if (!guarded) { return error("DOM copied index requires its own length guard"); }
+            indices.push_back(observation);
         }
         if (observations.empty()) { return error("DOM snapshot length is not observed"); }
         snapshots.push_back(snapshot);
@@ -160,9 +192,8 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         const auto where = call.getLoc();
         auto size = ctjs::GetPropertyOp::create(at, where, call.getType(), snapshot.getResult(),
                                                 length.getKey());
-        // The VM materializes at most 2^24 proxy slots. Shell indices above
-        // 1,000,000 produce undefined, which still contributes one concat slot.
-        // No value, identity or hook observation survived the preceding proof.
+        // The VM materializes at most 2^24 proxy slots. Preserve that cap on
+        // the copy while retaining every original NodeList slot and length.
         auto cap = ctjs::ConstantOp::create(
             at, where,
             ctjs::NumberAttr::get(candidate.getContext(),
@@ -180,6 +211,9 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         for (ctjs::GetPropertyOp observation : observations) {
             observation.getResult().replaceAllUsesWith(bounded.getResult(0));
             observation.erase();
+        }
+        for (ctjs::GetPropertyOp index : indices) {
+            index.getObjectMutable().assign(snapshot.getResult());
         }
         for (mlir::Operation * dead :
              {call.getOperation(), loop.getOperation(), length.getOperation(),
