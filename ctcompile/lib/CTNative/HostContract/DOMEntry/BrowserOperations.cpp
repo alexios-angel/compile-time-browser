@@ -39,7 +39,7 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
     {"remove", {Kind::removeClass, HostDOMMethod::removeClass}},
 };
 
-std::optional<double> signedNumberLiteral(mlir::Value value) {
+std::optional<double> numericIndexLiteral(mlir::Value value) {
     bool negative = false;
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
@@ -47,6 +47,14 @@ std::optional<double> signedNumberLiteral(mlir::Value value) {
         value = unary.getOperand();
     }
     auto literal = value.getDefiningOp<ctjs::ConstantOp>();
+    // Negation has already converted these exact primitives to Numbers.
+    // Bare null/Boolean arithmetic still needs a separate coercion proof.
+    if (negative && literal) {
+        if (llvm::isa<ctjs::NullAttr>(literal.getValue())) { return -0.0; }
+        if (auto flag = llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())) {
+            return flag.getValue() ? -1.0 : -0.0;
+        }
+    }
     auto number =
         literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
     if (!number || std::isnan(number.getDouble())) { return std::nullopt; }
@@ -89,7 +97,7 @@ std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 
     }
     // Size and infinity clamp before unsigned conversion in lowering. NaN has
     // no Number-literal source spelling; only the arithmetic above proves its origin.
-    return signedNumberLiteral(value);
+    return numericIndexLiteral(value);
 }
 } // namespace
 
@@ -103,15 +111,15 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
           binary.getKind() == ctjs::BinaryKind::Pow ||
           (binary.getKind() == ctjs::BinaryKind::Add &&
            ((binary.getLhs().getDefiningOp<ctjs::UnaryOp>() &&
-             signedNumberLiteral(binary.getLhs())) ||
+             numericIndexLiteral(binary.getLhs())) ||
             (binary.getRhs().getDefiningOp<ctjs::UnaryOp>() &&
-             signedNumberLiteral(binary.getRhs()))))))) {
+             numericIndexLiteral(binary.getRhs()))))))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
             refusal =
                 "DOM String indexing negation/division/subtraction/multiplication/remainder/power "
-                "requires at most two arithmetic levels over signed Number literals";
+                "requires at most two arithmetic levels over Number or negated primitive literals";
             return false;
         }
         llvm::SmallVector<mlir::Value> pending{result};
@@ -514,7 +522,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
                     refusal = "DOM String indexing requires primitive literals, proved undefined "
-                              "or at most two arithmetic levels over signed Number literals";
+                              "or at most two arithmetic levels over Number or negated primitive "
+                              "literals";
                     return false;
                 }
             }

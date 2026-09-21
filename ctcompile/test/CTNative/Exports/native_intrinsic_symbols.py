@@ -1108,6 +1108,55 @@ NESTED_INDICES = {
 }
 """,
 }
+NEGATED_PRIMITIVE_WITNESSES = {
+    # Preserve the four complete former negated primitive refusal sources.
+    "primitive-index-negated-null": (
+        "function bad(text, flag) { return text.charAt(-null); }\n",
+        ("", "a", "a"),
+    ),
+    "primitive-index-negated-boolean": (
+        "function bad(text, flag) { return text.slice(-true); }\n",
+        ("", "a", "c"),
+    ),
+    "signed-operand-index-boolean": (
+        "function bad(text, index) { return text.charAt(-false + 0); }\n",
+        ("", "a", "a"),
+    ),
+    "signed-operand-index-null": (
+        "function bad(text, index) { return text.slice(-null + 1); }\n",
+        ("", "", "bc"),
+    ),
+}
+NEGATED_PRIMITIVE_INDICES = {
+    **{name: source for name, (source, _) in NEGATED_PRIMITIVE_WITNESSES.items()},
+    "string-negated-primitive-indices": """function stringNegatedPrimitiveIndices(text, first, middle, tail) {
+  const nullValue = null;
+  const zero = -nullValue;
+  const negative = -true;
+  return nullValue === null && text.charAt(zero) === first && text.charAt(-false) === first &&
+    text.slice(zero) === text && text.slice(0, -false) === '' &&
+    text.charAt(negative) === '' && text.slice(negative) === text.slice(-1) &&
+    text.slice(0, negative) === text.slice(0, -1) &&
+    text.charAt(-true + 2) === middle && text.slice(-null + 1) === middle + tail &&
+    text.charAt(1 + -false) === middle && text.charAt(0 - negative) === middle &&
+    text.charAt(-true * -true) === middle && text.charAt(-true / -true) === middle &&
+    text.charAt((-true) ** 2) === middle && text.slice(-true % 2) === text.slice(-1) &&
+    text.slice(1 / -null) === text && text.slice(-1 / -false) === '' &&
+    text.charAt(-null / -false) === first && text.charAt((-true + 1) * 1) === first &&
+    text.charAt(-(-true + -false)) === middle;
+}
+""",
+    "description-capture-negated-primitive-index": """function descriptionCaptureNegatedPrimitiveIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const first = -false;
+    return text !== undefined ? text.charAt(first) + text.slice(-true * -true) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -1198,6 +1247,12 @@ PARAMETER_TYPES = {
     "string-nested-indices": ["string", "string", "string", "string"],
     "description-capture-nested-index": ["symbol"],
     "number-nested-add": ["number"],
+    **{
+        name: ["string", "boolean" if name.startswith("primitive-") else "number"]
+        for name in NEGATED_PRIMITIVE_WITNESSES
+    },
+    "string-negated-primitive-indices": ["string", "string", "string", "string"],
+    "description-capture-negated-primitive-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -2024,6 +2079,28 @@ CASES["number-nested-add"] = (
 """,
     "true\n",
 )
+for name, (source, expected) in NEGATED_PRIMITIVE_WITNESSES.items():
+    parameter = "js_boolean_t" if name.startswith("primitive-") else "ctnative::js_num"
+    argument = "js_boolean_t{false}" if name.startswith("primitive-") else "ctnative::js_num{0.0}"
+    CASES[name] = (
+        source,
+        "    using namespace ctnative;\n"
+        + f"    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string, {parameter})>);\n"
+        + "".join(
+            f"    assert(@ENTRY@(js_string{{{json.dumps(text)}}}, {argument}).value() == {json.dumps(value)});\n"
+            for text, value in zip(("", "a", "abc"), expected, strict=True)
+        )
+        + '    std::cout << "true\\n";\n',
+        "true\n",
+    )
+CASES["string-negated-primitive-indices"] = (
+    NEGATED_PRIMITIVE_INDICES["string-negated-primitive-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-negated-primitive-index"] = (
+    NEGATED_PRIMITIVE_INDICES["description-capture-negated-primitive-index"],
+    *CASES["description-type-guard"][1:],
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -2157,6 +2234,11 @@ def oracle(args):
             if name not in SIGNED_OPERAND_WITNESSES
         )
         + "".join(body for name, body in NESTED_INDICES.items() if name not in NESTED_WITNESSES)
+        + "".join(
+            body
+            for name, body in NEGATED_PRIMITIVE_INDICES.items()
+            if name not in NEGATED_PRIMITIVE_WITNESSES
+        )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -2802,6 +2884,32 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
   stringNestedPrefix('\ud801\udc00') === 'other:empty:plain' &&
   stringNestedPrefix('\ud800') === 'other:empty:plain';
 """
+        + "".join(
+            f"\nfunction observeNegatedPrimitive{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, false) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}NegatedPrimitiveWitness{i} = observeNegatedPrimitive{i}();\n"
+            for i, (body, expected) in enumerate(NEGATED_PRIMITIVE_WITNESSES.values(), 184)
+        )
+        + r"""
+var symbol188StringNegatedPrimitiveIndices = stringNegatedPrimitiveIndices('', '', '', '') &&
+  stringNegatedPrimitiveIndices('a', 'a', '', '') && stringNegatedPrimitiveIndices('abcd', 'a', 'b', 'cd') &&
+  stringNegatedPrimitiveIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringNegatedPrimitiveIndices('abc', 'a', 'bc', 'c') && !stringNegatedPrimitiveIndices('abc', 'a', 'b', 'bc');
+var symbol189DescriptionCaptureNegatedPrimitiveIndex = descriptionCaptureNegatedPrimitiveIndex(Symbol()) === ':absent' &&
+  descriptionCaptureNegatedPrimitiveIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureNegatedPrimitiveIndex(Symbol('')) === '' &&
+  descriptionCaptureNegatedPrimitiveIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureNegatedPrimitiveIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureNegatedPrimitiveIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureNegatedPrimitiveIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol190StringUTF16NegatedPrimitiveIndices = stringNegatedPrimitiveIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringNegatedPrimitiveIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringNegatedPrimitiveIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringNegatedPrimitiveIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -2933,6 +3041,10 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
         "DescriptionCaptureNestedPrefix",
         "StringNestedPrefixReuse",
         "StringUnicodeNestedPrefix",
+        *(f"NegatedPrimitiveWitness{i}" for i in range(184, 188)),
+        "StringNegatedPrimitiveIndices",
+        "DescriptionCaptureNegatedPrimitiveIndex",
+        "StringUTF16NegatedPrimitiveIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -2995,6 +3107,10 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
     vm_expected = vm_expected.replace(
         "symbol173StringUTF16NestedIndices=true",
         "symbol173StringUTF16NestedIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol190StringUTF16NegatedPrimitiveIndices=true",
+        "symbol190StringUTF16NegatedPrimitiveIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -3157,6 +3273,7 @@ def main():
             | POWER_INDICES
             | NEGATED_INDICES
             | SIGNED_OPERAND_INDICES
+            | NEGATED_PRIMITIVE_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -3827,8 +3944,6 @@ def main():
         "computed-boolean": "return text.charAt(text === 'a');",
         "coercion": "return text.slice(null, '1');",
         "object-coercion": "return text.charAt({valueOf() { return true; }});",
-        "negated-null": "return text.charAt(-null);",
-        "negated-boolean": "return text.slice(-true);",
         "null-authority": "return text.charAt(null).toLowerCase();",
         "false-authority": "return text.charAt(false).toLowerCase();",
         "true-authority": "return text.slice(true).toLowerCase();",
@@ -4134,8 +4249,6 @@ def main():
         "dynamic-left": "return text.charAt(-index / 2);",
         "dynamic-right": "return text.slice(-1 + index);",
         "coercion": "return text.charAt(-'1' * -1);",
-        "boolean": "return text.charAt(-false + 0);",
-        "null": "return text.slice(-null + 1);",
         "object-coercion": "return text.slice(-{valueOf() { return 0; }} / 1);",
         "nested-negation": "return text.charAt(-(-1) + 1);",
         "number-global": "return text.charAt(-NaN / 1);",
@@ -4225,6 +4338,50 @@ def main():
         raise RuntimeError("nested index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "nested-index-stale"):
         raise RuntimeError("changed nested index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-boolean": "return text.charAt(-flag);",
+        "computed-boolean": "return text.charAt(-(text === 'a'));",
+        "coercion": "return text.charAt(-'0');",
+        "object-coercion": "return text.charAt(-{valueOf() { return false; }});",
+        "undefined": "return text.charAt(-undefined);",
+        "bare-boolean": "return text.charAt(-true + false);",
+        "bare-null": "return text.charAt(null - -false);",
+        "double-negation": "return text.charAt(-(-true));",
+        "third-level": "return text.charAt(((-true + 1) * 1) + 0);",
+        "leaf-escape": "const bound=-false; text.charAt(bound + 0); return bound;",
+        "result-escape": "const bound=-null + 1; text.charAt(bound); return bound;",
+        "result-comparison": "const bound=-false; return text.charAt(bound) === text && bound === 0;",
+        "unused-result": "const bound=-false; return text.charAt(0);",
+        "unused-intermediate": "const bound=-true; const unused=bound + 1; return text.slice(bound);",
+        "extra-argument": "return text.charAt(0, -false);",
+        "charat-authority": "return text.charAt(-null).toLowerCase();",
+        "slice-authority": "return text.slice(-true * -true).toLowerCase();",
+        "detached": "const method=text.charAt; return method(-null);",
+        "replacement": "String.prototype.slice=0; return text.slice(-true);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(-true);",
+        "description-unguarded": "return Symbol(text).description.charAt(-false);",
+        "mutable-capture": "let bound=-false; function part() { return text.charAt(bound); } bound=1; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "negated-primitive-index-" + name,
+            f"function bad(text, flag) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "boolean"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"negated-primitive-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-negated-primitive-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"negated-primitive-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "negated-primitive-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("negated primitive fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "negated-primitive-index-stale"):
+        raise RuntimeError("changed negated primitive accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

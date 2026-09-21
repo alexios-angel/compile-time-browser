@@ -21,6 +21,17 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         value = ec::LoadOp::create(b, where, lvalue.getValueType(), value);
     }
     if (value.getType() == target) { return value; }
+    // Host null uses optional String storage. Its exact constant still converts
+    // to positive zero before negation; other optional values need their own proof.
+    if (isNumberCarrier(target) &&
+        value.getType() == ec::OpaqueType::get(context, kDOMOptionalStringType)) {
+        auto constant = value.getDefiningOp<ec::ConstantOp>();
+        auto literal =
+            constant ? llvm::dyn_cast<ec::OpaqueAttr>(constant.getValue()) : ec::OpaqueAttr{};
+        if (literal && literal.getValue() == "std::nullopt") {
+            return numberConstant(b, where, 0.0);
+        }
+    }
     const auto string = carrierType(context, carrier::string);
     const auto rawString = ec::OpaqueType::get(context, kRawStringType);
     const auto numberString = carrierType(context, carrier::numberString);
