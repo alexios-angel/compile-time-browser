@@ -44,8 +44,11 @@ proof, preserving nominal identity and constructor effects. Broader Symbol
 operations, custom hooks and nonconstant `instanceof` still require proofs.
 `Runtime/Browser.hpp` now supplies borrowed `js_document_t` and `js_element_t`
 views over public DOM/Style. Generated `matches` calls use the typed element
-receiver; document globals and the remaining selector emitter migration still
-need their source/ownership work. Object/Array prototypes remain planned.
+receiver. An explicit `current_document_parameter` host field now binds source
+`document` to an element input's owner and emits guarded root/querySelector access
+through the document view. Source document query-all, default-root helpers, the
+application driver and remaining selector carrier migration still need work.
+Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
@@ -397,8 +400,10 @@ The four stateless selector method types are members of `Element.prototype`.
 Raw `element_ref` callers retain the explicit Style argument. `Browser.hpp`
 adds receiver-only overloads for `js_element_t`; both spellings call the same
 public core. Generated `matches` calls now use this view with a typed String.
-The other generated selectors still use their existing raw nullable/snapshot
-carriers pending migration of their result and ownership flow.
+Generated document-root and document `querySelector` calls now use `js_document_t`,
+then bridge their null-only optional result to the existing raw element carrier.
+Other generated selectors still use their existing raw nullable/snapshot carriers
+pending migration of their result and ownership flow.
 
 An intrinsic object's C++ type or spelling does not prove its JavaScript identity.
 HostContract must still establish the original binding, prototype, method,
@@ -440,19 +445,36 @@ existing lift-core/thin-adapter extraction workflow. Generated code and these
 classes contain no `script::context`, `script::value`, collector handles or
 runtime lookup tables. ctbrowser never depends on ctcompile.
 
-The document facade alone does not authorize a JavaScript `document` global or
-the default `document.documentElement` argument. That source binding, root
-nullability and session ownership still require the documented host proof.
+The implemented host binding is optional `current_document_parameter` on
+`ctbrowser-dom-v1` and `ctbrowser-dom-session-v1`. Its index names a declared
+element input whose owner is the source `document`; detached anchors still select
+that document. Both JSON parsing and live proof reject invalid indices and foreign
+providers. The contract promises the original binding, root accessor, query method
+and lookup chains. Complete source proof rejects their replacement or mutation,
+incorrect receivers, escaped handles and unsupported effects.
 
-A global-looking current-document accessor is allowed when that host proof needs
-it. It must borrow the current invocation's document and Style association;
+Source `document.documentElement` and `document.querySelector(String)` call the
+typed view with the anchor's validated owner and live Style. Each root access
+reads the current document root, and document queries include it. The
+`element_or_null` bridge extracts checked optional views into the existing nullable
+`element_ref` carrier. Exact truthiness guards authorize present-result uses;
+borrowed returns, storage and joins remain refused. The existing caller/session
+owns every resource, with handle and Style validation before source effects.
+Source `document.querySelectorAll` remains unproved despite the C++ view method.
+The full Bootstrap default-root helpers and application driver remain unfinished.
+See [native DOM entries](../native-dom-entry.md#explicit-source-document-binding)
+for the contract and focused validation scope.
+
+A global-looking current-document accessor remains optional future work; none is
+needed or added by this explicit binding. If a later proved entry requires one,
+it must borrow the current invocation's document and Style association;
 the invocation/session remains the owner. Bind it with an RAII scope that saves
 and restores the previous binding on normal return and exceptions, including
 nested calls into another document. Concurrent invocations need independent
 bindings; thread-local storage alone is insufficient for interleaved asynchronous
 tasks. Reject access outside a bound scope, and do not let borrowed views escape
-their owner. Keep explicit document parameters available. Implement this accessor
-when a proved source `document` binding needs it; primitive-only exports need none.
+their owner. Keep explicit document parameters available; primitive-only exports
+need no document accessor.
 
 ## Existing implementation and migration
 
@@ -653,9 +675,11 @@ existing `auto`/template deduction.
    Reconcile Shell's current NodeList indices above
    1,000,000 returning undefined before broadening indexed `R.find` consumers;
    retain the separate 2^24 proxy-spread cap. A NodeList is not a JavaScript Array.
-4. **Document/element views.** Adapt existing borrowed and owned entries to typed
-   views, then prove document-root access and shorten receiver calls. Do not
-   broaden source admission merely because a C++ accessor exists.
+4. **Document/element views in progress.** Borrowed/owned entries now emit typed
+   `matches` receivers and explicitly bound document root/querySelector calls.
+   Migrate remaining nullable/snapshot carriers, prove source document query-all
+   and Bootstrap default-root calls, then connect an application driver. A C++
+   accessor alone never broadens source admission.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
    reads, absent/String construction, direct primitive methods and branch/loop/

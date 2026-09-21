@@ -48,9 +48,9 @@ query-all returns an owning `std::vector` snapshot of borrowed elements. Checked
 `.value()` extraction returns the underlying public `element_ref`.
 
 The [typed JavaScript interface plan](plans/native-js-types.md) tracks the remaining
-emitter migration and Object/Array interfaces. Source `document` globals and
-default `document.documentElement` arguments still need an explicit host binding
-proof; the C++ view supplies no such authority.
+emitter migration and Object/Array interfaces. Source `document` access now uses
+the explicit host binding below; the C++ view alone supplies no source authority.
+Bootstrap's default-root helpers and an application driver remain unfinished.
 
 This is an action entry, not native Bootstrap initialization. For example:
 
@@ -83,6 +83,50 @@ are not accepted. Pass the JSON path as `host-manifest` to
 translation. The existing host-contract and prefix analyses for
 `closed-source-v1` remain separate. The DOM provider uses the native lowering
 entry and a fresh live source proof, never printed proof attributes.
+
+## Explicit source document binding
+
+Both `ctbrowser-dom-v1` and `ctbrowser-dom-session-v1` accept the optional field
+`"current_document_parameter": 0`. Its value must name a declared element input.
+The source `document` is that input's owning document, even when the input node is
+detached. An absent field grants no document binding; other providers reject it.
+This contract promises the original document binding, `documentElement` accessor,
+`querySelector` method and their lookup chains. The complete source proof rejects
+binding replacement, accessor/method/prototype mutation, unknown calls and escapes.
+A saved document alias retains the same authority; a saved query method must still
+be called with its exact original receiver.
+
+Source `document.documentElement` and `document.querySelector(String)` emit ordinary
+`js_document_t` accessor/method calls over that input's owner and live Style engine.
+The anchor's engine reference is appended in parameter order, including for root-only
+entries. All input handles and engine atom-table associations are checked before
+source effects. The caller owns these stable resources for the call; an owned
+session provides its nonmovable document and engine. No ambient document binding,
+thread-local state or VM context is introduced.
+
+The root is reread at each source access. Document queries use public Style with
+document scope, including the root element, and preserve live interactive state.
+Both return `std::optional<js_element_t>` internally. The emitted
+`ctnative::element_or_null` bridge checks an engaged view and converts it to the
+existing nullable `element_ref` carrier; absence is canonical DOM null, never
+undefined. A truthiness or `!`/`!!` guard permits dereferencing that exact result
+only in the present arm. Unguarded use, borrowed returns/storage, branch/loop
+transport and explicit source null comparisons remain refused. Invalid selector
+syntax keeps the existing C++ exception and preceding source effects.
+
+`js_document_t::querySelectorAll` is available to C++ callers, but source
+`document.querySelectorAll` remains unproved. This binding also does not complete
+Bootstrap's default-root helpers, omitted element inputs, initialization or the
+application driver.
+
+The focused `CTNative/Browser/native-dom-document.test` passes **48 native
+executions and 82 refusals** across borrowed/owned providers, both compilers,
+printing layouts and optimization policies. Public DOM/Style clients cover both
+anchor positions, empty/replaced roots, detached anchors, root inclusion, live hover,
+cross-document identity, invalid input/Style rejection before effects, selector
+failure order and absence of Script symbols. The focused host-contract CTest passes
+**1/1** with schema and programmatic-provider controls; these are not full-suite or
+Node/VM differential results.
 
 ## Dataset key snapshots
 
@@ -272,7 +316,7 @@ document identity before calling `read_txn::is_ancestor_of`. Selector calls use
 as the bindings. Element `querySelector` returns the first descendant in current
 tree order, excludes the receiver itself, binds `:scope` to that receiver and
 preserves the platform's shadow boundaries. It also works in detached subtrees.
-Document receivers remain outside this contract.
+Document `querySelector` uses the explicit binding above and includes the root.
 
 Bootstrap's original prototype selector spelling is supported for an explicit
 element and a proved String:
@@ -297,8 +341,9 @@ Saved constructor, prototype and method aliases preserve the same identities.
 The compiler erases the proved global/prototype/method reads and emits the
 existing typed selector call, using argument zero's document and live Style
 engine. Missing guarantees, detached `.call`, `.apply`/`.bind`, coercible
-selectors and unguarded nullable receivers refuse. Default
-`document.documentElement` roots still require a separate document contract.
+selectors and unguarded nullable receivers refuse. An explicitly bound, guarded
+`document.documentElement` can supply an element; default-root helper admission
+still needs its complete nullability and call proof.
 
 `querySelectorAll(String)` calls public `engine::select` with `first_only=false`
 and returns a local `std::vector<ctbrowser::element_ref>`. The vector owns its
@@ -377,9 +422,9 @@ values. Before admitting indexed concat consumers, preserve this distinction wit
 an element-or-undefined proof and reconcile the existing direct indexed path;
 Script remains the oracle.
 
-A `closest` or `querySelector` result is a local borrowed identity, with a
-canonical empty `element_ref{}` for no match. Strict equality compares it with another result or
-an element parameter, so misses compare equal even across documents. A truthiness
+A `closest`, `querySelector` or document-root result is a local borrowed identity,
+with a canonical empty `element_ref{}` for no match. Strict equality compares it
+with another result or an element parameter, so misses compare equal even across documents. A truthiness
 or `!`/`!!` guard permits existing DOM operations on that exact result inside the
 present branch:
 
@@ -729,9 +774,9 @@ symbols or generic nullable value helpers in generated code.
 Select `ctbrowser-dom-session-v1` with the same fingerprint, entry and
 `element_parameters` fields to emit an additional `<entry_symbol>_session` class.
 It owns an atom table, then its document, then a selector engine when the source
-uses selectors. The class cannot be copied or moved. `document()` provides the
-document for building the page; `selectors()` exposes the owned engine's live
-interactive state when present. `invoke(element_ref, ...)` calls the same proved
+uses selectors or the explicit document binding. The class cannot be copied or
+moved. `document()` provides the document for building the page; `selectors()`
+exposes the owned engine's live interactive state when present. `invoke(element_ref, ...)` calls the same proved
 source function with the session's selector engine.
 
 Every supplied element must belong to this session. All document-pointer

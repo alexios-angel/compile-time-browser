@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Explicit source document binding, 2026-09-21 UTC
+
+Continued clean **8420a066** and implemented its next browser boundary.
+**dbc75a2b** adds `current_document_parameter` to the DOM entry/session contracts.
+It binds source `document` to a validated element input's owning document and live
+Style engine. Proved `document.documentElement` and `document.querySelector(String)`
+emit ordinary `js_document_t` calls over public ctbrowser DOM/Style. Results retain
+null-only identity and guarded use; replacement, unguarded dereference and escape
+remain refused. Ownership stays with the caller or existing nonmovable session.
+No ambient document state or Script/VM dependency was added.
+
+Focused checks pass: new document lit **48 native executions, 82 refusals,
+121.50 s**; existing prototype-selector lit **64 executions, 100 refusals,
+167.73 s**; exact host-contract CTest **1/1, 0.57 s total**. All 17 code/test hashes
+match the devbox. Scoped checks pass; required repository formatting retains the
+same 16 untouched diagnostics. Full suites and broad replays were skipped; no new
+Node/VM measurement or browser/shared implementation change is claimed.
+
+**Next browser boundary:** prove source `document.querySelectorAll` snapshots and
+their existing element-vector consumers with the same owner/Style association.
+Bootstrap's default root still needs a complete presence/nullability proof; the
+new binding does not guarantee a root exists. Remaining typed selector carriers,
+the application driver, overlapping DOM Map keys, original B/Data+B, object-valued
+class fields, tagged Map snapshots, broader Strings, conditional callees and
+mutable cells remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next document boundary](handoff/2026-09-21-source-document.md).
+
 ## Typed browser views and DOM key lifetimes, 2026-09-21 UTC
 
 Continued clean **4b76250f** and finished the alias thread left by a steering
