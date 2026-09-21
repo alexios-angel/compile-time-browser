@@ -20,7 +20,8 @@ assert SELECTED <= check.OBSERVATIONS.keys()
 check.OBSERVATIONS = {
     name: value
     for name, value in check.OBSERVATIONS.items()
-    if name in SELECTED or name.startswith("class-map-record-captured-helper-")
+    if name in SELECTED
+    or name.startswith(("class-map-record-captured-helper-", "class-map-record-captured-holder-"))
 }
-assert len(check.OBSERVATIONS) == len(SELECTED) + 11
+assert len(check.OBSERVATIONS) == len(SELECTED) + 25
 check.main()

@@ -85,19 +85,57 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                 if (!cellOperations.contains(user)) { return true; }
             }
         }
+        llvm::SmallVector<ctjs::GetPropertyOp> holderReads;
+        ctjs::SetPropertyOp publication;
+        auto uses = sourceUses(helper.getResult());
         llvm::SmallVector<mlir::Operation *> invocations;
-        for (mlir::OpOperand * use : sourceUses(helper.getResult())) {
+        for (size_t i = 0; i < uses.size(); ++i) {
+            mlir::OpOperand * use = uses[i];
             if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use->getOwner())) { continue; }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use->getOwner())) {
+                auto object = store.getObject().getDefiningOp<ctjs::CreateObjectOp>();
+                if (publication || use->getOperandNumber() != 2 || !object ||
+                    object->getBlock() != &entry) {
+                    return true;
+                }
+                // The shared census proves unique own slots and every holder
+                // use. Aliases/captures still need their wider lifetime proof.
+                auto holder = analyzeLocalCallableObject(object, [&] { return step(); });
+                if (!holder) {
+                    llvm::consumeError(holder.takeError());
+                    return reason.empty();
+                }
+                for (ctjs::SetPropertyOp slot : holder->stores) {
+                    if (!step()) { return false; }
+                    if (slot.getValue() == helper.getResult() && slot != store) { return true; }
+                }
+                for (auto [read, closure] : holder->reads) {
+                    if (!step()) { return false; }
+                    if (closure != helper) { continue; }
+                    holderReads.push_back(read);
+                    for (mlir::OpOperand & selected : read.getResult().getUses()) {
+                        if (!step()) { return false; }
+                        uses.push_back(&selected);
+                    }
+                }
+                publication = store;
+                continue;
+            }
             auto * call = use->getOwner();
             mlir::ValueRange arguments;
             if (auto dynamic = llvm::dyn_cast<ctjs::CallOp>(call)) {
-                if (use->getOperandNumber() != 0 || !undefined(dynamic.getReceiver())) {
+                auto read = dynamic.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                const bool holderCall = read && llvm::is_contained(holderReads, read);
+                if (use->getOperandNumber() != 0 ||
+                    (holderCall ? dynamic.getReceiver() != read.getObject()
+                                : !undefined(dynamic.getReceiver()))) {
                     return true;
                 }
                 arguments = dynamic.getArgs();
             } else if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(call)) {
-                if (use->getOperandNumber() != 2 || direct.getTarget() != function ||
+                if (direct.getCalleeValue().getDefiningOp<ctjs::GetPropertyOp>() ||
+                    use->getOperandNumber() != 2 || direct.getTarget() != function ||
                     !undefined(direct.getReceiver()) || !undefined(direct.getNewTarget())) {
                     return true;
                 }
@@ -168,6 +206,12 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                 if (!step()) { return false; }
             }
         }
+        if (publication) {
+            for (mlir::Operation * user : publication.getObject().getUsers()) {
+                (void)user;
+                if (!step()) { return false; }
+            }
+        }
         if (!reason.empty()) { return false; }
         for (mlir::Operation * call : invocations) {
             mlir::IRMapping mapping;
@@ -186,6 +230,16 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
             }
             call->getResult(0).replaceAllUsesWith(mapping.lookup(returned.getValue()));
             call->erase();
+        }
+        for (ctjs::GetPropertyOp read : holderReads) { eraseRooted(read); }
+        if (publication) {
+            auto object = publication.getObject();
+            publication.erase();
+            if (llvm::all_of(object.getUsers(), [](mlir::Operation * user) {
+                    return llvm::isa<ctjs::RootOp>(user);
+                })) {
+                eraseRooted(object.getDefiningOp());
+            }
         }
         if (helperCell) {
             llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
