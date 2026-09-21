@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Keyed publication and description guards, 2026-09-21 UTC
+
+Continued clean **210bbb2d** from its constructor-holder/Data boundary.
+**346d69e0** proves keyed constructor registration through a pure direct or
+single-slot holder helper. Every exact construction supplies its own literal
+String key; base publication stays deferred until the sole leaf's substituted
+arguments and complete owner/observer proof pass. Four new admissions retain
+saved aliases across replacement and deletion.
+**c6ea7670** narrows saved Symbol descriptions under exact String/undefined
+guards. Explicit String identity permits `charAt(0)` and `slice(1)` through
+existing UTF-16 operations and the correct owning carrier extraction.
+
+Focused devbox validation passes: **one exact CTest and five distinct lit cases**
+across corrected runs. Class checks measure **70 source observations, 152 main
+native executions, 140 unprepared refusals and 81 preparation refusals**;
+new admissions add 32 executions. Intrinsic exports measure **304 native
+executions, 278 refusals and two mutations**, with **46 Node/VM observations**.
+The affected DOM String fixture also passes. All **14 final code/test hashes**
+match the devbox. Scoped formatting passes; the repository formatter retains
+16 existing diagnostics. Full suites, broad corpus/matrices, full Bootstrap,
+WPT/test262, Windows and new sanitizers were skipped. No browser or runtime implementation changed.
+
+**Next:** compose Data's `set/get/remove` slots and three-argument registration
+with conditional nested Maps, conflict handling, nullable lookup and cleanup,
+proving every owner, observer, exception and reentry path. Original B/Data+B and
+the captured outer-key witness remain unchanged refusals. Computed keys,
+shared/deeper families, broader intrinsic String methods/indices, conditional
+callees, branch-mutated boxed locals, String ordering, document views and the
+application driver remain unfinished. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-keyed-publication-description-guards.md).
+
 ## Constructor holders and intrinsic captures, 2026-09-21 UTC
 
 Continued clean **1cae9bf5** from its constructor-holder/Data boundary.

@@ -175,9 +175,11 @@ is suppressed only around `js_symbol_t`; caller warnings remain enabled.
 
 **Primitive-only exports are implemented:** `ctbrowser-intrinsics-v1` accepts
 `version`, `provider`, `module_sha256`, `entry`, `initial_intrinsics: ["Symbol"]`
-and optional `parameter_types`. The ordered array names every explicit parameter
+and optional `parameter_types`. That ordered array names every explicit parameter
 as `"boolean"`, `"number"`, `"string"` or `"symbol"`; omitted/empty means no
-parameters. The fingerprinted named export may have an inert declaration wrapper.
+parameters. String methods additionally require the explicit
+`initial_intrinsics: ["Symbol", "String"]` contract. The fingerprinted named export
+may have an inert declaration wrapper.
 The complete bounded entry proof assigns exact categories without promising a
 particular identity, description, truth value or Number range. Generated signatures
 use the existing typed values by value, preserving Symbol identities, owning
@@ -223,19 +225,23 @@ the earlier fresh/method refusal sources now execute unchanged.
 `optional<js_string>` API and explicitly constructs an owning `nullable_string`
 with undefined or String. Its proof kind remains distinct from DOM null/String.
 Equality, truthiness, `typeof`, branches, loops and returns preserve that distinction;
-saved descriptions survive later Symbol assignments. String-method narrowing and
-mixed null/description joins remain separate proofs.
+saved descriptions survive later Symbol assignments. Exact `typeof` String/undefined
+guards and equality with undefined now narrow the same saved value within its
+proved String arm. Under an explicit String identity, `charAt(0)` and `slice(1)`
+reuse the existing UTF-16 operations and owning String extraction. Empty String
+remains present; truthiness, another description read and uses after the guard
+grant no String authority. Mixed null/description joins remain separate.
 
 **Primitive entry equality is implemented:** exact Number/Boolean operands use
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
-remain typed. With global/local helper composition, the export fixture checks
-280 native executions, 252 refusals and two mutations, with 43 Node/VM
-observations; no runtime implementation changed.
-[Exact capture and constructor-holder evidence](../handoff/2026-09-21-constructor-holders-intrinsic-captures.md).
+remain typed. With global/local helper composition and **c6ea7670** description
+guards, the export fixture checks **304 native executions, 278 refusals and two
+mutations**, with **46 Node/VM observations**; no runtime implementation changed.
+[Exact description-guard and keyed-publication evidence](../handoff/2026-09-21-keyed-publication-description-guards.md).
 
-**Next source slice:** description String-method narrowing. Conditional callee
-transport and branch-mutated boxed locals remain separate from immutable captures;
+**Next source slice:** broader String methods/indices and conditional callee
+transport. Branch-mutated boxed locals remain separate from immutable captures;
 mixed primitive unions and object coercion retain their own admission boundaries.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
@@ -624,7 +630,8 @@ existing `auto`/template deduction.
    return transport now emit in proved DOM and primitive-only entries. Source
    `.description` preserves owning undefined/String results. Exact primitive/Symbol
    parameters and local/global helper calls, including immutable local captures,
-   are implemented. Description String-method narrowing remains next.
+   are implemented. Exact description guards now permit `charAt(0)` and `slice(1)`
+   with explicit String identity; broader methods and indices remain separate.
    Registry, symbol-keyed fields and hooks remain
    separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.
