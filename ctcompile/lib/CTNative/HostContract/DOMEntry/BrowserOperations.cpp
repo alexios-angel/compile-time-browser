@@ -442,8 +442,12 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             }
             for (mlir::Value argument : arguments) {
                 if (!spend()) { return false; }
-                if (!hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
-                    refusal = "DOM String indexing requires Number literals or proved undefined";
+                auto literal = argument.getDefiningOp<ctjs::ConstantOp>();
+                const bool primitive =
+                    literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
+                if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
+                    refusal = "DOM String indexing requires Number, Boolean or null literals "
+                              "or proved undefined";
                     return false;
                 }
             }
@@ -453,7 +457,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[invoke.getResult()] = Kind::string;
             auto literal = arguments.empty() ? ctjs::ConstantOp{}
                                              : arguments.front().getDefiningOp<ctjs::ConstantOp>();
-            if (arguments.size() == 1 && literal && !hasKind(arguments.front(), Kind::undefined) &&
+            if (arguments.size() == 1 && literal && hasKind(arguments.front(), Kind::number) &&
                 *stringIndex(arguments.front()) == (first ? 0 : 1)) {
                 if (!spend()) { return false; }
                 (first ? firstUnits : stringTails)[invoke.getResult()] = invoke.getReceiver();

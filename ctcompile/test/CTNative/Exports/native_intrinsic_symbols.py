@@ -589,6 +589,47 @@ UNDEFINED_INDICES = {
 }
 """,
 }
+PRIMITIVE_WITNESSES = {
+    # Preserve both complete former null-index refusal bodies.
+    "undefined-index-charat-coercion": (
+        "function bad(text) { return text.charAt(null); }\n",
+        ("", "a", "a"),
+    ),
+    "undefined-index-slice-coercion": (
+        "function bad(text) { return text.slice(undefined, null); }\n",
+        ("", "", ""),
+    ),
+}
+PRIMITIVE_INDICES = {
+    **{name: source for name, (source, _) in PRIMITIVE_WITNESSES.items()},
+    "string-primitive-indices": """function stringPrimitiveIndices(text, first, middle, tail) {
+  const zero = null;
+  const no = false;
+  const yes = true;
+  return text.charAt(zero) === first && text.charAt(no) === first &&
+    text.charAt(yes) === middle && text.slice(zero) === text && text.slice(no) === text &&
+    text.slice(yes) === middle + tail && text.slice(zero, yes) === first &&
+    text.slice(no, yes) === first && text.slice(yes, 2) === middle &&
+    text.slice(2, undefined) === tail && text.slice(zero, zero) === '' &&
+    text.slice(no, no) === '' && text.slice(yes, no) === '' &&
+    text.slice(yes, yes) === '' && text.slice(undefined, zero) === '' &&
+    text.slice(yes, zero) === '' && text.slice(-1, zero) === '' &&
+    text.slice(-1e999, yes) === first && text.slice(zero, undefined) === text;
+}
+""",
+    "description-capture-primitive-index": """function descriptionCapturePrimitiveIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const zero = null;
+    const yes = true;
+    return text !== undefined ? text.charAt(zero) + text.slice(yes, undefined) +
+      text.slice(false, zero) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -641,6 +682,9 @@ PARAMETER_TYPES = {
     "string-slice-end-undefined": ["string", "number"],
     "string-undefined-indices": ["string", "string", "string", "string"],
     "description-capture-undefined-index": ["symbol"],
+    **{name: ["string"] for name in PRIMITIVE_WITNESSES},
+    "string-primitive-indices": ["string", "string", "string", "string"],
+    "description-capture-primitive-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1280,6 +1324,28 @@ CASES["description-capture-undefined-index"] = (
     UNDEFINED_INDICES["description-capture-undefined-index"],
     *CASES["description-type-guard"][1:],
 )
+for name, (source, expected) in PRIMITIVE_WITNESSES.items():
+    CASES[name] = (
+        source,
+        """
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string)>);
+"""
+        + "".join(
+            f"    assert(@ENTRY@(js_string{{{json.dumps(text)}}}).value() == {json.dumps(value)});\n"
+            for text, value in zip(("", "a", "abc"), expected, strict=True)
+        )
+        + '    std::cout << "true\\n";\n',
+        "true\n",
+    )
+CASES["string-primitive-indices"] = (
+    PRIMITIVE_INDICES["string-primitive-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-primitive-index"] = (
+    PRIMITIVE_INDICES["description-capture-primitive-index"],
+    *CASES["description-type-guard"][1:],
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -1386,6 +1452,9 @@ def oracle(args):
         + "".join(body for name, body in DEFAULT_INDICES.items() if name not in DEFAULT_WITNESSES)
         + "".join(
             body for name, body in UNDEFINED_INDICES.items() if name not in UNDEFINED_WITNESSES
+        )
+        + "".join(
+            body for name, body in PRIMITIVE_INDICES.items() if name not in PRIMITIVE_WITNESSES
         )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
@@ -1720,6 +1789,32 @@ var symbol107StringUTF16UndefinedIndices = stringUndefinedIndices('\u00c9xy', '\
   stringUndefinedIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringUndefinedIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observePrimitive{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}PrimitiveWitness{i} = observePrimitive{i}();\n"
+            for i, (body, expected) in enumerate(PRIMITIVE_WITNESSES.values(), 108)
+        )
+        + r"""
+var symbol110StringPrimitiveIndices = stringPrimitiveIndices('', '', '', '') &&
+  stringPrimitiveIndices('a', 'a', '', '') && stringPrimitiveIndices('abcd', 'a', 'b', 'cd') &&
+  stringPrimitiveIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringPrimitiveIndices('abc', 'a', 'bc', 'c') && !stringPrimitiveIndices('abc', 'a', 'b', 'bc');
+var symbol111DescriptionCapturePrimitiveIndex = descriptionCapturePrimitiveIndex(Symbol()) === ':absent' &&
+  descriptionCapturePrimitiveIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCapturePrimitiveIndex(Symbol('')) === '' &&
+  descriptionCapturePrimitiveIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCapturePrimitiveIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCapturePrimitiveIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCapturePrimitiveIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol112StringUTF16PrimitiveIndices = stringPrimitiveIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringPrimitiveIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringPrimitiveIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringPrimitiveIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -1802,6 +1897,10 @@ var symbol107StringUTF16UndefinedIndices = stringUndefinedIndices('\u00c9xy', '\
         "StringUndefinedIndices",
         "DescriptionCaptureUndefinedIndex",
         "StringUTF16UndefinedIndices",
+        *(f"PrimitiveWitness{i}" for i in range(108, 110)),
+        "StringPrimitiveIndices",
+        "DescriptionCapturePrimitiveIndex",
+        "StringUTF16PrimitiveIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1820,6 +1919,8 @@ var symbol107StringUTF16UndefinedIndices = stringUndefinedIndices('\u00c9xy', '\
     ).replace("symbol101StringUTF16DefaultIndices=true", "symbol101StringUTF16DefaultIndices=false")
     vm_expected = vm_expected.replace(
         "symbol107StringUTF16UndefinedIndices=true", "symbol107StringUTF16UndefinedIndices=false"
+    ).replace(
+        "symbol112StringUTF16PrimitiveIndices=true", "symbol112StringUTF16PrimitiveIndices=false"
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -1959,6 +2060,7 @@ def main():
             | WIDE_INDICES
             | DEFAULT_INDICES
             | UNDEFINED_INDICES
+            | PRIMITIVE_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -2162,6 +2264,7 @@ def main():
         *WIDE_INDICES,
         *DEFAULT_INDICES,
         *UNDEFINED_INDICES,
+        *PRIMITIVE_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -2495,8 +2598,6 @@ def main():
         raise RuntimeError("changed default index accepted a stale fingerprint")
 
     for name, body in {
-        "charat-coercion": "return text.charAt(null);",
-        "slice-coercion": "return text.slice(undefined, null);",
         "end-dynamic": "return text.slice(undefined, text);",
         "extra": "return text.slice(undefined, undefined, 1);",
         "charat-authority": "return text.charAt(undefined).toLowerCase();",
@@ -2527,6 +2628,45 @@ def main():
         raise RuntimeError("undefined index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "undefined-index-stale"):
         raise RuntimeError("changed undefined index accepted a stale fingerprint")
+
+    for name, body in {
+        "charat-dynamic": "return text.charAt(flag);",
+        "end-dynamic": "return text.slice(null, flag);",
+        "computed-boolean": "return text.charAt(text === 'a');",
+        "coercion": "return text.slice(null, '1');",
+        "object-coercion": "return text.charAt({valueOf() { return true; }});",
+        "negated-null": "return text.charAt(-null);",
+        "negated-boolean": "return text.slice(-true);",
+        "null-authority": "return text.charAt(null).toLowerCase();",
+        "false-authority": "return text.charAt(false).toLowerCase();",
+        "true-authority": "return text.slice(true).toLowerCase();",
+        "extra-argument": "return text.charAt(null, false);",
+        "detached": "const method=text.slice; return method(null, true);",
+        "replacement": "String.prototype.charAt=0; return text.charAt(false);",
+        "mutable-capture": "let index=false; function part() { return text.charAt(index); } index=true; return part();",
+        "dead-effect": "function unused() { unknown(); } return text.slice(null, true);",
+        "description-unguarded": "return Symbol(text).description.charAt(null);",
+        "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice(true) : '';",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "primitive-index-" + name,
+            f"function bad(text, flag) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "boolean"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"primitive-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-primitive-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"primitive-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "primitive-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("primitive index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "primitive-index-stale"):
+        raise RuntimeError("changed primitive index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
