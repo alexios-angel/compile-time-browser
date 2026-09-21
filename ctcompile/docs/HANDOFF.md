@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor provider graphs and nested indices, 2026-09-21 UTC
+
+Continued clean **955c764d**. **aded05d2** independently proves the prepared
+constructor/local-Map graph in the final DOM Data provider: exact closures and
+primitive actuals, nonreplacement returns, complete Map/record uses and ordered
+field categories. Seventeen existing complete vendor witnesses now prove all five
+public call edges while retaining five constructions, eight functions and the
+original class computation. **Native class-session emission still refuses.**
+**ccd97336** admits two binary levels of signed literal arithmetic as String
+indices, with a complete intermediate-use census. Ten former refusal sources
+execute unchanged; ordinary Number addition retains its existing behavior.
+
+Focused checks pass: exact host-contract CTest **1/1**, three selected DOM/provider
+lit cases **3/3, 105.21 s total**, final provider **16 prepared-IR refusals** plus
+forged-report recomputation, and String **128 native executions, 174 refusals**.
+Existing DOM checks retain **56 record and 24 object-key native executions**.
+String observations have 12 Node/VM agreements and one known UTF-16 difference;
+all 134 prior complete String cases and 33 general refusals are unchanged.
+All eight final code/test hashes match the devbox. Scoped checks pass; repository
+formatting retains 16 pre-existing diagnostics. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped. No browser
+or shared implementation changed.
+
+**Next:** the measured native owner refusal is `owned global method table requires
+unconditional straight-line operations`. Extend its branch, function, allocation,
+call and field census through the complete live constructor/local-Map graph;
+then lift proved constructors while preserving exact callee provenance. Provider
+categories authorize no native lifetime. Original composite-result sources still
+refuse class preparation. Multiple DOM-input alias partitions, original B/Data+B,
+broader Strings, conditional callees, mutable cells, String ordering, document
+views and the application driver remain. No full-Bootstrap admission or corpus
+coverage gain is claimed.
+
+[Exact checks and next native ownership boundary](handoff/2026-09-21-provider-records-nested-indices.md).
+
 ## Constructor field initialization and signed indices, 2026-09-21 UTC
 
 Continued clean **7b055fd6**. **49eeb949** retains primitive constructor field
