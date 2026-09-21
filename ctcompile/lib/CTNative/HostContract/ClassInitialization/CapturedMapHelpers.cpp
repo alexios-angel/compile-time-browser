@@ -94,8 +94,8 @@ bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> ma
 } // namespace
 
 bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostContract & contract) {
-    // ponytail: literal/fresh keys and one exact DOM input per outer Map.
-    // Multiple DOM inputs need alias partitions, not distinct SSA identities.
+    // ponytail: literal/fresh keys and one live DOM input key per outer Map.
+    // Overlapping DOM key lifetimes need alias partitions, not distinct SSA identities.
     auto & entry = scope.getBody().front();
     const auto entryPosition = [&](mlir::Operation * op) {
         while (op->getBlock() != &entry && llvm::isa<mlir::scf::IfOp>(op->getParentOp())) {
@@ -580,7 +580,10 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                                       "or exact DOM input keys");
                     }
                     if (element) {
-                        if (elementKey && elementKey != input) {
+                        // Once the previous key is absent, either alias partition
+                        // starts with the same empty DOM-key state. Saved children
+                        // keep their allocation identity independently of this key.
+                        if (elementKey && elementKey != input && entries.count({{}, elementKey})) {
                             return refuse("class nested Map DOM inputs require an alias proof");
                         }
                         elementKey = input;

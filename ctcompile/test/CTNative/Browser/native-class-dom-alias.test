@@ -1,0 +1,2 @@
+# Equal and distinct DOM inputs retain class results, saved children and cleanup ordering.
+# RUN: python3 %S/native_class_dom_alias.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t

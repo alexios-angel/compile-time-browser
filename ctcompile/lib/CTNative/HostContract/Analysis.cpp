@@ -782,7 +782,12 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         }
         for (mlir::BlockArgument input :
              analysis.entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
-            bool found = false;
+            // Local Map normalization can discharge every source use of a
+            // declared input. It still crosses the checked DOM entry boundary,
+            // but an unobserved identity needs no published Map key authority.
+            bool found = llvm::all_of(input.getUses(), [&](mlir::OpOperand & use) {
+                return analysis.step() && llvm::isa<ctjs::RootOp>(use.getOwner());
+            });
             for (const HostCallableEdge & edge : analysis.checkedCalls) {
                 if (!analysis.step()) { break; }
                 if (edge.capturedMap &&

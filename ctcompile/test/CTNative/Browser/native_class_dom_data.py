@@ -156,8 +156,10 @@ int main() {
 """
 
 
-def check_record_executable(args, name, native, expected=15927, class_value=None):
-    client = RECORD_CLIENT.replace("15927", str(expected))
+def check_record_executable(
+    args, name, native, expected=15927, class_value=None, *, client=RECORD_CLIENT
+):
+    client = client.replace("15927", str(expected))
     if expected in ("true", "false"):
         client = re.sub(
             r"ctnative::global_number\(((?:session|second)\.observe_trace(?:After|Other)\(\))\)"
@@ -210,8 +212,8 @@ def check_record_executable(args, name, native, expected=15927, class_value=None
     return executions
 
 
-def published_prepare(args, name, text):
-    ir, contract = dom.prepare(args, name, text, 1, entry_name="probe")
+def published_prepare(args, name, text, *, parameters=1):
+    ir, contract = dom.prepare(args, name, text, parameters, entry_name="probe")
     contract.update(
         roots=[{"binding": "host", "properties": ["slot"]}],
         provider="ctbrowser-dom-data-session-v1",
