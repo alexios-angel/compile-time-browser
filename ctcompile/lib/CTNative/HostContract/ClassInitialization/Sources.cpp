@@ -1050,6 +1050,10 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
         if (llvm::isa<ctjs::InstanceOfOp>(op) && use.getOperandNumber() == 0) {
             continue; // The complete instance/constructor proof runs after class setup.
         }
+        if (use.getOperandNumber() == 3 &&
+            deferredPublications.lookup(op->getParentOfType<ctjs::FuncOp>()) == op) {
+            continue; // Only the sole leaf can discharge this exact base receiver edge.
+        }
         if (retainedMapReads(use, methodKeys, staticReads)) { continue; }
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op)) {
             llvm::SmallVector<ctjs::GetPropertyOp> reads;

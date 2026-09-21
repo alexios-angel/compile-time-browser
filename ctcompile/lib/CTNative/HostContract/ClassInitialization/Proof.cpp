@@ -316,6 +316,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             domEntryHelpers.erase(target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
         }
     }
+    if (!deferredPublications.empty()) {
+        return refuse("base publication lacks a completed unique leaf proof");
+    }
     if (!proveMaps()) { return false; }
     // No ambient object, unknown callee, accessor, dynamic key or reflective
     // instruction can replace the fixed helper between entry and any call.

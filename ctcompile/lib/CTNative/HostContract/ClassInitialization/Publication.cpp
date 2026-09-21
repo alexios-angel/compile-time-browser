@@ -203,13 +203,35 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
 bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp constructor,
                                                      llvm::ArrayRef<ctjs::ConstructOp> instances,
                                                      const HostContract & contract) {
-    // ponytail: one terminal registration in a complete leaf constructor.
-    // Bases and earlier publication need partial-initialization/reentry proofs.
+    // ponytail: a terminal leaf, or one unconstructed base with one leaf whose
+    // remaining work only stores primitive literals. General partial publication
+    // needs exception/reentry and complete family observer proofs.
     auto function = target(constructor);
-    if (contract.provider != HostContract::Provider::closedSource || instances.empty() ||
-        baseClasses.contains(constructor.getResult()) || !function.getBody().hasOneBlock() ||
+    const bool isBase = baseClasses.contains(constructor.getResult());
+    if (contract.provider != HostContract::Provider::closedSource ||
+        (instances.empty() && !isBase) || !function.getBody().hasOneBlock() ||
         constructor.getUpvalues().size() != 1) {
         return true;
+    }
+    ctjs::CreateClosureOp baseClosure;
+    ctjs::CallOp basePublication;
+    if (auto inherited = heritage.lookup(constructor.getResult())) {
+        baseClosure = sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>();
+        basePublication = deferredPublications.lookup(target(baseClosure));
+    }
+    if (isBase) {
+        if (!instances.empty() || heritage.contains(constructor.getResult())) { return true; }
+        ctjs::CreateClosureOp leaf;
+        for (auto [derived, inherited] : heritage) {
+            if (!step()) { return false; }
+            if (sourceValue(inherited.getArgs()[1]) != constructor.getResult()) { continue; }
+            auto next = derived.getDefiningOp<ctjs::CreateClosureOp>();
+            if (leaf || !next || baseClasses.contains(derived) || !next.getUpvalues().empty()) {
+                return true;
+            }
+            leaf = next;
+        }
+        if (!leaf) { return true; }
     }
     auto & body = function.getBody().front();
     auto self = body.getArgument(ctjs::arg_receiver);
@@ -244,16 +266,30 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     }
     for (mlir::Operation * op = publication->getNextNode(); op; op = op->getNextNode()) {
         if (!step()) { return false; }
+        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op); basePublication && write) {
+            auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
+            if (write.getObject() == self && ctjs::ordinaryKey(write.getKey()) && value &&
+                llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
+                          ctjs::StringAttr>(value.getValue())) {
+                continue;
+            }
+        }
         if (!llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
             return true;
         }
     }
     // This sole capture must have no other observer, including another class
     // or helper. Every remaining Map use stays in the completed-owner census.
-    for (mlir::OpOperand & use : cell.getUses()) {
+    for (auto [alias, initial] : cells) {
         if (!step()) { return false; }
-        if (use.getOwner() != constructor && !cellOperations.contains(use.getOwner())) {
-            return true;
+        if (sourceValue(initial) != map.getResult()) { continue; }
+        for (mlir::OpOperand & use : alias.getUses()) {
+            if (!step()) { return false; }
+            if (use.getOwner() != constructor &&
+                (!basePublication || use.getOwner() != baseClosure) &&
+                !cellOperations.contains(use.getOwner())) {
+                return true;
+            }
         }
     }
     for (mlir::Operation & op : body) {
@@ -297,11 +333,19 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
         return refuse(problem);
     }
+    if (isBase) {
+        deferredPublications[function] = publication;
+        return true;
+    }
     // There is no observable work between the original set and return. Keep
     // registration immediately after each exact new, before its caller resumes.
     // A throwing prefix still skips it; a throwing set still skips the caller.
     for (ctjs::ConstructOp made : instances) {
-        if (!step()) { return false; }
+        constexpr unsigned expansionCost = 14;
+        if (remaining < expansionCost) {
+            return refuse("class initialization work budget exhausted");
+        }
+        remaining -= expansionCost;
         mlir::OpBuilder at(made);
         at.setInsertionPointAfter(made);
         auto name = ctjs::ConstantOp::create(at, selection.getLoc(),
@@ -311,17 +355,26 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
         ctjs::CallOp::create(at, publication.getLoc(), publication.getType(), select,
                              map.getResult(), mlir::ValueRange{literal, made.getResult()});
     }
-    mapCaptures.erase(captured.getResult());
-    mapOperations.erase(publication);
-    mapOperations.erase(selection);
-    mapOperations.erase(captured);
-    eraseRooted(publication);
-    eraseRooted(selection);
-    eraseRooted(captured);
-    constructor.getUpvaluesMutable().clear();
-    constructor.removeEnclosingIndicesAttr();
-    function.setUpvalueCount(0);
-    mapClosures.erase(constructor);
+    const auto retire = [&](ctjs::CreateClosureOp closure, ctjs::CallOp call) {
+        auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        auto load = call.getReceiver().getDefiningOp<ctjs::LoadUpvalueOp>();
+        mapCaptures.erase(load.getResult());
+        mapOperations.erase(call);
+        mapOperations.erase(read);
+        mapOperations.erase(load);
+        eraseRooted(call);
+        eraseRooted(read);
+        eraseRooted(load);
+        closure.getUpvaluesMutable().clear();
+        closure.removeEnclosingIndicesAttr();
+        target(closure).setUpvalueCount(0);
+        mapClosures.erase(closure);
+    };
+    retire(constructor, publication);
+    if (basePublication) {
+        deferredPublications.erase(target(baseClosure));
+        retire(baseClosure, basePublication);
+    }
     mapCells.erase(cell);
     return true;
 }

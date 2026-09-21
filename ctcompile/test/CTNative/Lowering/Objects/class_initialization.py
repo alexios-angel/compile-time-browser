@@ -523,6 +523,7 @@ def main():
                 in (
                     "class-map-record-alias-method-inherited",
                     "class-map-record-alias-snapshot-inherited",
+                    "class-map-record-constructor-inherited",
                 )
                 else text.count("ctjs.construct")
             )
@@ -693,6 +694,10 @@ def main():
             elif name == "class-map-inherited":
                 # Super guard Error constructions disappear during normalization.
                 operations = ("ctjs.load_upvalue",)
+            elif name == "class-map-inherited-base-string":
+                operations = ()
+                if after.count("ctjs.construct") != 2 or "ctjs.load_upvalue" in after:
+                    raise RuntimeError("base publication lost its Map or completed leaf owner")
             elif name.startswith("class-map-record-"):
                 operations = ("ctjs.construct",)
                 if before.count("ctjs.call ") != after.count("ctjs.call ") + 1:
@@ -825,6 +830,7 @@ def main():
             "class-map-inherited-distinct",
             "class-map-inherited-chain",
             "class-map-inherited-mixed-captures",
+            "class-map-record-constructor-inherited",
             "inherited-own-fields-iterate-forward-inherited",
             "inherited-own-fields-iterate-borrow-inherited",
             "inherited-own-fields-iterate-method-nearest",
@@ -891,9 +897,14 @@ def main():
                     if (
                         name.startswith("class-map-")
                         and not name.startswith("class-map-record-")
+                        and name != "class-map-inherited-base-string"
                         and f"!ctnative.map<{key_type}" not in native_text
                     ):
                         raise RuntimeError("class Map lost its key representation refusal")
+                    if name == "class-map-inherited-base-string" and (
+                        "string field requires definite string reads and writes" not in native_text
+                    ):
+                        raise RuntimeError("base publication lost its String field refusal")
                     if name == "inherited-helper-order" and (
                         "an object literal passed to a direct call as an argument"
                         not in native_text

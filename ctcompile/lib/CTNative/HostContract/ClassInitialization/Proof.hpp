@@ -73,6 +73,7 @@ struct classInitialization {
     llvm::DenseMap<mlir::Value, mlir::Value> mapCaptures;
     llvm::DenseSet<mlir::Operation *> mapClosures;
     llvm::DenseSet<mlir::Operation *> mapOperations;
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> deferredPublications;
     llvm::DenseMap<mlir::Value, mlir::Value> holderCaptures;
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> callableCaptures;
     llvm::SetVector<mlir::Operation *> capturedHelpers;

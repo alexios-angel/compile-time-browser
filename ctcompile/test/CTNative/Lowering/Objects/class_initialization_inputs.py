@@ -16,6 +16,23 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-inherited-base-overwrite": (5959, 5959),
+    "class-map-inherited-base-delete": (5452, 5452),
+    "class-map-inherited-base-constant-overwrite": (993, 993),
+    "class-map-inherited-base-string": (993, 993),
+    "class-map-inherited-base-observer": (1079, 1079),
+    "class-map-inherited-base-throw": (709, 709),
+    "class-map-inherited-base-getter": (777, 777),
+    "class-map-inherited-base-call": (1009, 1009),
+    "class-map-inherited-base-reentry": (279, 279),
+    "class-map-inherited-base-direct-base": (2709, 2709),
+    "class-map-inherited-base-siblings": (2078, 2078),
+    "class-map-inherited-base-deep": (739, 739),
+    "class-map-inherited-base-map-alias": (1009, 1009),
+    "class-map-inherited-base-map-escaped": (709, 709),
+    "class-map-inherited-base-return-receiver": (709, 709),
+    "class-map-inherited-base-return-object": (709, 709),
+    "class-map-inherited-base-arithmetic": (788, 788),
     "class-map-record-constructor-helper-overwrite": (5959, 5959),
     "class-map-record-constructor-helper-delete": (552, 552),
     "class-map-record-constructor-helper-write-after": (808, 808),
@@ -585,6 +602,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-constructor-inherited",
+    "class-map-inherited-base-overwrite",
+    "class-map-inherited-base-delete",
+    "class-map-inherited-base-constant-overwrite",
     "class-map-record-constructor-helper",
     "class-map-record-constructor-helper-overwrite",
     "class-map-record-constructor-helper-delete",
@@ -809,6 +830,7 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
+    "class-map-inherited-base-string",
     "class-map-optional-key-mixed-string",
     "class-map-optional-key-object",
     "inherited-own-fields-iterate-borrow-mixed-literal",
@@ -1349,7 +1371,9 @@ def check_executable(args, name, native, expected):
         cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
         if any(token in cpp for token in ("ctbrowser::", '"prototype"', '"__home"')):
             raise RuntimeError(f"{name}: native class retained runtime or prototype storage")
-        if name.startswith(("class-map-record-", "class-map-inherited-leaf-")) and (
+        if name.startswith(
+            ("class-map-record-", "class-map-inherited-leaf-", "class-map-inherited-base-")
+        ) and (
             not re.search(r"map_storage<std::string, ctn_\w+(?:<[^>]+>)? \*>", cpp)
             or "ctnative::map_get_present(" not in cpp
             or "std::make_shared<ctnative::identity_object>" in cpp
