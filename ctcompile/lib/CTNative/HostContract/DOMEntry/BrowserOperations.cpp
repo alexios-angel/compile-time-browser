@@ -594,25 +594,38 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::startsWith) && arguments.size() == 1) {
-            auto prefix = arguments[0].getDefiningOp<ctjs::ConstantOp>();
-            auto text =
-                prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
-            // ponytail: ASCII prefixes make byte and UTF-16 prefix tests
-            // equivalent. General prefixes need code-unit String proof.
-            if (!text) {
-                refusal = "DOM startsWith requires one constant ASCII prefix";
-                return false;
+            llvm::SmallVector<mlir::Value, 2> pieces{arguments[0]};
+            if (auto add = arguments[0].getDefiningOp<ctjs::BinaryOp>();
+                add && add.getKind() == ctjs::BinaryKind::Add) {
+                pieces = {add.getLhs(), add.getRhs()};
             }
-            for (unsigned char c : text.getValue()) {
+            // ponytail: one literal concatenation keeps the ASCII proof bounded.
+            // General prefixes need separate origin and UTF-16 proofs.
+            for (mlir::Value piece : pieces) {
                 if (!spend()) { return false; }
-                if (c > 127) {
-                    refusal = "DOM startsWith requires one constant ASCII prefix";
+                auto literal = piece.getDefiningOp<ctjs::ConstantOp>();
+                auto text = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
+                                    : ctjs::StringAttr{};
+                if (!text) {
+                    refusal = "DOM startsWith requires ASCII literals with at most one "
+                              "concatenation";
                     return false;
+                }
+                for (unsigned char c : text.getValue()) {
+                    if (!spend()) { return false; }
+                    if (c > 127) {
+                        refusal = "DOM startsWith requires an ASCII prefix";
+                        return false;
+                    }
                 }
             }
             provedCalls.push_back({invoke, HostDOMMethod::startsWith, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::boolean;
-            if (callbackBody &&
+            auto prefix = arguments[0].getDefiningOp<ctjs::ConstantOp>();
+            auto text =
+                prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
+            // Computed prefixes gain no dataset membership or key-transform authority.
+            if (callbackBody && text &&
                 invoke.getReceiver() == block.getArgument(ctjs::implicit_arguments) &&
                 text.getValue().starts_with("bs")) {
                 prefixRequired.insert(invoke.getResult());

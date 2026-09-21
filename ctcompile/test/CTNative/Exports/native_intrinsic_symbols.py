@@ -353,6 +353,29 @@ STRING_METHODS = {
   return check();
 }
 """,
+    "string-concatenated-prefix": r"""function stringConcatenatedPrefix(text) {
+  return (text.startsWith('b' + 's') ? 'prefix' : 'other') +
+    (text.startsWith('' + '') ? ':empty' : ':wrong') +
+    (text.startsWith('a' + '\u0000') ? ':nul' : ':plain');
+}
+""",
+    "description-capture-concatenated-prefix": """function descriptionCaptureConcatenatedPrefix(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function check() {
+    const prefix = 'b' + 's';
+    return text !== undefined ? text.startsWith(prefix) : false;
+  }
+  return check();
+}
+""",
+    "string-concatenated-prefix-reuse": """function stringConcatenatedPrefixReuse(text) {
+  const prefix = 'b' + 's';
+  const saved = prefix;
+  return (text.startsWith(saved) ? saved : 'other') +
+    (saved === 'bs' ? ':same' : ':wrong');
+}
+""",
 }
 STRING_INDICES = {
     "string-indices": """function stringIndices(text, unit, tail) {
@@ -1080,6 +1103,9 @@ PARAMETER_TYPES = {
     "string-prefix": ["string"],
     "description-lowercase": ["symbol"],
     "description-capture-prefix": ["symbol"],
+    "string-concatenated-prefix": ["string"],
+    "description-capture-concatenated-prefix": ["symbol"],
+    "string-concatenated-prefix-reuse": ["string"],
     "string-indices": ["string", "string", "string"],
     "description-slice": ["symbol"],
     "description-capture-index": ["symbol"],
@@ -1481,6 +1507,29 @@ CASES["description-capture-prefix"] = (
     assert(@ENTRY@(Symbol(js_string{"bs\0"})));
     assert(!@ENTRY@(Symbol(js_string{"Bs"})));
     assert(!@ENTRY@(Symbol.iterator));
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["string-concatenated-prefix"] = (
+    STRING_METHODS["string-concatenated-prefix"],
+    *CASES["string-prefix"][1:],
+)
+CASES["description-capture-concatenated-prefix"] = (
+    STRING_METHODS["description-capture-concatenated-prefix"],
+    *CASES["description-capture-prefix"][1:],
+)
+CASES["string-concatenated-prefix-reuse"] = (
+    STRING_METHODS["string-concatenated-prefix-reuse"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string)>);
+    assert(@ENTRY@(js_string{""}).value() == "other:same");
+    assert(@ENTRY@(js_string{"bs"}).value() == "bs:same");
+    assert(@ENTRY@(js_string{"bs\0", 3}).value() == "bs:same");
+    assert(@ENTRY@(js_string{"bs\xc3\xa9"}).value() == "bs:same");
+    assert(@ENTRY@(js_string{"b"}).value() == "other:same");
+    assert(@ENTRY@(js_string{"Bs"}).value() == "other:same");
     std::cout << "true\n";
 """,
     "true\n",
@@ -2625,6 +2674,27 @@ var symbol173StringUTF16NestedIndices = stringNestedIndices('\u00c9xy', '\u00c9'
   stringNestedIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
   stringNestedIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringNestedIndices('A\udc00x', 'A', '\udc00', 'x');
+var symbol174StringConcatenatedPrefix = stringConcatenatedPrefix('') === 'other:empty:plain' &&
+  stringConcatenatedPrefix('bs') === 'prefix:empty:plain' &&
+  stringConcatenatedPrefix('a\u0000b') === 'other:empty:nul' &&
+  stringConcatenatedPrefix('a') === 'other:empty:plain' &&
+  stringConcatenatedPrefix('Bs') === 'other:empty:plain';
+var symbol175DescriptionCaptureConcatenatedPrefix = !descriptionCaptureConcatenatedPrefix(Symbol()) &&
+  !descriptionCaptureConcatenatedPrefix(Symbol(undefined)) &&
+  !descriptionCaptureConcatenatedPrefix(Symbol('')) &&
+  descriptionCaptureConcatenatedPrefix(Symbol('bs')) &&
+  descriptionCaptureConcatenatedPrefix(Symbol('bs\u0000')) &&
+  !descriptionCaptureConcatenatedPrefix(Symbol('Bs')) &&
+  !descriptionCaptureConcatenatedPrefix(Symbol.iterator);
+var symbol176StringConcatenatedPrefixReuse = stringConcatenatedPrefixReuse('') === 'other:same' &&
+  stringConcatenatedPrefixReuse('bs') === 'bs:same' &&
+  stringConcatenatedPrefixReuse('bs\u0000') === 'bs:same' &&
+  stringConcatenatedPrefixReuse('bs\u00e9') === 'bs:same' &&
+  stringConcatenatedPrefixReuse('b') === 'other:same' &&
+  stringConcatenatedPrefixReuse('Bs') === 'other:same';
+var symbol177StringUnicodeConcatenatedPrefix = stringConcatenatedPrefix('bs\u00e9') === 'prefix:empty:plain' &&
+  stringConcatenatedPrefix('\ud801\udc00') === 'other:empty:plain' &&
+  stringConcatenatedPrefix('\ud800') === 'other:empty:plain';
 """
     )
     vm = args.work / "oracle.js"
@@ -2748,6 +2818,10 @@ var symbol173StringUTF16NestedIndices = stringNestedIndices('\u00c9xy', '\u00c9'
         "StringNestedIndices",
         "DescriptionCaptureNestedIndex",
         "StringUTF16NestedIndices",
+        "StringConcatenatedPrefix",
+        "DescriptionCaptureConcatenatedPrefix",
+        "StringConcatenatedPrefixReuse",
+        "StringUnicodeConcatenatedPrefix",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -3269,6 +3343,45 @@ def main():
         raise RuntimeError("String method fingerprint control did not change its prefix")
     if "fingerprint mismatch" not in refuse(changed, contract, "string-method-stale"):
         raise RuntimeError("changed String method accepted a stale fingerprint")
+
+    for name, body in {
+        "nested-left": "return text.startsWith(('b' + 's') + 'Config');",
+        "nested-right": "return text.startsWith('b' + ('s' + 'Config'));",
+        "unicode-left": "return text.startsWith('\u00e9' + 's');",
+        "unicode-right": "return text.startsWith('b' + '\u00e9');",
+        "surrogate": "return text.startsWith('b' + '\\ud800');",
+        "dynamic-string": "return text.startsWith('b' + text);",
+        "number": "return text.startsWith('b' + 1);",
+        "boolean": "return text.startsWith('b' + true);",
+        "null": "return text.startsWith('b' + null);",
+        "undefined": "return text.startsWith('b' + undefined);",
+        "symbol": "return text.startsWith('b' + key);",
+        "optional-description": "return text.startsWith('b' + key.description);",
+        "detached": "const method=text.startsWith; return method('b' + 's');",
+        "prototype-write": "String.prototype.startsWith=0; return text.startsWith('b' + 's');",
+        "discarded-effect": "unknown(); return text.startsWith('b' + 's');",
+        "prefix-publication": "const prefix='b' + 's'; saved=prefix; return text.startsWith(prefix);",
+        "position": "return text.startsWith('b' + 's', 0);",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "concatenated-prefix-" + name,
+            f"function bad(key, text) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["symbol", "string"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"concatenated-prefix-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-concatenated-prefix"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"concatenated-prefix-budget-{budget}", max_steps=budget)
+    changed = args.work / "concatenated-prefix-stale.mlir"
+    changed.write_text(ir.read_text().replace('"b"', '"other"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("concatenated prefix fingerprint control did not change its operand")
+    if "fingerprint mismatch" not in refuse(changed, contract, "concatenated-prefix-stale"):
+        raise RuntimeError("changed concatenated prefix accepted a stale fingerprint")
 
     for name, body in {
         "charat-dynamic": "return text.charAt(index);",
