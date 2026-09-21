@@ -567,6 +567,14 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         if (edge.kind == HostDOMMethod::stringCharAt) {
             range.push_back(
                 ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1")));
+        } else if (call.getArgs().size() == 2) {
+            auto end = ec::CastOp::create(
+                at, where, indexType, convertScalar(at, where, call.getArgs()[1], at.getF64Type()));
+            auto reversed = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, end,
+                                              range.front());
+            auto limit =
+                ec::ConditionalOp::create(at, where, indexType, reversed, range.front(), end);
+            range.push_back(ec::SubOp::create(at, where, indexType, limit, range.front()));
         }
         auto part = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{unitsType},
                                                    units.getResult(0), at.getStringAttr("substr"),

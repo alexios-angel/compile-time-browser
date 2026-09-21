@@ -388,23 +388,32 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (hasKind(invoke.getCallee(), Kind::charAt) || hasKind(invoke.getCallee(), Kind::slice)) {
             const bool first = hasKind(invoke.getCallee(), Kind::charAt);
-            auto literal = arguments.size() == 1 ? arguments[0].getDefiningOp<ctjs::ConstantOp>()
-                                                 : ctjs::ConstantOp{};
-            auto index =
-                literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
-            const double offset = index ? index.getDouble() : -1;
+            if (arguments.empty() || arguments.size() > (first ? 1U : 2U)) {
+                refusal = "DOM String indexing requires one index and an optional slice end";
+                return false;
+            }
             // ponytail: literal uint32 indices fit size_t on every native target;
             // broader inputs need ToIntegerOrInfinity and negative-slice proofs.
-            if (!index || !std::isfinite(offset) || offset < 0 || offset > 4294967295.0 ||
-                std::floor(offset) != offset) {
-                refusal = "DOM String indexing requires one nonnegative uint32 integer literal";
-                return false;
+            for (mlir::Value argument : arguments) {
+                auto literal = argument.getDefiningOp<ctjs::ConstantOp>();
+                auto index = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
+                                     : ctjs::NumberAttr{};
+                const double offset = index ? index.getDouble() : -1;
+                if (!index || !std::isfinite(offset) || offset < 0 || offset > 4294967295.0 ||
+                    std::floor(offset) != offset) {
+                    refusal = "DOM String indexing requires nonnegative uint32 integer literals";
+                    return false;
+                }
             }
             provedCalls.push_back({invoke,
                                    first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
                                    invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
-            if (offset == (first ? 0 : 1)) {
+            const double offset =
+                llvm::cast<ctjs::NumberAttr>(
+                    arguments.front().getDefiningOp<ctjs::ConstantOp>().getValue())
+                    .getDouble();
+            if (arguments.size() == 1 && offset == (first ? 0 : 1)) {
                 if (!spend()) { return false; }
                 (first ? firstUnits : stringTails)[invoke.getResult()] = invoke.getReceiver();
             }

@@ -94,6 +94,9 @@ FULL_H_REFUSALS = {
     "class_h_full_later_target": FULL_H_CALLS.replace(
         "H.removeDataAttribute(element, 'config')", "H.removeDataAttribute({}, 'config')"
     ),
+    # A bounded tail does not prove the original normalized dataset key.
+    "class_h_full_slice_end_tail": FULL_H_CALLS.replace("i.slice(1)", "i.slice(1, 2)"),
+    "class_h_full_slice_max_tail": FULL_H_CALLS.replace("i.slice(1)", "i.slice(1, 4294967295)"),
 }
 # Fresh H results are distinct from the class prototype and each instance.
 # Keep the complete original bodies while checking aliases and real writes.
@@ -315,6 +318,7 @@ UTF16_REFUSALS = {
     )
 }
 UTF16_CASES["class_utf16_lowercase"] = (UTF16_REFUSALS.pop("class_utf16_lowercase"), "1111")
+UTF16_CASES["class_utf16_slice_extra"] = (UTF16_REFUSALS.pop("class_utf16_slice_extra"), "1111")
 for name in ("class_utf16_char_index", "class_utf16_slice_index"):
     UTF16_CASES[name] = (UTF16_REFUSALS.pop(name), "0000")
 CLASS_CASES.update(UTF16_CASES)
