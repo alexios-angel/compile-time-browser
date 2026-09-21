@@ -87,11 +87,52 @@ REFUSALS = {
     "concat": "return '' + Symbol.iterator;",
     "property-key": "return element[Symbol.iterator];",
     "instanceof": "return element instanceof Symbol;",
-    "symbol-return": "return Symbol.iterator;",
     "mixed-compare": "return Symbol.iterator === 'iterator';",
+    "mixed-join": "return element.hasAttribute('x') ? Symbol.iterator : 0;",
+    "absent-join": "let key; if(element.hasAttribute('x')) key=Symbol.iterator; return key;",
+    "mixed-loop": "let key=Symbol.iterator; for(let i=0;i<2;i++) key=0; return key;",
+}
+
+
+TRANSPORT = {
+    "symbol-return": "return Symbol.iterator;",
     "join": "const key=element.hasAttribute('x') ? Symbol.iterator : Symbol.hasInstance; return !!key;",
     "loop": "let key=Symbol.iterator; for(let i=0;i<2;i++) key=Symbol.hasInstance; return !!key;",
 }
+
+STATE = """function state(element) {
+  let key = element.hasAttribute('data-other') ? Symbol.hasInstance : Symbol.iterator;
+  const saved = key;
+  const iterations = element.hasAttribute('data-empty') ? 0 : 3;
+  for (let i = 0; i < iterations; i++) {
+    element.setAttribute('data-copy', key === saved);
+    key = key === Symbol.iterator ? Symbol.hasInstance : Symbol.iterator;
+  }
+  element.setAttribute('data-saved', saved === Symbol.iterator);
+  return key;
+}
+"""
+STATE_CHECKS = r"""
+        (void)pressed; (void)foreign;
+        static_assert(std::is_same_v<decltype(@ENTRY@(element)), ctnative::js_symbol_t>);
+        const auto first = @ENTRY@(alias);
+        assert(first == ctnative::Symbol.hasInstance);
+        assert(doc.read().attribute_value(button, atoms.intern("data-copy")) == "true");
+        assert(doc.read().attribute_value(button, atoms.intern("data-saved")) == "true");
+        assert(doc.take_writes().size() == 4);
+        assert(doc.set_attribute(button, atoms.intern("data-other"), ""));
+        (void)doc.take_writes();
+        assert(@ENTRY@(element) == ctnative::Symbol.iterator);
+        assert(first == ctnative::Symbol.hasInstance);
+        assert(doc.read().attribute_value(button, atoms.intern("data-copy")) == "true");
+        assert(doc.read().attribute_value(button, atoms.intern("data-saved")) == "false");
+        assert(doc.take_writes().size() == 4);
+        assert(doc.set_attribute(button, atoms.intern("data-empty"), ""));
+        (void)doc.take_writes();
+        assert(@ENTRY@(element) == ctnative::Symbol.hasInstance);
+        assert(first == ctnative::Symbol.hasInstance);
+        assert(doc.take_writes().size() == 1);
+"""
 
 
 def oracle(args):
@@ -115,12 +156,38 @@ var symbolFirst = observe(false);
 var symbolSecond = observe(true);
 """
     vm = args.work / "oracle.js"
-    vm.write_text(SOURCE + helper)
-    if run([args.reference, str(vm)]).stdout != "symbolFirst=true\nsymbolSecond=true\n":
+    transport_source = "\n".join(
+        f"function {name.replace('-', '_')}(element) {{ {body} }}"
+        for name, body in TRANSPORT.items()
+    )
+    transport_oracle = """
+function observeState(other, empty) {
+  const saved = {};
+  let writes = 0;
+  const receiver = {
+    setAttribute: function(name, value) { saved[name] = '' + value; writes++; },
+    hasAttribute: function(name) { return name === 'data-empty' ? empty : other; }
+  };
+  const result = state(receiver);
+  return result === (other && !empty ? Symbol.iterator : Symbol.hasInstance) &&
+    writes === (empty ? 1 : 4) && (empty || saved['data-copy'] === 'true') &&
+    saved['data-saved'] === (other ? 'false' : 'true') &&
+    join(receiver) && loop(receiver) && symbol_return(receiver) === Symbol.iterator;
+}
+var symbolTransportFirst = observeState(false, false);
+var symbolTransportSecond = observeState(true, false);
+var symbolTransportZero = observeState(true, true);
+"""
+    vm.write_text(SOURCE + STATE + transport_source + helper + transport_oracle)
+    if (
+        run([args.reference, str(vm)]).stdout
+        != "symbolFirst=true\nsymbolSecond=true\nsymbolTransportFirst=true\nsymbolTransportSecond=true\nsymbolTransportZero=true\n"
+    ):
         raise RuntimeError("VM Symbol identity/effect observations differ")
     node = args.work / "oracle.cjs"
     node.write_text(
-        vm.read_text() + "\nif (!symbolFirst || !symbolSecond) throw Error('Symbol oracle');\n"
+        vm.read_text()
+        + "\nif (!symbolFirst || !symbolSecond || !symbolTransportFirst || !symbolTransportSecond || !symbolTransportZero) throw Error('Symbol oracle');\n"
     )
     run([args.node, str(node)])
 
@@ -174,6 +241,23 @@ def main():
                     raise
             else:
                 raise RuntimeError("Symbol identity mutation escaped observation")
+    for name, body in TRANSPORT.items():
+        original, contract = dom.prepare(
+            args, "original-" + name, f"function original(element) {{ {body} }}\n", 1
+        )
+        contract["initial_intrinsics"] = ["Symbol"]
+        native = dom.lower(args, original, contract, "original-" + name)
+        expected = " == ctnative::Symbol.iterator" if name == "symbol-return" else ""
+        checks = f"(void)pressed; (void)foreign; (void)alias; assert(@ENTRY@(element){expected});"
+        dom.standalone(args, native, "original-" + name, checks, compilers, includes, libraries)
+    state_ir, state_contract = dom.prepare(args, "state", STATE, 1)
+    state_contract["initial_intrinsics"] = ["Symbol"]
+    for optimize in (False, True):
+        name = f"state-{optimize}"
+        native = dom.lower(args, state_ir, state_contract, name, optimize=optimize)
+        if "std::variant<std::monostate, ctnative::js_symbol_t>" not in native.read_text():
+            raise RuntimeError("Symbol structured storage was not exercised")
+        dom.standalone(args, native, name, STATE_CHECKS, compilers, includes, libraries)
     for name, body in REFUSALS.items():
         bad, contract = dom.prepare(args, name, f"function bad(element) {{ {body} }}\n", 1)
         contract["initial_intrinsics"] = ["Symbol"]
@@ -201,7 +285,7 @@ def main():
     dom.lower(args, forged, contract, "forged-refused", success=False)
     print(
         f"Symbol DOM: {len(OBSERVATIONS)} attributes and 2 returns agree with Node/VM; "
-        f"8 native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"
+        f"28 native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"
     )
 
 

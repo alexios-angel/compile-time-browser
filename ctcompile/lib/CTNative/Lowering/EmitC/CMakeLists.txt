@@ -10,6 +10,8 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Operations.cpp
   Maps.cpp
   Functions.cpp
+  SymbolTransport.cpp
+  SymbolTransport.h
   Environments.cpp
   MethodTables.cpp
   Emitter.h

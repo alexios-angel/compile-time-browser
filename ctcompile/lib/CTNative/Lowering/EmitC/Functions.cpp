@@ -1,6 +1,7 @@
 // EmitC/Functions.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "SymbolTransport.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -123,6 +124,7 @@ void lowering::lower(ctjs::FuncOp fn) {
         }
     });
     for (mlir::Operation * o : ops) { replace(o, isEntry, returnType); }
+    transportSymbols(made);
 
     // ponytail: the pinned SCFToEmitC lowerDoWhile drops backedge assignments
     // when after contains only a yield. Keep a printing no-op through later

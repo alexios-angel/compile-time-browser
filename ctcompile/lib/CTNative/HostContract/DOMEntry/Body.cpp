@@ -191,7 +191,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                  !hasKind(result.getValue(), Kind::optionalString) &&
                  !hasKind(result.getValue(), Kind::json) &&
                  !hasKind(result.getValue(), Kind::jsonAggregate) &&
-                 !hasKind(result.getValue(), Kind::stringVector))) {
+                 !hasKind(result.getValue(), Kind::stringVector) &&
+                 !hasKind(result.getValue(), Kind::symbol))) {
                 refusal = "DOM entry return must be a scalar with no borrowed browser handle";
                 return false;
             }
