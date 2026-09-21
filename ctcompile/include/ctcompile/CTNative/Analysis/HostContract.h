@@ -499,7 +499,7 @@ struct HostCallableEdge {
 };
 
 // A proved Number, Boolean or String origin in an ordinary source global. Each read has
-// one earlier entry store; dependencies are the completed published results
+// one earlier entry store; dependencies are completed published results or owned field reads
 // encountered in its value expression, in traversal order (possibly repeated).
 // The list is empty for constant-only scalar expressions; their source scope,
 // initialization and complete environment proof remain mandatory.

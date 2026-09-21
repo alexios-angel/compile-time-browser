@@ -487,18 +487,25 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
     // Their original operands, sole stores and source scope/order still pass
     // the same bounded category walk, and publication still requires the
     // complete environment proof. An empty list supplies no value or type.
-    // The worklist only supplies categories. Require the actual completed
-    // calls in the final environment census too, with entry order and scope.
+    // The worklist only supplies categories. Require each dependency in the
+    // completed family, including its exact caller leaf and read-time field.
     for (mlir::Value dependency : result.dependencies) {
         if (!step()) { return std::nullopt; }
-        auto * call = dependency.getDefiningOp();
-        if (!call || call->getParentOp() != entry || !dominance.properlyDominates(call, store)) {
+        auto * origin = dependency.getDefiningOp();
+        if (!origin || origin->getParentOp() != entry ||
+            !dominance.properlyDominates(origin, store)) {
             return std::nullopt;
         }
+        auto field = llvm::dyn_cast<ctjs::GetPropertyOp>(origin);
+        auto leaf = field ? field.getObject().getDefiningOp<ctjs::CreateObjectOp>()
+                          : ctjs::CreateObjectOp{};
         bool found = false;
         for (const HostCallableEdge & edge : checkedCalls) {
             if (!step()) { return std::nullopt; }
-            found |= edge.call == call && edge.capturedMap.has_value();
+            if (!edge.capturedMap) { continue; }
+            found |= edge.call == origin ||
+                     (leaf && llvm::is_contained(edge.capturedMap->leafObjects, leaf) &&
+                      llvm::is_contained(edge.capturedMap->leafReads, field));
         }
         if (!found) { return std::nullopt; }
     }

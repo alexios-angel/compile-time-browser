@@ -800,11 +800,17 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             reject("saved scalar read disagrees with the complete host proof");
             return;
         }
-        // Constant-only scalar origins need no method result. Any results
-        // they do use must belong to this complete live owning family.
+        // Scalar dependencies must belong to this complete live owning family.
+        // A saved field value keeps its original read, not a later field load.
         for (mlir::Value dependency : edge.dependencies) {
             if (!spend()) { return; }
-            if (!methodCalls.contains(dependency.getDefiningOp())) {
+            auto fieldRead = dependency.getDefiningOp<ctjs::GetPropertyOp>();
+            auto leaf = fieldRead ? fieldRead.getObject().getDefiningOp<ctjs::CreateObjectOp>()
+                                  : ctjs::CreateObjectOp{};
+            const bool ownedField = capture && leaf &&
+                                    llvm::is_contained(capture->leafObjects, leaf) &&
+                                    llvm::is_contained(capture->leafReads, fieldRead);
+            if (!methodCalls.contains(dependency.getDefiningOp()) && !ownedField) {
                 reject("saved scalar result is outside the complete owned method family");
                 return;
             }

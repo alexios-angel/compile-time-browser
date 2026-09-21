@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish proved scalar record fields; retain the complete class/session boundary."""
+"""Publish proved scalar record fields and snapshots; retain the class/session boundary."""
 
 import argparse
 from pathlib import Path
@@ -169,7 +169,7 @@ def published_prepare(args, name, text):
     return ir, contract
 
 
-def published_observation(args, name, text, expected=15927):
+def published_observation(args, name, text, expected=15927, *, snapshot=False):
     observed = args.work / f"{name}.oracle.js"
     observed.write_text(
         text
@@ -181,9 +181,11 @@ def published_observation(args, name, text, expected=15927):
         f"traceAfter={expected}\ntraceBefore=undefined\ntraceEntered=1\n"
         f"traceFirst=true\ntraceOther={expected}\ntraceReset=true\n"
     )
+    if snapshot:
+        wanted = f"saved={expected}\n" + wanted
     node = session.source.NODE.replace(
         "typeof value !== 'number'", "typeof value !== 'number' && typeof value !== 'undefined'"
-    )
+    ).replace("key.startsWith('trace')", "key.startsWith('trace') || key === 'saved'")
     for command in ([args.node, "-e", node, str(observed)], [args.reference, str(observed)]):
         if run(command).stdout != wanted:
             raise RuntimeError(f"{name}: scalar publication/reset source observation changed")
@@ -191,6 +193,9 @@ def published_observation(args, name, text, expected=15927):
 
 def published_records(args):
     original = record_source()
+    snapshot = original.replace(
+        "traceEntered = 1;", "saved = payload.n; traceEntered = 1;"
+    ).replace("host.slot.set(element, payload.n)", "host.slot.set(element, saved)")
     sources = {
         "field": original,
         "alias": original.replace(
@@ -204,6 +209,13 @@ def published_records(args):
         "arithmetic": original.replace("{n: 15927}", "{n: 15920}").replace(
             "host.slot.set(element, payload.n)", "host.slot.set(element, payload.n + 7)"
         ),
+        "global-snapshot": snapshot,
+        "global-snapshot-alias": snapshot.replace(
+            "const payload = {n: 15927};", "const payload = {n: 15927}; const alias = payload;"
+        ).replace("saved = payload.n;", "saved = alias.n; alias.n = 7;"),
+        "global-snapshot-arithmetic": snapshot.replace("{n: 15927}", "{n: 15920}").replace(
+            "saved = payload.n;", "saved = payload.n + 7;"
+        ),
     }
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -211,7 +223,7 @@ def published_records(args):
     executions = refusals = 0
     for label, text in sources.items():
         name = "published-record-" + label
-        published_observation(args, name, text)
+        published_observation(args, name, text, snapshot=label.startswith("global-snapshot"))
         ir, contract = published_prepare(args, name, text)
         report, annotated, _ = host.analyze(args.opt, ir, contract, args.work / (name + "-proof"))
         if (
@@ -264,7 +276,7 @@ def published_records(args):
                     if run([str(binary)]).stdout != "DOM record Data passed\n":
                         raise RuntimeError(f"{name}: real document observations incomplete")
                     executions += 1
-        if label == "field":
+        if label in ("field", "global-snapshot"):
             for suffix, changed, budget in (
                 ("stale", dict(contract, module_sha256="0" * 64), None),
                 ("missing-root", dict(contract, roots=[]), None),
@@ -284,7 +296,7 @@ def published_records(args):
                         max_steps=budget,
                     )
                     refusals += 1
-            forged = args.work / "published-record-forged.mlir"
+            forged = args.work / f"{name}-forged.mlir"
             forged_text, count = re.subn(
                 r"ctnative.host_outer_key_inputs = 1 : i64",
                 "ctnative.host_outer_key_inputs = 99 : i64",
@@ -295,12 +307,12 @@ def published_records(args):
             forged.write_text(forged_text)
             fresh = dict(contract, module_sha256=host.fingerprint(args.opt, forged))
             rechecked, _, _ = host.analyze(
-                args.opt, forged, fresh, args.work / "record-forged-proof"
+                args.opt, forged, fresh, args.work / f"{name}-forged-proof"
             )
             if rechecked != report:
                 raise RuntimeError("forged report changed the live record proof")
             for optimize in (False, True):
-                dom.lower(args, forged, fresh, f"record-forged-{optimize}", optimize=optimize)
+                dom.lower(args, forged, fresh, f"{name}-forged-{optimize}", optimize=optimize)
     controls = {
         "getter": original.replace("{n: 15927}", "{get n() { return 15927; }}"),
         "dynamic-key": original.replace("payload.n", "payload[element]"),
@@ -312,9 +324,20 @@ def published_records(args):
         "unknown-call": original.replace(
             "traceEntered = 1;", "unknown(payload); traceEntered = 1;"
         ),
-        "global-snapshot": original.replace(
-            "traceEntered = 1;", "saved = payload.n; traceEntered = 1;"
-        ).replace("host.slot.set(element, payload.n)", "host.slot.set(element, saved)"),
+        "global-reassigned": snapshot.replace(
+            "saved = payload.n;", "saved = payload.n; saved = 7;"
+        ),
+        "global-object-escape": snapshot.replace(
+            "saved = payload.n;", "escaped = payload; saved = payload.n;"
+        ),
+        "global-getter": snapshot.replace("{n: 15927}", "{get n() { return 15927; }}"),
+        "global-capture": snapshot.replace(
+            "saved = payload.n;", "const unused = () => payload; saved = payload.n;"
+        ),
+        "global-uninitialized": snapshot.replace("{n: 15927}", "{}"),
+        "global-unowned-field": snapshot.replace(
+            "host.slot.set(element, saved)", "host.slot.set(element, 15927)"
+        ),
     }
     for label, text in controls.items():
         name = "record-refused-" + label
@@ -333,7 +356,7 @@ def published_records(args):
             dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
             refusals += 1
     print(
-        f"published DOM Data: 6 Node/VM observations, {executions} native record executions, {refusals} refusals; complete vendor class publication remains refused"
+        f"published DOM Data: {len(sources) + 2} Node/VM observations, {executions} native record executions, {refusals} refusals; complete vendor class publication remains refused"
     )
 
 
