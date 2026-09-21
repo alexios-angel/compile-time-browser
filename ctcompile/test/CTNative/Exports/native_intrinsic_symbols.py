@@ -208,6 +208,56 @@ function copyTypeGlobal(value) { return value; }
 GLOBAL_DESCRIPTION = """function globalDescription(key) { return describeGlobal(key); }
 function describeGlobal(value) { return value.description; }
 """
+GLOBAL_LOCAL_DECLARATION = """function globalLocalDeclaration() { return declaredGlobalLocal(); }
+function declaredGlobalLocal() {
+  function local() { return Symbol.iterator; }
+  function unused(value) { return typeof value; }
+  return local();
+}
+"""
+GLOBAL_LOCAL_STATE = """function globalLocalState(first, second, text, count, enabled) {
+  const key = cycleGlobalLocal(first, second, count);
+  return enabled ? makeGlobalLocal(text) : selectGlobalLocal(key, first, false);
+}
+function selectGlobalLocal(left, right, takeRight) {
+  function copy(value) { return value; }
+  return takeRight ? copy(right) : copy(left);
+}
+function cycleGlobalLocal(left, right, limit) {
+  function next(value, first, second) { return value === first ? second : first; }
+  let key = left;
+  for (let i = 0; i < limit; i++) key = next(key, left, right);
+  return key;
+}
+function makeGlobalLocal(description) {
+  function make(value) { return Symbol(value); }
+  return make(description);
+}
+"""
+GLOBAL_LOCAL_TYPES = """function globalLocalTypes(key, text, number, flag) {
+  let after = text;
+  const before = firstGlobalLocal(after, after = 'changed');
+  return (copyTypeGlobalLocal(key) === key ? 'symbol' : 'wrong') +
+    (copyTypeGlobalLocal(text) === text ? ':string' : ':wrong') +
+    (copyTypeGlobalLocal(number) < 1 ? ':number' : ':wrong') +
+    (copyTypeGlobalLocal(flag) ? ':wrong' : ':boolean') +
+    (before === text && after === 'changed' ? ':evaluation' : ':wrong');
+}
+function firstGlobalLocal(left, right) {
+  function first(a, b) { return a; }
+  return first(left, right);
+}
+function copyTypeGlobalLocal(value) {
+  function copy(input) { return input; }
+  return copy(value);
+}
+"""
+GLOBAL_LOCAL_DESCRIPTION = """function globalLocalDescription(key) { return describeGlobalLocal(key); }
+function describeGlobalLocal(value) {
+  function describe(input) { return input.description; }
+  return describe(value);
+}
+"""
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -224,6 +274,9 @@ PARAMETER_TYPES = {
     "global-state": ["symbol", "symbol", "string", "number", "boolean"],
     "global-types": ["symbol", "string", "number", "boolean"],
     "global-description": ["symbol"],
+    "global-local-state": ["symbol", "symbol", "string", "number", "boolean"],
+    "global-local-types": ["symbol", "string", "number", "boolean"],
+    "global-local-description": ["symbol"],
 }
 CASES = {
     "state": (
@@ -471,6 +524,10 @@ CASES["global-helper"] = (
 CASES["global-state"] = (GLOBAL_STATE, *CASES["parameter-state"][1:])
 CASES["global-types"] = (GLOBAL_TYPES, *CASES["helper-types"][1:])
 CASES["global-description"] = (GLOBAL_DESCRIPTION, *CASES["parameter-description"][1:])
+CASES["global-local-declaration"] = (GLOBAL_LOCAL_DECLARATION, *CASES["global-helper"][1:])
+CASES["global-local-state"] = (GLOBAL_LOCAL_STATE, *CASES["parameter-state"][1:])
+CASES["global-local-types"] = (GLOBAL_LOCAL_TYPES, *CASES["helper-types"][1:])
+CASES["global-local-description"] = (GLOBAL_LOCAL_DESCRIPTION, *CASES["parameter-description"][1:])
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -553,6 +610,10 @@ def oracle(args):
         + GLOBAL_STATE
         + GLOBAL_TYPES
         + GLOBAL_DESCRIPTION
+        + GLOBAL_LOCAL_DECLARATION
+        + GLOBAL_LOCAL_STATE
+        + GLOBAL_LOCAL_TYPES
+        + GLOBAL_LOCAL_DESCRIPTION
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -618,6 +679,18 @@ symbol32GlobalTypes = globalTypes(key, 'a\\u0000b', -0, false) === 'symbol:strin
 symbol33GlobalDescription = globalDescription(Symbol()) === undefined &&
   globalDescription(Symbol('a\\u0000b')) === 'a\\u0000b' &&
   globalDescription(Symbol.iterator) === 'Symbol.iterator';
+symbol34GlobalLocalDeclaration = globalLocalDeclaration() === Symbol.iterator;
+symbol35GlobalLocalState = globalLocalState(key, other, 'fresh', 0, false) === key &&
+  globalLocalState(key, other, 'fresh', 1, false) === other &&
+  globalLocalState(key, other, 'fresh', 2, false) === key &&
+  globalLocalState(key, other, 'fresh', 1, true).description === 'fresh' &&
+  globalLocalState(key, other, 'fresh', 1, true) !== globalLocalState(key, other, 'fresh', 1, true);
+symbol36GlobalLocalTypes = globalLocalTypes(key, 'a\\u0000b', -0, false) === 'symbol:string:number:boolean:evaluation';
+symbol37GlobalLocalDescription = globalLocalDescription(Symbol()) === undefined &&
+  globalLocalDescription(Symbol('')) === '' &&
+  globalLocalDescription(Symbol('a\\u0000b')) === 'a\\u0000b' &&
+  globalLocalDescription(Symbol('\\ud800')) === '\\ud800' &&
+  globalLocalDescription(Symbol.iterator) === 'Symbol.iterator';
 }}
 observeHelpers();
 var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, false, 1) &&
@@ -659,6 +732,10 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
         "GlobalState",
         "GlobalTypes",
         "GlobalDescription",
+        "GlobalLocalDeclaration",
+        "GlobalLocalState",
+        "GlobalLocalTypes",
+        "GlobalLocalDescription",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -861,6 +938,25 @@ def main():
         for optimize in (False, True):
             refuse(ir, contract, f"helper-{name}-{optimize}", optimize=optimize)
     for name, body in {
+        "receiver": "function local(input) { return this; } return local(value);",
+        "unused-receiver": "function local(input) { return this; } return value;",
+        "capture": "function local() { return value; } return local();",
+        "recursive": "function local(input) { return local(input); } return local(value);",
+        "escape": "function local(input) { return input; } return local;",
+        "discarded-argument": "function local(input) { return Symbol.iterator; } return local(unknown());",
+        "unused-effect": "function local(input) { unknown(); return input; } return value;",
+        "shadowed-intrinsic": "function local(Symbol) { return Symbol.iterator; } return local(value);",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "global-local-" + name,
+            "function bad(key) { return helper(key); }\n" f"function helper(value) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["symbol"],
+        )
+        for optimize in (False, True):
+            refuse(ir, contract, f"global-local-{name}-{optimize}", optimize=optimize)
+    for name, body in {
         "strict-symbol": "return number === Symbol.iterator;",
         "loose-symbol": "return number == Symbol.iterator;",
         "strict-string": "return number === '1';",
@@ -893,6 +989,15 @@ def main():
         raise RuntimeError("global helper fingerprint control did not change its body")
     if "fingerprint mismatch" not in refuse(changed, contract, "global-stale"):
         raise RuntimeError("changed global helper body accepted a stale fingerprint")
+    ir, contract = accepted["global-local-declaration"]
+    for budget in (0, 1, 100, 500):
+        refuse(ir, contract, f"global-local-budget-{budget}", max_steps=budget)
+    changed = args.work / "global-local-stale.mlir"
+    changed.write_text(ir.read_text().replace('"iterator"', '"hasInstance"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("global local helper fingerprint control did not change its body")
+    if "fingerprint mismatch" not in refuse(changed, contract, "global-local-stale"):
+        raise RuntimeError("changed global local helper body accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

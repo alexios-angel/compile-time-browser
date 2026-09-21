@@ -112,6 +112,17 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
     if (depth == 64 || !active.insert(function).second) {
         return refuse("DOM helper call tree is recursive or too deep");
     }
+    if (directReceiver) {
+        // An inert receiver enclosure needs the complete local closure proof,
+        // just like a source closure call. Keep the restricted direct path
+        // when the original body observes its actual receiver.
+        directReceiver = false;
+        for (mlir::Operation * use :
+             function.getBody().front().getArgument(ctjs::arg_receiver).getUsers()) {
+            if (!step()) { return false; }
+            directReceiver |= !llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use);
+        }
+    }
     if (!normalizeCompletion(function) || !checkBody(function, entry, directReceiver, true)) {
         return false;
     }
