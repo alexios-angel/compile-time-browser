@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional child Maps and signed String slices, 2026-09-21 UTC
+
+Continued clean **9fd8337c** from the recorded conditional child-Map boundary.
+**e7cff7c2** proves result-free, Map-only branches from known outer `has`, `size`
+and `delete` observations. Selected child allocations move into their existing
+owner frame; skipped allocations disappear. Both arms pass the original use/effect
+census, and the unchanged concrete record-owner proof still checks every borrow.
+**1f315db4** admits signed literal `slice` bounds with uint32 magnitudes through
+the existing UTF-16 path. Clamping precedes unsigned subtraction; `charAt` and
+exact dataset-tail/first-unit authority retain their previous restrictions.
+
+Focused devbox validation passes: **one exact CTest and four distinct lit cases**.
+Captured class checks measure **122 source observations, 272 main native executions,
+244 unprepared refusals and 155 preparation refusals**, with new budget **994**.
+Intrinsic exports measure **408 native executions, 430 refusals and two mutations**,
+with **59 Node/VM agreements and five explicit known casing/indexing differences**.
+DOM Strings measure 809 observations and eight native binaries. All **eight final
+code/test hashes** match the devbox; scoped checks and 41 original class source
+files pass. Repository formatting retains 16 existing diagnostics in untouched files.
+No browser/runtime implementation changed. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** compose captured Data helper/constructor calls with conditional child
+origins and result-carrying short-circuit control flow. Original
+`Data.set(element, componentKey, this)` still needs both key dimensions, conflicts,
+nullable lookup and cleanup, with complete owner, observer, exception and reentry
+proofs. Original B/Data+B remains refused with its complete source intact.
+Negative `charAt`, dynamic/coercing String indices, broader String methods,
+conditional callees, branch-mutated boxed locals, String ordering, document views
+and the application driver remain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-conditional-maps-signed-slices.md).
+
 ## Finite nested Maps and String slice bounds, 2026-09-21 UTC
 
 Continued clean **a9eb0f33** from the recorded Data boundary.

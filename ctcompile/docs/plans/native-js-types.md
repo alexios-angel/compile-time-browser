@@ -231,11 +231,13 @@ proved String arm. Under an explicit String identity, `charAt` and `slice` with
 nonnegative uint32 integer literal indices reuse the existing UTF-16 operations
 and owning String extraction (**2e6dc90a**). **7f226c55** adds literal uint32
 `slice(start, end)` with checked bounds; reversed bounds produce an empty String.
-Offsets clamp to the UTF-16 length. Only one-argument `slice(1)` supplies dataset-tail authority.
+**1f315db4** adds signed literal `slice` bounds with uint32 magnitudes, including
+negative zero and mixed start/end signs. Magnitudes clamp to the UTF-16 length
+before unsigned subtraction. Only one-argument `slice(1)` supplies dataset-tail authority.
 **8e6e2e4d** also admits constant ASCII-prefix `startsWith` and
 `charAt(0).toLowerCase()` through their existing proofs and public Core helpers.
-Whole-string lowercase, non-ASCII prefixes and negative/dynamic/coercing indices
-remain separate. Dataset reconstruction and first-unit lowercase keep index 0/1 proofs.
+Whole-string lowercase, non-ASCII prefixes, negative `charAt` indices and
+dynamic/coercing indices remain separate. Dataset reconstruction and first-unit lowercase keep index 0/1 proofs.
 Empty String remains present; truthiness, another description read and uses after
 the guard grant no String authority. Mixed null/description joins remain separate.
 
@@ -243,14 +245,14 @@ the guard grant no String authority. Mixed null/description joins remain separat
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
 remain typed. With global/local helper composition, description guards and
-**7f226c55** literal String slice bounds, the export fixture checks **376 native executions,
-394 refusals and two mutations**, with **55 Node/VM agreements and four known VM
+**1f315db4** signed literal String slice bounds, the export fixture checks **408 native executions,
+430 refusals and two mutations**, with **59 Node/VM agreements and five known VM
 casing/indexing differences**. Native/Node Unicode expectations remain intact;
 no runtime implementation changed.
-[Exact nested-Map and String-bound evidence](../handoff/2026-09-21-nested-maps-slice-bounds.md).
+[Exact conditional-Map and signed String-bound evidence](../handoff/2026-09-21-conditional-maps-signed-slices.md).
 
-**Next source slice:** broader String methods, negative/dynamic/coercing indices
-and conditional callee transport. Branch-mutated boxed locals remain separate from immutable captures;
+**Next source slice:** broader String methods, negative `charAt` indices,
+dynamic/coercing indices and conditional callee transport. Branch-mutated boxed locals remain separate from immutable captures;
 mixed primitive unions and object coercion retain their own admission boundaries.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
@@ -640,8 +642,9 @@ existing `auto`/template deduction.
    return transport now emit in proved DOM and primitive-only entries. Source
    `.description` preserves owning undefined/String results. Exact primitive/Symbol
    parameters and local/global helper calls, including immutable local captures,
-   are implemented. Exact description guards permit literal uint32 `charAt`/`slice`
-   indices with explicit String identity, including ASCII-prefix checks and
+   are implemented. Exact description guards permit literal uint32 `charAt` indices
+   and signed literal `slice` bounds with uint32 magnitudes and explicit String identity,
+   including ASCII-prefix checks and
    isolated-first-unit lowercase; broader methods and indices remain separate.
    Registry, symbol-keyed fields and hooks remain
    separate. BigInt still needs its public non-Script core and ownership
