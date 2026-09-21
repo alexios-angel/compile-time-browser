@@ -50,8 +50,6 @@ REFUSALS = {
     "stored-member": "for (const node of R.find('*',anchor)) anchor.saved=node; return 0;",
     "mutated-snapshot": "const nodes=R.find('*',anchor); nodes[0]=anchor; "
     "for (const node of nodes) node.matches('*'); return 0;",
-    "nested-open": "for (const node of R.find('*',anchor)) "
-    "for (const child of node.querySelectorAll('*')) child.matches('*'); return 0;",
     "custom-iterator": "const nodes={ [Symbol.iterator]() { return anchor; } }; "
     "for (const node of nodes) node.matches('*'); return 0;",
     "replaced-open": "__ctbrowser_for_of_open=anchor; "

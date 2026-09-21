@@ -250,27 +250,39 @@ module {
 
     // Independent importer-shaped element iteration: the proxy's eager copy
     // is bounded, while a separate observation of the NodeList stays whole.
-    const auto iterated =
-        replaced(replaced(queried, "ctjs.get_property %keys[", "ctjs.get_property %iterable["),
-                 "    %lengthName =", R"MLIR(
+    const auto iterated = replaced(replaced(replaced(queried, "ctjs.compare lt %index, %length",
+                                                     "ctjs.compare lt %index, %materialized#1"),
+                                            "%key = ctjs.get_property %keys[%index]",
+                                            "%key = ctjs.get_property %materialized#0[%index]"),
+                                   "    %length = ctjs.get_property %keys[%lengthName]", R"MLIR(
+    %aliasLength = ctjs.get_property %keys[%lengthName]
     %open = ctjs.load_global "__ctbrowser_for_of_open"
     %undefined = ctjs.constant #ctjs.undefined
     %record = ctjs.call %open(%undefined, %keys)
-    %iterable = ctjs.iterable of %keys
-    %aliasKey = ctjs.constant #ctjs.string<"length">
-    %aliasLength = ctjs.get_property %keys[%aliasKey]
-    %lengthName =)MLIR");
+    %fast = ctjs.compare strict_eq %record, %undefined
+    %testFast = ctjs.truthy %fast
+    %materialized:2 = scf.if %testFast -> (!ctjs.value, !ctjs.value) {
+      %iterable = ctjs.iterable of %keys
+      %length = ctjs.get_property %iterable[%lengthName]
+      scf.yield %iterable, %length : !ctjs.value, !ctjs.value
+    } else {
+      scf.yield %keys, %aliasLength : !ctjs.value, !ctjs.value
+    })MLIR");
+    const auto iterationRequest = [&](mlir::ModuleOp input) {
+        auto request = contract;
+        request.datasetParameters.clear();
+        request.initialIntrinsics = {"Array", "Element", "__ctbrowser_for_of_open",
+                                     "__ctbrowser_iter_next", "__ctbrowser_iter_close"};
+        request.moduleSha256 = hostContractFingerprint(input);
+        return request;
+    };
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(iterated, &context);
         check(static_cast<bool>(input), "element for-of normalization fixture parses");
         if (!input) { continue; }
-        auto request = contract;
+        auto request = iterationRequest(*input);
         request.provider = provider;
-        request.datasetParameters.clear();
-        request.initialIntrinsics = {"Array", "Element", "__ctbrowser_for_of_open",
-                                     "__ctbrowser_iter_next", "__ctbrowser_iter_close"};
-        request.moduleSha256 = hostContractFingerprint(*input);
         if (auto failure = normalizeDOMIteration(*input, request, 100000)) {
             check(false, "element for-of normalizes through the complete snapshot proof");
             std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
@@ -295,6 +307,69 @@ module {
             DOMEntryAnalysis limited(*input, request, budget);
             check(limited.exhausted() && noEvidence(*input, limited),
                   "incomplete normalized iteration exposes no element or index evidence");
+        }
+    }
+    const auto bodyBegin = iterated.find("    %queryName =");
+    const auto bodyEnd = iterated.find("    ctjs.return %loop#2");
+    const auto discardedInput =
+        replaced(iterated, "    %queryName =",
+                 "    %discard = arith.constant false\n    scf.if %discard {\n" +
+                     iterated.substr(bodyBegin, bodyEnd - bodyBegin) +
+                     "      scf.yield\n    } else {\n      scf.yield\n    }\n    %queryName =");
+    for (const auto & [invalid, diagnostic] : {
+             std::pair{replaced(iterated, "ctjs.compare lt %index, %materialized#1",
+                                "ctjs.compare lt %index, %aliasLength"),
+                       "own length guard"},
+             std::pair{replaced(iterated, "ctjs.get_property %materialized#0[%index]",
+                                "ctjs.get_property %materialized#0[%one]"),
+                       "own length guard"},
+             std::pair{replaced(iterated, "ctjs.return %loop#2", "ctjs.return %materialized#0"),
+                       "escapes its observations"},
+             std::pair{replaced(iterated, "ctjs.compare strict_eq %record, %undefined",
+                                "ctjs.compare strict_eq %undefined, %undefined"),
+                       "exact source materialization arm"},
+             std::pair{discardedInput, "would discard a recorded input"},
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsafe element materialization fixture parses");
+        if (!input) { continue; }
+        auto request = iterationRequest(*input);
+        const auto reason = llvm::toString(normalizeDOMIteration(*input, request, 100000));
+        check(reason.find(diagnostic) != std::string::npos,
+              "unsafe materialization bounds, uses and discarded identities refuse");
+        request.moduleSha256 = hostContractFingerprint(*input);
+        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+              "refused private materialization publishes no borrowed evidence");
+    }
+    auto staleIteration = mlir::parseSourceString<mlir::ModuleOp>(iterated, &context);
+    check(static_cast<bool>(staleIteration), "materialization fingerprint fixture parses");
+    if (staleIteration) {
+        auto request = iterationRequest(*staleIteration);
+        mlir::Value aliasLength;
+        staleIteration->walk([&](ctjs::GetPropertyOp read) {
+            if (ctjs::constantKey(read.getKey()) == "length" &&
+                read.getObject().getDefiningOp<ctjs::CallOp>()) {
+                aliasLength = read.getResult();
+            }
+        });
+        staleIteration->walk([&](ctjs::CompareOp compare) {
+            if (compare.getKind() == ctjs::CompareKind::Lt) {
+                compare.getRhsMutable().assign(aliasLength);
+                compare->setAttr("ctnative.host_element_vector_index",
+                                 mlir::BoolAttr::get(&context, true));
+            }
+        });
+        const auto changed = hostContractFingerprint(*staleIteration);
+        for (bool fresh : {false, true}) {
+            if (fresh) { request.moduleSha256 = changed; }
+            const auto reason =
+                llvm::toString(normalizeDOMIteration(*staleIteration, request, 100000));
+            check(reason.find(fresh ? "own length" : "fingerprint") != std::string::npos,
+                  "stale fingerprints and forged reports cannot authorize uncapped copy bounds");
+            auto reproof = request;
+            reproof.moduleSha256 = hostContractFingerprint(*staleIteration);
+            check(noEvidence(*staleIteration, DOMEntryAnalysis(*staleIteration, reproof)),
+                  "failed private materialization reproof withholds all evidence");
         }
     }
 

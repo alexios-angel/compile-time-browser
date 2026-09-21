@@ -1,3 +1,4 @@
+#include "DOMSnapshotBounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -165,45 +166,9 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
             // Preserve the copied array's cap before aliasing its slots to the
             // original, possibly longer NodeList. A guard of nodes.length alone
             // cannot authorize copied[index]. Complete reproof checks the step.
-            bool guarded = false;
-            auto index = llvm::dyn_cast<mlir::BlockArgument>(observation.getKey());
-            for (auto * parent = observation->getParentOp(); parent && !guarded;
-                 parent = parent->getParentOp()) {
-                if (!spend()) { return error("DOM snapshot work budget exhausted"); }
-                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
-                    branch && branch.getThenRegion().isAncestor(observation->getParentRegion())) {
-                    auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
-                    auto compare = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
-                                         : ctjs::CompareOp{};
-                    auto bound = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>()
-                                         : ctjs::GetPropertyOp{};
-                    guarded = index && compare && compare.getKind() == ctjs::CompareKind::Lt &&
-                              compare.getLhs() == index && bound &&
-                              bound.getObject() == call.getResult() &&
-                              ctjs::constantKey(bound.getKey()) == "length";
-                    if (guarded) { break; }
-                }
-                auto consumer = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
-                if (!consumer || !index || !consumer.getAfter().hasOneBlock() ||
-                    !consumer.getBefore().hasOneBlock() ||
-                    index.getOwner() != &consumer.getAfter().front()) {
-                    continue;
-                }
-                auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(
-                    consumer.getBefore().front().getTerminator());
-                auto truth = condition ? condition.getCondition().getDefiningOp<ctjs::TruthyOp>()
-                                       : ctjs::TruthyOp{};
-                auto compare =
-                    truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
-                auto bound = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>()
-                                     : ctjs::GetPropertyOp{};
-                guarded = compare && compare.getKind() == ctjs::CompareKind::Lt && bound &&
-                          condition.getArgs().size() > index.getArgNumber() &&
-                          compare.getLhs() == condition.getArgs()[index.getArgNumber()] &&
-                          bound.getObject() == call.getResult() &&
-                          ctjs::constantKey(bound.getKey()) == "length";
+            if (!hasOwnSnapshotBound(observation, call.getResult(), spend)) {
+                return error("DOM copied index requires its own length guard");
             }
-            if (!guarded) { return error("DOM copied index requires its own length guard"); }
             indices.push_back(observation);
         }
         if (observations.empty()) { return error("DOM snapshot length is not observed"); }

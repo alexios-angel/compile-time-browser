@@ -11,10 +11,12 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
         return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
     };
     const auto precedes = [&](mlir::Operation * definition, mlir::Operation * use) {
-        // Immutable slots may be read in a nested source branch. Stores stay
-        // unconditional; loops and other region boundaries remain unproved.
+        // Immutable slots may be read repeatedly in nested branches and loops.
+        // The complete use census still requires unique unconditional stores;
+        // no backedge can replace a slot or carry the holder into another scope.
         while (use->getBlock() != definition->getBlock()) {
-            if (!spend() || !llvm::isa_and_nonnull<mlir::scf::IfOp>(use->getParentOp())) {
+            if (!spend() ||
+                !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(use->getParentOp())) {
                 return false;
             }
             use = use->getParentOp();

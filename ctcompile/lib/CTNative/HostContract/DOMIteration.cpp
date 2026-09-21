@@ -1,8 +1,8 @@
+#include "DOMSnapshotBounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
-#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
@@ -163,7 +163,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
     llvm::SmallVector<ctjs::CallOp> opens;
     bool hasLoop = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
-        if (!spend()) { return mlir::WalkResult::interrupt(); }
+        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+        }
         if (llvm::isa<mlir::scf::WhileOp>(operation)) {
             auto owner = operation->getParentOfType<ctjs::FuncOp>();
             hasLoop |= owner && owner.getSymName() == contract.entry;
@@ -176,6 +178,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
     });
     if (census.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
     if (opens.empty()) { return llvm::Error::success(); }
+    if (hostContractFingerprint(candidate) != contract.moduleSha256) {
+        return error("DOM iteration fingerprint mismatch");
+    }
     for (llvm::StringRef name :
          {"Array", "__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"}) {
         if (!llvm::is_contained(contract.initialIntrinsics, name)) {
@@ -187,168 +192,58 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
     };
     auto entry = candidate.lookupSymbol<ctjs::FuncOp>(contract.entry);
-    // ponytail: conditional and sequential snapshots only. Loop-nested opens
-    // need a proof of their changing prefix and scalar state.
     if (!entry || !hasLoop || !entry.getBody().hasOneBlock()) {
         return error("DOM iteration requires a structured source entry");
     }
-    for (ctjs::CallOp open : opens) {
-        auto * block = open->getBlock();
-        while (block != &entry.getBody().front()) {
-            if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(block->getParentOp());
-            if (!branch || !block->getParent()->hasOneBlock() || block->getNumArguments()) {
-                return error("DOM iteration requires sequential or conditional source iterators");
-            }
-            block = branch->getBlock();
-        }
-    }
+    struct Input {
+        ctjs::CallOp producer;
+        llvm::SmallVector<ctjs::GetPropertyOp> lengths;
+    };
+    llvm::SmallVector<Input> inputs;
+    llvm::DenseSet<mlir::Operation *> recorded;
+    llvm::DenseSet<mlir::Operation *> members;
     const auto normalize = [&](ctjs::CallOp open) -> llvm::Error {
         if (!undefined(open.getReceiver()) || open.getArgs().size() != 1) {
             return error("DOM iterator open requires one snapshot and an undefined receiver");
         }
 
-        // Reuse the complete DOM proof. Observe length in a private prefix;
-        // borrowed element snapshots must never gain a return capability.
-        const auto chargeClone = candidate.walk([&](mlir::Operation * operation) {
-            for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (chargeClone.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
-        mlir::IRMapping mapping;
-        mlir::OwningOpRef<mlir::ModuleOp> prefix =
-            llvm::cast<mlir::ModuleOp>(candidate->clone(mapping));
-        auto copiedOpen = llvm::cast<ctjs::CallOp>(mapping.lookup(open.getOperation()));
-        auto snapshot = copiedOpen.getArgs().front();
-        auto snapshotCall = snapshot.getDefiningOp<ctjs::CallOp>();
-        const bool copiedSnapshot = bool(snapshot.getDefiningOp<ctjs::CallSpreadOp>());
-        if (!snapshotCall && !copiedSnapshot) {
-            return error("DOM iterator input is not a proved owning snapshot");
-        }
-        auto * body = copiedOpen->getBlock();
-        while (&body->back() != copiedOpen) {
-            if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            body->back().erase();
-        }
-        copiedOpen.erase();
-        mlir::OpBuilder observe(body, body->end());
-        auto lengthKey = ctjs::ConstantOp::create(
-            observe, open.getLoc(), ctjs::StringAttr::get(candidate.getContext(), "length"));
-        ctjs::GetPropertyOp::create(observe, open.getLoc(), snapshot.getType(), snapshot,
-                                    lengthKey);
-        // The prefix witnesses just the path reaching this open. Keep each
-        // condition producer and dominating operation, but discard its suffix
-        // and other arm only in this private proof. The final entry proof still
-        // checks both original arms, including effects and joined scalar state.
-        while (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(body->getParentOp())) {
-            auto * parent = branch->getBlock();
-            while (&parent->back() != branch) {
-                if (!spend()) { return error("DOM iteration work budget exhausted"); }
-                parent->back().erase();
-            }
-            if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            // Retain the condition and its selected arm so document-root guards
-            // keep their authority. The unused arm has no prefix observations.
-            const bool selectedThen = body->getParent() == &branch.getThenRegion();
-            mlir::OpBuilder keep(branch);
-            auto kept = mlir::scf::IfOp::create(keep, branch.getLoc(), mlir::TypeRange{},
-                                                branch.getCondition());
-            for (mlir::Region & region : kept->getRegions()) {
-                auto & arm = region.emplaceBlock();
-                if ((&region == &kept.getThenRegion()) == selectedThen) {
-                    arm.getOperations().splice(arm.end(), body->getOperations());
-                }
-                mlir::OpBuilder exit(&arm, arm.end());
-                mlir::scf::YieldOp::create(exit, branch.getLoc());
-            }
-            branch.erase();
-            body = parent;
-        }
-        ctjs::FrameEnterOp frame;
-        for (mlir::Operation & operation : *body) {
-            if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) { frame = entered; }
-            if (llvm::isa<ctjs::FrameExitOp>(operation)) { frame = {}; }
-        }
-        auto copiedLoad =
-            llvm::cast<ctjs::LoadGlobalOp>(mapping.lookup(open.getCallee().getDefiningOp()));
-        if (copiedLoad.getResult().use_empty()) { copiedLoad.erase(); }
-        mlir::OpBuilder at(body, body->end());
-        if (frame) { ctjs::FrameExitOp::create(at, open.getLoc(), frame.getContext()); }
-        auto emptyResult = ctjs::ConstantOp::create(
-            at, open.getLoc(), ctjs::UndefinedAttr::get(candidate.getContext()));
-        ctjs::ReturnOp::create(at, open.getLoc(), emptyResult);
-        // A callback created only in the removed suffix has no identity in
-        // this temporary prefix. The original candidate retains its whole body
-        // and every invocation for the final DOM proof before publication.
-        llvm::DenseSet<unsigned> prefixCallbacks;
-        unsigned prefixOperations = 0;
-        const auto callbacks = prefix->walk([&](mlir::Operation * operation) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
-            ++prefixOperations;
-            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                closure && closure.getFunction() >= 0) {
-                prefixCallbacks.insert(static_cast<unsigned>(closure.getFunction()));
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (callbacks.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
-        for (auto function : llvm::make_early_inc_range(prefix->getOps<ctjs::FuncOp>())) {
-            if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            const auto index = functionIndex(function);
-            if (!index || *index == 0 || function.getSymName() == contract.entry ||
-                prefixCallbacks.contains(*index)) {
-                continue;
-            }
-            if (remaining / 2 < prefixOperations) {
-                return error("DOM iteration work budget exhausted");
-            }
-            remaining -= 2 * prefixOperations;
-            if (mlir::SymbolTable::symbolKnownUseEmpty(function, prefix->getOperation()) &&
-                mlir::SymbolTable::symbolKnownUseEmpty(function, &prefix->getBodyRegion())) {
-                function.erase();
-            }
-        }
-        HostContract prefixContract = contract;
-        const auto chargeFingerprint = prefix->walk([&](mlir::Operation * operation) {
-            for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (chargeFingerprint.wasInterrupted()) {
-            return error("DOM iteration work budget exhausted");
-        }
-        prefixContract.moduleSha256 = hostContractFingerprint(*prefix);
-        mlir::IRMapping snapshotMapping;
-        unsigned snapshotWork = 0;
-        if (auto failure = normalizeDOMSnapshotLengths(*prefix, prefixContract, remaining,
-                                                       &snapshotMapping, &snapshotWork)) {
-            return failure;
-        }
-        remaining -= snapshotWork;
-        if (snapshotCall) {
-            snapshotCall = llvm::cast<ctjs::CallOp>(
-                snapshotMapping.lookupOrDefault(snapshotCall.getOperation()));
-        }
-        prefixContract.moduleSha256 = hostContractFingerprint(*prefix);
-        const DOMEntryAnalysis proof(*prefix, prefixContract, remaining);
-        if (!proof.proved()) {
-            return error(("DOM iterator snapshot prefix: " + proof.reason()).str());
-        }
-        remaining -= proof.steps();
-        const auto * edge = snapshotCall ? proof.call(snapshotCall) : nullptr;
-        if (!copiedSnapshot &&
-            (!edge || (!edge->returnsStringVector() && !edge->returnsElementVector()))) {
-            return error("DOM iterator input is not a proved owning snapshot");
-        }
-        const bool proxySnapshot = edge && edge->returnsElementVector();
-        if (proxySnapshot && !llvm::is_contained(contract.initialIntrinsics, "Element")) {
-            return error("DOM element iteration requires original Element wrapper identities");
+        if (open->getParentOfType<ctjs::FuncOp>() != entry) {
+            return error("DOM iterator must belong to the complete entry");
         }
         const mlir::Value originalSnapshot = open.getArgs().front();
+        auto producer = originalSnapshot.getDefiningOp<ctjs::CallOp>();
+        if (!producer && !originalSnapshot.getDefiningOp<ctjs::CallSpreadOp>()) {
+            return error("DOM iterator input is not a proved owning snapshot");
+        }
+        // Only the importer's exact materialization arm belongs to this open.
+        // A separate spread of the same source must keep its own copy semantics.
+        llvm::DenseSet<mlir::Operation *> materializations;
+        const auto find = entry.walk([&](mlir::Operation * operation) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            auto iterable = llvm::dyn_cast<ctjs::IterableOp>(operation);
+            if (!iterable || iterable.getSource() != originalSnapshot) {
+                return mlir::WalkResult::advance();
+            }
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(iterable->getParentOp());
+            auto truth =
+                branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
+            auto compare =
+                truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
+            if (branch && iterable->getParentRegion() == &branch.getThenRegion() && compare &&
+                compare.getKind() == ctjs::CompareKind::StrictEq &&
+                ((compare.getLhs() == open.getResult() && undefined(compare.getRhs())) ||
+                 (compare.getRhs() == open.getResult() && undefined(compare.getLhs())))) {
+                materializations.insert(operation);
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (find.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
+        if (materializations.empty()) {
+            return error("DOM iterator requires its exact source materialization arm");
+        }
+        recorded.insert(originalSnapshot.getDefiningOp());
+        auto & input = inputs.emplace_back(producer);
+        mlir::OpBuilder at(open);
         auto * iterationBody = open->getBlock();
         at.setInsertionPoint(open);
         for (mlir::OpOperand & use : open.getResult().getUses()) {
@@ -385,13 +280,20 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                 }
                 at.setInsertionPoint(operation);
                 if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+                    const bool bothUndefined =
+                        undefined(compare.getLhs()) && undefined(compare.getRhs());
+                    const bool definedMember =
+                        (members.contains(compare.getLhs().getDefiningOp()) &&
+                         undefined(compare.getRhs())) ||
+                        (undefined(compare.getLhs()) &&
+                         members.contains(compare.getRhs().getDefiningOp()));
                     if (compare.getKind() == ctjs::CompareKind::StrictEq &&
-                        undefined(compare.getLhs()) && undefined(compare.getRhs())) {
+                        (bothUndefined || definedMember)) {
+                        // A bounded snapshot member cannot select a helper's
+                        // undefined default. Reprove each member after copying.
                         auto value = ctjs::ConstantOp::create(
                             at, compare.getLoc(),
-                            ctjs::BooleanAttr::get(candidate.getContext(),
-                                                   compare.getKind() ==
-                                                       ctjs::CompareKind::StrictEq));
+                            ctjs::BooleanAttr::get(candidate.getContext(), bothUndefined));
                         compare.getResult().replaceAllUsesWith(value.getResult());
                         compare.erase();
                         changed = true;
@@ -425,6 +327,22 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                         if (!yield || yield.getOperandTypes() != branch.getResultTypes()) {
                             return error("DOM iterator branch lost its value correspondence");
                         }
+                        // ponytail: recorded inputs in later-discarded arms refuse.
+                        // Pre-prune those arms if their admission becomes necessary.
+                        for (mlir::Region & region : branch->getRegions()) {
+                            if (&region == &selected) { continue; }
+                            const auto discarded = region.walk([&](mlir::Operation * dead) {
+                                if (!spend() || recorded.contains(dead)) {
+                                    return mlir::WalkResult::interrupt();
+                                }
+                                return mlir::WalkResult::advance();
+                            });
+                            if (discarded.wasInterrupted()) {
+                                return error(remaining
+                                                 ? "DOM iteration would discard a recorded input"
+                                                 : "DOM iteration work budget exhausted");
+                            }
+                        }
                         for (auto [result, value] :
                              llvm::zip(branch.getResults(), yield.getOperands())) {
                             result.replaceAllUsesWith(value);
@@ -439,46 +357,29 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     }
                 }
                 if (auto iterable = llvm::dyn_cast<ctjs::IterableOp>(operation);
-                    iterable && iterable->getOperand(0) == originalSnapshot) {
-                    llvm::SmallVector<ctjs::GetPropertyOp> lengths;
-                    if (proxySnapshot) {
-                        for (mlir::Operation * user : iterable->getUsers()) {
-                            if (!spend()) { return error("DOM iteration work budget exhausted"); }
-                            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
-                            if (read && read.getObject() == iterable.getResult() &&
-                                ctjs::constantKey(read.getKey()) == "length") {
-                                lengths.push_back(read);
-                            }
+                    iterable && materializations.contains(operation)) {
+                    for (mlir::Operation * user : iterable->getUsers()) {
+                        if (!spend()) { return error("DOM iteration work budget exhausted"); }
+                        if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                        if (!read || read.getObject() != iterable.getResult()) {
+                            return error("DOM iteration materialization escapes its observations");
+                        }
+                        if (ctjs::constantKey(read.getKey()) == "length") {
+                            input.lengths.push_back(read);
+                            recorded.insert(read);
+                        } else if (!hasOwnSnapshotBound(read, iterable.getResult(), spend)) {
+                            return error(remaining
+                                             ? "DOM iterated index requires its own length guard"
+                                             : "DOM iteration work budget exhausted");
+                        } else {
+                            members.insert(read);
+                            recorded.insert(read);
                         }
                     }
                     iterable.getResult().replaceAllUsesWith(originalSnapshot);
+                    materializations.erase(operation);
                     iterable.erase();
-                    for (ctjs::GetPropertyOp length : lengths) {
-                        // Proxy iteration copies only the first 2^24 slots. The
-                        // original query snapshot and other aliases stay whole.
-                        at.setInsertionPoint(length);
-                        auto size =
-                            ctjs::GetPropertyOp::create(at, length.getLoc(), length.getType(),
-                                                        originalSnapshot, length.getKey());
-                        auto cap = ctjs::ConstantOp::create(
-                            at, length.getLoc(),
-                            ctjs::NumberAttr::get(candidate.getContext(),
-                                                  std::bit_cast<uint64_t>(double(1U << 24))));
-                        auto less = ctjs::CompareOp::create(at, length.getLoc(), length.getType(),
-                                                            ctjs::CompareKind::Lt, size, cap);
-                        auto test =
-                            ctjs::TruthyOp::create(at, length.getLoc(), at.getI1Type(), less);
-                        auto bounded = mlir::scf::IfOp::create(at, length.getLoc(),
-                                                               length->getResultTypes(), test);
-                        for (auto [region, value] : llvm::zip(
-                                 bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
-                            auto & arm = region.emplaceBlock();
-                            mlir::OpBuilder exit(&arm, arm.end());
-                            mlir::scf::YieldOp::create(exit, length.getLoc(), value);
-                        }
-                        length.getResult().replaceAllUsesWith(bounded.getResult(0));
-                        length.erase();
-                    }
                     changed = true;
                     break;
                 }
@@ -510,10 +411,13 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                 }
             }
         }
+        if (!materializations.empty()) {
+            return error("DOM iteration lost its source materialization");
+        }
         return llvm::Error::success();
     };
-    // Source order matters: each prefix includes every earlier normalized loop,
-    // so the same complete proof checks effects and snapshot state between opens.
+    // Normalize privately, then prove every input and the entire live entry.
+    // Nested queries stay in their original bodies; no loop state is invented.
     while (!opens.empty()) {
         if (auto failure = normalize(opens.front())) { return failure; }
         // Constant branch folding can erase another open in an unreachable arm.
@@ -529,6 +433,97 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         });
         if (scan.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
     }
+    auto transformed = contract;
+    const auto fingerprint = [&] {
+        const auto charged = candidate.walk([&](mlir::Operation * operation) {
+            for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (charged.wasInterrupted()) { return false; }
+        transformed.moduleSha256 = hostContractFingerprint(candidate);
+        return true;
+    };
+    if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
+    mlir::IRMapping mapping;
+    unsigned snapshotWork = 0;
+    if (auto failure = normalizeDOMSnapshotLengths(candidate, transformed, remaining, &mapping,
+                                                   &snapshotWork)) {
+        return failure;
+    }
+    remaining -= snapshotWork;
+    if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
+    const DOMEntryAnalysis proof(candidate, transformed, remaining);
+    if (!proof.proved()) { return error(("DOM iterator entry: " + proof.reason()).str()); }
+    remaining -= proof.steps();
+    llvm::DenseSet<mlir::Operation *> live;
+    const auto censusLive = candidate.walk([&](mlir::Operation * operation) {
+        if (!spend()) { return mlir::WalkResult::interrupt(); }
+        live.insert(operation);
+        return mlir::WalkResult::advance();
+    });
+    if (censusLive.wasInterrupted()) { return error("DOM iteration work budget exhausted"); }
+    for (mlir::Operation * member : members) {
+        if (!spend()) { return error("DOM iteration work budget exhausted"); }
+        auto * mapped = mapping.lookupOrDefault(member);
+        if (!live.contains(mapped)) { return error("DOM iteration lost its indexed member"); }
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(mapped);
+        if (!read || (!proof.isElementVectorIndex(read) && !proof.isStringVectorIndex(read))) {
+            return error("DOM iteration member lacks a proved snapshot index");
+        }
+    }
+    for (Input & input : inputs) {
+        if (!spend()) { return error("DOM iteration work budget exhausted"); }
+        // Spread producers have been erased only by the complete confined-copy
+        // proof above. Never dereference their deleted IRMapping targets.
+        if (!input.producer) { continue; }
+        auto * mapped = mapping.lookupOrDefault(input.producer.getOperation());
+        if (!live.contains(mapped)) { return error("DOM iterator lost its input producer"); }
+        auto producer = llvm::dyn_cast<ctjs::CallOp>(mapped);
+        const auto * edge = producer ? proof.call(producer) : nullptr;
+        if (!edge || (!edge->returnsStringVector() && !edge->returnsElementVector())) {
+            return error("DOM iterator input is not a proved owning snapshot");
+        }
+        if (!edge->returnsElementVector()) { continue; }
+        if (!llvm::is_contained(contract.initialIntrinsics, "Element")) {
+            return error("DOM element iteration requires original Element wrapper identities");
+        }
+        for (ctjs::GetPropertyOp original : input.lengths) {
+            if (!spend()) { return error("DOM iteration work budget exhausted"); }
+            auto * mappedLength = mapping.lookupOrDefault(original.getOperation());
+            if (!live.contains(mappedLength)) { return error("DOM iteration lost its length"); }
+            auto length = llvm::dyn_cast<ctjs::GetPropertyOp>(mappedLength);
+            if (!length || !proof.isElementVectorLength(length)) {
+                return error("DOM iteration length lacks complete element snapshot evidence");
+            }
+            // Only materialization length is capped. Other NodeList aliases
+            // still observe the whole collection, including after DOM writes.
+            mlir::OpBuilder at(length);
+            auto size = ctjs::GetPropertyOp::create(at, length.getLoc(), length.getType(),
+                                                    length.getObject(), length.getKey());
+            auto cap = ctjs::ConstantOp::create(
+                at, length.getLoc(),
+                ctjs::NumberAttr::get(candidate.getContext(),
+                                      std::bit_cast<uint64_t>(double(1U << 24))));
+            auto less = ctjs::CompareOp::create(at, length.getLoc(), length.getType(),
+                                                ctjs::CompareKind::Lt, size, cap);
+            auto test = ctjs::TruthyOp::create(at, length.getLoc(), at.getI1Type(), less);
+            auto bounded =
+                mlir::scf::IfOp::create(at, length.getLoc(), length->getResultTypes(), test);
+            for (auto [region, value] :
+                 llvm::zip(bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
+                auto & arm = region.emplaceBlock();
+                mlir::OpBuilder exit(&arm, arm.end());
+                mlir::scf::YieldOp::create(exit, length.getLoc(), value);
+            }
+            length.getResult().replaceAllUsesWith(bounded.getResult(0));
+            length.erase();
+        }
+    }
+    if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
+    const DOMEntryAnalysis capped(candidate, transformed, remaining);
+    if (!capped.proved()) { return error(("DOM iterator capped entry: " + capped.reason()).str()); }
     return llvm::Error::success();
 }
 
