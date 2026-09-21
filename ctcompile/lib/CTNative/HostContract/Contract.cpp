@@ -72,6 +72,7 @@ const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
         "JSON",
         "Array",
         "String",
+        "Symbol",
         "RegExp",
         "Element",
         "Function",

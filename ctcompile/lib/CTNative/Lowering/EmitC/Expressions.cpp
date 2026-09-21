@@ -88,7 +88,8 @@ mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, ml
                    mlir::ValueRange{value})
             .getResult(0);
     }
-    if (isIdentityCarrier(value.getType())) {
+    if (isIdentityCarrier(value.getType()) ||
+        value.getType() == carrierType(context, carrier::symbol)) {
         return ec::ConstantOp::create(builder, where, mlir::IntegerType::get(context, 1),
                                       builder.getBoolAttr(true));
     }

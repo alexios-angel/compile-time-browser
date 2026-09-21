@@ -5,6 +5,11 @@
 namespace ctcompile::ctnative::dom_entry_detail {
 
 namespace {
+const llvm::StringSet<> wellKnownSymbols{
+#define CTBROWSER_WELL_KNOWN_SYMBOL(name) #name,
+#include "ctbrowser/core/well_known_symbols.def"
+#undef CTBROWSER_WELL_KNOWN_SYMBOL
+};
 const llvm::StringMap<std::pair<Kind, HostDOMMethod>> stringMethods{
     {"startsWith", {Kind::startsWith, HostDOMMethod::startsWith}},
     {"replace", {Kind::replacePrefix, HostDOMMethod::removeStringPrefix}},
@@ -40,6 +45,11 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[load.getResult()] = Kind::undefined;
             return true;
         }
+        if (suppliedSymbol && load.getName() == "Symbol") {
+            values[load.getResult()] = Kind::symbolIntrinsic;
+            provedSymbolIntrinsics.insert(load);
+            return true;
+        }
         if (suppliedElement && load.getName() == "Element") {
             values[load.getResult()] = Kind::elementIntrinsic;
             provedElementIntrinsics.insert(load);
@@ -73,6 +83,13 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
         const auto key = ctjs::constantKey(read.getKey());
+        // Bound catalog lookup work by the longest standard property name.
+        if (hasKind(read.getObject(), Kind::symbolIntrinsic) && key.size() <= 18 &&
+            wellKnownSymbols.contains(key)) {
+            values[read.getResult()] = Kind::symbol;
+            provedSymbols.try_emplace(read, key);
+            return true;
+        }
         if (hasKind(read.getObject(), Kind::elementIntrinsic) && key == "prototype") {
             values[read.getResult()] = Kind::elementPrototype;
             provedElementPrototypes.insert(read);

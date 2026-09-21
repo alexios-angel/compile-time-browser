@@ -25,9 +25,10 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read && (domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read) ||
-                     domEntry->isElementVectorLength(read) ||
-                     domEntry->isElementVectorIndex(read) || domEntry->datasetValueElement(read))) {
+            read &&
+            (!domEntry->wellKnownSymbol(read).empty() || domEntry->isStringVectorLength(read) ||
+             domEntry->isStringVectorIndex(read) || domEntry->isElementVectorLength(read) ||
+             domEntry->isElementVectorIndex(read) || domEntry->datasetValueElement(read))) {
             return true;
         }
         if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);
@@ -639,7 +640,8 @@ bool admission::op(mlir::Operation * o) {
         case UnaryKind::Neg:
         case UnaryKind::Plus: return numericOperand(u.getOperand(), "unary");
         case UnaryKind::TypeOf:
-            return isPrimitiveCarrier(carrierOf(typeOf(u.getOperand()))) ||
+            return carrierOf(typeOf(u.getOperand())) == carrier::symbol ||
+                   isPrimitiveCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    isObjectCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    refuse("typeof requires a scalar, object identity or owning string carrier");
         case UnaryKind::Not:
@@ -661,6 +663,10 @@ bool admission::op(mlir::Operation * o) {
             return numeric(cmp.getLhs(), "compare") && numeric(cmp.getRhs(), "compare");
         case CompareKind::Eq:
         case CompareKind::StrictEq:
+            if (carrierOf(typeOf(cmp.getLhs())) == carrier::symbol &&
+                carrierOf(typeOf(cmp.getRhs())) == carrier::symbol) {
+                return true;
+            }
             if (stringEquality(typeOf(cmp.getLhs()), typeOf(cmp.getRhs()))) { return true; }
             if (isObjectCarrier(carrierOf(typeOf(cmp.getLhs()))) ||
                 isObjectCarrier(carrierOf(typeOf(cmp.getRhs())))) {

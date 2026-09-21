@@ -50,6 +50,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
         });
         function.walk([&](ctjs::GetPropertyOp read) {
+            if (auto name = entry.wellKnownSymbol(read); !name.empty()) {
+                domSymbols.try_emplace(read, name);
+            }
             if (entry.isStringVectorLength(read) || entry.isElementVectorLength(read)) {
                 vectorLengthReads.insert(read);
             }
@@ -185,6 +188,15 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                    ? convertScalar(at, where, value, rawString)
                    : value;
     };
+    if (auto found = domSymbols.find(operation); found != domSymbols.end()) {
+        auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
+        auto value = ec::ConstantOp::create(
+            at, where, carrierType(context, carrier::symbol),
+            ec::OpaqueAttr::get(context, ("ctnative::Symbol." + found->second).str()));
+        read.getResult().replaceAllUsesWith(value.getResult());
+        read.erase();
+        return true;
+    }
     if (auto found = domDatasetValues.find(operation); found != domDatasetValues.end()) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
         auto value = callWithConstValueOperands(

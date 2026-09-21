@@ -283,7 +283,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             (hasKind(unary.getOperand(), Kind::optionalString) ||
              hasKind(unary.getOperand(), Kind::string) || hasKind(unary.getOperand(), Kind::null) ||
              hasKind(unary.getOperand(), Kind::json) ||
-             hasKind(unary.getOperand(), Kind::jsonAggregate))) {
+             hasKind(unary.getOperand(), Kind::jsonAggregate) ||
+             hasKind(unary.getOperand(), Kind::symbol))) {
             if (!spend()) { return false; }
             values[unary.getResult()] = Kind::string;
             // JSON's object tag includes null and arrays, never member
@@ -324,7 +325,9 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                     continue;
                 }
             }
-            if (strings ||
+            const bool symbols =
+                hasKind(compare.getLhs(), Kind::symbol) && hasKind(compare.getRhs(), Kind::symbol);
+            if (strings || symbols ||
                 (strict &&
                  ((elementIdentity(compare.getLhs()) && elementIdentity(compare.getRhs())) ||
                   (stringOrNull(compare.getLhs()) && stringOrNull(compare.getRhs()))))) {
@@ -355,7 +358,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
              hasKind(truth.getValue(), Kind::string) ||
              hasKind(truth.getValue(), Kind::optionalString) ||
              hasKind(truth.getValue(), Kind::nullableElement) ||
-             hasKind(truth.getValue(), Kind::null))) {
+             hasKind(truth.getValue(), Kind::null) || hasKind(truth.getValue(), Kind::symbol))) {
             values[truth.getResult()] = Kind::boolean;
             if (!spend()) { return false; }
             if (auto found = constantBooleans.find(truth.getValue());
@@ -387,7 +390,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
              hasKind(unary.getOperand(), Kind::optionalString) ||
              hasKind(unary.getOperand(), Kind::string) ||
              hasKind(unary.getOperand(), Kind::nullableElement) ||
-             hasKind(unary.getOperand(), Kind::null))) {
+             hasKind(unary.getOperand(), Kind::null) ||
+             hasKind(unary.getOperand(), Kind::symbol))) {
             values[unary.getResult()] = Kind::boolean;
             if (!spend()) { return false; }
             if (auto found = predicates.find(unary.getOperand()); found != predicates.end()) {

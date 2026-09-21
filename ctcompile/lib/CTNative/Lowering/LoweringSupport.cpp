@@ -44,6 +44,7 @@ mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternati
 carrier carrierOf(mlir::Type type) {
     if (type == nullptr) { return carrier::none; }
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
+    if (llvm::isa<SymbolType>(type)) { return carrier::symbol; }
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
@@ -338,6 +339,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::methodTable:
         llvm::report_fatal_error("method table carrier needs its proved schema");
     case carrier::boolean: return ec::OpaqueType::get(c, kBooleanType);
+    case carrier::symbol: return ec::OpaqueType::get(c, kSymbolType);
     case carrier::number: return ec::OpaqueType::get(c, kNumberType);
     case carrier::string: return ec::OpaqueType::get(c, kStringType);
     case carrier::structure:

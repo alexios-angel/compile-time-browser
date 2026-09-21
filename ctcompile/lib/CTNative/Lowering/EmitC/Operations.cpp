@@ -426,7 +426,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             swap(number(b, where, u.getOperand()));
             return;
         case UnaryKind::TypeOf:
-            if (isObjectValueCarrier(u.getOperand().getType())) {
+            if (u.getOperand().getType() == carrierType(context, carrier::symbol)) {
+                swap(stringConstant(b, where, "symbol"));
+            } else if (isObjectValueCarrier(u.getOperand().getType())) {
                 needsObjectValue = true;
                 swap(convertScalar(
                     b, where,

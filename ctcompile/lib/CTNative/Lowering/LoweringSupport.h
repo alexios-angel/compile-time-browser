@@ -46,6 +46,7 @@ namespace ec = mlir::emitc;
 enum class carrier {
     none,
     boolean,
+    symbol,
     number,
     nullable,
     string,
@@ -72,6 +73,7 @@ inline constexpr llvm::StringLiteral kStringType = "ctnative::js_string";
 inline constexpr llvm::StringLiteral kRawStringType = "std::string";
 inline constexpr llvm::StringLiteral kNumberType = "ctnative::js_num";
 inline constexpr llvm::StringLiteral kBooleanType = "ctnative::js_boolean_t";
+inline constexpr llvm::StringLiteral kSymbolType = "ctnative::js_symbol_t";
 inline constexpr llvm::StringLiteral kBooleanStringType = "ctnative::boolean_string";
 inline constexpr llvm::StringLiteral kNullableBooleanStringType =
     "ctnative::nullable_boolean_string";
