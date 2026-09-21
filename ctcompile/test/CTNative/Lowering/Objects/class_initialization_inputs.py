@@ -16,6 +16,24 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-constructor-holder-alias-capture": (7, 7),
+    "class-map-record-constructor-holder-map-alias-capture": (707, 707),
+    "class-map-record-constructor-holder-late-slot": (7, 7),
+    "class-map-record-constructor-holder-direct": (771, 771),
+    "class-map-record-constructor-holder-overwrite-delete": (59592, 59592),
+    "class-map-record-constructor-holder-numeric": (771, 771),
+    "class-map-record-constructor-holder-escaped": (7, 7),
+    "class-map-record-constructor-holder-alias": (7, 7),
+    "class-map-record-constructor-holder-captured-observer": (7, 7),
+    "class-map-record-constructor-holder-second-slot": (7, 7),
+    "class-map-record-constructor-holder-second-constructor": (207, 207),
+    "class-map-record-constructor-holder-early": (707, 707),
+    "class-map-record-constructor-holder-throw-after": (709, 709),
+    "class-map-record-constructor-holder-receiver": (7, 7),
+    "class-map-record-constructor-holder-replaced": (7, 7),
+    "class-map-record-constructor-holder-map-observer": (707, 707),
+    "class-map-record-constructor-holder-helper-write": (808, 808),
+    "class-map-record-constructor-holder-helper-return": (707, 707),
     "class-map-record-captured-holder-direct": (771, 771),
     "class-map-record-captured-holder-overwrite-delete": (59592, 59592),
     "class-map-record-captured-holder-distinct": (5757, 5757),
@@ -635,6 +653,9 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-constructor-holder-direct",
+    "class-map-record-constructor-holder-overwrite-delete",
+    "class-map-record-constructor-holder-numeric",
     "class-map-record-captured-holder-direct",
     "class-map-record-captured-holder-overwrite-delete",
     "class-map-record-captured-holder-distinct",

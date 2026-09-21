@@ -4,7 +4,7 @@ namespace ctcompile::ctnative::class_detail {
 
 bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp constructor,
                                                      const HostContract & contract) {
-    // ponytail: one pure registration helper used only by one leaf constructor.
+    // ponytail: one pure registration helper, direct or in one exact holder slot.
     // Shared helpers and earlier publication need a complete observer proof.
     auto function = target(constructor);
     if (contract.provider != HostContract::Provider::closedSource ||
@@ -14,7 +14,63 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     }
     auto helperCell = constructor.getUpvalues().front();
     if (!cells.contains(helperCell)) { return true; }
-    auto helper = sourceValue(cells.lookup(helperCell)).getDefiningOp<ctjs::CreateClosureOp>();
+    auto source = sourceValue(cells.lookup(helperCell));
+    auto helper = source.getDefiningOp<ctjs::CreateClosureOp>();
+    auto holder = source.getDefiningOp<ctjs::CreateObjectOp>();
+    auto & body = function.getBody().front();
+    ctjs::LoadUpvalueOp selectedHelper;
+    for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
+        if (!step()) { return false; }
+        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+        auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+        if (!load || load.getIndex() != 0 || selectedHelper || load->getBlock() != &body) {
+            return true;
+        }
+        selectedHelper = load;
+    }
+    if (!selectedHelper) { return true; }
+    ctjs::SetPropertyOp holderSlot;
+    ctjs::GetPropertyOp holderRead;
+    ctjs::CallOp invocation;
+    if (holder) {
+        if (holder->getBlock() != constructor->getBlock() ||
+            !holder->isBeforeInBlock(constructor)) {
+            return true;
+        }
+        // The raw cell/alias census below proves every omitted transport.
+        // Project only this constructor's sole captured holder read.
+        auto proof = analyzeLocalCallableObject(
+            holder, [&] { return step(); },
+            [&](mlir::Value value) {
+                auto uses = sourceUses(value);
+                for (mlir::OpOperand & use : selectedHelper.getResult().getUses()) {
+                    if (!step()) { break; }
+                    uses.push_back(&use);
+                }
+                return uses;
+            });
+        if (!proof) {
+            llvm::consumeError(proof.takeError());
+            return reason.empty();
+        }
+        if (proof->stores.size() != 1 || proof->reads.size() != 1 || proof->calls.size() != 1) {
+            return true;
+        }
+        holderSlot = proof->stores.front();
+        holderRead = proof->reads.front().first;
+        helper = proof->reads.front().second;
+        invocation = llvm::dyn_cast<ctjs::CallOp>(proof->calls.front());
+        if (!ctjs::ordinaryKey(holderSlot.getKey()) || !holderSlot->isBeforeInBlock(constructor) ||
+            holderRead.getObject() != selectedHelper.getResult() || !invocation ||
+            invocation.getCallee() != holderRead.getResult() ||
+            invocation.getReceiver() != selectedHelper.getResult()) {
+            return true;
+        }
+        for (mlir::Operation * user : holderRead->getUsers()) {
+            if (!step()) { return false; }
+            if (user != invocation && !llvm::isa<ctjs::RootOp>(user)) { return true; }
+        }
+    }
     auto targetFunction = target(helper);
     if (!targetFunction || helper.getUpvalues().size() != 1 ||
         helper->getBlock() != constructor->getBlock() || !helper->isBeforeInBlock(constructor) ||
@@ -38,14 +94,13 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         return true;
     }
     auto & helperBody = targetFunction.getBody().front();
-    auto & body = function.getBody().front();
     if (helperBody.getNumArguments() != ctjs::implicit_arguments + 1 ||
         !helperBody.getArgument(ctjs::arg_receiver).use_empty() ||
         !helperBody.getArgument(ctjs::arg_new_target).use_empty()) {
         return true;
     }
-    ctjs::LoadUpvalueOp captured, selectedHelper;
-    ctjs::CallOp publication, invocation;
+    ctjs::LoadUpvalueOp captured;
+    ctjs::CallOp publication;
     ctjs::GetPropertyOp selection;
     for (mlir::Operation & op : helperBody) {
         if (!step()) { return false; }
@@ -81,28 +136,22 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         if (!step()) { return false; }
         if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
     }
-    for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
-        if (!step()) { return false; }
-        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-        auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
-        if (!load || load.getIndex() != 0 || selectedHelper || load->getBlock() != &body) {
-            return true;
+    if (!holder) {
+        for (mlir::OpOperand & use : selectedHelper.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            if (!call || invocation || use.getOperandNumber() != 0 ||
+                !undefined(call.getReceiver())) {
+                return true;
+            }
+            invocation = call;
         }
-        selectedHelper = load;
     }
-    if (!selectedHelper) { return true; }
-    for (mlir::OpOperand & use : selectedHelper.getResult().getUses()) {
-        if (!step()) { return false; }
-        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-        if (!call || invocation || use.getOperandNumber() != 0 || call->getBlock() != &body ||
-            !undefined(call.getReceiver()) || call.getArgs().size() != 1 ||
-            call.getArgs().front() != body.getArgument(ctjs::arg_receiver)) {
-            return true;
-        }
-        invocation = call;
+    if (!invocation || invocation->getBlock() != &body || invocation.getArgs().size() != 1 ||
+        invocation.getArgs().front() != body.getArgument(ctjs::arg_receiver)) {
+        return true;
     }
-    if (!invocation) { return true; }
     for (mlir::Operation * user : invocation->getUsers()) {
         if (!step()) { return false; }
         if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
@@ -126,7 +175,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     if (!initialized) { return true; }
     for (mlir::Operation * user : helper->getUsers()) {
         if (!step()) { return false; }
-        if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+        if (llvm::isa<ctjs::RootOp>(user) || (holder && user == holderSlot)) { continue; }
         auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
         auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(user);
         if (!cellOperations.contains(user) ||
@@ -136,11 +185,17 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     }
     for (mlir::OpOperand * use : sourceUses(helper.getResult())) {
         if (!step()) { return false; }
-        if (!llvm::isa<ctjs::RootOp>(use->getOwner())) { return true; }
+        if (!llvm::isa<ctjs::RootOp>(use->getOwner()) &&
+            !(holder && use->getOwner() == holderSlot && use->getOperandNumber() == 2)) {
+            return true;
+        }
     }
     for (auto [cell, initial] : cells) {
         if (!step()) { return false; }
-        if (cell != helperCell && sourceValue(initial) == helper.getResult()) { return true; }
+        auto value = sourceValue(initial);
+        if ((cell != helperCell && value == source) || (holder && value == helper.getResult())) {
+            return true;
+        }
     }
     for (ctjs::CellGetOp read : cellReads) {
         // Precharge the cleanup scan as well; it cannot fail after mutation.
@@ -178,6 +233,10 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     ctjs::CallOp::create(at, invocation.getLoc(), invocation.getType(), select, selectedHelper,
                          mlir::ValueRange{literal, body.getArgument(ctjs::arg_receiver)});
     eraseRooted(invocation);
+    if (holder) {
+        eraseRooted(holderRead);
+        holderSlot.erase();
+    }
     constructor.getUpvaluesMutable().assign(mapCell);
     constructor.removeEnclosingIndicesAttr();
     llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
@@ -193,6 +252,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     cellOperations.erase(helperCell.getDefiningOp());
     cells.erase(helperCell);
     helperCell.getDefiningOp()->erase();
+    if (holder) { eraseRooted(holder); }
     earlyCaptures.erase(helper);
     eraseRooted(helper);
     functions.erase(*functionIndex(targetFunction));

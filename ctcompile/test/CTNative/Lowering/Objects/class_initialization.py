@@ -807,6 +807,7 @@ def main():
             "class-map-helper-constructor",
             "class-map-record-captured-helper-direct",
             "class-map-record-captured-holder-direct",
+            "class-map-record-constructor-holder-direct",
             "class-map-helper-holder",
             "class-map-helper-chain",
             "class-map-helper-shared-callers",
