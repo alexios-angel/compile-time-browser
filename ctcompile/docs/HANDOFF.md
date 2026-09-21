@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native Symbol object and values, 2026-09-21 UTC
+
+Continued clean **d2a75ef0**, following the user's Symbol priority.
+**36bfb67e** extracts existing identity, description and formatting behavior into
+public Core; VM creation, equality and explicit String methods are adapters.
+**498a34bc** adds `js_symbol_t` and the native `Symbol` object, including
+`Symbol.hasInstance` and 14 other immutable well-known keys. Fresh construction,
+absent/empty descriptions, owning snapshots and `toString`/`valueOf` prototype
+calls are implemented. Well-known values require no startup allocation; fresh
+identities remain distinct across translation units and factory copies.
+
+Focused devbox checks pass: **three distinct selected CTests**, the three-case
+`script_gc symbol` filter, and **three distinct selected lit cases**. The new API
+fixture compares **25 observations** with Node/VM under GCC and Clang, including
+cross-translation-unit identity, standalone-header use, mutation and source
+refusals. All **nine final code/test hashes** match the devbox. Scoped C++
+formatting and whitespace pass; required repository formatting retains 16
+existing diagnostics. Full suites and broad corpus/matrix runs were skipped.
+[Exact checks and oracle probe](handoff/2026-09-21-native-symbols.md).
+
+**Next:** prove direct well-known Symbol reads through the fingerprint-bound
+initial-intrinsic contract, then add a distinct source Symbol carrier for
+identity equality, truthiness and `typeof`. `Symbol.hasInstance` is a key;
+constructor hook lookup and `instanceof` remain unimplemented in native code.
+The current VM ignores custom hooks: a measured Node true/one-call witness is
+false/zero-call in the VM. Registry, symbol-keyed fields and hook/default-prototype
+proofs remain separate. The retained sibling-capture boundary, String ordering,
+collections/document views, full Bootstrap and application driver also remain.
+
 ## Typed Number bitwise operations and return dispatch, 2026-09-21 UTC
 
 Continued clean **0587aa5d**. **2526d714** extracts the VM's existing

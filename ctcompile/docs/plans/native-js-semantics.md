@@ -68,9 +68,42 @@ the named primitive String witness above is claimed as a measured wtfjs example.
 Other required cases extend beyond this README: Number/BigInt mixed arithmetic
 errors, BigInt zero division and shifts, Symbol identity/registry and forbidden
 coercions, `Symbol.toStringTag`, iterator closing on abrupt completion, and
-prototype mutations invalidating earlier assumptions. BigInt still needs a public
+prototype mutations invalidating earlier assumptions. Native Symbol values and
+15 well-known keys now exist, with identity-preserving copies, owning description
+snapshots and explicit formatting shared with the VM through public Core. The
+25-observation API fixture agrees with Node/VM; source Symbol admission, registry
+operations and hook dispatch remain unfinished. BigInt still needs a public
 non-Script implementation. Add these with their corresponding type/prototype
 milestones rather than treating the external inventory as exhaustive.
+
+## Symbol hook oracle boundary, measured 2026-09-21 UTC
+
+`Symbol.hasInstance` names a Symbol key; the callable belongs to
+`constructor[Symbol.hasInstance]`. For this valid custom hook:
+
+```javascript
+var calls = 0;
+var candidate = {};
+candidate[Symbol.hasInstance] = function(value) {
+    calls = calls + 1;
+    return value === 7 ? "accepted" : "";
+};
+var result = 7 instanceof candidate;
+```
+
+Node reports `calls = 1`, `result = true`. The current VM reports `calls = 0`,
+`result = false`: its opcode calls OrdinaryHasInstance directly. The existing
+`Function.prototype[Symbol.hasInstance]` method does not fix that missing hook
+lookup. Invalid RHS/prototype errors also need an audit before source admission.
+The new native Symbol API supplies the key only; no native hook wrapper or
+`instanceof` lowering is claimed. Implement the planned wrapper after lookup,
+receiver, result conversion, exception and prototype proofs exist. Use
+`std::holds_alternative<T>` only for a proved equivalent default case.
+
+The VM also retains documented implicit Symbol-to-String coercion divergences
+in `symbol_basics.cpp`. Native Symbols expose explicit `toString()` and reject
+implicit String/numeric conversion; that restriction must remain when the
+compiler admits these values. Full wtfjs and WPT/test262 were not replayed.
 
 ## Shared Core conversion boundaries
 

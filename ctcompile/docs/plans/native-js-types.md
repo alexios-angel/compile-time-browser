@@ -30,7 +30,11 @@ optional form now preserves undefined, null, Number and String through source
 global reads, calls and coercions. Strict/loose equality now covers these proved
 String-containing unions while retaining type, absence, NaN and zero semantics.
 Shared variables and nested capture pointers now carry those unions with owning
-snapshots and observable absence. Object/Array prototypes and document views remain planned.
+snapshots and observable absence. `js_symbol_t` and the native `Symbol` object now
+provide fresh identities, immutable well-known keys such as `Symbol.hasInstance`,
+owning descriptions and `toString`/`valueOf` methods. Source Symbol operations
+and `instanceof` still require compiler proofs. Object/Array prototypes and
+document views remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
@@ -93,7 +97,7 @@ implement every prototype up front.
 | `js_array_t<T>` | The interface for an admitted JavaScript Array, with `length()`, indexed operations and methods such as `push`, `pop` and `filter`. Use dense storage only under the existing density/content proof. Preserve reference identity, presence, mutation and eager evaluation. |
 | `js_object_t` | A non-virtual interface/tag for generated closed-shape objects. Concrete generated classes keep concrete fields and checked methods; no generic property dictionary, universal payload or slicing through this base. |
 | `js_bigint_t` | Owning arbitrary-precision integer with JavaScript BigInt semantics. Requires a public non-Script numeric implementation; a fixed-width integer or floating-point stand-in is insufficient. |
-| `js_symbol_t` | A symbol identity, distinct from its description. Well-known symbols and `Symbol.for` require separate identity/registry proofs; text equality cannot implement them. |
+| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. Source admission, `Symbol.for`/`keyFor` and hook dispatch still need separate proofs. |
 | `js_document_t` | An explicit borrowed document interface over a public `ctbrowser::document` and its live `style::engine`. Exposes methods/accessors through ordinary `document.member(...)` syntax. A containing session owns the resources when ownership is required. |
 | `js_element_t` | The corresponding borrowed element interface, retaining document/node identity and its proved Style association. It enables receiver-only prototype calls without exposing a VM context. |
 
@@ -107,6 +111,53 @@ Finite unions remain closed, proved sets of concrete alternatives. Reuse the
 existing nullable/union machinery during migration. A single `std::optional<T>`
 is suitable only when exactly one absence kind is possible or their distinction
 is proved unobservable; it cannot collapse null and undefined generally.
+
+## Symbol values and the Symbol object
+
+`Runtime/Symbol.hpp`, included by `ctnative.hpp`, now implements:
+
+```cpp
+auto marker = ctnative::Symbol(ctnative::js_string{"marker"});
+auto key = ctnative::Symbol.hasInstance;
+auto description = marker.description(); // optional<js_string>: undefined or String
+auto text = ctnative::Symbol.prototype.toString.call(marker);
+auto same = ctnative::Symbol.prototype.valueOf.call(marker);
+```
+
+`Symbol()` and `Symbol(undefined_t{})` retain an absent description;
+`Symbol(js_string{""})` retains a present empty String. Each call makes a new
+identity, even with the same description. Copies and moves preserve that
+primitive identity. Description results own their String snapshots. Symbols
+are truthy only through explicit Boolean conversion; numeric and implicit String
+conversion are unavailable. Other constructor coercions remain future work.
+
+The 15 well-known fields come from one public Core catalog. They use constexpr
+identities without startup allocation; fresh symbols own the existing Core
+payload by value. A single atomic serial source covers translation units and
+factory copies, refusing exhaustion before key reuse. VM payloads, equality,
+fresh-key creation, descriptions and explicit formatting use the same Core.
+The VM registry and key reconstruction retain their existing behavior.
+
+`Symbol.hasInstance` is a symbol key, not a callable. JavaScript calls the
+constructor's `constructor[Symbol.hasInstance]` hook, not `Symbol.hasInstance.call`.
+The key's presence in this API does not yet supply that lookup or the compiler's
+constructor/prototype proof. A measured non-callable object with a custom
+hook returns true with one hook call in Node, but false with zero calls in the
+current VM. Preserve that oracle gap explicitly; do not implement native
+`instanceof` as an unchecked `std::holds_alternative` test.
+
+**Next source slice:** extend the fingerprint-bound initial-intrinsic contract
+for the standard Symbol object, census all uses, and initially admit only direct
+constant well-known property reads. Refuse replacement, aliases/escape and
+unproved mutation. Carry a distinct Symbol identity into equality, truthiness
+and `typeof`; do not infer it from a property-name string alone. Custom hook
+lookup/call/Boolean conversion, default prototype matching, invalid RHS errors,
+registry operations and symbol-keyed generated fields follow their own proofs.
+
+The focused API fixture checks 25 primitive observations against Node and the
+VM, GCC/Clang compilation, two translation units, standalone-header use, a
+mutation and three source refusal controls. It measures the native API, not
+new source emission. [Exact checks](../handoff/2026-09-21-native-symbols.md).
 
 ## Operators and JavaScript semantics
 
@@ -420,16 +471,19 @@ existing `auto`/template deduction.
    class/prototype work once constructor identity and `Symbol.hasInstance`
    lookup/call proofs exist. Test a custom hook (including a non-Boolean return
    and thrown exception), default matching, inheritance and primitive rejection
-   against the VM before emitting that operation.
+   against Node and the VM before emitting that operation. The current VM
+   skips custom hooks; record or resolve that gap without matching native to it.
    Reconcile Shell's current NodeList indices above
    1,000,000 returning undefined before broadening indexed `R.find` consumers;
    retain the separate 2^24 proxy-spread cap. A NodeList is not a JavaScript Array.
 4. **Document/element views.** Adapt existing borrowed and owned entries to typed
    views, then prove document-root access and shorten receiver calls. Do not
    broaden source admission merely because a C++ accessor exists.
-5. **BigInt and Symbol.** Supply their native core, identities, operations and
-   ownership proofs in separate changes. Until then the names are plan targets
-   and unsupported uses remain compile-time diagnostics.
+5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
+   and primitive methods now have a shared Core/native API. Add the source proof
+   described above before emitting them; registry, symbol-keyed fields and hooks
+   remain separate. BigInt still needs its public non-Script core and ownership
+   proofs. Unsupported uses remain compile-time diagnostics.
 
 ## Focused acceptance criteria
 
