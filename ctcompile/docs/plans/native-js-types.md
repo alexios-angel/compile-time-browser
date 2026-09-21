@@ -34,9 +34,9 @@ snapshots and observable absence. `js_symbol_t` and the native `Symbol` object n
 provide fresh identities, immutable well-known keys such as `Symbol.hasInstance`,
 owning descriptions and `toString`/`valueOf` methods. Fingerprinted DOM entries now
 emit direct well-known Symbol reads, fresh construction with absent/String
-descriptions, direct `toString`/`valueOf`, identity equality, truthiness and
-`typeof`, including branches, loops and typed returns. Parameterless Symbol-only
-exports use the same operations through a separate intrinsic contract without
+descriptions, direct `toString`/`valueOf`, owning `.description` reads, identity
+equality, truthiness and `typeof`, including branches, loops and typed returns.
+Parameterless Symbol-only exports use the same operations through a separate intrinsic contract without
 DOM inputs. Same-cell sibling calls now forward existing lifted capture
 parameters after both functions pass the lift proof. Ordinary `instanceof`
 on exact local class constructions now folds under the complete class/prototype
@@ -201,10 +201,15 @@ the existing native factory and produces a distinct identity. Direct zero-argume
 original prototype. Generated code uses ordinary `js_symbol_t` values and methods;
 the earlier fresh/method refusal sources now execute unchanged.
 
-**Next source slice:** `.description` needs distinct undefined/String transport.
-Its native API already returns `optional<js_string>`, but the DOM nullable String
-carrier currently means null/String; reusing it would change absence semantics.
-Then extend the intrinsic entry contract for useful parameters and helper calls.
+**Source descriptions are implemented:** `.description` calls the existing
+`optional<js_string>` API and explicitly constructs an owning `nullable_string`
+with undefined or String. Its proof kind remains distinct from DOM null/String.
+Equality, truthiness, `typeof`, branches, loops and returns preserve that distinction;
+saved descriptions survive later Symbol assignments. String-method narrowing and
+mixed null/description joins remain separate proofs.
+
+**Next source slice:** extend the intrinsic entry contract for useful parameters
+and helper calls.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
 
@@ -576,10 +581,10 @@ existing `auto`/template deduction.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
    reads, absent/String construction, direct primitive methods and branch/loop/
-   return transport now emit in proved DOM and primitive-only entries. Next prove
-   source `.description` with undefined/String transport, then useful intrinsic
-   parameters/helpers. Registry, symbol-keyed fields and hooks remain separate.
-   BigInt still needs its public non-Script core and ownership
+   return transport now emit in proved DOM and primitive-only entries. Source
+   `.description` preserves owning undefined/String results. Next prove useful
+   intrinsic parameters/helpers. Registry, symbol-keyed fields and hooks remain
+   separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.
 
 ## Focused acceptance criteria

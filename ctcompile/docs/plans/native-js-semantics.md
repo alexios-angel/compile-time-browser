@@ -76,8 +76,10 @@ well-known Symbol reads and preserve identity comparisons, truthiness and `typeo
 while driving browser operations. Well-known identities now survive branches,
 loops and returns; a strict primitive-only export contract needs no DOM input.
 Those entries now admit fresh construction with absent/String descriptions and
-direct `toString`/`valueOf` calls. General scripts, source `.description` with
-undefined/String transport, registry operations and hook dispatch remain
+direct `toString`/`valueOf` calls. Source `.description` now preserves owning
+undefined/String snapshots through comparisons, branches, loops and returns;
+its proof remains separate from DOM null/String. Useful intrinsic entry parameters
+and helpers, general scripts, registry operations and hook dispatch remain
 unfinished. BigInt still needs a public
 non-Script implementation. Add these with their corresponding type/prototype
 milestones rather than treating the external inventory as exhaustive.

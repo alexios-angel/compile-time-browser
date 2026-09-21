@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited leaf publication and Symbol descriptions, 2026-09-21 UTC
+
+Continued clean **97e96751**. **744ebe85** proves an inherited leaf's terminal
+Map registration after its complete super chain, reusing the existing stack-owner
+and borrowed-record proof. Base publication followed by child work remains
+refused. **be96b029** admits source Symbol `.description` with an owning
+undefined/String result distinct from DOM null/String, including equality,
+truthiness, branches, loops and returns.
+
+Focused devbox validation passes: **two distinct CTests and six distinct lit
+cases** across corrected runs. Four new leaf cases add **32 native executions**;
+the class gate selects 21 source observations. Symbol exports check **72 native
+executions, 84 refusals and two mutations**; DOM Symbols check **40 executions,
+42 refusals and one mutation**. All **19 code/test hashes** match the devbox.
+Scoped formatting passes; required repository formatting retains 16 existing
+diagnostics. Full suites, broad corpus/matrices, new sanitizers and full Bootstrap
+were skipped. No browser or runtime implementation changed.
+
+**Next:** original helper and base-constructor publication, beginning with the
+unchanged `class-map-record-constructor-helper.js` in class fixture file 30.
+Prove complete Map origins/observers, partial initialization, exceptions/reentry
+and owner lifetime before widening. Original B/Data+B also needs captured outer
+and nested Data Maps, conflict checks, nullable gets and cleanup. Useful intrinsic
+entry parameters/helpers are the next Symbol slice. Deeper sibling relays,
+String ordering, document views and the application driver remain unfinished.
+No full-Bootstrap gain is claimed.
+
+[Exact checks and corrections](handoff/2026-09-21-leaf-publication-symbol-description.md).
+
 ## Symbol construction and sibling captures, 2026-09-21 UTC
 
 Continued **aebfa918**, including the interrupted in-flight work.
