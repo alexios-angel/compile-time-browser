@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor field initialization and signed indices, 2026-09-21 UTC
+
+Continued clean **7b055fd6**. **49eeb949** retains primitive constructor field
+categories at each original allocation for public DOM Data preparation. Literal
+stores and formals with exact literal actuals no longer require an entry overwrite;
+separate instances, repeated stores and saved reads preserve their own categories
+and source order. Three former refusal sources now prepare unchanged. All five
+constructions and eight functions remain; native class-session ownership still
+refuses. **91e64124** admits signed Number-literal operands in the existing
+arithmetic String bounds, preserving the complete use census and literal-only
+casing authority. Eleven exact former refusal sources now execute.
+
+Focused checks pass: exact host-contract CTest **1/1**, selected DOM lit **2/2,
+110.27 s total**, and the String selector **128 native executions, 84 refusals**.
+New constructor checks pass **nine Node/VM observations, nine preparations and
+33 refusals**. Existing DOM tests retain **56 record and 24 object-key native
+executions**. String observations have 13 Node/VM agreements and one known UTF-16
+difference. All four final code/test hashes match the devbox; scoped formatting
+passes. Repository formatting retains 16 pre-existing diagnostics. Full suites,
+broad corpus/matrices, full Bootstrap, WPT/test262, Windows and new sanitizers
+were skipped. No browser/runtime implementation changed.
+
+**Next:** the measured provider refusal is `unsupported provider behavior through
+ctjs.construct`. Recompute constructor/local-Map/field evidence in the final
+provider analysis, extend the native owner function/allocation census, then
+explicitly lift the proved constructors in the host path. Preparation categories
+alone authorize none of those steps. The full vendor composite result still needs
+local Map observations and Boolean-to-Number category proof. Multiple DOM alias
+partitions, original B/Data+B, broader Strings, conditional callees, mutable cells,
+String ordering, document views and the application driver remain. No full-Bootstrap
+admission or corpus coverage gain is claimed.
+
+[Exact checks and next ownership sequence](handoff/2026-09-21-constructor-fields-signed-indices.md).
+
 ## Class field payloads and negated indices, 2026-09-21 UTC
 
 Continued clean **b3c7edae**. **356373ed** prepares public DOM Data calls whose
