@@ -23,6 +23,7 @@
 
 #include "ctcompile/CTNative/Runtime/Number.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
+#include "ctcompile/CTNative/Runtime/Symbol.hpp"
 
 #include <ctbrowser/core/algorithms.hpp>
 

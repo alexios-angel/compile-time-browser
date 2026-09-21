@@ -1,0 +1,278 @@
+# Typed Symbol values have identity, owning descriptions and immutable well-known
+# properties. This exercises the native API; source Symbol lowering remains refused.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: %gxx -O2 %t/main.cpp %t/other.cpp -o %t/gcc
+# RUN: %clangxx -O2 %t/main.cpp %t/other.cpp -o %t/clang
+# RUN: %compilation_unit --prebuilt %t/gcc --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_gcc
+# RUN: %compilation_unit --prebuilt %t/clang --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_clang
+# RUN: %gxx -O2 -DSYMBOL_MUTATE_ALIAS %t/main.cpp %t/other.cpp -o %t/mutated
+# RUN: not %compilation_unit --prebuilt %t/mutated --module %t/unused.mlir --js %t/values.js --work %t --name symbol_api_mutated 2>&1 | FileCheck %s --check-prefix=MUTATED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/read.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=READ
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/type.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=TYPE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=HOOK
+
+# MUTATED: global 'bAlias' differs
+# READ: ctnative.not_native =
+# READ: ctjs.load_global "Symbol"
+# READ: ctjs.get_property
+# TYPE: ctnative.not_native =
+# TYPE: ctjs.load_global "Symbol"
+# TYPE: ctjs.unary
+# HOOK: ctnative.not_native =
+# HOOK: ctjs.load_global "Symbol"
+# HOOK: ctjs.instanceof
+
+#--- main.cpp
+#include <ctcompile/CTNative/Runtime/ctnative.hpp>
+
+#include <array>
+#include <optional>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+using ctnative::js_string;
+using ctnative::js_symbol_t;
+using ctnative::Symbol;
+
+js_symbol_t other_fresh();
+js_symbol_t other_known();
+js_symbol_t other_static();
+
+const auto before_main = Symbol(js_string{"same"});
+
+static_assert(std::is_same_v<decltype(Symbol()), js_symbol_t>);
+static_assert(std::is_same_v<decltype(Symbol().description()), std::optional<js_string>>);
+static_assert(std::is_same_v<decltype(Symbol().toString()), js_string>);
+static_assert(std::is_same_v<decltype(Symbol().valueOf()), js_symbol_t>);
+static_assert(!std::is_default_constructible_v<js_symbol_t>);
+static_assert(!std::is_convertible_v<js_symbol_t, bool>);
+static_assert(!std::is_convertible_v<js_symbol_t, double>);
+static_assert(!std::is_convertible_v<js_symbol_t, js_string>);
+static_assert(!std::is_invocable_v<decltype(Symbol.hasInstance)>);
+static_assert(!std::is_assignable_v<decltype((Symbol.hasInstance)), js_symbol_t>);
+
+void boolean(const char * name, bool value) {
+    ctnative::print_scalar(name, ctnative::js_boolean_t{value});
+}
+
+void description(const char * name, const js_symbol_t & value) {
+    const auto text = value.description();
+    if (text) {
+        ctnative::print_string(name, text->value());
+    } else {
+        ctnative::print_scalar(name, ctnative::undefined_t{});
+    }
+}
+
+int main() {
+    const auto first = Symbol(js_string{"same"});
+    auto alias = first;
+    auto factory = Symbol;
+    auto snapshot = first.description();
+    *snapshot = js_string{"changed"};
+    const auto nul = Symbol(js_string{"a\0b"});
+    const auto bytes = Symbol(js_string{"\xed\xa0\x80\0\xc3\xa9"});
+    const auto fresh = other_fresh();
+    const std::array known{Symbol.asyncDispose,
+                           Symbol.asyncIterator,
+                           Symbol.dispose,
+                           Symbol.hasInstance,
+                           Symbol.isConcatSpreadable,
+                           Symbol.iterator,
+                           Symbol.match,
+                           Symbol.matchAll,
+                           Symbol.replace,
+                           Symbol.search,
+                           Symbol.species,
+                           Symbol.split,
+                           Symbol.toPrimitive,
+                           Symbol.toStringTag,
+                           Symbol.unscopables};
+    const std::array names{
+        "asyncDispose", "asyncIterator", "dispose",     "hasInstance", "isConcatSpreadable",
+        "iterator",     "match",         "matchAll",    "replace",     "search",
+        "species",      "split",         "toPrimitive", "toStringTag", "unscopables"};
+    bool distinct = true;
+    bool descriptions = true;
+    bool distinctFromFresh = true;
+    bool stable = true;
+    for (std::size_t i = 0; i < known.size(); ++i) {
+        const auto label = std::string{"Symbol."} + names[i];
+        descriptions &= known[i].description()->value() == label;
+        descriptions &= Symbol.prototype.toString.call(known[i]).value() ==
+                        std::string{"Symbol("} + label + ")";
+        distinctFromFresh &= !(known[i] == Symbol(js_string{label}));
+        stable &= known[i] == Symbol.prototype.valueOf.call(known[i]);
+        for (std::size_t j = 0; j < i; ++j) { distinct &= !(known[i] == known[j]); }
+    }
+    description("aAbsentDescription", Symbol());
+#ifdef SYMBOL_MUTATE_ALIAS
+    boolean("bAlias", false);
+#else
+    boolean("bAlias", first == alias);
+#endif
+    boolean("cCrossFactoryDistinct", !(first == fresh) && !(fresh == other_fresh()) &&
+                                         !(before_main == other_static()) &&
+                                         !(first == factory(js_string{"same"})));
+    boolean("dCrossWellKnown",
+            Symbol.hasInstance == other_known() && Symbol.hasInstance == factory.hasInstance);
+    description("eDescriptionSnapshot", first);
+    boolean("fDistinctDescriptions", first == Symbol(js_string{"different"}));
+    description("gEmptyDescription", Symbol(js_string{""}));
+    description("hExplicitUndefinedDescription", Symbol(ctnative::undefined_t{}));
+    boolean("iFreshEqualDescriptions", first == Symbol(js_string{"same"}));
+    description("jHasInstanceDescription", Symbol.hasInstance);
+    description("kNulDescription", nul);
+    ctnative::print_string("lNulText", nul.toString().value());
+    ctnative::print_string("mPrototypeText", Symbol.prototype.toString.call(first).value());
+    boolean("nPrototypeValue", Symbol.prototype.valueOf.call(first) == first);
+    ctnative::print_string("oText", first.toString().value());
+    boolean("pTruthy", static_cast<bool>(Symbol()) && static_cast<bool>(Symbol(js_string{""})));
+    boolean("qValueOf", first.valueOf() == first);
+    boolean("rWellKnownAllDistinct", distinct);
+    boolean("sWellKnownDescriptions", descriptions);
+    boolean("tWellKnownDistinctFromFresh", distinctFromFresh);
+    boolean("uWellKnownStable", stable);
+    boolean("vSpecialBytesPreserved",
+            bytes.description()->value() == std::string{"\xed\xa0\x80\0\xc3\xa9", 6} &&
+                bytes.toString() == js_string{"Symbol(\xed\xa0\x80\0\xc3\xa9)"});
+    alias = fresh;
+    boolean("wCopyAssignment", alias == fresh && !(alias == first));
+    auto moving = first;
+    alias = std::move(moving);
+    const auto moved = std::move(moving);
+    boolean("xMoveAssignment", alias == first && moved == first && moving == first);
+    boolean("yFactoryAbsentFresh", !(Symbol() == Symbol(ctnative::undefined_t{})));
+}
+#--- other.cpp
+#include <ctcompile/CTNative/Runtime/Symbol.hpp>
+
+const auto other_before_main = ctnative::Symbol(ctnative::js_string{"same"});
+
+ctnative::js_symbol_t other_fresh() {
+    return ctnative::Symbol(ctnative::js_string{"same"});
+}
+ctnative::js_symbol_t other_known() {
+    return ctnative::Symbol.hasInstance;
+}
+ctnative::js_symbol_t other_static() {
+    return other_before_main;
+}
+#--- values.js
+var aAbsentDescription, bAlias, cCrossFactoryDistinct, dCrossWellKnown;
+var eDescriptionSnapshot, fDistinctDescriptions, gEmptyDescription;
+var hExplicitUndefinedDescription, iFreshEqualDescriptions, jHasInstanceDescription;
+var kNulDescription, lNulText, mPrototypeText, nPrototypeValue, oText, pTruthy;
+var qValueOf, rWellKnownAllDistinct, sWellKnownDescriptions, tWellKnownDistinctFromFresh;
+var uWellKnownStable, vSpecialBytesPreserved, wCopyAssignment, xMoveAssignment;
+var yFactoryAbsentFresh;
+function otherFresh() { return Symbol("same"); }
+function otherKnown() { return Symbol.hasInstance; }
+function observe() {
+    var first = Symbol("same");
+    var alias = first;
+    var snapshot = first.description;
+    snapshot = "changed";
+    var nul = Symbol("a\u0000b");
+    var bytes = Symbol("\ud800\u0000\u00e9");
+    var fresh = otherFresh();
+    var names = ["asyncDispose", "asyncIterator", "dispose", "hasInstance",
+        "isConcatSpreadable", "iterator", "match", "matchAll", "replace", "search",
+        "species", "split", "toPrimitive", "toStringTag", "unscopables"];
+    var distinct = true;
+    var descriptions = true;
+    var distinctFromFresh = true;
+    var stable = true;
+    for (var i = 0; i < names.length; ++i) {
+        var known = Symbol[names[i]];
+        var label = "Symbol." + names[i];
+        descriptions = descriptions && known.description === label;
+        descriptions = descriptions && Symbol.prototype.toString.call(known) === "Symbol(" + label + ")";
+        distinctFromFresh = distinctFromFresh && known !== Symbol(label);
+        stable = stable && known === Symbol.prototype.valueOf.call(known);
+        for (var j = 0; j < i; ++j) { distinct = distinct && known !== Symbol[names[j]]; }
+    }
+    aAbsentDescription = Symbol().description;
+    bAlias = first === alias;
+    cCrossFactoryDistinct = first !== fresh && fresh !== otherFresh() && Symbol("same") !== Symbol("same");
+    dCrossWellKnown = Symbol.hasInstance === otherKnown();
+    eDescriptionSnapshot = first.description;
+    fDistinctDescriptions = first === Symbol("different");
+    gEmptyDescription = Symbol("").description;
+    hExplicitUndefinedDescription = Symbol(undefined).description;
+    iFreshEqualDescriptions = first === Symbol("same");
+    jHasInstanceDescription = Symbol.hasInstance.description;
+    kNulDescription = nul.description;
+    lNulText = nul.toString();
+    mPrototypeText = Symbol.prototype.toString.call(first);
+    nPrototypeValue = Symbol.prototype.valueOf.call(first) === first;
+    oText = first.toString();
+    pTruthy = Boolean(Symbol()) && Boolean(Symbol(""));
+    qValueOf = first.valueOf() === first;
+    rWellKnownAllDistinct = distinct;
+    sWellKnownDescriptions = descriptions;
+    tWellKnownDistinctFromFresh = distinctFromFresh;
+    uWellKnownStable = stable;
+    vSpecialBytesPreserved = bytes.description === "\ud800\u0000\u00e9" && bytes.toString() === "Symbol(\ud800\u0000\u00e9)";
+    alias = fresh;
+    wCopyAssignment = alias === fresh && alias !== first;
+    alias = first;
+    xMoveAssignment = alias === first;
+    yFactoryAbsentFresh = Symbol() !== Symbol(undefined);
+}
+observe();
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    aAbsentDescription: undefined,
+    bAlias: true,
+    cCrossFactoryDistinct: true,
+    dCrossWellKnown: true,
+    eDescriptionSnapshot: "same",
+    fDistinctDescriptions: false,
+    gEmptyDescription: "",
+    hExplicitUndefinedDescription: undefined,
+    iFreshEqualDescriptions: false,
+    jHasInstanceDescription: "Symbol.hasInstance",
+    kNulDescription: "a\u0000b",
+    lNulText: "Symbol(a\u0000b)",
+    mPrototypeText: "Symbol(same)",
+    nPrototypeValue: true,
+    oText: "Symbol(same)",
+    pTruthy: true,
+    qValueOf: true,
+    rWellKnownAllDistinct: true,
+    sWellKnownDescriptions: true,
+    tWellKnownDistinctFromFresh: true,
+    uWellKnownStable: true,
+    vSpecialBytesPreserved: true,
+    wCopyAssignment: true,
+    xMoveAssignment: true,
+    yFactoryAbsentFresh: true
+};
+assert.equal(Object.keys(expected).length, 25);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("25 Symbol observations agree with JavaScript");
+
+#--- read.js
+function read() { return Symbol.hasInstance; }
+var result = read();
+
+#--- type.js
+function type() { return typeof Symbol; }
+var result = type();
+
+#--- hook.js
+var constructor = {};
+constructor[Symbol.hasInstance] = function(value) { return value === 7; };
+var result = 7 instanceof constructor;
