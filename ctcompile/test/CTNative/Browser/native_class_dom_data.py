@@ -646,9 +646,13 @@ def published_constructor_fields(args):
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
         published_provider(args, name, prepared, checked, adversarial=label == "constructor-only")
         for optimize in (False, True):
-            dom.lower(
+            diagnostic = dom.lower(
                 args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
             )
+            if label == "constructor-only" and (
+                "standard Map identity is unproved across an unknown constructor" not in diagnostic
+            ):
+                raise RuntimeError(f"{name}: complete source ownership regressed\n{diagnostic}")
             refusals += 1
         if label == "constructor-only":
             for suffix, request, options in (

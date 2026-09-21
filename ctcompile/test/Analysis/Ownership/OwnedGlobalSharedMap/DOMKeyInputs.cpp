@@ -194,6 +194,226 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
                          has),
             false, "a fluent outer snapshot cannot bypass the complete input-role census");
 
+    // Keep the local record and Map computations alongside the complete public
+    // family. Only the joined scalar reaches that family, never either owner.
+    const std::string localGraph = R"MLIR(
+    %localLiteral = ctjs.constant #ctjs.number<4607182418800017408>
+    %localInert = ctjs.create_object
+    %localConstructor = ctjs.create_closure %callee[8] this %u
+    %localRecord = ctjs.construct %localConstructor(%localConstructor, %localLiteral)
+    %localMapConstructor = ctjs.load_global "Map"
+    %localMap = ctjs.construct %localMapConstructor(%localMapConstructor)
+    %localKey = ctjs.constant #ctjs.string<"x">
+    %localSetKey = ctjs.constant #ctjs.string<"set">
+    %localSet = ctjs.get_property %localMap[%localSetKey]
+    %localWritten = ctjs.call %localSet(%localMap, %localKey, %localRecord)
+    %localGetKey = ctjs.constant #ctjs.string<"get">
+    %localGet = ctjs.get_property %localMap[%localGetKey]
+    %localAlias = ctjs.call %localGet(%localMap, %localKey)
+    %localName = ctjs.constant #ctjs.string<"number">
+    %localSizeKey = ctjs.constant #ctjs.string<"size">
+    %localSize = ctjs.get_property %localMap[%localSizeKey]
+    %localCondition = ctjs.truthy %localSize
+    %localSelected = scf.if %localCondition -> (!ctjs.value) {
+      %localThen = ctjs.get_property %localAlias[%localName]
+      scf.yield %localThen : !ctjs.value
+    } else {
+      %localElse = ctjs.get_property %localRecord[%localName]
+      %localSum = ctjs.binary add %localElse, %localLiteral
+      scf.yield %localSum : !ctjs.value
+    }
+)MLIR";
+    auto records = replaced(siblings, "    %putResult =", localGraph + "    %putResult =");
+    records = replaced(records, prepared ? "%putterEnv, %element)" : "%putter(%owned, %element)",
+                       prepared ? "%putterEnv, %element, %localSelected)"
+                                : "%putter(%owned, %element, %localSelected)");
+    records =
+        replaced(records, "    %value = ctjs.constant #ctjs.number<4607182418800017408>\n", "");
+    const auto setter = records.find("ctjs.func private @put$4(");
+    const auto formal = records.find("%entryKey: !ctjs.value)", setter);
+    check(formal != std::string::npos, "local record fixture retains the public setter formal");
+    if (formal != std::string::npos) {
+        records.replace(formal, std::string("%entryKey: !ctjs.value)").size(),
+                        "%entryKey: !ctjs.value, %value: !ctjs.value)");
+    }
+    records = replaced(records, "\n}\n", R"MLIR(
+  ctjs.func private @record$8(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %initial: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %name = ctjs.constant #ctjs.string<"number">
+    ctjs.set_property %this[%name], %initial
+    %recordUndefined = ctjs.constant #ctjs.undefined
+    ctjs.return %recordUndefined
+  }
+}
+)MLIR");
+    unsigned recordRows = 0;
+    const auto localVariant = [&](const std::string & text, bool provider, bool owned,
+                                  const char * message) {
+        ++recordRows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "local record owner fixture parses");
+        if (!module) { return module; }
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() == provider && owner.proved() == owned && !host.exhausted() &&
+                  !owner.exhausted(),
+              message);
+        if (host.proved() != provider || owner.proved() != owned) {
+            std::fprintf(stderr, "DOM local records %s row %u: provider %s; owner %s\n",
+                         prepared ? "prepared" : "source", recordRows, host.reason().str().c_str(),
+                         owner.reason().str().c_str());
+        }
+        if (!provider) {
+            check(host.localRecords().constructors.empty() &&
+                      host.localRecords().operations.empty() &&
+                      !host.localRecords().primitiveFields && host.callables().empty(),
+                  "a failed provider exposes no partial constructor or public family graph");
+        }
+        if (!owned) {
+            check(empty(*module, owner) && owner.domInputs().empty() && !owner.wrapper(),
+                  "a failed local record owner exposes no storage or DOM input evidence");
+        } else if (host.proved() && owner.proved()) {
+            const auto & local = host.localRecords();
+            const auto count = [&](auto matches) {
+                return llvm::count_if(local.operations, matches);
+            };
+            check(
+                local.primitiveFields && local.constructors.size() == 1 &&
+                    local.constructors.front() == module->lookupSymbol<ctjs::FuncOp>("record$8") &&
+                    local.operations.size() == 17 &&
+                    count([](auto * op) { return llvm::isa<ctjs::ConstructOp>(op); }) == 2 &&
+                    count([](auto * op) { return llvm::isa<ctjs::CallOp>(op); }) == 2 &&
+                    count([](auto * op) { return llvm::isa<ctjs::BinaryOp>(op); }) == 1 &&
+                    count([](auto * op) { return llvm::isa<ctjs::GetPropertyOp>(op); }) == 5 &&
+                    count([](auto * op) { return llvm::isa<ctjs::SetPropertyOp>(op); }) == 1 &&
+                    count([](auto * op) { return llvm::isa<ctjs::CreateClosureOp>(op); }) == 1 &&
+                    llvm::all_of(local.operations,
+                                 [&](auto * op) { return llvm::count(local.operations, op) == 1; }),
+                "the local census retains every constructor, Map operation and branch read once");
+            unsigned functions = 0, constructions = 0, objects = 0;
+            module->walk([&](ctjs::FuncOp) { ++functions; });
+            module->walk([&](ctjs::ConstructOp) { ++constructions; });
+            module->walk([&](ctjs::CreateObjectOp) { ++objects; });
+            check(
+                functions == 6 && constructions == 3 && objects == 3 && owner.roots().size() == 1 &&
+                    owner.domInputs().size() == 1 && owner.roots().front().methodTable &&
+                    owner.roots().front().methodTable->methods.size() == 2 &&
+                    owner.roots().front().methodTable->calls.size() == 2 &&
+                    owner.roots().front().methodTable->capturedMap && host.callables().size() == 2,
+                "ownership preserves the complete function/allocation census and public family");
+            for (const auto & edge : host.callables()) {
+                auto function = edge.function;
+                const bool put = function.getSymName() == "put$4";
+                check(
+                    edge.arguments.size() == (put ? 2u : 1u) && edge.capturedMap &&
+                        owner.domInputs().size() == 1 &&
+                        edge.arguments.front().element == owner.domInputs().front() &&
+                        (!put || (!edge.arguments.back().object && !edge.arguments.back().element &&
+                                  edge.arguments.back().alternatives.tag() ==
+                                      mlir::TypeID::get<ctjs::NumberAttr>())),
+                    "only the record's scalar branch result crosses into the public family");
+            }
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "local ownership queries preserve the original source computations");
+        return module;
+    };
+    auto localModule =
+        localVariant(records, true, true,
+                     "closed local constructors and Map aliases compose with DOM ownership");
+    for (const auto & [from, to] : {
+             std::pair{"ctjs.set_property %this[%name], %initial",
+                       "ctjs.store_global \"ctorEffect\", %initial\n"
+                       "    ctjs.set_property %this[%name], %initial"},
+             {"ctjs.return %recordUndefined", " %replacement = ctjs.create_object\n"
+                                              "    ctjs.return %replacement"},
+             {"%localConstructor(%localConstructor, %localLiteral)",
+              "%localConstructor(%localConstructor, %element)"},
+             {"%localSet(%localMap, %localKey, %localRecord)",
+              "%localSet(%localRecord, %localKey, %localRecord)"},
+             {"    %putResult =", "    ctjs.store_global \"escaped\", %localMap\n    %putResult ="},
+             {"    %putResult =", "    %captureRecord = ctjs.create_closure %callee[8] this %u "
+                                  "captures %localRecord\n    %putResult ="},
+             {"      scf.yield %localThen", "      ctjs.set_property %localAlias[%localName], "
+                                            "%localLiteral\n      scf.yield %localThen"},
+             {"%localSet(%localMap, %localKey, %localRecord)",
+              "%localSet(%localMap, %localLiteral, %localRecord)"},
+             {"ctjs.binary add %localElse, %localLiteral", "ctjs.binary add %localElse, %element"},
+             {"    %putResult =",
+              "    ctjs.store_global \"escaped\", %localAlias\n    %putResult ="},
+         }) {
+        localVariant(
+            replaced(records, from, to), false, false,
+            "unknown effects, replacement, escapes and branch mutation refuse the whole graph");
+    }
+    localVariant(replaced(records, "    %putResult =",
+                          "    ctjs.store_global \"escapedInert\", %localInert\n    %putResult ="),
+                 true, false, "a retained source allocation must have no observable use");
+    auto unread = localVariant(
+        replaced(records, "    %putResult =",
+                 "    %extra = ctjs.create_object\n"
+                 "    %extraKey = ctjs.constant #ctjs.string<\"extra\">\n"
+                 "    ctjs.set_property %localAlias[%extraKey], %extra\n    %putResult ="),
+        true, false, "an unread object field cannot borrow primitive native record ownership");
+    if (unread) {
+        HostContractAnalysis host(*unread, requested(*unread));
+        check(host.proved() && !host.localRecords().constructors.empty() &&
+                  !host.localRecords().primitiveFields,
+              "provider field snapshots and native storage authorization remain separate");
+    }
+    localVariant(replaced(records, "\n}\n", R"MLIR(
+  ctjs.func private @extra$9(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    ctjs.return %u
+  }
+}
+)MLIR"),
+                 true, false, "an uncensused function cannot join the complete native owner graph");
+    if (localModule) {
+        const auto manifest = requested(*localModule);
+        HostContractAnalysis host(*localModule, manifest);
+        OwnedGlobalRoots owner(*localModule, manifest);
+        if (host.proved() && owner.proved()) {
+            for (unsigned budget : {0u, host.steps() - 1}) {
+                HostContractAnalysis limited(*localModule, manifest, budget);
+                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                          limited.localRecords().constructors.empty() &&
+                          limited.localRecords().operations.empty() &&
+                          !limited.localRecords().primitiveFields && limited.callables().empty(),
+                      "an incomplete provider budget publishes no local record graph");
+            }
+            for (unsigned budget : {0u, host.steps(), owner.steps() - 1}) {
+                OwnedGlobalRoots limited(*localModule, manifest, budget);
+                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                          empty(*localModule, limited) && limited.domInputs().empty(),
+                      "an incomplete owner budget publishes no local storage authority");
+            }
+            check(HostContractAnalysis(*localModule, manifest, host.steps()).proved() &&
+                      OwnedGlobalRoots(*localModule, manifest, owner.steps()).proved(),
+                  "exact budgets restore both complete source and ownership proofs");
+            mlir::Builder attributes(&context);
+            (*localModule)->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
+            check(OwnedGlobalRoots(*localModule, manifest).proved(),
+                  "forged record reports do not obstruct independent source ownership");
+            auto entry = localModule->lookupSymbol<ctjs::FuncOp>(manifest.entry);
+            auto construction = *entry.getBody().front().getOps<ctjs::ConstructOp>().begin();
+            construction->setOperand(2, entry.getBody().front().getArgument(3));
+            HostContractAnalysis staleHost(*localModule, manifest);
+            OwnedGlobalRoots staleOwner(*localModule, manifest);
+            const auto fresh = requested(*localModule);
+            HostContractAnalysis freshHost(*localModule, fresh);
+            OwnedGlobalRoots freshOwner(*localModule, fresh);
+            check(!staleHost.proved() && staleHost.reason().contains("fingerprint") &&
+                      !staleOwner.proved() && staleOwner.reason().contains("fingerprint") &&
+                      !freshHost.proved() && freshHost.localRecords().constructors.empty() &&
+                      freshHost.localRecords().operations.empty() && !freshOwner.proved() &&
+                      empty(*localModule, freshOwner),
+                  "stale fingerprints and forged records cannot authorize a nonliteral actual");
+        }
+    }
+    std::printf("DOM local record owners %s: %u rows, exact census, report and budget controls\n",
+                prepared ? "prepared" : "source", recordRows);
+
     for (const bool different : {false, true}) {
         auto readback = replaced(siblings, "#ctjs.string<\"has\">", "#ctjs.string<\"get\">");
         if (different) {

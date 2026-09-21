@@ -100,6 +100,7 @@ struct analyzer {
     // Private read-time categories, reconstructed independently by class
     // preparation and the final provider. These never authorize native ownership.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> classScalarReads;
+    HostLocalRecords localRecords;
     llvm::DenseSet<mlir::Operation *> mutableScalarReads;
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);

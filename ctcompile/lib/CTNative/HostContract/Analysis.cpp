@@ -869,6 +869,7 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         checkedCalls = std::move(analysis.checkedCalls);
         checkedScalarReads = std::move(scalarReads);
         checkedObjectReads = std::move(objectReads);
+        checkedLocalRecords = std::move(analysis.localRecords);
     }
 }
 

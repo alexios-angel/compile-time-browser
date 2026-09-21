@@ -524,6 +524,15 @@ struct HostObjectGlobalRead {
     ctjs::CreateObjectOp object;
 };
 
+// Exact entry-local constructor/Map source graph. Every record and Map alias
+// has a complete use census; field categories alone confer no native lifetime.
+// Unknown field stores remain valid provider source but fail primitiveFields.
+struct HostLocalRecords {
+    llvm::SmallVector<ctjs::FuncOp> constructors;
+    llvm::SmallVector<mlir::Operation *> operations;
+    bool primitiveFields = false;
+};
+
 struct HostSlotReport {
     std::string binding;
     std::string property;
@@ -563,6 +572,7 @@ public:
         return checkedObjectReads;
     }
     [[nodiscard]] const HostObjectGlobalRead * objectRead(ctjs::LoadGlobalOp read) const;
+    [[nodiscard]] const HostLocalRecords & localRecords() const { return checkedLocalRecords; }
 
 private:
     std::string refusal;
@@ -572,6 +582,7 @@ private:
     std::vector<HostCallableEdge> checkedCalls;
     std::vector<HostScalarGlobalRead> checkedScalarReads;
     std::vector<HostObjectGlobalRead> checkedObjectReads;
+    HostLocalRecords checkedLocalRecords;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };

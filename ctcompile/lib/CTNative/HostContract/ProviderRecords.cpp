@@ -15,6 +15,7 @@ std::string analyzer::localRecordProblem() {
     // ponytail: uncaptured literal/formal constructors and same-block String-key
     // Maps. Captured constructors and branch mutations need a wider owner proof.
     llvm::DenseSet<mlir::Operation *> operations, constructors, closures, maps;
+    bool primitiveFields = true;
     llvm::DenseMap<mlir::Value, mlir::Value> origins;
     llvm::DenseMap<mlir::Value, llvm::StringMap<PrimitiveAlternatives>> fields;
     llvm::DenseMap<mlir::Value, llvm::StringMap<mlir::Value>> entries;
@@ -91,6 +92,7 @@ std::string analyzer::localRecordProblem() {
         origins[made.getResult()] = made.getResult();
         constructors.insert(function);
         closures.insert(closure);
+        operations.insert(closure);
         operations.insert(made);
     }
     if (constructors.empty()) { return exhausted ? reject() : std::string{}; }
@@ -123,6 +125,19 @@ std::string analyzer::localRecordProblem() {
                 return reject();
             }
         }
+    }
+    // Preparation keeps retired holder/prototype allocations in the source.
+    // Only an allocation with no observable use belongs to this local graph.
+    for (ctjs::CreateObjectOp made : entry.getBody().front().getOps<ctjs::CreateObjectOp>()) {
+        if (!step()) { return reject(); }
+        bool inert = true;
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            if (!step()) { return reject(); }
+            inert &= use.getOperandNumber() == 0 && llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                     use.getOwner()->getParentOfType<ctjs::FuncOp>() == entry &&
+                     dominance.dominates(made.getResult(), use.getOwner());
+        }
+        if (inert) { operations.insert(made); }
     }
     for (ctjs::ConstructOp made : entry.getBody().front().getOps<ctjs::ConstructOp>()) {
         if (!step()) { return reject(); }
@@ -225,7 +240,9 @@ std::string analyzer::localRecordProblem() {
                 if (write->getParentOp() != entry || !ctjs::ordinaryKey(write.getKey())) {
                     return mlir::WalkResult::interrupt();
                 }
-                fields[owner][ctjs::constantKey(write.getKey())] = category(write.getValue(), op);
+                const auto value = category(write.getValue(), op);
+                primitiveFields &= value.known;
+                fields[owner][ctjs::constantKey(write.getKey())] = value;
                 operations.insert(write);
             }
         } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
@@ -265,6 +282,7 @@ std::string analyzer::localRecordProblem() {
             if (numeric(binary.getLhs()) && numeric(binary.getRhs())) {
                 scalars[binary.getResult()] =
                     PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
+                operations.insert(binary);
             }
         }
         return exhausted ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
@@ -307,7 +325,13 @@ std::string analyzer::localRecordProblem() {
     for (mlir::Operation * op : operations) {
         if (!step()) { return reject(); }
         capturedOperations.insert(op);
+        localRecords.operations.push_back(op);
     }
+    for (mlir::Operation * function : constructors) {
+        if (!step()) { return reject(); }
+        localRecords.constructors.push_back(llvm::cast<ctjs::FuncOp>(function));
+    }
+    localRecords.primitiveFields = primitiveFields;
     return {};
 }
 
