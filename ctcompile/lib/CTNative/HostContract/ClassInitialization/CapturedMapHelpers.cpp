@@ -794,7 +794,7 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
     const auto expand = [&](ctjs::CreateClosureOp helper) {
         auto function = target(helper);
         if (!function || helper.getUpvalues().size() != 1 || function.getUpvalueCount() != 1 ||
-            !function.getBody().hasOneBlock() || !undefined(helper.getEnclosingThis()) ||
+            !function.getBody().hasOneBlock() ||
             (helper.getEnclosingIndicesAttr() &&
              llvm::any_of(helper.getEnclosingIndicesAttr().asArrayRef(),
                           [](int32_t index) { return index >= 0; }))) {
@@ -804,6 +804,8 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         auto map = sourceValue(cells.lookup(mapCell)).getDefiningOp<ctjs::ConstructOp>();
         if (!map || !maps.contains(map.getResult()) || map->getBlock() != &entry) { return true; }
         auto & body = function.getBody().front();
+        // An arrow may save lexical this without reading it. The complete body
+        // and callee census below must also exclude any nested capture or escape.
         if (!body.getArgument(ctjs::arg_receiver).use_empty() ||
             !body.getArgument(ctjs::arg_new_target).use_empty()) {
             return true;

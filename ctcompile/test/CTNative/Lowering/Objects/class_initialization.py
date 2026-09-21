@@ -18,6 +18,17 @@ CONFLICT_OBSERVATIONS = {
     "class-map-record-nested-conflict-hidden-store": (7, 7),
 }
 OBSERVATIONS.update(CONFLICT_OBSERVATIONS)
+VENDOR_DATA_OBSERVATIONS = {
+    "class-map-record-nested-vendor-holder": (15927, 15927),
+    "class-map-record-nested-vendor-constructor": (59112, 59112),
+    "class-map-record-nested-vendor-live-this": (15927, 15927),
+    "class-map-record-nested-vendor-unused-observer": (15927, 15927),
+}
+OBSERVATIONS.update(VENDOR_DATA_OBSERVATIONS)
+POSITIVES.update(
+    {"class-map-record-nested-vendor-holder", "class-map-record-nested-vendor-constructor"}
+)
+
 POSITIVES.update(
     {
         "class-map-record-nested-conflict-direct",
@@ -321,6 +332,12 @@ def main():
         .removesuffix(",")
         + ";\n"
     )
+    for name in (
+        "class-map-record-nested-vendor-holder",
+        "class-map-record-nested-vendor-constructor",
+    ):
+        if data not in (args.fixtures / f"{name}.js").read_text():
+            raise RuntimeError(f"{name}: complete vendor Data declaration changed")
     (args.fixtures / "bootstrap-base-data.js").write_text(
         (args.fixtures / "bootstrap-base.js")
         .read_text()
@@ -631,6 +648,7 @@ def main():
             "class-map-record-nested-cleanup-direct",
             "class-map-record-nested-nullable-direct",
             "class-map-record-nested-conflict-direct",
+            "class-map-record-nested-vendor-holder",
         ):
             prepare(
                 args,
@@ -686,6 +704,8 @@ def main():
                 "class-map-record-nested-conflict-direct": 6,
                 "class-map-record-nested-conflict-holder": 4,
                 "class-map-record-nested-conflict-constructor": 4,
+                "class-map-record-nested-vendor-holder": 4,
+                "class-map-record-nested-vendor-constructor": 4,
             }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -970,6 +990,7 @@ def main():
             "class-map-record-nested-cleanup-direct",
             "class-map-record-nested-nullable-direct",
             "class-map-record-nested-conflict-direct",
+            "class-map-record-nested-vendor-holder",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",
