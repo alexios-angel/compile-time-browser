@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor lifting and native class sessions, 2026-09-21 UTC
+
+Continued clean **0bbed840**. **6a333142** lifts exact proved constructors in the
+DOM Data host path, preserving their original callable and fresh instance.
+The provider rebuilds the allocation, initializer, field, Map and symbol census;
+initialization must precede every instance observation. Final ownership is
+reproved after rewriting. Generic constructor guards remain unchanged.
+**Six existing vendor-derived class/Data sources now execute natively**, including
+class-field publication and the complete retained vendor Data declaration.
+Their independently observed class results remain 15927 or 59112. This is not
+full Bootstrap admission. **e2bf7729** adds two-level ASCII prefix concatenation
+for startsWith without widening literal-only dataset authority.
+
+Focused validation passes: final DOM lit **181.45 s**, with **48 class, 56 record
+and 24 object-key native executions**; exact ownership/host CTests **2/2,
+246.78 s total**; and the three selected DOM-input/generic-constructor lit cases.
+New live-IR controls cover exact callees, receivers, initialization order,
+repeated initialization, escaped results, fingerprints, budgets and forged
+reports. String checks pass **56 native executions, 112 refusals and six
+Node/VM agreements**. Existing source generators, source tables and hostile
+source bodies are unchanged. All six code/test hashes match the devbox; scoped
+formatting passes. The repository formatter retains 16 untouched diagnostics.
+No browser/shared implementation changed; full suites and broad replays were skipped.
+
+**Next:** the unchanged constructor-only saved-field witness now refuses the
+native carrier `Map<DOMElement, Optional<Number>>`, after successful constructor
+lifting and fresh ownership proof. Extend closed optional scalar Map storage,
+arguments and reads while retaining null/undefined/missing-entry distinctions,
+or prove field presence before narrowing. Original composite-result publication
+still refuses preparation. Multiple DOM-input alias partitions, original
+B/Data+B, broader Strings, conditional callees, mutable cells, String ordering,
+document views and the application driver remain unfinished.
+
+[Exact checks and remaining carrier boundary](handoff/2026-09-21-constructor-lifting-prefixes.md).
+
 ## Local constructor ownership and ASCII prefixes, 2026-09-21 UTC
 
 Continued clean **0f8628da**. **32a1ca2f** composes the final DOM Data provider's
