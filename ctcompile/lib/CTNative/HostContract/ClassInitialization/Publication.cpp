@@ -8,8 +8,7 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     // Shared helpers and earlier publication need a complete observer proof.
     auto function = target(constructor);
     if (contract.provider != HostContract::Provider::closedSource ||
-        baseClasses.contains(constructor.getResult()) || constructor.getUpvalues().size() != 1 ||
-        !function.getBody().hasOneBlock()) {
+        constructor.getUpvalues().size() != 1 || !function.getBody().hasOneBlock()) {
         return true;
     }
     auto helperCell = constructor.getUpvalues().front();
@@ -94,7 +93,9 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         return true;
     }
     auto & helperBody = targetFunction.getBody().front();
-    if (helperBody.getNumArguments() != ctjs::implicit_arguments + 1 ||
+    if (helperBody.getNumArguments() < ctjs::implicit_arguments + 1) { return true; }
+    const auto parameters = helperBody.getArguments().drop_front(ctjs::implicit_arguments);
+    if ((parameters.size() != 1 && parameters.size() != 2) ||
         !helperBody.getArgument(ctjs::arg_receiver).use_empty() ||
         !helperBody.getArgument(ctjs::arg_new_target).use_empty()) {
         return true;
@@ -127,11 +128,15 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         ctjs::constantKey(selection.getKey()) != "set" ||
         publication.getCallee() != selection.getResult() ||
         publication.getReceiver() != captured.getResult() || publication.getArgs().size() != 2 ||
-        publication.getArgs()[1] != helperBody.getArgument(ctjs::implicit_arguments)) {
+        publication.getArgs()[1] != parameters.back()) {
         return true;
     }
     auto key = publication.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-    if (!key || !llvm::isa<ctjs::StringAttr>(key.getValue())) { return true; }
+    const bool keyed = parameters.size() == 2;
+    if (keyed ? publication.getArgs()[0] != parameters.front()
+              : !key || !llvm::isa<ctjs::StringAttr>(key.getValue())) {
+        return true;
+    }
     for (mlir::Operation * user : publication->getUsers()) {
         if (!step()) { return false; }
         if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
@@ -148,8 +153,9 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
             invocation = call;
         }
     }
-    if (!invocation || invocation->getBlock() != &body || invocation.getArgs().size() != 1 ||
-        invocation.getArgs().front() != body.getArgument(ctjs::arg_receiver)) {
+    if (!invocation || invocation->getBlock() != &body ||
+        invocation.getArgs().size() != parameters.size() ||
+        invocation.getArgs().back() != body.getArgument(ctjs::arg_receiver)) {
         return true;
     }
     for (mlir::Operation * user : invocation->getUsers()) {
@@ -218,9 +224,9 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         }
     }
     if (!reason.empty()) { return false; }
-    // Four operations, counting each operation, operand and result before
-    // allocation, just like the enclosing candidate-copy budget.
-    constexpr unsigned expansionCost = 14;
+    // Count operations, operands and results before allocation. A forwarded
+    // key keeps its original evaluation; the publication proof checks its type.
+    const unsigned expansionCost = keyed ? 12 : 14;
     if (remaining < expansionCost) { return refuse("class initialization work budget exhausted"); }
     remaining -= expansionCost;
     // The helper has no other effects or callers. Replace its exact call,
@@ -229,9 +235,10 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     auto name = ctjs::ConstantOp::create(at, selection.getLoc(),
                                          ctjs::StringAttr::get(module.getContext(), "set"));
     auto select = ctjs::GetPropertyOp::create(at, selection.getLoc(), selectedHelper, name);
-    auto literal = ctjs::ConstantOp::create(at, key.getLoc(), key.getValue());
+    mlir::Value registrationKey = invocation.getArgs().front();
+    if (!keyed) { registrationKey = ctjs::ConstantOp::create(at, key.getLoc(), key.getValue()); }
     ctjs::CallOp::create(at, invocation.getLoc(), invocation.getType(), select, selectedHelper,
-                         mlir::ValueRange{literal, body.getArgument(ctjs::arg_receiver)});
+                         mlir::ValueRange{registrationKey, body.getArgument(ctjs::arg_receiver)});
     eraseRooted(invocation);
     if (holder) {
         eraseRooted(holderRead);
@@ -316,13 +323,33 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     auto selection = publication.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
     auto captured = publication.getReceiver().getDefiningOp<ctjs::LoadUpvalueOp>();
     auto key = publication.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+    auto keyParameter = llvm::dyn_cast<mlir::BlockArgument>(publication.getArgs()[0]);
     auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
     if (!selection || selection.getObject() != publication.getReceiver() ||
         ctjs::constantKey(selection.getKey()) != "set" || !captured ||
-        mapCaptures.lookup(captured.getResult()) != map.getResult() || !key ||
-        !llvm::isa<ctjs::StringAttr>(key.getValue()) || !returned ||
+        mapCaptures.lookup(captured.getResult()) != map.getResult() || !returned ||
         !undefined(returned.getValue())) {
         return true;
+    }
+    if (key ? !llvm::isa<ctjs::StringAttr>(key.getValue())
+            : !keyParameter || keyParameter.getOwner() != &body ||
+                  keyParameter.getArgNumber() < ctjs::implicit_arguments) {
+        return true;
+    }
+    // A base parameter remains a deferred obligation: super normalization
+    // substitutes it into the sole leaf, which checks every exact new below.
+    // ponytail: literal String actuals; computed keys need a wider type proof.
+    llvm::SmallVector<ctjs::ConstantOp> keys;
+    for (ctjs::ConstructOp made : instances) {
+        if (!step()) { return false; }
+        auto actual = key;
+        if (!actual) {
+            const auto index = keyParameter.getArgNumber() - ctjs::implicit_arguments;
+            if (index >= made.getArgs().size()) { return true; }
+            actual = made.getArgs()[index].getDefiningOp<ctjs::ConstantOp>();
+        }
+        if (!actual || !llvm::isa<ctjs::StringAttr>(actual.getValue())) { return true; }
+        keys.push_back(actual);
     }
     llvm::DenseSet<mlir::Value> numbers;
     if (basePublication) {
@@ -451,7 +478,7 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     // There is no observable work between the original set and return. Keep
     // registration immediately after each exact new, before its caller resumes.
     // A throwing prefix still skips it; a throwing set still skips the caller.
-    for (ctjs::ConstructOp made : instances) {
+    for (auto [made, actual] : llvm::zip(instances, keys)) {
         constexpr unsigned expansionCost = 14;
         if (remaining < expansionCost) {
             return refuse("class initialization work budget exhausted");
@@ -462,9 +489,9 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
         auto name = ctjs::ConstantOp::create(at, selection.getLoc(),
                                              ctjs::StringAttr::get(module.getContext(), "set"));
         auto select = ctjs::GetPropertyOp::create(at, selection.getLoc(), map.getResult(), name);
-        auto literal = ctjs::ConstantOp::create(at, key.getLoc(), key.getValue());
+        auto literal = ctjs::ConstantOp::create(at, actual.getLoc(), actual.getValue());
         ctjs::CallOp::create(at, publication.getLoc(), publication.getType(), select,
-                             map.getResult(), mlir::ValueRange{literal, made.getResult()});
+                             map.getResult(), mlir::ValueRange{literal, made->getResult(0)});
     }
     const auto retire = [&](ctjs::CreateClosureOp closure, ctjs::CallOp call) {
         auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();

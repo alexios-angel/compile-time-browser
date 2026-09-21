@@ -3,6 +3,9 @@
 from CTNative.Lowering.Objects import class_initialization as check
 
 SELECTED = {
+    "class-map-record-constructor-dynamic-key",
+    "class-map-inherited-keyed-holder",
+    "class-map-inherited-keyed-later-number",
     "class-map-record-direct",
     "class-map-record-shared-owner",
     "class-map-record-returned-alias",
@@ -26,8 +29,9 @@ check.OBSERVATIONS = {
             "class-map-record-captured-helper-",
             "class-map-record-captured-holder-",
             "class-map-record-constructor-holder-",
+            "class-map-record-constructor-keyed-",
         )
     )
 }
-assert len(check.OBSERVATIONS) == len(SELECTED) + 43
+assert len(check.OBSERVATIONS) == len(SELECTED) + 55
 check.main()

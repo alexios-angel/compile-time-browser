@@ -16,6 +16,20 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-constructor-keyed-holder": (2727, 2727),
+    "class-map-record-constructor-keyed-overwrite-delete": (59592, 59592),
+    "class-map-record-constructor-keyed-helper": (272, 272),
+    "class-map-inherited-keyed-holder": (2733, 2733),
+    "class-map-record-constructor-keyed-later-number": (207, 207),
+    "class-map-record-constructor-keyed-missing": (207, 207),
+    "class-map-record-constructor-keyed-computed": (707, 707),
+    "class-map-record-constructor-keyed-effect": (107, 107),
+    "class-map-record-constructor-keyed-helper-modified-key": (7, 7),
+    "class-map-record-constructor-keyed-helper-return-key": (7, 7),
+    "class-map-record-constructor-keyed-helper-receiver": (7, 7),
+    "class-map-record-constructor-keyed-early": (707, 707),
+    "class-map-record-constructor-keyed-owner-escaped": (7, 7),
+    "class-map-inherited-keyed-later-number": (207, 207),
     "class-map-record-constructor-holder-alias-capture": (7, 7),
     "class-map-record-constructor-holder-map-alias-capture": (707, 707),
     "class-map-record-constructor-holder-late-slot": (7, 7),
@@ -653,6 +667,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-constructor-keyed-holder",
+    "class-map-record-constructor-keyed-overwrite-delete",
+    "class-map-record-constructor-keyed-helper",
+    "class-map-inherited-keyed-holder",
     "class-map-record-constructor-holder-direct",
     "class-map-record-constructor-holder-overwrite-delete",
     "class-map-record-constructor-holder-numeric",
