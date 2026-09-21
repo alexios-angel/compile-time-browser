@@ -777,6 +777,36 @@ REMAINDER_INDICES = {
 }
 """,
 }
+ADDITION_WITNESSES = {
+    "addition-index-charat-zero": (
+        "function bad(text, index) { return text.charAt(0 + 0); }\n",
+        ("", "a", "a"),
+    ),
+}
+ADDITION_INDICES = {
+    **{name: source for name, (source, _) in ADDITION_WITNESSES.items()},
+    "string-addition-indices": """function stringAdditionIndices(text, first, middle, tail) {
+  const next = 0.5 + 1;
+  return next === 1.5 && text.charAt(0 + 0) === first && text.slice(0 + 0) === text &&
+    text.slice(0, 0 + 0) === '' && text.slice(undefined, 0 + 0) === '' &&
+    text.charAt(next) === middle && text.slice(next, 2) === middle &&
+    text.slice(next) === middle + tail && text.slice(2, 1e308 + 1e308) === tail &&
+    text.charAt(1e999 + 0) === '' && text.slice(1e999 + 1e999) === '' &&
+    text.slice(0, 4294967295 + 1) === text && text.charAt(4294967295 + 1) === '' &&
+    text.charAt(5e-324 + 5e-324) === first && text.slice(0.5 + 0.25) === text;
+}
+""",
+    "description-capture-addition-index": """function descriptionCaptureAdditionIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const first = 0 + 0;
+    return text !== undefined ? text.charAt(first) + text.slice(0.5 + 1) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -844,6 +874,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in REMAINDER_WITNESSES},
     "string-remainder-indices": ["string", "string", "string", "string"],
     "description-capture-remainder-index": ["symbol"],
+    **{name: ["string", "number"] for name in ADDITION_WITNESSES},
+    "string-addition-indices": ["string", "string", "string", "string"],
+    "description-capture-addition-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1437,6 +1470,7 @@ for name, (source, expected) in (
     | SUBTRACTION_WITNESSES
     | MULTIPLICATION_WITNESSES
     | REMAINDER_WITNESSES
+    | ADDITION_WITNESSES
 ).items():
     CASES[name] = (
         source,
@@ -1552,6 +1586,14 @@ CASES["string-remainder-indices"] = (
 )
 CASES["description-capture-remainder-index"] = (
     REMAINDER_INDICES["description-capture-remainder-index"],
+    *CASES["description-type-guard"][1:],
+)
+CASES["string-addition-indices"] = (
+    ADDITION_INDICES["string-addition-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-addition-index"] = (
+    ADDITION_INDICES["description-capture-addition-index"],
     *CASES["description-type-guard"][1:],
 )
 # The complete former refused programs now execute unchanged.
@@ -1676,6 +1718,7 @@ def oracle(args):
         + "".join(
             body for name, body in REMAINDER_INDICES.items() if name not in REMAINDER_WITNESSES
         )
+        + "".join(body for name, body in ADDITION_INDICES.items() if name not in ADDITION_WITNESSES)
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -2139,6 +2182,32 @@ var symbol129StringUTF16RemainderIndices = stringRemainderIndices('\u00c9xy', '\
   stringRemainderIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringRemainderIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeAddition{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}AdditionWitness{i} = observeAddition{i}();\n"
+            for i, (body, expected) in enumerate(ADDITION_WITNESSES.values(), 130)
+        )
+        + r"""
+var symbol131StringAdditionIndices = stringAdditionIndices('', '', '', '') &&
+  stringAdditionIndices('a', 'a', '', '') && stringAdditionIndices('abcd', 'a', 'b', 'cd') &&
+  stringAdditionIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringAdditionIndices('abc', 'a', 'bc', 'c') && !stringAdditionIndices('abc', 'a', 'b', 'bc');
+var symbol132DescriptionCaptureAdditionIndex = descriptionCaptureAdditionIndex(Symbol()) === ':absent' &&
+  descriptionCaptureAdditionIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureAdditionIndex(Symbol('')) === '' &&
+  descriptionCaptureAdditionIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureAdditionIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureAdditionIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureAdditionIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol133StringUTF16AdditionIndices = stringAdditionIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringAdditionIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringAdditionIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringAdditionIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -2241,6 +2310,10 @@ var symbol129StringUTF16RemainderIndices = stringRemainderIndices('\u00c9xy', '\
         "StringRemainderIndices",
         "DescriptionCaptureRemainderIndex",
         "StringUTF16RemainderIndices",
+        "AdditionWitness130",
+        "StringAdditionIndices",
+        "DescriptionCaptureAdditionIndex",
+        "StringUTF16AdditionIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -2283,6 +2356,10 @@ var symbol129StringUTF16RemainderIndices = stringRemainderIndices('\u00c9xy', '\
     vm_expected = vm_expected.replace(
         "symbol129StringUTF16RemainderIndices=true",
         "symbol129StringUTF16RemainderIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol133StringUTF16AdditionIndices=true",
+        "symbol133StringUTF16AdditionIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -2441,6 +2518,7 @@ def main():
             | SUBTRACTION_INDICES
             | MULTIPLICATION_INDICES
             | REMAINDER_INDICES
+            | ADDITION_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -2663,6 +2741,7 @@ def main():
         *SUBTRACTION_INDICES,
         *MULTIPLICATION_INDICES,
         *REMAINDER_INDICES,
+        *ADDITION_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -3148,7 +3227,6 @@ def main():
         "nested-expression": "return text.charAt((0 * 1) * 1);",
         "negated-expression": "return text.slice(-(0 * 1));",
         "negated-operand": "return text.charAt(0 * (-1));",
-        "other-arithmetic": "return text.charAt(0 + 0);",
         "nan-global": "return text.charAt(NaN * 0);",
         "result-escape": "const missing=0 * 1e999; text.charAt(missing); return missing;",
         "unused-result": "const missing=0 * 1e999; return text.charAt(0);",
@@ -3196,7 +3274,6 @@ def main():
         "negative-left": "return text.charAt(-1 % 2);",
         "negative-right": "return text.slice(1 % -2);",
         "negative-zero": "return text.charAt(-0 % 1);",
-        "other-arithmetic": "return text.charAt(0 + 0);",
         "nan-global": "return text.charAt(NaN % 1);",
         "infinity-global": "return text.slice(1 % Infinity);",
         "result-escape": "const missing=1 % 0; text.charAt(missing); return missing;",
@@ -3229,6 +3306,48 @@ def main():
         raise RuntimeError("remainder index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "remainder-index-stale"):
         raise RuntimeError("changed remainder index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-left": "return text.charAt(index + 1);",
+        "dynamic-right": "return text.slice(1 + index);",
+        "coercion": "return text.charAt('0' + 1);",
+        "boolean": "return text.charAt(false + 0);",
+        "null": "return text.slice(0 + null);",
+        "other-arithmetic": "return text.charAt(0 ** 1);",
+        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} + 1);",
+        "nested-expression": "return text.charAt((0 + 1) + 1);",
+        "negated-expression": "return text.slice(-(0 + 1));",
+        "negative-left": "return text.charAt(-1 + 2);",
+        "nan-global": "return text.charAt(NaN + 1);",
+        "infinity-global": "return text.slice(1 + Infinity);",
+        "extra-argument": "return text.charAt(0, 0 + 1);",
+        "charat-authority": "return text.charAt(0 + 0).toLowerCase();",
+        "slice-authority": "return text.slice(0 + 1).toLowerCase();",
+        "replacement": "String.prototype.slice=0; return text.slice(0 + 1);",
+        "detached": "const method=text.charAt; return method(0 + 1);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(0 + 1);",
+        "description-unguarded": "return Symbol(text).description.charAt(0 + 1);",
+        "mutable-capture": "let bound=0 + 1; function part() { return text.charAt(bound); } bound=2; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "addition-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"addition-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-addition-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"addition-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "addition-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("addition index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "addition-index-stale"):
+        raise RuntimeError("changed addition index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

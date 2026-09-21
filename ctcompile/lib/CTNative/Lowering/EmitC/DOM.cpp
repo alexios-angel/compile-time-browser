@@ -555,7 +555,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                 mlir::ValueRange{rawText(call.getReceiver())});
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
         // The host proof admits Number/Boolean/null literals, undefined and
-        // one division/subtraction/multiplication/remainder of Number literals, including NaN.
+        // one arithmetic operation on Number literals, including produced NaN.
         // Null selects zero; undefined retains the default slice end.
         const auto numericIndex = [](mlir::Value argument) {
             return isNumberCarrier(argument.getType()) || argument.getType().isF64() ||
