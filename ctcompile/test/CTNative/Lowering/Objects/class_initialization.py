@@ -3,6 +3,29 @@
 
 from CTNative.Lowering.Objects.class_initialization_inputs import *
 
+# The standalone reference has no console binding; actual conflicts throw there.
+CONFLICT_OBSERVATIONS = {
+    "class-map-record-nested-conflict-direct": (594414, 594414),
+    "class-map-record-nested-conflict-holder": (15927, 15927),
+    "class-map-record-nested-conflict-constructor": (59112, 59112),
+    "class-map-record-nested-conflict-reached": (2, None),
+    "class-map-record-nested-conflict-saved-child-conflict": (2, None),
+    "class-map-record-nested-conflict-hidden-observer": (7, 7),
+    "class-map-record-nested-conflict-hidden-coercion": (7, 7),
+    "class-map-record-nested-conflict-unused-holder-slot": (15927, 15927),
+    "class-map-record-nested-conflict-dynamic-key": (7, 7),
+    "class-map-record-nested-conflict-returned-owner": (7, 7),
+    "class-map-record-nested-conflict-hidden-store": (7, 7),
+}
+OBSERVATIONS.update(CONFLICT_OBSERVATIONS)
+POSITIVES.update(
+    {
+        "class-map-record-nested-conflict-direct",
+        "class-map-record-nested-conflict-holder",
+        "class-map-record-nested-conflict-constructor",
+    }
+)
+
 OWN_FIELDS = {
     "own-fields-length": (2, 2),
     "own-fields-order": (113, 113),
@@ -580,6 +603,11 @@ def main():
             "static-error-method": "unknown call, binding or reflective effect",
             "instance-default-replacement": "primitive constructor return",
         }.get(name, "")
+        if name in (
+            "class-map-record-nested-conflict-reached",
+            "class-map-record-nested-conflict-saved-child-conflict",
+        ):
+            diagnostic = "class nested Map conflict observer is reachable"
         prepared = prepare(
             args,
             name,
@@ -602,6 +630,7 @@ def main():
             "class-map-record-nested-inherited-direct",
             "class-map-record-nested-cleanup-direct",
             "class-map-record-nested-nullable-direct",
+            "class-map-record-nested-conflict-direct",
         ):
             prepare(
                 args,
@@ -654,6 +683,9 @@ def main():
                 "class-map-record-nested-nullable-direct": 6,
                 "class-map-record-nested-nullable-holder": 4,
                 "class-map-record-nested-nullable-constructor": 4,
+                "class-map-record-nested-conflict-direct": 6,
+                "class-map-record-nested-conflict-holder": 4,
+                "class-map-record-nested-conflict-constructor": 4,
             }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -937,6 +969,7 @@ def main():
             "class-map-record-nested-inherited-direct",
             "class-map-record-nested-cleanup-direct",
             "class-map-record-nested-nullable-direct",
+            "class-map-record-nested-conflict-direct",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

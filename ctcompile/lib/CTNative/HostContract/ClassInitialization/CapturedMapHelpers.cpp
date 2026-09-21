@@ -3,6 +3,95 @@
 #include <bit>
 
 namespace ctcompile::ctnative::class_detail {
+namespace {
+
+// Recognize only the complete diagnostic expression, not its runtime behavior.
+// Its caller must prove this arm unreachable at every invocation before erasing
+// it. Neither console nor Array receives intrinsic authority from this census.
+bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> map,
+                   llvm::function_ref<bool()> step) {
+    llvm::DenseSet<mlir::Operation *> expression;
+    const auto member = [&](mlir::Value value, llvm::StringRef key) {
+        auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
+        if (!read || read->getBlock() != &block || ctjs::constantKey(read.getKey()) != key) {
+            return ctjs::GetPropertyOp{};
+        }
+        expression.insert(read);
+        return read;
+    };
+    const auto global = [&](mlir::Value value, llvm::StringRef name) {
+        auto load = value.getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!load || load->getBlock() != &block || load.getName() != name) { return false; }
+        expression.insert(load);
+        return true;
+    };
+    ctjs::CallOp observer;
+    for (auto call : block.getOps<ctjs::CallOp>()) {
+        if (!step()) { return false; }
+        auto read = member(call.getCallee(), "error");
+        if (!read) { continue; }
+        if (observer || call.getArgs().size() != 1 || call.getReceiver() != read.getObject() ||
+            !global(read.getObject(), "console")) {
+            return false;
+        }
+        observer = call;
+    }
+    if (!observer) { return false; }
+    expression.insert(observer);
+    unsigned snapshots = 0;
+    const auto message = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
+        if (!step() || depth == 64) { return false; }
+        auto * op = value.getDefiningOp();
+        if (!op || op->getBlock() != &block) { return false; }
+        if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
+            return llvm::isa<ctjs::StringAttr>(literal.getValue());
+        }
+        if (auto concat = llvm::dyn_cast<ctjs::BinaryOp>(op);
+            concat && concat.getKind() == ctjs::BinaryKind::Concat) {
+            expression.insert(concat);
+            return self(self, concat.getLhs(), depth + 1) && self(self, concat.getRhs(), depth + 1);
+        }
+        auto first = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        auto index = first ? first.getKey().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+        auto number =
+            index ? llvm::dyn_cast<ctjs::NumberAttr>(index.getValue()) : ctjs::NumberAttr{};
+        auto copy = first ? first.getObject().getDefiningOp<ctjs::CallOp>() : ctjs::CallOp{};
+        if (!number || number.getDouble() != 0 || !copy || copy->getBlock() != &block ||
+            copy.getArgs().size() != 1 || ++snapshots != 1) {
+            return false;
+        }
+        auto from = member(copy.getCallee(), "from");
+        if (!from || copy.getReceiver() != from.getObject() || !global(from.getObject(), "Array")) {
+            return false;
+        }
+        auto keys = copy.getArgs().front().getDefiningOp<ctjs::CallOp>();
+        auto read = keys ? member(keys.getCallee(), "keys") : ctjs::GetPropertyOp{};
+        if (!read || keys->getBlock() != &block || !keys.getArgs().empty() ||
+            keys.getReceiver() != read.getObject() || !map(read.getObject())) {
+            return false;
+        }
+        expression.insert(first);
+        expression.insert(copy);
+        expression.insert(keys);
+        return true;
+    };
+    if (!message(message, observer.getArgs().front(), 0) || snapshots != 1) { return false; }
+    for (mlir::Operation & op : block) {
+        if (!step()) { return false; }
+        if (!expression.contains(&op) &&
+            !llvm::isa<ctjs::ConstantOp, ctjs::RootOp, mlir::scf::YieldOp>(op)) {
+            return false;
+        }
+        for (mlir::Value result : op.getResults()) {
+            for (mlir::Operation * user : result.getUsers()) {
+                if (!step() || user->getBlock() != &block) { return false; }
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
     // ponytail: literal outer keys and statically selected Map-only branches.
@@ -245,6 +334,19 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                 }
             }
         }
+        llvm::DenseSet<mlir::Block *> diagnostics;
+        for (mlir::Operation * op : conditional) {
+            for (auto & region : op->getRegions()) {
+                if (!step()) { return false; }
+                if (region.hasOneBlock() &&
+                    diagnosticArm(
+                        region.front(),
+                        [&](mlir::Value value) { return mapCandidate(mapCandidate, value, 0); },
+                        [&] { return step(); })) {
+                    diagnostics.insert(&region.front());
+                }
+            }
+        }
         // Check both arms before discarding either. These operations cannot
         // retain cached class/cell/closure facts or invoke user code.
         for (mlir::Operation * op : conditional) {
@@ -254,6 +356,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
             }
             const auto checked = branch.walk([&](mlir::Operation * nested) {
                 if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (diagnostics.contains(nested->getBlock())) { return mlir::WalkResult::skip(); }
                 if (llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
                               mlir::scf::YieldOp, mlir::scf::IfOp>(nested)) {
                     return mlir::WalkResult::advance();
@@ -327,6 +430,9 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
         }
         const auto visit = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
             if (depth == 64) { return refuse("class nested Map branch nesting exhausted"); }
+            if (diagnostics.contains(&block)) {
+                return refuse("class nested Map conflict observer is reachable");
+            }
             for (mlir::Operation & op : block) {
                 if (!step()) { return false; }
                 visited.insert(&op);
@@ -705,9 +811,11 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
         if (!returned) { return true; }
         llvm::DenseSet<mlir::Value> captures;
+        llvm::DenseSet<mlir::Block *> diagnostics;
         const auto checked = function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             if (op == function) { return mlir::WalkResult::advance(); }
+            if (diagnostics.contains(op->getBlock())) { return mlir::WalkResult::skip(); }
             if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
                 if (read.getIndex() != 0 ||
                     read.getClosure() != body.getArgument(ctjs::arg_callee)) {
@@ -765,6 +873,13 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     if (!region.empty() &&
                         (!region.hasOneBlock() || region.front().getNumArguments())) {
                         return mlir::WalkResult::interrupt();
+                    }
+                    if (region.hasOneBlock() &&
+                        diagnosticArm(
+                            region.front(),
+                            [&](mlir::Value value) { return captures.contains(value); },
+                            [&] { return step(); })) {
+                        diagnostics.insert(&region.front());
                     }
                 }
                 for (mlir::Value result : branch.getResults()) { captures.insert(result); }
