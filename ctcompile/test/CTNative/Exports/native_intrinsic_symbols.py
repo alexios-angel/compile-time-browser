@@ -741,6 +741,42 @@ MULTIPLICATION_INDICES = {
 }
 """,
 }
+REMAINDER_WITNESSES = {
+    "remainder-index-charat-zero": (
+        "function bad(text, index) { return text.charAt(0 % 1); }\n",
+        ("", "a", "a"),
+    ),
+}
+REMAINDER_INDICES = {
+    **{name: source for name, (source, _) in REMAINDER_WITNESSES.items()},
+    "string-remainder-indices": """function stringRemainderIndices(text, first, middle, tail) {
+  const missing = 1 % 0;
+  const next = 3.5 % 2;
+  return text.charAt(missing) === first && text.slice(missing) === text &&
+    text.slice(0, missing) === '' && text.slice(undefined, missing) === '' &&
+    text.charAt(0 % 0) === first && text.slice(1e999 % 1) === text &&
+    text.charAt(1e999 % 1e999) === first && text.slice(1e999 % 0) === text &&
+    text.charAt(next) === middle && text.slice(next, 2) === middle &&
+    text.slice(next) === middle + tail && text.charAt(1 % 1e999) === middle &&
+    text.slice(2 % 1e999) === tail && text.charAt(4 % 2) === first &&
+    text.slice(0 % 1e999) === text && text.slice(0, 0 % 1) === '' &&
+    text.charAt(5e-324 % 1) === first && text.slice(1, 0.5 % 1) === '' &&
+    text.charAt(4294967296 % 1e999) === '' && text.slice(4294967296 % 1e999) === '' &&
+    text.slice(0, 4294967296 % 1e999) === text;
+}
+""",
+    "description-capture-remainder-index": """function descriptionCaptureRemainderIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const missing = 1 % 0;
+    return text !== undefined ? text.charAt(missing) + text.slice(3.5 % 2) +
+      text.slice(0, missing) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -805,6 +841,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in MULTIPLICATION_WITNESSES},
     "string-multiplication-indices": ["string", "string", "string", "string"],
     "description-capture-multiplication-index": ["symbol"],
+    **{name: ["string", "number"] for name in REMAINDER_WITNESSES},
+    "string-remainder-indices": ["string", "string", "string", "string"],
+    "description-capture-remainder-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1397,6 +1436,7 @@ for name, (source, expected) in (
     | DIVISION_WITNESSES
     | SUBTRACTION_WITNESSES
     | MULTIPLICATION_WITNESSES
+    | REMAINDER_WITNESSES
 ).items():
     CASES[name] = (
         source,
@@ -1504,6 +1544,14 @@ CASES["string-multiplication-indices"] = (
 )
 CASES["description-capture-multiplication-index"] = (
     MULTIPLICATION_INDICES["description-capture-multiplication-index"],
+    *CASES["description-type-guard"][1:],
+)
+CASES["string-remainder-indices"] = (
+    REMAINDER_INDICES["string-remainder-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-remainder-index"] = (
+    REMAINDER_INDICES["description-capture-remainder-index"],
     *CASES["description-type-guard"][1:],
 )
 # The complete former refused programs now execute unchanged.
@@ -1624,6 +1672,9 @@ def oracle(args):
             body
             for name, body in MULTIPLICATION_INDICES.items()
             if name not in MULTIPLICATION_WITNESSES
+        )
+        + "".join(
+            body for name, body in REMAINDER_INDICES.items() if name not in REMAINDER_WITNESSES
         )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
@@ -2062,6 +2113,32 @@ var symbol125StringUTF16MultiplicationIndices = stringMultiplicationIndices('\u0
   stringMultiplicationIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringMultiplicationIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeRemainder{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}RemainderWitness{i} = observeRemainder{i}();\n"
+            for i, (body, expected) in enumerate(REMAINDER_WITNESSES.values(), 126)
+        )
+        + r"""
+var symbol127StringRemainderIndices = stringRemainderIndices('', '', '', '') &&
+  stringRemainderIndices('a', 'a', '', '') && stringRemainderIndices('abcd', 'a', 'b', 'cd') &&
+  stringRemainderIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringRemainderIndices('abc', 'a', 'bc', 'c') && !stringRemainderIndices('abc', 'a', 'b', 'bc');
+var symbol128DescriptionCaptureRemainderIndex = descriptionCaptureRemainderIndex(Symbol()) === ':absent' &&
+  descriptionCaptureRemainderIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureRemainderIndex(Symbol('')) === '' &&
+  descriptionCaptureRemainderIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureRemainderIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureRemainderIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureRemainderIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol129StringUTF16RemainderIndices = stringRemainderIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringRemainderIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringRemainderIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringRemainderIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -2160,6 +2237,10 @@ var symbol125StringUTF16MultiplicationIndices = stringMultiplicationIndices('\u0
         "StringMultiplicationIndices",
         "DescriptionCaptureMultiplicationIndex",
         "StringUTF16MultiplicationIndices",
+        "RemainderWitness126",
+        "StringRemainderIndices",
+        "DescriptionCaptureRemainderIndex",
+        "StringUTF16RemainderIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -2198,6 +2279,10 @@ var symbol125StringUTF16MultiplicationIndices = stringMultiplicationIndices('\u0
     vm_expected = vm_expected.replace(
         "symbol125StringUTF16MultiplicationIndices=true",
         "symbol125StringUTF16MultiplicationIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol129StringUTF16RemainderIndices=true",
+        "symbol129StringUTF16RemainderIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -2355,6 +2440,7 @@ def main():
             | DIVISION_INDICES
             | SUBTRACTION_INDICES
             | MULTIPLICATION_INDICES
+            | REMAINDER_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -2576,6 +2662,7 @@ def main():
         *DIVISION_INDICES,
         *SUBTRACTION_INDICES,
         *MULTIPLICATION_INDICES,
+        *REMAINDER_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -3098,6 +3185,50 @@ def main():
         raise RuntimeError("multiplication index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "multiplication-index-stale"):
         raise RuntimeError("changed multiplication index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-left": "return text.charAt(index % 1);",
+        "dynamic-right": "return text.slice(1 % index);",
+        "coercion": "return text.charAt('0' % 1);",
+        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} % 1);",
+        "nested-expression": "return text.charAt((0 % 1) % 1);",
+        "negated-expression": "return text.slice(-(0 % 1));",
+        "negative-left": "return text.charAt(-1 % 2);",
+        "negative-right": "return text.slice(1 % -2);",
+        "negative-zero": "return text.charAt(-0 % 1);",
+        "other-arithmetic": "return text.charAt(0 + 0);",
+        "nan-global": "return text.charAt(NaN % 1);",
+        "infinity-global": "return text.slice(1 % Infinity);",
+        "result-escape": "const missing=1 % 0; text.charAt(missing); return missing;",
+        "unused-result": "const missing=1 % 0; return text.charAt(0);",
+        "extra-argument": "return text.charAt(0, 0 % 1);",
+        "charat-authority": "return text.charAt(0 % 1).toLowerCase();",
+        "slice-authority": "return text.slice(1 % 2).toLowerCase();",
+        "replacement": "String.prototype.slice=0; return text.slice(0 % 1);",
+        "detached": "const method=text.charAt; return method(0 % 1);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(0 % 1);",
+        "description-unguarded": "return Symbol(text).description.charAt(0 % 1);",
+        "mutable-capture": "let bound=0 % 1; function part() { return text.charAt(bound); } bound=2; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "remainder-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"remainder-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-remainder-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"remainder-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "remainder-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("remainder index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "remainder-index-stale"):
+        raise RuntimeError("changed remainder index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

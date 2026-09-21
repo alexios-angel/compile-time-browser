@@ -42,7 +42,7 @@ std::optional<double> stringIndex(mlir::Value value) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         binary &&
         (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-         binary.getKind() == ctjs::BinaryKind::Mul)) {
+         binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod)) {
         auto left = binary.getLhs().getDefiningOp<ctjs::ConstantOp>();
         auto right = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
         auto lhs = left ? llvm::dyn_cast<ctjs::NumberAttr>(left.getValue()) : ctjs::NumberAttr{};
@@ -54,6 +54,9 @@ std::optional<double> stringIndex(mlir::Value value) {
         // Nested expressions and globals still need their own origin proof.
         if (binary.getKind() == ctjs::BinaryKind::Div) { return lhs.getDouble() / rhs.getDouble(); }
         if (binary.getKind() == ctjs::BinaryKind::Sub) { return lhs.getDouble() - rhs.getDouble(); }
+        if (binary.getKind() == ctjs::BinaryKind::Mod) {
+            return std::fmod(lhs.getDouble(), rhs.getDouble());
+        }
         return lhs.getDouble() * rhs.getDouble();
     }
     bool negative = false;
@@ -80,12 +83,13 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
         (binary &&
          (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-          binary.getKind() == ctjs::BinaryKind::Mul))) {
+          binary.getKind() == ctjs::BinaryKind::Mul ||
+          binary.getKind() == ctjs::BinaryKind::Mod))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
-            refusal = "DOM String indexing negation/division/subtraction/multiplication requires "
-                      "direct Number literals";
+            refusal = "DOM String indexing negation/division/subtraction/multiplication/remainder "
+                      "requires direct Number literals";
             return false;
         }
         unsigned bounds = 0;
@@ -470,7 +474,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
                     refusal = "DOM String indexing requires primitive literals, proved undefined "
-                              "or one Number-literal division/subtraction/multiplication";
+                              "or one Number-literal division/subtraction/multiplication/remainder";
                     return false;
                 }
             }
