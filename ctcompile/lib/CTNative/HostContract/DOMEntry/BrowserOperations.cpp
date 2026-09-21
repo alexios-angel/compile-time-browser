@@ -41,18 +41,22 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
 
 std::optional<double> numericIndexLiteral(mlir::Value value) {
     bool negative = false;
-    if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
-        unary && unary.getKind() == ctjs::UnaryKind::Neg) {
-        negative = true;
+    unsigned negations = 0;
+    // ponytail: two literal negations; deeper chains need a budgeted origin proof.
+    for (; negations < 2; ++negations) {
+        auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+        if (!unary || unary.getKind() != ctjs::UnaryKind::Neg) { break; }
+        negative = !negative;
         value = unary.getOperand();
     }
     auto literal = value.getDefiningOp<ctjs::ConstantOp>();
     // Negation has already converted these exact primitives to Numbers.
     // Bare null/Boolean arithmetic still needs a separate coercion proof.
-    if (negative && literal) {
-        if (llvm::isa<ctjs::NullAttr>(literal.getValue())) { return -0.0; }
+    if (negations && literal) {
+        if (llvm::isa<ctjs::NullAttr>(literal.getValue())) { return negative ? -0.0 : 0.0; }
         if (auto flag = llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())) {
-            return flag.getValue() ? -1.0 : -0.0;
+            const double number = flag.getValue() ? 1.0 : 0.0;
+            return negative ? -number : number;
         }
     }
     auto number =

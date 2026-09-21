@@ -1157,6 +1157,55 @@ NEGATED_PRIMITIVE_INDICES = {
 }
 """,
 }
+DOUBLE_NEGATED_WITNESSES = {
+    # Preserve the four complete former double literal negation refusals.
+    "signed-slice-nested-negation": (
+        "function bad(text, index) { return text.slice(-(-1)); }\n",
+        ("", "", "bc"),
+    ),
+    "signed-charat-nested-negation": (
+        "function bad(text, index) { return text.charAt(-(-1)); }\n",
+        ("", "", "b"),
+    ),
+    "signed-operand-index-nested-negation": (
+        "function bad(text, index) { return text.charAt(-(-1) + 1); }\n",
+        ("", "", "c"),
+    ),
+    "negated-primitive-index-double-negation": (
+        "function bad(text, flag) { return text.charAt(-(-true)); }\n",
+        ("", "", "b"),
+    ),
+}
+DOUBLE_NEGATED_INDICES = {
+    **{name: source for name, (source, _) in DOUBLE_NEGATED_WITNESSES.items()},
+    "string-double-negated-indices": """function stringDoubleNegatedIndices(text, first, middle, tail) {
+  const negative = -1;
+  const one = -negative;
+  const zero = -(-null);
+  return text.charAt(zero) === first && text.charAt(-(-false)) === first &&
+    text.slice(zero) === text && text.slice(0, -(-false)) === '' &&
+    text.charAt(one) === middle && text.slice(one) === middle + tail &&
+    text.charAt(-(-true)) === middle && text.slice(-(-true)) === middle + tail &&
+    text.charAt(-(-0.5)) === first && text.slice(-(-1.5)) === middle + tail &&
+    text.charAt(-(-1e999)) === '' && text.slice(-(-1e999)) === '' &&
+    text.slice(1 / zero) === '' && text.slice(-1 / -(-0)) === text &&
+    text.charAt(zero / -(-false)) === first &&
+    text.charAt(-(-true) + 0) === middle && text.charAt(0 + -(-true)) === middle &&
+    text.charAt((-(-true) * 1) + 0) === middle &&
+    text.charAt((-(-true)) ** 1) === middle && text.slice(-(-true) % 1) === text;
+}
+""",
+    "description-capture-double-negated-index": """function descriptionCaptureDoubleNegatedIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const first = -(-false);
+    return text !== undefined ? text.charAt(first) + text.slice(-(-true)) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -1253,6 +1302,12 @@ PARAMETER_TYPES = {
     },
     "string-negated-primitive-indices": ["string", "string", "string", "string"],
     "description-capture-negated-primitive-index": ["symbol"],
+    **{
+        name: ["string", "boolean" if name.startswith("negated-primitive-") else "number"]
+        for name in DOUBLE_NEGATED_WITNESSES
+    },
+    "string-double-negated-indices": ["string", "string", "string", "string"],
+    "description-capture-double-negated-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -2101,6 +2156,29 @@ CASES["description-capture-negated-primitive-index"] = (
     NEGATED_PRIMITIVE_INDICES["description-capture-negated-primitive-index"],
     *CASES["description-type-guard"][1:],
 )
+for name, (source, expected) in DOUBLE_NEGATED_WITNESSES.items():
+    primitive = name.startswith("negated-primitive-")
+    parameter = "js_boolean_t" if primitive else "ctnative::js_num"
+    argument = "js_boolean_t{false}" if primitive else "ctnative::js_num{0.0}"
+    CASES[name] = (
+        source,
+        "    using namespace ctnative;\n"
+        + f"    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string, {parameter})>);\n"
+        + "".join(
+            f"    assert(@ENTRY@(js_string{{{json.dumps(text)}}}, {argument}).value() == {json.dumps(value)});\n"
+            for text, value in zip(("", "a", "abc"), expected, strict=True)
+        )
+        + '    std::cout << "true\\n";\n',
+        "true\n",
+    )
+CASES["string-double-negated-indices"] = (
+    DOUBLE_NEGATED_INDICES["string-double-negated-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-double-negated-index"] = (
+    DOUBLE_NEGATED_INDICES["description-capture-double-negated-index"],
+    *CASES["description-type-guard"][1:],
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -2238,6 +2316,11 @@ def oracle(args):
             body
             for name, body in NEGATED_PRIMITIVE_INDICES.items()
             if name not in NEGATED_PRIMITIVE_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in DOUBLE_NEGATED_INDICES.items()
+            if name not in DOUBLE_NEGATED_WITNESSES
         )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
@@ -2910,6 +2993,32 @@ var symbol190StringUTF16NegatedPrimitiveIndices = stringNegatedPrimitiveIndices(
   stringNegatedPrimitiveIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringNegatedPrimitiveIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeDoubleNegated{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, false) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}DoubleNegatedWitness{i} = observeDoubleNegated{i}();\n"
+            for i, (body, expected) in enumerate(DOUBLE_NEGATED_WITNESSES.values(), 191)
+        )
+        + r"""
+var symbol195StringDoubleNegatedIndices = stringDoubleNegatedIndices('', '', '', '') &&
+  stringDoubleNegatedIndices('a', 'a', '', '') && stringDoubleNegatedIndices('abcd', 'a', 'b', 'cd') &&
+  stringDoubleNegatedIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringDoubleNegatedIndices('abc', 'a', 'bc', 'c') && !stringDoubleNegatedIndices('abc', 'a', 'b', 'bc');
+var symbol196DescriptionCaptureDoubleNegatedIndex = descriptionCaptureDoubleNegatedIndex(Symbol()) === ':absent' &&
+  descriptionCaptureDoubleNegatedIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureDoubleNegatedIndex(Symbol('')) === '' &&
+  descriptionCaptureDoubleNegatedIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureDoubleNegatedIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureDoubleNegatedIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureDoubleNegatedIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringDoubleNegatedIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringDoubleNegatedIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringDoubleNegatedIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -3045,6 +3154,10 @@ var symbol190StringUTF16NegatedPrimitiveIndices = stringNegatedPrimitiveIndices(
         "StringNegatedPrimitiveIndices",
         "DescriptionCaptureNegatedPrimitiveIndex",
         "StringUTF16NegatedPrimitiveIndices",
+        *(f"DoubleNegatedWitness{i}" for i in range(191, 195)),
+        "StringDoubleNegatedIndices",
+        "DescriptionCaptureDoubleNegatedIndex",
+        "StringUTF16DoubleNegatedIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -3111,6 +3224,10 @@ var symbol190StringUTF16NegatedPrimitiveIndices = stringNegatedPrimitiveIndices(
     vm_expected = vm_expected.replace(
         "symbol190StringUTF16NegatedPrimitiveIndices=true",
         "symbol190StringUTF16NegatedPrimitiveIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol197StringUTF16DoubleNegatedIndices=true",
+        "symbol197StringUTF16DoubleNegatedIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -3274,6 +3391,7 @@ def main():
             | NEGATED_INDICES
             | SIGNED_OPERAND_INDICES
             | NEGATED_PRIMITIVE_INDICES
+            | DOUBLE_NEGATED_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -3722,7 +3840,6 @@ def main():
         "end-dynamic": "return text.slice(0, -index);",
         "start-coercion": "return text.slice(-'1');",
         "end-object": "return text.slice(0, -{valueOf() { return 1; }});",
-        "nested-negation": "return text.slice(-(-1));",
         "negation-escape": "const bound=-1; text.slice(bound); return bound;",
         "replacement": "String.prototype.slice=0; return text.slice(-1);",
         "first-unit-authority": "return text.slice(-1).toLowerCase();",
@@ -3756,7 +3873,6 @@ def main():
         "dynamic": "return text.charAt(-index);",
         "coercion": "return text.charAt(-'1');",
         "object": "return text.charAt(-{valueOf() { return 1; }});",
-        "nested-negation": "return text.charAt(-(-1));",
         "negation-escape": "const bound=-1; text.charAt(bound); return bound;",
         "replacement": "String.prototype.charAt=0; return text.charAt(-1);",
         "first-unit-authority": "return text.charAt(-1).toLowerCase();",
@@ -4250,7 +4366,6 @@ def main():
         "dynamic-right": "return text.slice(-1 + index);",
         "coercion": "return text.charAt(-'1' * -1);",
         "object-coercion": "return text.slice(-{valueOf() { return 0; }} / 1);",
-        "nested-negation": "return text.charAt(-(-1) + 1);",
         "number-global": "return text.charAt(-NaN / 1);",
         "infinity-global": "return text.slice(-Infinity / 1);",
         "leaf-escape": "const bound=-1; text.charAt(0 - bound); return bound;",
@@ -4347,7 +4462,6 @@ def main():
         "undefined": "return text.charAt(-undefined);",
         "bare-boolean": "return text.charAt(-true + false);",
         "bare-null": "return text.charAt(null - -false);",
-        "double-negation": "return text.charAt(-(-true));",
         "third-level": "return text.charAt(((-true + 1) * 1) + 0);",
         "leaf-escape": "const bound=-false; text.charAt(bound + 0); return bound;",
         "result-escape": "const bound=-null + 1; text.charAt(bound); return bound;",
@@ -4382,6 +4496,51 @@ def main():
         raise RuntimeError("negated primitive fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "negated-primitive-index-stale"):
         raise RuntimeError("changed negated primitive accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic": "return text.charAt(-(-flag));",
+        "comparison": "return text.charAt(-(-(text === 'a')));",
+        "string": "return text.charAt(-(-'1'));",
+        "object": "return text.slice(-(-{valueOf() { return 1; }}));",
+        "undefined": "return text.charAt(-(-undefined));",
+        "global": "return text.slice(-(-Infinity));",
+        "third-negation": "return text.charAt(-(-(-1)));",
+        "negated-arithmetic": "return text.charAt(-(-(1 + 0)));",
+        "third-binary": "return text.charAt(((-(-true) + 1) * 1) + 0);",
+        "bare-boolean": "return text.charAt(-(-true) + false);",
+        "bare-null": "return text.charAt(-(-true) + null);",
+        "inner-escape": "const inner=-true; text.charAt(-inner); return inner;",
+        "outer-escape": "const bound=-(-true); text.charAt(bound); return bound;",
+        "outer-comparison": "const bound=-(-false); return text.charAt(bound) === text && bound === 0;",
+        "unused-intermediate": "const bound=-(-true); const unused=bound + 1; return text.slice(bound);",
+        "extra-argument": "return text.charAt(0, -(-false));",
+        "charat-authority": "return text.charAt(-(-null)).toLowerCase();",
+        "slice-authority": "return text.slice(-(-true)).toLowerCase();",
+        "detached": "const method=text.charAt; return method(-(-null));",
+        "replacement": "String.prototype.slice=0; return text.slice(-(-true));",
+        "dead-effect": "function unused() { unknown(); } return text.slice(-(-true));",
+        "description-unguarded": "return Symbol(text).description.charAt(-(-false));",
+        "mutable-capture": "let bound=-(-false); function part() { return text.charAt(bound); } bound=1; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "double-negated-index-" + name,
+            f"function bad(text, flag) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "boolean"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"double-negated-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-double-negated-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"double-negated-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "double-negated-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("double negated fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "double-negated-index-stale"):
+        raise RuntimeError("changed double negated index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
