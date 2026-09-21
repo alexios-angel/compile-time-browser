@@ -71,8 +71,10 @@ coercions, `Symbol.toStringTag`, iterator closing on abrupt completion, and
 prototype mutations invalidating earlier assumptions. Native Symbol values and
 15 well-known keys now exist, with identity-preserving copies, owning description
 snapshots and explicit formatting shared with the VM through public Core. The
-25-observation API fixture agrees with Node/VM; source Symbol admission, registry
-operations and hook dispatch remain unfinished. BigInt still needs a public
+25-observation API fixture agrees with Node/VM. Proved DOM entries now emit
+well-known Symbol reads and preserve identity comparisons, truthiness and `typeof`
+while driving browser operations. Symbol transport, general script contracts,
+registry operations and hook dispatch remain unfinished. BigInt still needs a public
 non-Script implementation. Add these with their corresponding type/prototype
 milestones rather than treating the external inventory as exhaustive.
 

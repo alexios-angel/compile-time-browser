@@ -32,8 +32,9 @@ String-containing unions while retaining type, absence, NaN and zero semantics.
 Shared variables and nested capture pointers now carry those unions with owning
 snapshots and observable absence. `js_symbol_t` and the native `Symbol` object now
 provide fresh identities, immutable well-known keys such as `Symbol.hasInstance`,
-owning descriptions and `toString`/`valueOf` methods. Source Symbol operations
-and `instanceof` still require compiler proofs. Object/Array prototypes and
+owning descriptions and `toString`/`valueOf` methods. Fingerprinted DOM entries now
+emit direct well-known Symbol reads, identity equality, truthiness and `typeof`.
+Broader Symbol operations and `instanceof` still require compiler proofs. Object/Array prototypes and
 document views remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
@@ -97,7 +98,7 @@ implement every prototype up front.
 | `js_array_t<T>` | The interface for an admitted JavaScript Array, with `length()`, indexed operations and methods such as `push`, `pop` and `filter`. Use dense storage only under the existing density/content proof. Preserve reference identity, presence, mutation and eager evaluation. |
 | `js_object_t` | A non-virtual interface/tag for generated closed-shape objects. Concrete generated classes keep concrete fields and checked methods; no generic property dictionary, universal payload or slicing through this base. |
 | `js_bigint_t` | Owning arbitrary-precision integer with JavaScript BigInt semantics. Requires a public non-Script numeric implementation; a fixed-width integer or floating-point stand-in is insufficient. |
-| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. Source admission, `Symbol.for`/`keyFor` and hook dispatch still need separate proofs. |
+| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. DOM entries admit direct well-known reads, identity equality, truthiness and `typeof`; transport, `Symbol.for`/`keyFor` and hook dispatch need further proofs. |
 | `js_document_t` | An explicit borrowed document interface over a public `ctbrowser::document` and its live `style::engine`. Exposes methods/accessors through ordinary `document.member(...)` syntax. A containing session owns the resources when ownership is required. |
 | `js_element_t` | The corresponding borrowed element interface, retaining document/node identity and its proved Style association. It enables receiver-only prototype calls without exposing a VM context. |
 
@@ -146,18 +147,38 @@ hook returns true with one hook call in Node, but false with zero calls in the
 current VM. Preserve that oracle gap explicitly; do not implement native
 `instanceof` as an unchecked `std::holds_alternative` test.
 
-**Next source slice:** extend the fingerprint-bound initial-intrinsic contract
-for the standard Symbol object, census all uses, and initially admit only direct
-constant well-known property reads. Refuse replacement, aliases/escape and
-unproved mutation. Carry a distinct Symbol identity into equality, truthiness
-and `typeof`; do not infer it from a property-name string alone. Custom hook
-lookup/call/Boolean conversion, default prototype matching, invalid RHS errors,
-registry operations and symbol-keyed generated fields follow their own proofs.
+**Implemented source slice:** `ctbrowser-dom-v1` entries with an explicit
+`initial_intrinsics: ["Symbol"]` contract admit direct constant well-known reads.
+The existing complete DOM source census, work bound and fingerprint checks
+supply the proof; inference introduces `!ctnative.symbol` only from that live
+query. Generated C++ uses `ctnative::js_symbol_t` and `ctnative::Symbol.hasInstance`
+(or the requested property), with native identity equality, truthiness and
+`typeof`. Local SSA copies retain identity. Rebinding, mutation, escape, dynamic
+properties, coercion and custom hooks remain refused. No new Script or VM
+dependency is introduced.
+
+**Next source slice:** resume the retained `join`, `loop` and `symbol-return`
+controls in `Browser/native_dom_symbols.py`. Carry proved Symbol values through
+structured state and returns without inventing a default/absent Symbol identity;
+`js_symbol_t` deliberately has no default constructor. Keep null/undefined and
+mixed alternatives separate. General Symbol-only scripts still need an intrinsic
+contract without the DOM provider's required element inputs; existing closed
+source providers require an owned root. Fresh construction, primitive methods,
+registry operations and symbol-keyed fields follow their own proofs. Custom
+hook lookup/call/Boolean conversion, default prototype matching and invalid RHS
+errors remain prerequisites for `instanceof`.
 
 The focused API fixture checks 25 primitive observations against Node and the
 VM, GCC/Clang compilation, two translation units, standalone-header use, a
 mutation and three source refusal controls. It measures the native API, not
 new source emission. [Exact checks](../handoff/2026-09-21-native-symbols.md).
+
+The subsequent source fixture, `Browser/native-dom-symbols.test`, checks 21
+attribute observations and two return paths against Node/VM and real public DOM
+execution in eight GCC/Clang modes. It includes 38 refused contracts/operations
+and one distinguishing identity mutation. Two selected CTests and four distinct
+lit cases pass; full suites were skipped.
+[Source integration evidence](../handoff/2026-09-21-native-symbol-source.md).
 
 ## Operators and JavaScript semantics
 
@@ -480,8 +501,8 @@ existing `auto`/template deduction.
    views, then prove document-root access and shorten receiver calls. Do not
    broaden source admission merely because a C++ accessor exists.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
-   and primitive methods now have a shared Core/native API. Add the source proof
-   described above before emitting them; registry, symbol-keyed fields and hooks
+   and primitive methods now have a shared Core/native API. Direct well-known
+   reads now emit in proved DOM entries; next add the transport proofs above; registry, symbol-keyed fields and hooks
    remain separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.
 

@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Proved Symbol reads in native DOM entries, 2026-09-21 UTC
+
+Continued clean **a11c4878**. **083349ac** connects the native Symbol API to
+source compilation through the existing fingerprinted DOM entry proof.
+An explicit `initial_intrinsics: ["Symbol"]` contract admits direct reads of
+all 15 well-known keys. Inference retains a distinct `!ctnative.symbol`; generated
+C++ uses `ctnative::js_symbol_t` and properties such as `ctnative::Symbol.hasInstance`.
+Local identity comparisons, truthiness and `typeof` can drive public DOM calls.
+Mutation, construction, registry access, property-key use and hooks stay refused.
+
+Focused devbox validation passes: **two exact CTests and four distinct lit cases**.
+The new source fixture checks **21 attribute observations and two return paths**
+against Node/VM, then real DOM execution in **eight native modes**, with
+**38 refusals and one identity mutation**. All **17 code/test hashes** match the
+devbox. Scoped formatting passes; required repository formatting retains 16
+existing diagnostics. Full suites and broad corpus/matrix runs were skipped.
+[Exact checks and corrections](handoff/2026-09-21-native-symbol-source.md).
+
+**Next:** resume `join`, `loop` and `symbol-return` in
+`Browser/native_dom_symbols.py`. Prove Symbol state/return transport without a
+fabricated default or absent identity; `js_symbol_t` has no default constructor.
+General Symbol-only scripts still need a contract independent of the DOM
+provider's element inputs. Fresh construction, primitive methods, registry,
+symbol-keyed fields and custom/default `instanceof` proofs remain separate.
+The measured VM custom-hook gap remains unchanged. String ordering, sibling
+captures, document views and full Bootstrap/application work also remain.
+No browser, VM or runtime implementation changed.
+
 ## Native Symbol object and values, 2026-09-21 UTC
 
 Continued clean **d2a75ef0**, following the user's Symbol priority.
