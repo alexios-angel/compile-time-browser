@@ -22,6 +22,45 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local constructor ownership and ASCII prefixes, 2026-09-21 UTC
+
+Continued clean **0f8628da**. **32a1ca2f** composes the final DOM Data provider's
+complete local constructor/Map graph with native source ownership. The owner
+census retains exact functions, allocations, calls and field reads, including
+numeric observations in read-only branches and unobserved holder/prototype
+allocations left by preparation. Every field store must have a primitive category;
+an unread object field still refuses ownership. The unchanged complete vendor
+constructor witness now reaches constructor lifting and native type admission.
+**Native class-session emission still refuses.** **fc440f29** admits one
+concatenation of ASCII literals in `startsWith`, preserving ordinary String
+addition and direct-literal dataset authority.
+
+Final focused checks pass: exact host-contract and shared-Map ownership CTests
+**2/2, 248.05 s total**, two selected DOM lit cases **2/2, 109.42 s total**,
+and the final constructor selector **nine observations/preparations/provider
+proofs and 33 refusals**, plus its 16 prepared-IR controls. New ownership tests
+cover 28 source/prepared rows, complete censuses and budget/fingerprint controls.
+Existing DOM checks retain **56 record and 24 object-key native executions**.
+String checks pass **40 native executions, 76 refusals and four Node/VM
+agreements**; all 147 earlier complete cases and 33 general refusals are unchanged.
+All nine final code/test hashes match the devbox. Scoped checks pass; repository
+formatting retains 16 pre-existing diagnostics. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped. No browser
+or shared implementation changed.
+
+**Next:** explicitly lift these proved constructors in the host method-table
+path, retaining their exact callee provenance and recomputing the source graph
+after rewriting. Both policies now report `standard Map identity is unproved
+across an unknown constructor`, alongside unlifted closure/receiver diagnostics.
+Do not relax that guard globally: the ordinary constructor lift still rejects
+Map payload uses and substitutes an undefined callee. Original composite-result
+publication still refuses class preparation. Multiple DOM-input alias partitions,
+original B/Data+B, broader Strings, conditional callees, mutable cells, String
+ordering, document views and the application driver remain. No full-Bootstrap
+admission or corpus coverage gain is claimed.
+
+[Exact checks and next constructor boundary](handoff/2026-09-21-local-owner-prefixes.md).
+
 ## Constructor provider graphs and nested indices, 2026-09-21 UTC
 
 Continued clean **955c764d**. **aded05d2** independently proves the prepared
