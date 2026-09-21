@@ -22,6 +22,35 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured Map helpers and global intrinsic helpers, 2026-09-21 UTC
+
+Continued clean **fb5b8c04** from its captured/nested Data Map handoff.
+**de86d5ba** expands exact local helpers capturing one Map at their original
+entry-block calls. Registration, lookup, size and deletion then pass the existing
+concrete record-owner proof; saved aliases keep their original owners.
+**fdf79a61** admits exact uncaptured global helpers in intrinsic exports through
+closed declaration checks, private expansion and complete typed reproof.
+
+Focused devbox validation passes: **one distinct exact CTest and four distinct
+lit cases** across corrected runs. Captured Map checks cover **23 source
+observations and 56 main native executions**; four new cases add 32.
+Intrinsic exports check **200 executions, 200 refusals and two mutations**,
+with 33 Node/VM observations. All **11 final code/test hashes** match the devbox.
+Scoped formatting passes; required repository formatting retains 16 existing
+diagnostics. Full suites, broad corpus/matrices, new sanitizers and full Bootstrap
+were skipped. No browser or runtime implementation changed.
+
+**Next:** original B/Data+B still needs constructor-time calls through the Data
+holder, conditional nested Map creation, conflict checks, nullable gets and cleanup,
+with complete owner, observer, exception and reentry proofs. The new helper
+normalization does not transport borrowed records across frames or nested Maps.
+Preserve the original Bootstrap bodies. Captured intrinsic helpers and global
+helpers containing local declarations remain separate, as do description
+String-method narrowing, String ordering, document views and the application driver.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-captured-map-global-helpers.md).
+
 ## Numeric publication and scalar equality, 2026-09-21 UTC
 
 Continued clean **0e96b1dd**, resuming the retained file-33 arithmetic witness.
