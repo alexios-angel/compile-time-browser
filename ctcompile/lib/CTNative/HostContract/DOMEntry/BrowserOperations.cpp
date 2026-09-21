@@ -39,10 +39,11 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
 };
 
 std::optional<double> stringIndex(mlir::Value value) {
-    if (auto division = value.getDefiningOp<ctjs::BinaryOp>();
-        division && division.getKind() == ctjs::BinaryKind::Div) {
-        auto left = division.getLhs().getDefiningOp<ctjs::ConstantOp>();
-        auto right = division.getRhs().getDefiningOp<ctjs::ConstantOp>();
+    if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
+        binary &&
+        (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub)) {
+        auto left = binary.getLhs().getDefiningOp<ctjs::ConstantOp>();
+        auto right = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
         auto lhs = left ? llvm::dyn_cast<ctjs::NumberAttr>(left.getValue()) : ctjs::NumberAttr{};
         auto rhs = right ? llvm::dyn_cast<ctjs::NumberAttr>(right.getValue()) : ctjs::NumberAttr{};
         if (!lhs || !rhs || std::isnan(lhs.getDouble()) || std::isnan(rhs.getDouble())) {
@@ -50,7 +51,8 @@ std::optional<double> stringIndex(mlir::Value value) {
         }
         // Both operands are already Numbers; no coercion or user code can run.
         // Nested expressions and globals still need their own origin proof.
-        return lhs.getDouble() / rhs.getDouble();
+        return binary.getKind() == ctjs::BinaryKind::Div ? lhs.getDouble() / rhs.getDouble()
+                                                         : lhs.getDouble() - rhs.getDouble();
     }
     bool negative = false;
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
@@ -64,7 +66,7 @@ std::optional<double> stringIndex(mlir::Value value) {
     if (!number) { return std::nullopt; }
     const double offset = negative ? -number.getDouble() : number.getDouble();
     // Size and infinity clamp before unsigned conversion in lowering. NaN has
-    // no Number-literal source spelling; only the division above proves its origin.
+    // no Number-literal source spelling; only the arithmetic above proves its origin.
     if (std::isnan(offset)) { return std::nullopt; }
     return offset;
 }
@@ -72,13 +74,15 @@ std::optional<double> stringIndex(mlir::Value value) {
 
 std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
-    auto division = llvm::dyn_cast<ctjs::BinaryOp>(operation);
+    auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
-        (division && division.getKind() == ctjs::BinaryKind::Div)) {
+        (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
+                    binary.getKind() == ctjs::BinaryKind::Sub))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
-            refusal = "DOM String indexing negation/division requires direct Number literals";
+            refusal = "DOM String indexing negation/division/subtraction requires direct Number "
+                      "literals";
             return false;
         }
         unsigned bounds = 0;
@@ -463,7 +467,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
                     refusal = "DOM String indexing requires primitive literals, proved undefined "
-                              "or one Number-literal division";
+                              "or one Number-literal division/subtraction";
                     return false;
                 }
             }

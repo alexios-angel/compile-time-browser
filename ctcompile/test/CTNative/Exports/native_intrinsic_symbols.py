@@ -666,6 +666,42 @@ DIVISION_INDICES = {
 }
 """,
 }
+SUBTRACTION_WITNESSES = {
+    # Preserve the complete former division-index arithmetic refusal body.
+    "division-index-other-arithmetic": (
+        "function bad(text, index) { return text.charAt(1e999 - 1e999); }\n",
+        ("", "a", "a"),
+    ),
+}
+SUBTRACTION_INDICES = {
+    **{name: source for name, (source, _) in SUBTRACTION_WITNESSES.items()},
+    "string-subtraction-indices": """function stringSubtractionIndices(text, first, middle, tail) {
+  const missing = 1e999 - 1e999;
+  const previous = 0 - 1;
+  const next = 2 - 0.5;
+  return text.charAt(missing) === first && text.slice(missing) === text &&
+    text.slice(0, missing) === '' && text.slice(undefined, missing) === '' &&
+    text.charAt(next) === middle && text.slice(next, 2) === middle &&
+    text.slice(next) === middle + tail && text.slice(2, 1e999 - 1) === tail &&
+    text.slice(previous) === text.slice(-1) && text.slice(0, previous) === text.slice(0, -1) &&
+    text.charAt(previous) === '' && text.charAt(0 - 0.5) === first &&
+    text.slice(0 - 0.5) === text && text.slice(1, 0 - 0.5) === '' &&
+    text.slice(0 - 4294967296) === text && text.charAt(0 - 1e999) === '' &&
+    text.slice(0 - 1e999) === text && text.charAt(1e999 - 0) === '';
+}
+""",
+    "description-capture-subtraction-index": """function descriptionCaptureSubtractionIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const missing = 1e999 - 1e999;
+    return text !== undefined ? text.charAt(missing) + text.slice(2 - 0.5) +
+      text.slice(0, missing) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -724,6 +760,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in DIVISION_WITNESSES},
     "string-division-indices": ["string", "string", "string", "string"],
     "description-capture-division-index": ["symbol"],
+    **{name: ["string", "number"] for name in SUBTRACTION_WITNESSES},
+    "string-subtraction-indices": ["string", "string", "string", "string"],
+    "description-capture-subtraction-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1301,7 +1340,11 @@ CASES["description-capture-signed-charat"] = (
     "true\n",
 )
 for name, (source, expected) in (
-    FRACTIONAL_WITNESSES | WIDE_WITNESSES | DEFAULT_WITNESSES | DIVISION_WITNESSES
+    FRACTIONAL_WITNESSES
+    | WIDE_WITNESSES
+    | DEFAULT_WITNESSES
+    | DIVISION_WITNESSES
+    | SUBTRACTION_WITNESSES
 ).items():
     CASES[name] = (
         source,
@@ -1393,6 +1436,14 @@ CASES["string-division-indices"] = (
 )
 CASES["description-capture-division-index"] = (
     DIVISION_INDICES["description-capture-division-index"],
+    *CASES["description-type-guard"][1:],
+)
+CASES["string-subtraction-indices"] = (
+    SUBTRACTION_INDICES["string-subtraction-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-subtraction-index"] = (
+    SUBTRACTION_INDICES["description-capture-subtraction-index"],
     *CASES["description-type-guard"][1:],
 )
 # The complete former refused programs now execute unchanged.
@@ -1506,6 +1557,9 @@ def oracle(args):
             body for name, body in PRIMITIVE_INDICES.items() if name not in PRIMITIVE_WITNESSES
         )
         + "".join(body for name, body in DIVISION_INDICES.items() if name not in DIVISION_WITNESSES)
+        + "".join(
+            body for name, body in SUBTRACTION_INDICES.items() if name not in SUBTRACTION_WITNESSES
+        )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -1891,6 +1945,32 @@ var symbol117StringUTF16DivisionIndices = stringDivisionIndices('\u00c9xy', '\u0
   stringDivisionIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringDivisionIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeSubtraction{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}SubtractionWitness{i} = observeSubtraction{i}();\n"
+            for i, (body, expected) in enumerate(SUBTRACTION_WITNESSES.values(), 118)
+        )
+        + r"""
+var symbol119StringSubtractionIndices = stringSubtractionIndices('', '', '', '') &&
+  stringSubtractionIndices('a', 'a', '', '') && stringSubtractionIndices('abcd', 'a', 'b', 'cd') &&
+  stringSubtractionIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringSubtractionIndices('abc', 'a', 'bc', 'c') && !stringSubtractionIndices('abc', 'a', 'b', 'bc');
+var symbol120DescriptionCaptureSubtractionIndex = descriptionCaptureSubtractionIndex(Symbol()) === ':absent' &&
+  descriptionCaptureSubtractionIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureSubtractionIndex(Symbol('')) === '' &&
+  descriptionCaptureSubtractionIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureSubtractionIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureSubtractionIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureSubtractionIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol121StringUTF16SubtractionIndices = stringSubtractionIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringSubtractionIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringSubtractionIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringSubtractionIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -1981,6 +2061,10 @@ var symbol117StringUTF16DivisionIndices = stringDivisionIndices('\u00c9xy', '\u0
         "StringDivisionIndices",
         "DescriptionCaptureDivisionIndex",
         "StringUTF16DivisionIndices",
+        "SubtractionWitness118",
+        "StringSubtractionIndices",
+        "DescriptionCaptureSubtractionIndex",
+        "StringUTF16SubtractionIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -2004,6 +2088,10 @@ var symbol117StringUTF16DivisionIndices = stringDivisionIndices('\u00c9xy', '\u0
     )
     vm_expected = vm_expected.replace(
         "symbol117StringUTF16DivisionIndices=true", "symbol117StringUTF16DivisionIndices=false"
+    )
+    vm_expected = vm_expected.replace(
+        "symbol121StringUTF16SubtractionIndices=true",
+        "symbol121StringUTF16SubtractionIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -2145,6 +2233,7 @@ def main():
             | UNDEFINED_INDICES
             | PRIMITIVE_INDICES
             | DIVISION_INDICES
+            | SUBTRACTION_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -2350,6 +2439,7 @@ def main():
         *UNDEFINED_INDICES,
         *PRIMITIVE_INDICES,
         *DIVISION_INDICES,
+        *SUBTRACTION_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -2758,7 +2848,6 @@ def main():
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} / 0);",
         "nested-expression": "return text.charAt((0 / 0) / 1);",
         "negated-expression": "return text.slice(-(0 / 0));",
-        "other-arithmetic": "return text.charAt(1e999 - 1e999);",
         "result-escape": "const missing=0 / 0; text.charAt(missing); return missing;",
         "unused-result": "const missing=0 / 0; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, 0 / 0);",
@@ -2788,6 +2877,46 @@ def main():
         raise RuntimeError("division index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "division-index-stale"):
         raise RuntimeError("changed division index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-left": "return text.charAt(index - 0);",
+        "dynamic-right": "return text.slice(0 - index);",
+        "coercion": "return text.charAt('0' - 0);",
+        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} - 0);",
+        "nested-expression": "return text.charAt((1 - 1) - 0);",
+        "negated-expression": "return text.slice(-(1 - 1));",
+        "negated-operand": "return text.charAt(0 - (-1));",
+        "other-arithmetic": "return text.charAt(0 * 1e999);",
+        "result-escape": "const missing=1e999 - 1e999; text.charAt(missing); return missing;",
+        "unused-result": "const missing=1e999 - 1e999; return text.charAt(0);",
+        "extra-argument": "return text.charAt(0, 1 - 1);",
+        "charat-authority": "return text.charAt(1 - 1).toLowerCase();",
+        "slice-authority": "return text.slice(2 - 1).toLowerCase();",
+        "replacement": "String.prototype.slice=0; return text.slice(1 - 1);",
+        "detached": "const method=text.charAt; return method(1 - 1);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(1 - 1);",
+        "description-unguarded": "return Symbol(text).description.charAt(1 - 1);",
+        "mutable-capture": "let bound=1 - 1; function part() { return text.charAt(bound); } bound=2; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "subtraction-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"subtraction-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-subtraction-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"subtraction-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "subtraction-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("subtraction index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "subtraction-index-stale"):
+        raise RuntimeError("changed subtraction index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
