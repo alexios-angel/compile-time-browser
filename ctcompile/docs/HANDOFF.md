@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited Data publication and omitted String indices, 2026-09-21 UTC
+
+Continued clean **97f32ae8** from its recorded inherited Data boundary.
+**5ab02710** reuses super normalization to move three-argument registration past
+one unique leaf's proved literal/numeric completion. Both key arguments and the
+original capture cell retain their identities. Captured helper expansion, nested
+Map routing and the complete record-owner/observer census remain required.
+The original file-45 inherited witness executes unchanged; three new bodies cover
+saved aliases, replacement/recreation and a numeric leaf suffix.
+**19d43e03** admits omitted `charAt()`/`slice()` indices as zero through the existing
+UTF-16 path. Length is emitted only for explicit indices; first-unit lowercase
+and dataset-tail authority retain their direct-literal restrictions.
+
+Focused validation passes: **one exact CTest, three distinct lit cases and a
+targeted intrinsic-export check**. Captured classes measure **187 observations,
+392 main native executions, 374 unprepared and 248 preparation refusals**, with
+new budget **4712**. The final export selector measures **48 native executions,
+564 refusals, 93 Node/VM agreements and eight known differences**. The whole export
+case was not replayed after fixing its unused length variable; its preceding run
+completed 648 earlier executions and two mutations before that new-case failure.
+An earlier expectation-ordering failure at observation 100 was also corrected.
+All **11 final code/test hashes** match the devbox; all 45 earlier class source
+files are unchanged. Scoped checks pass; repository formatting retains 16 existing
+diagnostics. No browser/runtime code changed. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** child `has`/`size`/`delete` evidence for original Data's guarded removal
+and empty-parent cleanup, retaining every unused slot, owner and exception/reentry
+observer. Current nested routing evaluates outer topology and requires a present
+child. Conflict reporting, nullable lookup, actual element keys and DOM ownership
+remain. Original B/Data+B still refuses with complete sources. Dynamic/coercing
+String indices, NaN origins, broader methods, conditional callees, branch-mutated
+boxed locals, String ordering, document views and the application driver remain.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks, failures and next proof seam](handoff/2026-09-21-inherited-data-string-defaults.md).
+
 ## Constructor Data publication and wide String indices, 2026-09-21 UTC
 
 Continued clean **d5631824** from the recorded constructor-time Data boundary.
