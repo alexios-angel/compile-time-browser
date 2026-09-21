@@ -4,6 +4,7 @@
 // Everything shared - the argument helpers, namespace detail, and these
 // functions' declarations - is in internal.hpp.
 
+#include "ctbrowser/core/number.hpp"
 #include "internal.hpp"
 #include "text/internal.hpp"
 
@@ -106,28 +107,19 @@ void install_math(context & cx, std::uint64_t seed) {
         const double ulp = std::ldexp(1.0, exponent - 10);
         return std::copysign(std::nearbyint(a / ulp) * ulp, x);
     });
-    // ToUint32 (7.1.6) OVER AN ALREADY-COERCED NUMBER. `context::to_uint32` is
-    // the STATIC conversion and answers 0 for every object, so `Math.imul({
-    // valueOf: () => 3}, 2)` was 0 and `Math.clz32("1")` was 32 - both because
-    // the receiver's own coercion never ran. Step 1 of each is `? ToUint32(x)`,
-    // which is ToNumber and then this.
-    const auto to_uint32_of = [](double n) -> std::uint32_t {
-        if (!std::isfinite(n)) { return 0; }
-        return static_cast<std::uint32_t>(
-            static_cast<std::int64_t>(std::fmod(std::trunc(n), 4294967296.0)));
-    };
-    method(cx, math, "clz32", 1, [math_arg, to_uint32_of](context & c, std::span<value> a) {
-        const std::uint32_t x = to_uint32_of(math_arg(c, a, 0));
+    // Coerce through the context before Core ToUint32 so object valueOf hooks run.
+    method(cx, math, "clz32", 1, [math_arg](context & c, std::span<value> a) {
+        const std::uint32_t x = ctbrowser::number_to_uint32(math_arg(c, a, 0));
         int n = 0;
         for (std::uint32_t bit = 0x80000000u; bit != 0 && (x & bit) == 0; bit >>= 1) { ++n; }
         return value::number(x == 0 ? 32 : n);
     });
-    method(cx, math, "imul", 2, [math_arg, to_uint32_of](context & c, std::span<value> a) {
+    method(cx, math, "imul", 2, [math_arg](context & c, std::span<value> a) {
         // NAMED LOCALS, so the two coercions happen LEFT TO RIGHT. As arguments
         // to one expression their order is unspecified in C++ and observable in
         // JavaScript: `Math.imul({valueOf: f}, {valueOf: g})` must call f then g.
-        const std::uint32_t x = to_uint32_of(math_arg(c, a, 0));
-        const std::uint32_t y = to_uint32_of(math_arg(c, a, 1));
+        const std::uint32_t x = ctbrowser::number_to_uint32(math_arg(c, a, 0));
+        const std::uint32_t y = ctbrowser::number_to_uint32(math_arg(c, a, 1));
         return value::number(static_cast<double>(static_cast<std::int32_t>(x * y)));
     });
     unary("floor", [](double x) { return std::floor(x); });
