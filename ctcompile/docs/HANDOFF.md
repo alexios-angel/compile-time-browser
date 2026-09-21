@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local Map holders and global helper declarations, 2026-09-21 UTC
+
+Continued **ab3fe6c6**, recovering drafts through two process interruptions.
+**ba1edab6** expands exact local holder methods that capture a Map at their
+original owner-frame calls. The shared callable-object census proves every slot
+and use; existing concrete record-owner checks remain unchanged.
+The former direct-plus-holder helper refusal now executes with its source intact.
+**7660166b** lets exact global intrinsic helpers contain local declarations by
+using the existing complete closure proof when their receiver is unobserved.
+
+Focused devbox validation passes: **one distinct exact CTest and four distinct
+lit cases** across the corrected runs. The holder fixture checks **37 source
+observations, 96 main native executions, 74 unprepared refusals and 43 preparation
+refusals**; five new admissions add 40 executions. Intrinsic exports check
+**232 executions, 221 refusals and two mutations**, with 37 Node/VM observations.
+All **seven final code/test hashes** match the devbox. Scoped formatting passes;
+required repository formatting retains 16 existing diagnostics. Full suites,
+broad corpus/matrices, full Bootstrap, Windows and new sanitizers were skipped.
+No browser or runtime implementation changed.
+
+**Next:** carry exact holder identities into constructor-time Data calls, then
+prove conditional nested Map creation, conflicts, nullable lookup and cleanup
+against every concrete owner, observer, exception and reentry path.
+Original Bootstrap B/Data+B still refuses; its bodies remain intact.
+Holder captures, region calls and publication before receiver completion remain
+outside this new entry-block proof. Captured intrinsic helpers, description
+String-method narrowing, String ordering, document views and the application
+driver remain unfinished. No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-map-holders-local-declarations.md).
+
 ## Captured Map helpers and global intrinsic helpers, 2026-09-21 UTC
 
 Continued clean **fb5b8c04** from its captured/nested Data Map handoff.

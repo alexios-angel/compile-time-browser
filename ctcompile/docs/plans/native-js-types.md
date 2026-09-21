@@ -184,8 +184,11 @@ use the existing typed values by value, preserving Symbol identities, owning
 String snapshots, signed zero and NaN. No document, DOM input, owned root or
 script runtime is needed. Exact uncaptured local and global helpers expand on a
 charged private copy, followed by complete typed entry reproof. Global helpers
-require unique inert declarations and a complete direct-callee use census;
-mutation, identity observations and escaping functions remain refused.
+require unique inert declarations and a complete direct-callee use census.
+**7660166b** admits their exact local declarations through the existing complete
+closure proof when the original receiver has no observable use; receiver-observing
+direct helpers retain their restricted path. Mutation, identity observations
+and escaping functions remain refused.
 Multiple invocations may supply
 different primitive kinds; original argument evaluation order remains intact.
 The frontend pads missing arguments with undefined, which still requires a valid
@@ -223,13 +226,13 @@ mixed null/description joins remain separate proofs.
 **Primitive entry equality is implemented:** exact Number/Boolean operands use
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
-remain typed. With global helpers, the export fixture checks 200 native executions,
-200 refusals and two mutations, with 33 Node/VM observations; no runtime
-implementation changed.
+remain typed. With global/local helper composition, the export fixture checks
+232 native executions, 221 refusals and two mutations, with 37 Node/VM
+observations; no runtime implementation changed.
 
-**Next source slice:** prove captured helper identities and global helpers with
-local declarations within the intrinsic entry contract. Description String-method narrowing, mixed primitive
-unions and object coercion retain their separate admission boundaries.
+**Next source slice:** prove captured helper identities within the intrinsic entry
+contract. Description String-method narrowing, mixed primitive unions and object
+coercion retain their separate admission boundaries.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
 
