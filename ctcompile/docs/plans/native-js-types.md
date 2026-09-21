@@ -55,8 +55,11 @@ Bootstrap `R.find` omitted/undefined default receiver now works under a source
 document-root guard with length observations and canonical indexed element loops.
 The copied result retains the proxy spread cap, while original NodeList aliases
 remain uncapped. Proved `for…of` consumers now use native indexed loops over those
-typed vectors, including nested queries with live owner/Style association. Custom
-iterator protocols, general array behavior and the application driver need work.
+typed vectors, including nested queries with live owner/Style association.
+Confined self-iterating objects now lower exact identity/next/optional-return
+methods to scalar loop state and public DOM calls. General custom iterator
+state, factories, abrupt-close behavior, array behavior and the application
+driver need work.
 Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
@@ -494,7 +497,15 @@ Bootstrap helper holders allow repeated reads inside structured loops while
 retaining unique unconditional slot initialization and complete escape checks.
 Exact bounded members can select an explicit helper receiver over its undefined
 default; complete mapped index proof supplies that fact, never nullable results.
-Literal C++ range-for emission, custom protocols, unguarded defaults,
+One confined root-local self-iterator now permits an exact ordinary identity
+hook, next results with own done/value fields and an optional empty-object
+return result. Immutable captured elements retain their owner; every producer
+and effect receives complete helper/DOM proof. Exhaustion skips return and a
+proved effect-only source break closes once. Returning a changed counter across
+the importer's break-exit dispatch still needs completion proof. This reuses
+scalar C++ loop lowering without adding a runtime iterator or boxed record.
+Literal C++ range-for emission, mutable
+iterator state, factories, body return/throw close behavior, unguarded defaults,
 general array behavior and the application driver remain unfinished.
 
 The focused indexed `R.find` fixture passes **48 native executions/114 refusals**.
@@ -740,13 +751,15 @@ existing `auto`/template deduction.
    above one million members was measured. The independent 1,000,000 `ownKeys`
    enumeration and 2^24 proxy-spread limits remain. Confined indexed `R.find`
    consumers now preserve their own capped-length guard and reuse typed snapshots;
-   ordinary element `for…of` now uses those snapshots too. Custom iterator
-   protocols and general Array behavior remain unproved.
+   ordinary element `for…of` now uses those snapshots too. A confined
+   self-iterator with immutable captures and exact method/result shapes is
+   proved; broader custom protocols and general Array behavior remain unproved.
 4. **Document/element views in progress.** Borrowed/owned entries now emit typed
    selectors, optional element results, explicitly bound document root/query calls
    and document/element query-all snapshots. Guarded Bootstrap default-root calls
    and bounded indexed/`for…of` result consumers, including nested queries, are
-   proved. Extend custom iterable proofs and connect an application driver.
+   proved. Confined custom self-iterators now use ordinary scalar C++ loops.
+   Extend iterator state and abrupt-close proofs and connect an application driver.
    A C++ accessor alone never broadens source admission.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known

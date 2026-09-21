@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Confined custom DOM iteration, 2026-09-21 UTC
+
+Continued clean **6e8cb697** and its recorded custom-iterator boundary.
+**e52bec52** admits one confined self-iterating object with an exact ordinary
+`Symbol.iterator` identity hook, `next` results with own done/value fields and
+an optional empty-object return result. Immutable captured elements retain
+their owner. Complete helper/DOM proofs check producers, effects and lifetimes.
+Exhaustion skips return; a proved effect-only break closes once.
+
+Private normalization replaces the protocol with ordinary calls and scalar
+completion state before helper expansion. Empty dispatch and dead tuple
+positions are removed without discarding source effects. Generated output uses
+existing C++ loops and public DOM calls, with no VM iterator, boxed result record,
+new runtime type or Script dependency. No browser/shared implementation changed.
+
+Final focused checks pass: exact host-contract CTest **1/1, 0.67 s total** and
+custom-iteration lit **1/1, 49.12 s**, with **32 native executions, 94 refusals
+and 12 Node/VM source-double observations**. The preceding three-case run passed
+nested iteration (**48 native/two prior-source checks/94 refusals**) and dataset
+(**112 Node/VM observations, eight binaries, lifetime sanitizer, 432 refusals**)
+while custom counted break failed; **two passed, one failed, 141.19 s**. That
+source is preserved as a refusal. All ten final code/test hashes match devbox.
+Scoped checks pass; required formatting retains 16 untouched diagnostics.
+Full suites and broad replays were skipped.
+
+**Next browser boundary:** resolve the live counter/exit alternatives in the
+new fixture's `counted-break-exit` source. Existing completion proof cannot yet
+transport that changed counter across the importer's conditional break exit.
+Mutable iterator state, factories, nested custom opens, generators and body
+return/throw close behavior remain unproved. Literal range-for printing,
+unguarded Bootstrap defaults, broader Array behavior and the application driver
+also remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-21-custom-dom-iteration.md).
+
 ## Nested DOM and Bootstrap iteration, 2026-09-21 UTC
 
 Continued clean **ac5c984a** and its recorded nested-iteration boundary.

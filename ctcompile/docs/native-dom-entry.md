@@ -459,8 +459,8 @@ dataset-enabled loops still need a separate backedge alias proof. No supported
 operation can reclaim a selected node or reenter script.
 
 Snapshot writes, out-of-bounds or unproved indices, identity observation,
-borrowed returns, retained callbacks, NodeList `forEach` and custom iterator
-protocols remain refused.
+borrowed returns, retained callbacks, NodeList `forEach` and custom NodeList
+iterator hooks remain refused.
 
 `for…of` over proved element snapshots and confined `R.find` copies uses the
 existing native loop lowering over `std::vector<js_element_t>`:
@@ -503,6 +503,48 @@ are supported with invariant scalar loop state. Custom hooks, snapshot mutation
 or escape, missing intrinsic guarantees and unguarded default roots remain
 diagnostics. A later constant fold that would erase an already recorded input
 also refuses, keeping operation identities valid until reproof.
+
+One root-local custom iterable may instead be a fresh, confined object with
+its own ordinary `[Symbol.iterator]() { return this; }`, `next` and optional
+`return` methods. For example:
+
+```javascript
+const values = {
+  [Symbol.iterator]() { return this; },
+  next() {
+    const done = anchor.hasAttribute('data-yielded');
+    anchor.setAttribute('data-yielded', 'yes');
+    return {done: done, value: anchor};
+  },
+  return() { anchor.setAttribute('data-closed', 'yes'); return {}; }
+};
+for (const element of values) {
+  element.setAttribute('data-visited', 'yes');
+  if (anchor.hasAttribute('stop')) break;
+}
+```
+
+This path requires original `Object`, `Symbol` and the three importer helper
+identities. The identity method must be closed, non-arrow and effect-free.
+`next` and `return` may use proved immutable captures, but cannot observe their
+implicit receivers. `next` returns a fresh record with exactly own `done` and
+`value` fields; `return`, when present, returns an empty fresh object. Complete
+helper and DOM proofs still check every field producer, effect and borrowed
+element lifetime. Mutable lexical cells and extra holder fields are not admitted.
+
+Private normalization selects the custom protocol before source completion
+expansion, substitutes ordinary method calls and carries scalar done state.
+The item must only be observed after a fresh false done test; done itself has
+truth-only observations. Exhaustion stops further next calls and skips return.
+A proved effect-only source `break` calls return once when it exists. An
+accumulator returned across the importer's break-exit dispatch still refuses;
+the existing completion proof cannot yet resolve its inactive result slots.
+Generated C++ uses the existing scalar loop lowering and public DOM calls,
+with no iterator runtime,
+boxed result record or new runtime type. Nested custom opens, escaping or
+replaced hooks, separate iterator factories and generators remain refused.
+Source body returns, throws and handlers need a separate abrupt-close proof;
+the current importer does not close custom iterators on body return/throw.
 
 A confined spread into an empty concat receiver supports `.length` and canonical
 indexed element loops:
