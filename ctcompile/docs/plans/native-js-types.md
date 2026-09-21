@@ -534,11 +534,11 @@ existing `auto`/template deduction.
    retaining `ctnative.hpp` as the generated-code include.
 3. **Collections and objects.** Migrate dense snapshots to `js_vector<T>` and
    admitted Arrays to `js_array_t<T>`. Preserve alias ownership and generated
-   concrete object shapes. Implement the typed `instanceof` wrapper alongside
-   class/prototype work once constructor identity and `Symbol.hasInstance`
+   concrete object shapes. Exact ordinary `instanceof` now folds under the class
+   proof. Implement the wrapper for remaining tests once constructor identity and `Symbol.hasInstance`
    lookup/call proofs exist. Test a custom hook (including a non-Boolean return
    and thrown exception), default matching, inheritance and primitive rejection
-   against Node and the VM before emitting that operation. The current VM
+   against Node and the VM before extending source admission. The current VM
    skips custom hooks; record or resolve that gap without matching native to it.
    Reconcile Shell's current NodeList indices above
    1,000,000 returning undefined before broadening indexed `R.find` consumers;
@@ -548,8 +548,9 @@ existing `auto`/template deduction.
    broaden source admission merely because a C++ accessor exists.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
-   reads now emit in proved DOM entries; next add the transport proofs above; registry, symbol-keyed fields and hooks
-   remain separate. BigInt still needs its public non-Script core and ownership
+   reads and branch/loop/return transport now emit in proved DOM and primitive-only
+   entries. Next prove fresh source construction and primitive methods; registry,
+   symbol-keyed fields and hooks remain separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.
 
 ## Focused acceptance criteria
