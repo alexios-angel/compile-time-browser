@@ -98,12 +98,40 @@ A saved document alias retains the same authority; a saved query method must sti
 be called with its exact original receiver.
 
 Source `document.documentElement` and `document.querySelector(String)` emit ordinary
-`js_document_t` accessor/method calls over that input's owner and live Style engine.
+`ctnative::document` accessor/method calls over that input's owner and live Style engine.
 The anchor's engine reference is appended in parameter order, including for root-only
 entries. All input handles and engine atom-table associations are checked before
 source effects. The caller owns these stable resources for the call; an owned
-session provides its nonmovable document and engine. No ambient document binding,
-thread-local state or VM context is introduced.
+session provides its nonmovable document and engine.
+
+The global `ctnative::document` object is declared alongside `Element` in
+`Runtime/ctnative.hpp`. `Runtime/Browser.hpp` supplies its methods and a
+noncopyable, nonmovable `document_scope` that borrows a `js_document_t` view:
+
+```cpp
+const ctnative::document_scope scope{page, styles};
+auto button = ctnative::document.querySelector(ctnative::js_string{"button"});
+```
+
+Generated entries establish one lexical scope after validating all inputs.
+It saves and restores the previous thread-local binding on return or exception;
+nested invocations for another document therefore restore their caller's document.
+Access without a scope throws `std::logic_error`. Binding validates Style before
+changing the active view. Existing explicit document/element views and saved
+snapshots keep their own document association when the global binding changes.
+The owner and Style engine must outlive the scope and every borrowed view.
+Scopes support synchronous calls on one thread; they must not span coroutine
+suspension or interleaved asynchronous tasks. Separate threads have independent
+bindings. No document singleton, VM context or new source admission is introduced.
+
+The global-object integration passes the two focused document lit cases in
+**128.07 s**: root/query **48 native executions, 82 refusals**, query-all
+**32 executions, 84 refusals**. The clients verify that an independent outer
+document is restored after successful calls, selector exceptions, invalid inputs
+and rejected session calls. Exact native-runtime/host-contract CTests pass
+**2/2, 0.58 s total**; runtime checks also cover failed binding, saved views and
+thread isolation. These measurements use public DOM/Core/Style, with no full-suite
+or new Node/VM differential claim. Earlier measurements below retain their scope.
 
 The root is reread at each source access. Document queries use public Style with
 document scope, including the root element, and preserve live interactive state.

@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Global native document, 2026-09-21 UTC
+
+Continued clean **21c65d1c** and implemented the user's global-document request.
+**096e3959** adds `ctnative::document` alongside `Element`, forwarding root/query
+methods to the existing borrowed `js_document_t`. A noncopyable, nonmovable
+`document_scope` binds the current document and Style for synchronous calls,
+restoring the previous binding on return or exception. Separate threads have
+independent bindings; explicit views and snapshots retain their own document.
+Access outside a scope throws, and invalid Style cannot replace the active view.
+
+**42c1406f** makes generated document entries establish that scope after all input
+validation and call `ctnative::document` directly. The existing explicit owner
+contract, null guards, snapshot bounds and escape/effect proofs remain intact.
+Ownership stays with the caller/session, and browser behavior stays in public
+ctbrowser DOM/Style. No Script dependency or new source admission was added.
+
+Focused checks pass: exact native-runtime/host CTests **2/2, 0.58 s total**;
+selected document/document-all lit **2/2, 128.07 s**, respectively **48 native
+executions/82 refusals** and **32/84**. Clients verify outer-document restoration
+on success, exceptions and rejected inputs; runtime checks include thread
+isolation and saved views. All seven code/test hashes match the devbox. Scoped
+checks pass; required formatting retains 16 untouched diagnostics. Full suites
+and broad replays were skipped; no new Node/VM or full-Bootstrap result is claimed.
+No browser/shared implementation changed.
+
+**Next browser boundary:** the original Bootstrap `R.find` omitted receiver still
+needs complete document-root presence and helper/concat proof. Global syntax
+does not guarantee a root exists. Remaining selector carrier migration, the
+application driver, overlapping DOM Map keys, original B/Data+B, object-valued
+fields, tagged Map snapshots, broader Strings, conditional callees and mutable
+cells remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-21-global-document.md).
+
 ## Typed document query snapshots, 2026-09-21 UTC
 
 Continued **c786ecd6** and resumed the interrupted query-all draft.

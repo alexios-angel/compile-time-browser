@@ -45,8 +45,9 @@ operations, custom hooks and nonconstant `instanceof` still require proofs.
 `Runtime/Browser.hpp` now supplies borrowed `js_document_t` and `js_element_t`
 views over public DOM/Style. Generated `matches` calls use the typed element
 receiver. An explicit `current_document_parameter` host field now binds source
-`document` to an element input's owner and emits guarded root/querySelector access
-through the document view. Source document query-all now retains a typed element
+`document` to an element input's owner. Generated entries scope the global
+`ctnative::document` object to that borrowed view, restoring any previous binding
+after nested calls and exceptions. Source document query-all retains a typed element
 snapshot and extracts checked members for existing operations. Default-root
 helpers, the application driver and remaining selector carrier migration still need work.
 Object/Array prototypes remain planned.
@@ -457,7 +458,7 @@ and lookup chains. Complete source proof rejects their replacement or mutation,
 incorrect receivers, escaped handles and unsupported effects.
 
 Source `document.documentElement` and `document.querySelector(String)` call the
-typed view with the anchor's validated owner and live Style. Each root access
+global typed object with the anchor's validated owner and live Style. Each root access
 reads the current document root, and document queries include it. The
 `element_or_null` bridge extracts checked optional views into the existing nullable
 `element_ref` carrier. Exact truthiness guards authorize present-result uses;
@@ -477,16 +478,23 @@ controls. These are public DOM/Style checks, not new Node/VM differential result
 See [native DOM entries](../native-dom-entry.md#explicit-source-document-binding)
 for the contract and focused validation scope.
 
-A global-looking current-document accessor remains optional future work; none is
-needed or added by this explicit binding. If a later proved entry requires one,
-it must borrow the current invocation's document and Style association;
-the invocation/session remains the owner. Bind it with an RAII scope that saves
-and restores the previous binding on normal return and exceptions, including
-nested calls into another document. Concurrent invocations need independent
-bindings; thread-local storage alone is insufficient for interleaved asynchronous
-tasks. Reject access outside a bound scope, and do not let borrowed views escape
-their owner. Keep explicit document parameters available; primitive-only exports
-need no document accessor.
+The global `ctnative::document` object is implemented alongside `Element`.
+`document_scope` borrows a `ctbrowser::document&` and `ctbrowser::style::engine&`;
+the invocation/session remains the owner. Generated entries establish
+this noncopyable, nonmovable RAII scope after validating all inputs. Its
+thread-local binding restores the previous view on normal return and exceptions,
+including nested calls into another document. Access outside a bound scope throws
+`std::logic_error`; an invalid Style association is rejected before changing the
+binding. Explicit views and saved snapshots retain their own document association.
+Scopes are synchronous and must not span coroutine suspension or interleaved
+asynchronous tasks. Separate threads have independent bindings. Borrowed views
+must not outlive their owner or Style engine. Explicit document parameters remain
+available; primitive-only exports need no document accessor. This adds C++ syntax
+and scoped borrowing, without relaxing source identity, effect or escape proofs.
+The two focused document lit cases pass **80 native executions and 166 refusals**
+in **128.07 s**, including outer-binding restoration. Exact native-runtime and
+host-contract CTests pass **2/2 in 0.58 s**, including nested scopes, exception
+restoration and thread isolation. Full suites were skipped.
 
 ## Existing implementation and migration
 
