@@ -805,6 +805,7 @@ def main():
             preparation_refusals += 4
         if name in (
             "class-map-helper-constructor",
+            "class-map-record-captured-helper-direct",
             "class-map-helper-holder",
             "class-map-helper-chain",
             "class-map-helper-shared-callers",

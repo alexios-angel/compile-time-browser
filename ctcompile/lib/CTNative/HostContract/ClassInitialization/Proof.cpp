@@ -190,6 +190,16 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             mapOperations.insert(load);
         }
     }
+    if (!maps.empty()) {
+        llvm::DenseSet<mlir::Operation *> scopes;
+        for (ctjs::CallOp call : calls) {
+            if (!step()) { return false; }
+            auto scope = call->getParentOfType<ctjs::FuncOp>();
+            if (scopes.insert(scope).second && !normalizeCapturedMapHelpers(scope)) {
+                return false;
+            }
+        }
+    }
     if (!proveHeritage(contract)) { return false; }
     if (!heritage.empty()) {
         HostContract binding = contract;
