@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Bootstrap indexed element consumers, 2026-09-21 UTC
+
+Continued clean **0ce0bdf3** from its recorded indexed-consumer boundary.
+**6c32120f** admits canonical indexed loops over the unchanged Bootstrap `R.find`
+result, including explicit receivers and guarded omitted/undefined defaults.
+Each copied index must have its own `copied.length` guard before slots are
+rebound to the original query snapshot. Complete live proof checks zero/unit-step
+indices and the exact `min(snapshot.length, 16777216)` bound. Original NodeList
+aliases keep their full length; array identity, mutation and escapes stay refused.
+
+**bebdc40d** separately emits element query-all through the existing typed
+`std::vector<js_element_t>` view, with checked member extraction and live Style.
+Browser behavior remains in public ctbrowser DOM/Style, ownership stays with the
+caller/session and generated output has no Script dependency. No browser/shared
+implementation changed.
+
+Focused validation passes: exact host-contract CTest **1/1, 0.66 s total**;
+selected find-elements/query-all/spread-length lit **3/3, 141.75 s**, respectively
+**48 native executions/114 refusals**, **16/44** and **32/52**. All eight code/test
+hashes match the devbox. Scoped checks pass; required formatting retains 16
+untouched diagnostics. Full suites and broad replays were skipped; no new Node/VM
+or above-cap collection execution is claimed.
+
+**Next browser boundary:** prove `for…of` over these element results. The existing
+iterator normalizer proves String snapshots; element iteration must retain the
+copied cap, owner/Style association, source iterator identities and guarded root
+authority. Unguarded defaults, general Array behavior and the application driver
+remain unfinished, along with the remaining native plan. Full Bootstrap is not
+admitted.
+
+[Exact checks and next boundary](handoff/2026-09-21-bootstrap-element-consumers.md).
+
 ## Guarded Bootstrap document defaults, 2026-09-21 UTC
 
 Continued **8b6ff9d7** and resumed the interrupted default-root/typed-selector

@@ -43,17 +43,18 @@ on exact local class constructions now folds under the complete class/prototype
 proof, preserving nominal identity and constructor effects. Broader Symbol
 operations, custom hooks and nonconstant `instanceof` still require proofs.
 `Runtime/Browser.hpp` now supplies borrowed `js_document_t` and `js_element_t`
-views over public DOM/Style. Generated `matches`, `closest` and `querySelector`
-calls use the typed element receiver; nullable results use optional typed views
-before checked extraction to existing element carriers. An explicit
+views over public DOM/Style. Generated `matches`, `closest`, `querySelector` and
+`querySelectorAll` calls use the typed element receiver; nullable results use
+optional typed views before checked extraction to existing element carriers. An explicit
 `current_document_parameter` host field now binds source
 `document` to an element input's owner. Generated entries scope the global
 `ctnative::document` object to that borrowed view, restoring any previous binding
-after nested calls and exceptions. Source document query-all retains a typed element
-snapshot and extracts checked members for existing operations. The original
+after nested calls and exceptions. Document and element query-all retain typed
+element snapshots and extract checked members for existing operations. The original
 Bootstrap `R.find` omitted/undefined default receiver now works under a source
-document-root guard with length-only result observations. Its element-result
-consumers, the application driver and remaining snapshot carrier migration need work.
+document-root guard with length observations and canonical indexed element loops.
+The copied result retains the proxy spread cap, while original NodeList aliases
+remain uncapped. `for…of`, general array behavior and the application driver need work.
 Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
@@ -477,8 +478,20 @@ dataset-enabled mutation loops remain refused. A source guard of the bound
 document root now proves repeated root reads present inside that arm; all admitted
 effects preserve the root, and the fact is restored on branch exit. This supports
 the original Bootstrap `R.find` omitted or explicit-undefined default and its
-existing length-only spread/concat proof. Unguarded defaults, complete helper
-result consumers and the application driver remain unfinished.
+confined spread/concat proof. Copied element indices must be guarded by the copy's
+own length before rebinding to the original query snapshot. Live proof recognizes
+the exact `min(snapshot.length, 16777216)` bound, verifies unit-step indices and
+retains ordinary owner/Style borrowing. Original NodeList length aliases remain
+uncapped. Unguarded defaults, `for…of`, general array behavior and the application
+driver remain unfinished.
+
+The focused indexed `R.find` fixture passes **48 native executions/114 refusals**.
+Together with existing query-all **16/44** and spread-length **32/52**, the selected
+lit cases pass **3/3, 141.75 s**. Exact host-contract CTest passes **1/1, 0.66 s
+total**, including copied/original length distinction, cap/arm mutation and
+incomplete-budget controls. These are public DOM/Core/Style checks with typed
+element snapshots; no new Node/VM differential or above-cap allocation was run.
+
 The focused original-default fixture passes **32 native executions/92 refusals,
 86.49 s**; the existing explicit-receiver spread fixture passes **32/52, 84.42 s**.
 Exact host-contract CTest passes **1/1, 0.57 s total**, covering root-guard authority,
@@ -713,13 +726,15 @@ existing `auto`/template deduction.
    and actual membership, removing the former 1,000,000 numeric read cap. Focused
    browser checks cover huge absent/overflow/noncanonical reads; no collection
    above one million members was measured. The independent 1,000,000 `ownKeys`
-   enumeration and 2^24 proxy-spread limits remain. Indexed `R.find` consumers
-   still need their own presence/spread proof. A NodeList is not a JavaScript Array.
+   enumeration and 2^24 proxy-spread limits remain. Confined indexed `R.find`
+   consumers now preserve their own capped-length guard and reuse typed snapshots;
+   this does not admit general Array behavior or NodeList iteration protocols.
 4. **Document/element views in progress.** Borrowed/owned entries now emit typed
-   `matches` receivers, explicitly bound document root/querySelector calls and
-   document query-all snapshots. Migrate remaining nullable/element-selector
-   snapshot carriers, prove Bootstrap default-root calls, then connect an
-   application driver. A C++ accessor alone never broadens source admission.
+   selectors, optional element results, explicitly bound document root/query calls
+   and document/element query-all snapshots. Guarded Bootstrap default-root calls
+   and bounded indexed result consumers are proved. Extend element iterator
+   consumers and connect an application driver. A C++ accessor alone never
+   broadens source admission.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
    reads, absent/String construction, direct primitive methods and branch/loop/

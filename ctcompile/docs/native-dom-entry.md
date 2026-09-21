@@ -166,13 +166,13 @@ may be read inside source `if` arms when initialized unconditionally beforehand;
 conditional/late writes, replacement and wrong receivers remain refused.
 Missing helper arguments become exact `undefined`, while excess arity remains
 unsupported. The existing initial `undefined` binding and live entry proof
-authorize selecting the original default arm. Spread/concat still requires its
-complete confined length-only proof; no default expression or source effect is
-replaced with a handwritten helper.
+authorize selecting the original default arm. Spread/concat requires its complete
+confined length and indexed-consumer proof; no default expression or source
+effect is replaced with a handwritten helper.
 
-This does not establish a root for an unguarded caller. Consuming `R.find` element
-members, general borrowed transport, initialization and the application driver
-remain unfinished.
+This does not establish a root for an unguarded caller. Canonical indexed loops
+over `R.find` members are supported as described below; `for…of`, general borrowed
+transport, initialization and the application driver remain unfinished.
 
 The focused `CTNative/Browser/native-dom-document-default.test` passes **32 native
 executions and 92 refusals, 86.49 s**, with the unchanged vendor-pinned `R.find`
@@ -427,12 +427,14 @@ The compiler erases the proved global/prototype/method reads and emits the
 existing typed selector call, using argument zero's document and live Style
 engine. Missing guarantees, detached `.call`, `.apply`/`.bind`, coercible
 selectors and unguarded nullable receivers refuse. An explicitly bound, guarded
-`document.documentElement` can supply an element; default-root helper admission
-still needs its complete nullability and call proof.
+`document.documentElement` can supply an element. The original `R.find` default
+uses that guard and its complete helper proof.
 
 Element `querySelectorAll(String)` calls public `engine::select` with
-`first_only=false` and returns a local `std::vector<ctbrowser::element_ref>`. The vector owns its
-slots; the caller or session document owns the nodes. The shared selector engine
+`first_only=false` and returns a local `std::vector<ctnative::js_element_t>`. The vector owns its
+slots; each typed view borrows the caller/session document and live Style engine.
+Indexed uses extract checked elements through `.at(index).value()` for the existing
+DOM operations. The shared selector engine
 provides tree order, deduplication, root exclusion, `:scope`, detached-subtree
 queries and shadow boundaries. Attribute/class changes leave saved membership
 unchanged; a later query sees current membership.
@@ -461,20 +463,28 @@ borrowed returns, retained callbacks and NodeList `forEach`/iterator protocols
 remain refused. The original String-array iterator proof does not authorize
 NodeList iteration.
 
-A confined spread into an empty concat receiver also supports `.length`:
+A confined spread into an empty concat receiver supports `.length` and canonical
+indexed element loops:
 
 ```javascript
 const R = {
   find: (t, e = document.documentElement) => [].concat(...Element.prototype.querySelectorAll.call(e, t))
 };
-return R.find('.selected', element).length;
+const nodes = R.find('.selected', element);
+for (let i = 0; i < nodes.length; i++) {
+  nodes[i].classList.remove('selected');
+}
+return nodes.length;
 ```
 
 This preserves the original Bootstrap helper. Its holder, property read and call
-must satisfy the local same-block helper proof above. The supplied element makes
+must satisfy the local callable-holder proof above, including unconditional
+initialization before branch-local reads. The supplied element makes
 its default arm unreachable: exact declared element identities compare false to
 `undefined` under strict equality in either operand order. This fact does not
-propagate through unproved cells, joins or nullable query results.
+propagate through unproved cells, joins or nullable query results. Omitted or
+explicit-undefined receivers instead select the unchanged default arm under a
+source guard of the bound document root.
 
 The manifest supplies `"initial_intrinsics": ["Array", "Element", "Function"]`.
 Array additionally promises original `Array.prototype.concat`, default
@@ -484,18 +494,24 @@ prototype chains. The complete source proof rejects operations that invalidate
 these guarantees, including unknown calls, mutation and escaping identities.
 
 The compiler proves the imported zero-based spread loop, its sole append, fresh
-empty receiver and arguments array, and length-only uses of the result. It keeps
+empty receiver and arguments array, and confined result observations. It keeps
 the public selector call and replaces concat length by
 `min(snapshot.length, 16777216)`, using ordinary scalar C++ control flow. That
 limit preserves the current VM's proxy materialization cap; direct NodeList length
-is uncapped. Undefined slots still contribute one concat slot. No JavaScript array,
+is uncapped. Indexed copies must use their own `index < copied.length` loop
+condition, with zero-based unit progression. This is checked before rebinding
+the copied slots to the original snapshot; the uncapped original NodeList length
+cannot authorize a copied index. Complete live DOM proof then checks the exact
+minimum, member bounds, effects and borrowing. Saved membership and ordinary
+element identity survive supported attribute/class writes. No JavaScript array,
 iterator, callable table or runtime value is emitted. Work-budget exhaustion or a
 stale fingerprint leaves the original source unchanged, and the resulting private
 candidate must pass the complete DOM proof before publication.
 
 Nonempty receivers, additional arguments/spreads, detached concat, replaced methods,
-result indexing, identity, escape or mutation remain refused. Default document roots
-are also refused. The source proof tests check the exact cap and selected arms;
+unproved indices, array identity, escape or mutation remain refused. Unguarded
+default document roots and `for…of` consumers also refuse. The source proof tests
+check the exact cap and selected arms;
 standalone native tests cover empty/scoped/detached results, saved counts across DOM
 writes, invalid-selector effect order and borrowed/owned document validation.
 
@@ -506,8 +522,21 @@ member does not allocate by index, and the old guard ran after collection refres
 The focused `dom_nodes_wpt` check passes with huge absent, overflowing and
 noncanonical index reads; no collection with over one million members was executed.
 The separate `ownKeys` enumeration limit of 1,000,000 and proxy-spread limit of
-2^24 are unchanged. Indexed concat consumers still need their own presence and
-spread proof; a NodeList is not a JavaScript Array.
+2^24 are unchanged. The confined indexed concat proof above does not admit general
+JavaScript Array behavior or NodeList iteration protocols.
+
+The focused `native-dom-find-elements.test` passes **48 native executions and
+114 refusals** with the unchanged vendor-pinned helper, explicit receiver and
+guarded omitted/undefined defaults. Both providers, GCC/Clang, printing layouts
+and optimization policies cover ordered element writes, identity, live hover,
+saved membership after class mutation, document-root replacement, selector failure
+order and outer-document restoration. Existing element query-all **16/44** and
+spread-length **32/52** pass alongside it: **3/3 selected lit cases, 141.75 s**.
+Exact host-contract CTest passes **1/1, 0.66 s total**. Source controls preserve
+the uncapped original NodeList alias, reject copied indices guarded by that alias,
+and withhold evidence after cap/arm mutation or incomplete budgets. The cap is
+checked structurally; no above-cap collection or new Node/VM differential run is
+claimed. Full suites were skipped.
 
 A `closest`, `querySelector` or document-root result is a local borrowed identity,
 with a canonical empty `element_ref{}` for no match. Strict equality compares it
