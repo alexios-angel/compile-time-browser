@@ -255,7 +255,7 @@ def main():
     for optimize in (False, True):
         name = f"state-{optimize}"
         native = dom.lower(args, state_ir, state_contract, name, optimize=optimize)
-        if "std::variant<std::monostate, ctnative::js_symbol_t>" not in native.read_text():
+        if "std::optional<ctnative::js_symbol_t>" not in native.read_text():
             raise RuntimeError("Symbol structured storage was not exercised")
         dom.standalone(args, native, name, STATE_CHECKS, compilers, includes, libraries)
     for name, body in REFUSALS.items():

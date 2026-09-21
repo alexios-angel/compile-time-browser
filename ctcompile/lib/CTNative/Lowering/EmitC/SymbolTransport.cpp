@@ -6,8 +6,7 @@ namespace ctcompile::ctnative::lowering_detail {
 void transportSymbols(ec::FuncOp function) {
     auto * context = function.getContext();
     const auto symbol = carrierType(context, carrier::symbol);
-    constexpr llvm::StringLiteral storageName =
-        "std::variant<std::monostate, ctnative::js_symbol_t>";
+    constexpr llvm::StringLiteral storageName = "std::optional<ctnative::js_symbol_t>";
     const auto storage = ec::OpaqueType::get(context, storageName);
     const auto wrap = [&](mlir::OpOperand & operand) {
         if (operand.get().getType() != symbol) { return; }
@@ -22,14 +21,12 @@ void transportSymbols(ec::FuncOp function) {
         if (value.getType() != symbol) { return; }
         value.setType(storage);
         if (value.use_empty()) { return; }
-        // Every SCF edge supplies a Symbol. monostate only permits C++ state
+        // Every SCF edge supplies a Symbol. Empty storage only permits C++
         // declarations before assignment; it is never a JavaScript alternative.
         // Copy on read so the next loop state cannot change saved identities.
-        // GCC 13 warns on the equivalent optional<js_symbol_t> loop storage.
-        auto read =
-            ec::CallOpaqueOp::create(at, value.getLoc(), mlir::TypeRange{symbol},
-                                     at.getStringAttr("std::get<ctnative::js_symbol_t>"),
-                                     mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{value});
+        auto read = ec::MemberCallOpaqueOp::create(
+            at, value.getLoc(), mlir::TypeRange{symbol}, value, at.getStringAttr("value"),
+            mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
         value.replaceAllUsesExcept(read.getResult(0), read);
     };
     function.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * operation) {

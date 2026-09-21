@@ -17,6 +17,13 @@ namespace ctnative {
 struct undefined_t;
 struct symbol_constructor;
 
+// GCC 13 misdiagnoses the inactive String arm through optional loop state.
+// ponytail: remove this scoped suppression when GCC 13 support ends.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ == 13
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+
 // A primitive identity, not its description or a boxed object. Well-known
 // values need no allocation, including during static initialization.
 class js_symbol_t {
@@ -52,6 +59,10 @@ public:
     js_symbol_t valueOf() const { return *this; }
     friend bool operator==(const js_symbol_t &, const js_symbol_t &) = default;
 };
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ == 13
+#pragma GCC diagnostic pop
+#endif
 
 struct symbol_to_string_method {
     js_string call(const js_symbol_t & receiver) const { return receiver.toString(); }

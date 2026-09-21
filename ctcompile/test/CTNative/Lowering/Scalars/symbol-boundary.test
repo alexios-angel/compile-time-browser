@@ -1,6 +1,7 @@
 # Typed Symbol values have identity, owning descriptions and immutable well-known
-# properties. This exercises the native API; source Symbol lowering remains refused.
+# properties. Without a host contract, source Symbol lowering remains refused.
 # RUN: split-file %s %t
+# RUN: not %gxx -O2 -c %t/warning.cpp -o %t/warning.o 2>&1 | FileCheck %s --check-prefix=WARNING
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: %gxx -O2 %t/main.cpp %t/other.cpp -o %t/gcc
 # RUN: %clangxx -O2 %t/main.cpp %t/other.cpp -o %t/clang
@@ -12,6 +13,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/type.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=TYPE
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=HOOK
 
+# WARNING: -Werror=maybe-uninitialized
 # MUTATED: global 'bAlias' differs
 # READ: ctnative.not_native =
 # READ: ctjs.load_global "Symbol"
@@ -276,3 +278,17 @@ var result = type();
 var constructor = {};
 constructor[Symbol.hasInstance] = function(value) { return value === 7; };
 var result = 7 instanceof constructor;
+
+#--- warning.cpp
+#include <ctcompile/CTNative/Runtime/ctnative.hpp>
+
+// The GCC 13 Symbol workaround must not disable warnings in its callers.
+int still_warn(int selector) {
+    int x;
+    switch (selector) {
+    case 1: x = 1; break;
+    case 2: x = 4; break;
+    case 3: x = 5; break;
+    }
+    return x;
+}
