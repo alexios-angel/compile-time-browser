@@ -99,9 +99,53 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     object->getBlock() != &entry) {
                     return true;
                 }
-                // The shared census proves unique own slots and every holder
-                // use. Aliases/captures still need their wider lifetime proof.
-                auto holder = analyzeLocalCallableObject(object, [&] { return step(); });
+                // Include the original constructor's captured reads in the
+                // holder census. Its registration slot stays intact because
+                // this expansion only accepts calls in the owning entry block.
+                auto holderUses = sourceUses(object.getResult());
+                llvm::DenseMap<mlir::Value, mlir::Operation *> captureSites;
+                for (auto [cell, initial] : cells) {
+                    if (!step()) { return false; }
+                    if (sourceValue(initial) != object.getResult()) { continue; }
+                    for (mlir::OpOperand & selected : cell.getUses()) {
+                        if (!step()) { return false; }
+                        if (cellOperations.contains(selected.getOwner())) { continue; }
+                        auto constructor =
+                            llvm::dyn_cast<ctjs::CreateClosureOp>(selected.getOwner());
+                        auto fn = target(constructor);
+                        if (!fn || constructor->getBlock() != &entry ||
+                            constructor.getUpvalues().size() != 1 ||
+                            constructor.getUpvalues().front() != cell ||
+                            fn.getUpvalueCount() != 1 || !fn.getBody().hasOneBlock()) {
+                            return true;
+                        }
+                        bool classConstructor = false;
+                        for (ctjs::CallOp setup : calls) {
+                            if (!step()) { return false; }
+                            classConstructor |= setup.getArgs().size() == 1 &&
+                                                setup.getArgs().front() == constructor.getResult();
+                        }
+                        if (!classConstructor) { return true; }
+                        auto & constructorBody = fn.getBody().front();
+                        for (mlir::OpOperand & use :
+                             constructorBody.getArgument(ctjs::arg_callee).getUses()) {
+                            if (!step()) { return false; }
+                            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                            auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+                            if (!load || load.getIndex() != 0 ||
+                                load->getBlock() != &constructorBody) {
+                                return true;
+                            }
+                            captureSites[load.getResult()] = constructor;
+                            for (mlir::OpOperand & capturedUse : load.getResult().getUses()) {
+                                if (!step()) { return false; }
+                                holderUses.push_back(&capturedUse);
+                            }
+                        }
+                    }
+                }
+                auto holder = analyzeLocalCallableObject(
+                    object, [&] { return step(); }, [&](mlir::Value) { return holderUses; });
                 if (!holder) {
                     llvm::consumeError(holder.takeError());
                     return reason.empty();
@@ -112,6 +156,14 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                 }
                 for (auto [read, closure] : holder->reads) {
                     if (!step()) { return false; }
+                    auto * position = captureSites.lookup(read.getObject());
+                    if (!position) { position = read; }
+                    for (ctjs::SetPropertyOp slot : holder->stores) {
+                        if (!step()) { return false; }
+                        if (position->getBlock() != &entry || !slot->isBeforeInBlock(position)) {
+                            return true;
+                        }
+                    }
                     if (closure != helper) { continue; }
                     holderReads.push_back(read);
                     for (mlir::OpOperand & selected : read.getResult().getUses()) {

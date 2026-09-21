@@ -3,6 +3,7 @@
 from CTNative.Lowering.Objects import class_initialization as check
 
 SELECTED = {
+    "class-map-inherited-multislot-holder",
     "class-map-record-constructor-dynamic-key",
     "class-map-inherited-keyed-holder",
     "class-map-inherited-keyed-later-number",
@@ -30,8 +31,9 @@ check.OBSERVATIONS = {
             "class-map-record-captured-holder-",
             "class-map-record-constructor-holder-",
             "class-map-record-constructor-keyed-",
+            "class-map-record-constructor-multislot-",
         )
     )
 }
-assert len(check.OBSERVATIONS) == len(SELECTED) + 55
+assert len(check.OBSERVATIONS) == len(SELECTED) + 66
 check.main()

@@ -798,6 +798,7 @@ def main():
             "class-map-record-constructor-helper",
             "class-map-record-alias-snapshot-overwrite-delete",
             "class-map-record-constructor-keyed-holder",
+            "class-map-record-constructor-multislot-keyed",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

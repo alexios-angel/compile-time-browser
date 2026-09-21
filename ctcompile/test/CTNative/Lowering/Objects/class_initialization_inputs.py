@@ -16,6 +16,18 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-constructor-multislot-keyed": (2711, 2711),
+    "class-map-record-constructor-multislot-overwrite": (59592, 59592),
+    "class-map-inherited-multislot-holder": (3032, 3032),
+    "class-map-record-constructor-multislot-literal": (771, 771),
+    "class-map-record-constructor-multislot-extracted": (2711, 2711),
+    "class-map-record-constructor-multislot-replaced": (2711, 2711),
+    "class-map-record-constructor-multislot-escaped": (1, 1),
+    "class-map-record-constructor-multislot-captured-observer": (2711, 2711),
+    "class-map-record-constructor-multislot-constructor-observer": (3811, 3811),
+    "class-map-record-constructor-multislot-missing": (201, 201),
+    "class-map-record-constructor-multislot-unused-effect": (2711, 2711),
+    "class-map-record-constructor-multislot-late-slot": (2711, 2711),
     "class-map-record-constructor-keyed-holder": (2727, 2727),
     "class-map-record-constructor-keyed-overwrite-delete": (59592, 59592),
     "class-map-record-constructor-keyed-helper": (272, 272),
@@ -667,6 +679,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-constructor-multislot-keyed",
+    "class-map-record-constructor-multislot-overwrite",
+    "class-map-inherited-multislot-holder",
+    "class-map-record-constructor-multislot-literal",
     "class-map-record-constructor-keyed-holder",
     "class-map-record-constructor-keyed-overwrite-delete",
     "class-map-record-constructor-keyed-helper",
