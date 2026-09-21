@@ -476,6 +476,53 @@ FRACTIONAL_INDICES = {
 }
 """,
 }
+# Preserve all sixteen complete former magnitude/infinity refusal programs.
+WIDE_WITNESSES = {
+    name: (
+        f"function bad(text, index) {{ return text.{expression}; }}\n",
+        ("", "a", "abc") if whole else ("", "", ""),
+    )
+    for name, expression, whole in (
+        ("string-index-charat-large", "charAt(4294967296)", False),
+        ("string-index-slice-large", "slice(4294967296)", False),
+        ("string-index-charat-infinity", "charAt(1e999)", False),
+        ("string-index-slice-infinity", "slice(1e999)", False),
+        ("string-slice-end-large", "slice(0, 4294967296)", True),
+        ("string-slice-end-infinity", "slice(0, 1e999)", True),
+        ("signed-slice-start-large", "slice(-4294967296)", True),
+        ("signed-slice-end-large", "slice(0, -4294967296)", False),
+        ("signed-slice-start-infinity", "slice(-1e999)", True),
+        ("signed-slice-end-infinity", "slice(0, -1e999)", False),
+        ("signed-charat-large", "charAt(-4294967296)", False),
+        ("signed-charat-infinity", "charAt(-1e999)", False),
+        ("fractional-index-charat-large", "charAt(4294967295.5)", False),
+        ("fractional-index-slice-large", "slice(4294967295.5)", False),
+        ("fractional-index-charat-negative-large", "charAt(-4294967295.5)", False),
+        ("fractional-index-slice-end-negative-large", "slice(0, -4294967295.5)", False),
+    )
+}
+WIDE_INDICES = {
+    **{name: source for name, (source, _) in WIDE_WITNESSES.items()},
+    "string-wide-indices": """function stringWideIndices(text) {
+  return text.charAt(18446744073709549568) === '' &&
+    text.charAt(18446744073709551616) === '' && text.charAt(1.7976931348623157e308) === '' &&
+    text.charAt(-18446744073709551616) === '' && text.charAt(1e999) === '' &&
+    text.charAt(-1e999) === '' && text.slice(18446744073709549568) === '' &&
+    text.slice(18446744073709551616) === '' && text.slice(-18446744073709551616) === text &&
+    text.slice(-1.7976931348623157e308, 1.7976931348623157e308) === text &&
+    text.slice(-1e999, 1e999) === text && text.slice(1e999, -1e999) === '' &&
+    text.slice(-1e999, -1e999) === '' && text.slice(1e999, 1e999) === '' &&
+    text.slice(-0.5, 1e999) === text && text.slice(0, -1e999) === '';
+}
+""",
+    "description-capture-wide-index": """function descriptionCaptureWideIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() { return text !== undefined ? text.slice(-1e999, 1e999) : ':absent'; }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -517,6 +564,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in FRACTIONAL_WITNESSES},
     "string-fractional-indices": ["string", "string", "string", "string"],
     "description-capture-fractional-index": ["symbol"],
+    **{name: ["string", "number"] for name in WIDE_WITNESSES},
+    "string-wide-indices": ["string"],
+    "description-capture-wide-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1093,7 +1143,7 @@ CASES["description-capture-signed-charat"] = (
 """,
     "true\n",
 )
-for name, (source, expected) in FRACTIONAL_WITNESSES.items():
+for name, (source, expected) in (FRACTIONAL_WITNESSES | WIDE_WITNESSES).items():
     CASES[name] = (
         source,
         """
@@ -1113,6 +1163,24 @@ CASES["string-fractional-indices"] = (
 )
 CASES["description-capture-fractional-index"] = (
     FRACTIONAL_INDICES["description-capture-fractional-index"],
+    *CASES["description-type-guard"][1:],
+)
+CASES["string-wide-indices"] = (
+    WIDE_INDICES["string-wide-indices"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_boolean_t (*)(js_string)>);
+    for (const auto * text : {"", "a", "abc", "\xc3\x89xy", "\xf0\x90\x90\x80x",
+                             "\xed\xa0\x80xy", "A\xed\xb0\x80x"}) {
+        assert(@ENTRY@(js_string{std::string{text}}));
+    }
+    assert(@ENTRY@(js_string{"a\0b"}));
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["description-capture-wide-index"] = (
+    WIDE_INDICES["description-capture-wide-index"],
     *CASES["description-type-guard"][1:],
 )
 # The complete former refused programs now execute unchanged.
@@ -1217,6 +1285,7 @@ def oracle(args):
         + "".join(
             body for name, body in FRACTIONAL_INDICES.items() if name not in FRACTIONAL_WITNESSES
         )
+        + "".join(body for name, body in WIDE_INDICES.items() if name not in WIDE_WITNESSES)
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -1479,6 +1548,26 @@ var symbol71StringUTF16FractionalIndices = stringFractionalIndices('\u00c9xy', '
             + f"; }}\nvar symbol{i}FractionalWitness{i} = observeFractional{i}();\n"
             for i, (body, expected) in enumerate(FRACTIONAL_WITNESSES.values(), 72)
         )
+        + r"""
+var symbol79StringWideIndices = stringWideIndices('') && stringWideIndices('a') &&
+  stringWideIndices('abc') && stringWideIndices('a\u0000b') && stringWideIndices('\u00c9xy') &&
+  stringWideIndices('\ud801\udc00x') && stringWideIndices('\ud800xy') && stringWideIndices('A\udc00x');
+var symbol80DescriptionCaptureWideIndex = descriptionCaptureWideIndex(Symbol()) === ':absent' &&
+  descriptionCaptureWideIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureWideIndex(Symbol('')) === '' && descriptionCaptureWideIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureWideIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureWideIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureWideIndex(Symbol.iterator) === 'Symbol.iterator';
+"""
+        + "".join(
+            f"\nfunction observeWide{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}WideWitness{i} = observeWide{i}();\n"
+            for i, (body, expected) in enumerate(WIDE_WITNESSES.values(), 81)
+        )
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -1550,6 +1639,9 @@ var symbol71StringUTF16FractionalIndices = stringFractionalIndices('\u00c9xy', '
         "DescriptionCaptureFractionalIndex",
         "StringUTF16FractionalIndices",
         *(f"FractionalWitness{i}" for i in range(72, 79)),
+        "StringWideIndices",
+        "DescriptionCaptureWideIndex",
+        *(f"WideWitness{i}" for i in range(81, 97)),
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1701,6 +1793,7 @@ def main():
             | SIGNED_SLICES
             | SIGNED_CHARAT
             | FRACTIONAL_INDICES
+            | WIDE_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -1901,6 +1994,7 @@ def main():
         *SIGNED_SLICES,
         *SIGNED_CHARAT,
         *FRACTIONAL_INDICES,
+        *WIDE_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -1975,10 +2069,6 @@ def main():
         raise RuntimeError("changed String method accepted a stale fingerprint")
 
     for name, body in {
-        "charat-large": "return text.charAt(4294967296);",
-        "slice-large": "return text.slice(4294967296);",
-        "charat-infinity": "return text.charAt(1e999);",
-        "slice-infinity": "return text.slice(1e999);",
         "charat-dynamic": "return text.charAt(index);",
         "slice-dynamic": "return text.slice(index);",
         "charat-coercion": "return text.charAt('1');",
@@ -2013,8 +2103,6 @@ def main():
         raise RuntimeError("changed String index accepted a stale fingerprint")
 
     for name, body in {
-        "end-large": "return text.slice(0, 4294967296);",
-        "end-infinity": "return text.slice(0, 1e999);",
         "end-dynamic": "return text.slice(0, index);",
         "end-coercion": "return text.slice(0, '2');",
         "end-undefined": "return text.slice(0, undefined);",
@@ -2052,10 +2140,6 @@ def main():
         raise RuntimeError("changed String slice accepted a stale fingerprint")
 
     for name, body in {
-        "start-large": "return text.slice(-4294967296);",
-        "end-large": "return text.slice(0, -4294967296);",
-        "start-infinity": "return text.slice(-1e999);",
-        "end-infinity": "return text.slice(0, -1e999);",
         "start-dynamic": "return text.slice(-index);",
         "end-dynamic": "return text.slice(0, -index);",
         "start-coercion": "return text.slice(-'1');",
@@ -2091,8 +2175,6 @@ def main():
         raise RuntimeError("changed signed String slice accepted a stale fingerprint")
 
     for name, body in {
-        "large": "return text.charAt(-4294967296);",
-        "infinity": "return text.charAt(-1e999);",
         "dynamic": "return text.charAt(-index);",
         "coercion": "return text.charAt(-'1');",
         "object": "return text.charAt(-{valueOf() { return 1; }});",
@@ -2131,10 +2213,6 @@ def main():
         raise RuntimeError("changed signed charAt accepted a stale fingerprint")
 
     for name, body in {
-        "charat-large": "return text.charAt(4294967295.5);",
-        "slice-large": "return text.slice(4294967295.5);",
-        "charat-negative-large": "return text.charAt(-4294967295.5);",
-        "slice-end-negative-large": "return text.slice(0, -4294967295.5);",
         "charat-coercion": "return text.charAt('1.5');",
         "slice-coercion": "return text.slice(-'1.5');",
         "charat-dynamic": "return text.charAt(index + 0.5);",
@@ -2170,6 +2248,57 @@ def main():
         raise RuntimeError("fractional index fingerprint control did not change its magnitude")
     if "fingerprint mismatch" not in refuse(changed, contract, "fractional-index-stale"):
         raise RuntimeError("changed fractional index accepted a stale fingerprint")
+
+    for name, body in {
+        "charat-nan-global": "return text.charAt(NaN);",
+        "slice-nan-global": "return text.slice(0, NaN);",
+        "charat-infinity-global": "return text.charAt(Infinity);",
+        "slice-infinity-global": "return text.slice(-Infinity);",
+        "charat-nan-expression": "return text.charAt(0 / 0);",
+        "slice-infinity-expression": "return text.slice(1 / 0);",
+        "coercion": "return text.charAt('1e999');",
+        "object": "return text.slice(0, {valueOf() { return 1e999; }});",
+        "negation-escape": "const bound=-1e999; text.slice(bound); return bound;",
+        "extra-bound": "return text.charAt(0, -1e999);",
+        "first-unit-authority": "return text.charAt(1e999).toLowerCase();",
+        "slice-authority": "return text.slice(-1e999).toLowerCase();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "wide-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"wide-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-wide-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"wide-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "wide-index-stale.mlir"
+    # Replace literal +infinity with 1, retaining the original Neg operation.
+    changed.write_text(
+        ir.read_text().replace(
+            "#ctjs.number<9218868437227405312>", "#ctjs.number<4607182418800017408>", 1
+        )
+    )
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("wide index fingerprint control did not change its infinity")
+    if "fingerprint mismatch" not in refuse(changed, contract, "wide-index-stale"):
+        raise RuntimeError("changed wide index accepted a stale fingerprint")
+    ir, contract = accepted["string-index-charat-infinity"]
+    changed = args.work / "wide-index-nan.mlir"
+    changed.write_text(
+        ir.read_text().replace(
+            "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>", 1
+        )
+    )
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("wide index NaN control did not replace its infinity")
+    contract = dict(contract, module_sha256=fingerprint(args.opt, changed))
+    for optimize in (False, True):
+        refuse(changed, contract, f"wide-index-nan-literal-{optimize}", optimize=optimize)
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

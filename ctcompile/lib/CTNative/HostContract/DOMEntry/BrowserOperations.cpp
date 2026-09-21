@@ -50,11 +50,9 @@ std::optional<double> stringIndex(mlir::Value value) {
         literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
     if (!number) { return std::nullopt; }
     const double offset = negative ? -number.getDouble() : number.getDouble();
-    // ponytail: bounded finite magnitudes fit size_t after truncation; broader
-    // inputs need their own ToIntegerOrInfinity and representability proof.
-    if (!std::isfinite(offset) || offset < -4294967295.0 || offset > 4294967295.0) {
-        return std::nullopt;
-    }
+    // Size and infinity clamp before unsigned conversion in lowering. NaN has
+    // no Number-literal source spelling; its global/arithmetic origins need proof.
+    if (std::isnan(offset)) { return std::nullopt; }
     return offset;
 }
 } // namespace
@@ -64,7 +62,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
         if (!spend()) { return false; }
         if (!stringIndex(unary.getResult())) {
-            refusal = "DOM String indexing negation requires one bounded Number literal";
+            refusal = "DOM String indexing negation requires one Number literal";
             return false;
         }
         unsigned bounds = 0;
@@ -445,7 +443,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             for (mlir::Value argument : arguments) {
                 if (!spend()) { return false; }
                 if (!stringIndex(argument)) {
-                    refusal = "DOM String indexing requires bounded Number literals";
+                    refusal = "DOM String indexing requires Number literals";
                     return false;
                 }
             }

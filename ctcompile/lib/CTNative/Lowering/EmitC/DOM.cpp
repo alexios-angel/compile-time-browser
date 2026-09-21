@@ -571,11 +571,27 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             auto negated = ec::UnaryMinusOp::create(at, where, at.getF64Type(), number);
             auto magnitude =
                 ec::ConditionalOp::create(at, where, at.getF64Type(), negative, negated, number);
-            auto index = ec::CastOp::create(at, where, indexType, magnitude);
-            auto inRange = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, index,
-                                             length.getResult(0));
-            auto clamped = ec::ConditionalOp::create(at, where, indexType, inRange, index,
+            // Guard the cast itself: infinity and a Number at/above size_t's
+            // limit cannot become an unsigned index. Keep length comparisons
+            // in size_t so rounding a long String's length cannot move its end.
+            auto maximum = ec::ConstantOp::create(
+                at, where, indexType,
+                ec::OpaqueAttr::get(context, "std::numeric_limits<std::size_t>::max()"));
+            auto representable =
+                ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, magnitude,
+                                  ec::CastOp::create(at, where, at.getF64Type(), maximum));
+            auto branch =
+                mlir::scf::IfOp::create(at, where, mlir::TypeRange{indexType}, representable, true);
+            auto inside = mlir::OpBuilder::atBlockBegin(&branch.getThenRegion().front());
+            auto index = ec::CastOp::create(inside, where, indexType, magnitude);
+            auto inRange = ec::CmpOp::create(inside, where, inside.getI1Type(),
+                                             ec::CmpPredicate::lt, index, length.getResult(0));
+            auto bounded = ec::ConditionalOp::create(inside, where, indexType, inRange, index,
                                                      length.getResult(0));
+            mlir::scf::YieldOp::create(inside, where, mlir::ValueRange{bounded});
+            inside.setInsertionPointToStart(&branch.getElseRegion().front());
+            mlir::scf::YieldOp::create(inside, where, length.getResults());
+            auto clamped = branch.getResult(0);
             if (edge.kind == HostDOMMethod::stringCharAt) {
                 return ec::ConditionalOp::create(at, where, indexType, negative,
                                                  length.getResult(0), clamped);
