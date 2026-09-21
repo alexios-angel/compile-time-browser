@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Short-circuit Maps and signed charAt indices, 2026-09-21 UTC
+
+Continued clean **3e3ebde3** from the recorded Data short-circuit boundary.
+**f5ac5a7a** preserves selected results of single-result, Map-only branches in
+an exact owning entry. Nested `has || set` and `has && get` retain child identity;
+cached results survive cleanup and replacement. Both arms and every outer mutation
+pass the original use/effect census. An outer `set` result may travel only through
+unused yields; observable outer-result transport remains refused.
+**d8f532c1** admits signed literal `charAt` indices with uint32 magnitudes through
+the existing UTF-16 path. Negative indices return an empty String; negative zero
+selects index zero. Exact first-unit and dataset-tail authority is unchanged.
+
+Focused devbox validation passes: **one exact CTest and four distinct lit cases**.
+Captured class checks measure **136 source observations, 296 main native executions,
+272 unprepared refusals and 174 preparation refusals**, with new budget **1704**.
+Intrinsic exports measure **432 native executions, 466 refusals and two mutations**,
+with **62 Node/VM agreements and six explicit known casing/indexing differences**.
+DOM Strings measure 809 observations and eight native binaries. All **eight final
+code/test hashes** match the devbox; scoped checks and 42 original class source
+files pass. Repository formatting retains 16 existing diagnostics in untouched files.
+No browser/runtime implementation changed. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** expand exact captured three-argument Data helper calls in their owning
+entry before resolving nested Maps. Current helper expansion accepts straight-line
+bodies, and the pass runs nested routing first. Constructor publication still needs
+both key origins and the selected child owner, preserving all holder observers.
+Original Data also needs element-identity keys, conflict reporting, nullable lookup
+and cleanup with complete owner, exception and reentry proofs. Original B/Data+B
+remains refused with its complete source intact. Dynamic/coercing String indices,
+broader methods, conditional callees, branch-mutated boxed locals, String ordering,
+document views and the application driver remain. No full-Bootstrap coverage gain
+is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-shortcircuit-maps-signed-charat.md).
+
 ## Conditional child Maps and signed String slices, 2026-09-21 UTC
 
 Continued clean **9fd8337c** from the recorded conditional child-Map boundary.
