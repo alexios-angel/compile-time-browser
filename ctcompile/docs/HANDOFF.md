@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Finite nested Maps and String slice bounds, 2026-09-21 UTC
+
+Continued clean **a9eb0f33** from the recorded Data boundary.
+**8bbcf23b** resolves finite outer-Map routes to exact preallocated child Maps
+before the unchanged record-owner proof. Literal String keys, complete outer
+use/cell census and same-entry operations are required. Saved child/record
+aliases retain their original owners across replacement and deletion.
+**7f226c55** admits literal uint32 `slice(start, end)` through the existing
+UTF-16 path. Dataset-tail and first-unit authority retain their original
+one-argument `slice(1)` and `charAt(0)` proofs.
+
+Focused devbox validation passes: **one exact CTest, four distinct lit cases and
+one targeted UTF16/H class subset**. Captured class checks measure **106 source
+observations, 248 main native executions, 212 unprepared refusals and 134
+preparation refusals**, with budget **830** for the new direct witness.
+Intrinsic exports measure **376 executions, 394 refusals and two mutations**,
+with **55 Node/VM agreements and four explicit known differences**.
+The class subset measures 100 observations, eight native executions and 466
+refusals; DOM Strings also pass. All **11 final code/test hashes** match the
+devbox. Scoped checks pass; repository formatting retains 16 existing diagnostics.
+No browser/runtime implementation changed. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** conditional child-Map creation and original three-argument Data
+registration using both key dimensions, conflicts, nullable lookup and cleanup
+still need complete owner, observer, exception and reentry proofs. This slice
+resolves fixed routes among existing children. Original B/Data+B remains refused
+with its complete bodies intact. Broader String methods/indices, conditional
+callees, branch-mutated boxed locals, String ordering, document views and the
+application driver remain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-nested-maps-slice-bounds.md).
+
 ## Captured keys and literal String indices, 2026-09-21 UTC
 
 Continued clean **641c8ee5** from the recorded Data/key boundary.

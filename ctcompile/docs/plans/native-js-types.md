@@ -229,7 +229,9 @@ saved descriptions survive later Symbol assignments. Exact `typeof` String/undef
 guards and equality with undefined now narrow the same saved value within its
 proved String arm. Under an explicit String identity, `charAt` and `slice` with
 nonnegative uint32 integer literal indices reuse the existing UTF-16 operations
-and owning String extraction (**2e6dc90a**). Offsets clamp to the UTF-16 length.
+and owning String extraction (**2e6dc90a**). **7f226c55** adds literal uint32
+`slice(start, end)` with checked bounds; reversed bounds produce an empty String.
+Offsets clamp to the UTF-16 length. Only one-argument `slice(1)` supplies dataset-tail authority.
 **8e6e2e4d** also admits constant ASCII-prefix `startsWith` and
 `charAt(0).toLowerCase()` through their existing proofs and public Core helpers.
 Whole-string lowercase, non-ASCII prefixes and negative/dynamic/coercing indices
@@ -241,11 +243,11 @@ the guard grant no String authority. Mixed null/description joins remain separat
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
 remain typed. With global/local helper composition, description guards and
-**2e6dc90a** literal String indices, the export fixture checks **352 native executions,
-356 refusals and two mutations**, with **52 Node/VM agreements and three known VM
+**7f226c55** literal String slice bounds, the export fixture checks **376 native executions,
+394 refusals and two mutations**, with **55 Node/VM agreements and four known VM
 casing/indexing differences**. Native/Node Unicode expectations remain intact;
 no runtime implementation changed.
-[Exact captured-key and String-index evidence](../handoff/2026-09-21-captured-keys-string-indices.md).
+[Exact nested-Map and String-bound evidence](../handoff/2026-09-21-nested-maps-slice-bounds.md).
 
 **Next source slice:** broader String methods, negative/dynamic/coercing indices
 and conditional callee transport. Branch-mutated boxed locals remain separate from immutable captures;
