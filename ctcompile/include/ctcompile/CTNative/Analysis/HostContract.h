@@ -70,6 +70,9 @@ struct HostContract {
     // The provider starts with the standard undefined binding. The complete
     // source proof excludes replacement and external script reentry.
     std::vector<unsigned> elementParameters;
+    // DOM entry/session only: the source document binding is this input's
+    // owning document, with original root/query access and live Style.
+    std::optional<unsigned> currentDocumentParameter;
     // Explicit subset whose namespace is HTML or SVG, checked at native entry.
     // Other namespaces need public namespace URI ownership before admission.
     std::vector<unsigned> datasetParameters;
@@ -150,6 +153,7 @@ enum class HostDOMMethod {
     closest,
     querySelector,
     querySelectorAll,
+    documentQuerySelector,
     number,
     numberToString,
     symbol,
@@ -176,7 +180,8 @@ struct HostDOMCall {
     // Function.prototype.call supplies the browser receiver as argument zero.
     bool explicitReceiver = false;
     [[nodiscard]] bool returnsElement() const {
-        return kind == HostDOMMethod::closest || kind == HostDOMMethod::querySelector;
+        return kind == HostDOMMethod::closest || kind == HostDOMMethod::querySelector ||
+               kind == HostDOMMethod::documentQuerySelector;
     }
     [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
     [[nodiscard]] bool returnsStringVector() const {
@@ -250,6 +255,9 @@ public:
     [[nodiscard]] bool isDataset(mlir::Value value) const;
     [[nodiscard]] bool isDatasetElement(mlir::Value value) const;
     [[nodiscard]] bool isElementPrototype(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] bool isCurrentDocument(ctjs::LoadGlobalOp load) const;
+    [[nodiscard]] bool isDocumentElement(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] mlir::BlockArgument documentParameter() const { return documentAnchor; }
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isElementVectorLength(ctjs::GetPropertyOp read) const;
@@ -302,6 +310,9 @@ private:
     std::vector<ctjs::GetPropertyOp> stringVectorIndices;
     llvm::DenseSet<ctjs::GetPropertyOp> elementVectorLengths, elementVectorIndices;
     llvm::DenseSet<ctjs::GetPropertyOp> elementPrototypes;
+    mlir::BlockArgument documentAnchor;
+    llvm::DenseSet<ctjs::LoadGlobalOp> documentLoads;
+    llvm::DenseSet<ctjs::GetPropertyOp> documentRoots;
     llvm::DenseSet<ctjs::LoadGlobalOp> elementIntrinsics, symbolIntrinsics;
     llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> symbols;
     llvm::DenseSet<ctjs::GetPropertyOp> symbolDescriptions;

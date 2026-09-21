@@ -23,6 +23,8 @@ enum class Kind {
     implicit,
     element,
     nullableElement,
+    document,
+    documentQuerySelector,
     tokenList,
     dataset,
     elementIntrinsic,
@@ -105,6 +107,9 @@ struct Body {
     const bool & suppliedElement;
     const bool & suppliedFunction;
     const bool & suppliedSymbol;
+    mlir::BlockArgument documentParameter;
+    llvm::DenseSet<ctjs::LoadGlobalOp> & provedDocumentLoads;
+    llvm::DenseSet<ctjs::GetPropertyOp> & provedDocumentRoots;
     bool & provedUndefinedReturn;
     llvm::DenseMap<mlir::Value, Kind> & values;
     llvm::DenseSet<mlir::Value> & increasingIndices;

@@ -99,6 +99,11 @@ public:
     }
 };
 
+// Bridge the proved null-only view result to the existing native element carrier.
+inline ctbrowser::element_ref element_or_null(const std::optional<js_element_t> & element) {
+    return element ? element->value() : ctbrowser::element_ref{};
+}
+
 inline js_boolean_t matches_method::call(const js_element_t & element,
                                          const js_string & selector) const {
     return element.matches(selector);

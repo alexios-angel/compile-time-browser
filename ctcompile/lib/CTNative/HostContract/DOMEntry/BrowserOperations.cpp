@@ -168,6 +168,11 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         return true;
     }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+        if (documentParameter && load.getName() == "document") {
+            values[load.getResult()] = Kind::document;
+            provedDocumentLoads.insert(load);
+            return true;
+        }
         // The DOM provider fixes this initial binding. The complete
         // source census admits no replacement or script reentry.
         if (load.getName() == "undefined") {
@@ -212,6 +217,18 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
         const auto key = ctjs::constantKey(read.getKey());
+        if (hasKind(read.getObject(), Kind::document)) {
+            if (key == "documentElement") {
+                values[read.getResult()] = Kind::nullableElement;
+                provedDocumentRoots.insert(read);
+                return true;
+            }
+            if (key == "querySelector") {
+                values[read.getResult()] = Kind::documentQuerySelector;
+                provedMethods.try_emplace(read, HostDOMMethod::documentQuerySelector);
+                return true;
+            }
+        }
         // Bound catalog lookup work by the longest standard property name.
         if (hasKind(read.getObject(), Kind::symbolIntrinsic) && key.size() <= 18 &&
             wellKnownSymbols.contains(key)) {
@@ -491,6 +508,13 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (!method || method.getObject() != invoke.getReceiver()) {
             refusal = "DOM call does not preserve its proved method receiver";
             return false;
+        }
+        if (hasKind(invoke.getCallee(), Kind::documentQuerySelector) && arguments.size() == 1 &&
+            hasKind(arguments[0], Kind::string)) {
+            provedCalls.push_back(
+                {invoke, HostDOMMethod::documentQuerySelector, documentParameter});
+            values[invoke.getResult()] = Kind::nullableElement;
+            return true;
         }
         if ((hasKind(invoke.getCallee(), Kind::symbolToString) ||
              hasKind(invoke.getCallee(), Kind::symbolValueOf)) &&

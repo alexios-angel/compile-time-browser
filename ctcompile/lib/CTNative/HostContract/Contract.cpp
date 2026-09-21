@@ -111,8 +111,9 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     }
     if (intrinsics ? !keys(*object, {"version", "provider", "module_sha256", "entry",
                                      "initial_intrinsics", "parameter_types"})
-        : dom ? !keys(*object, {"version", "provider", "module_sha256", "entry",
-                                "element_parameters", "initial_intrinsics", "dataset_parameters"})
+        : dom ? !keys(*object,
+                      {"version", "provider", "module_sha256", "entry", "element_parameters",
+                       "initial_intrinsics", "dataset_parameters", "current_document_parameter"})
               : !keys(*object,
                       {"version", "provider", "module_sha256", "entry", "roots", "observations",
                        "absent_bindings", "undefined_bindings", "initial_intrinsics",
@@ -182,6 +183,14 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             result.elementParameters.push_back(static_cast<unsigned>(*index));
         }
         if (dom) {
+            if (const auto * requested = object->get("current_document_parameter")) {
+                const auto index = requested->getAsInteger();
+                if (!index || *index < 0 ||
+                    static_cast<std::uint64_t>(*index) >= result.elementParameters.size()) {
+                    return error("DOM current_document_parameter must name a declared element");
+                }
+                result.currentDocumentParameter = static_cast<unsigned>(*index);
+            }
             if (const auto * requested = object->get("dataset_parameters")) {
                 const auto * indices = requested->getAsArray();
                 if (!indices) { return error("DOM dataset_parameters must be an index array"); }
@@ -420,7 +429,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
     if ((contract.provider != HostContract::Provider::closedSource &&
          contract.provider != HostContract::Provider::closedSourceSession &&
          contract.provider != HostContract::Provider::ctbrowserDOMDataSession) ||
-        !contract.intrinsicParameters.empty() ||
+        !contract.intrinsicParameters.empty() || contract.currentDocumentParameter ||
         (contract.provider != HostContract::Provider::ctbrowserDOMDataSession &&
          !contract.elementParameters.empty())) {
         return "closed-source analysis requires a closed-source host provider";

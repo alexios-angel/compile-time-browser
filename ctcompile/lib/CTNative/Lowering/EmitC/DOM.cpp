@@ -26,6 +26,7 @@ std::string lowering::domDataDefinition() const {
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     hasHostEntry = true;
+    domDocumentParameter = entry.documentParameter();
     needsDOM |= !entry.parameters().empty();
     if (entry.returnsUndefined()) {
         resultTypes[entry.entry().getSymName()] = mlir::NoneType::get(context);
@@ -51,6 +52,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
         });
         function.walk([&](ctjs::GetPropertyOp read) {
+            if (entry.isDocumentElement(read)) { domDocumentRoots.insert(read); }
             if (entry.isSymbolDescription(read)) { domSymbolDescriptions.insert(read); }
             if (auto name = entry.wellKnownSymbol(read); !name.empty()) {
                 domSymbols.try_emplace(read, name);
@@ -69,7 +71,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             }
         });
         function.walk([&](ctjs::LoadGlobalOp load) {
-            if (entry.isInitialIntrinsic(load)) { domReads.insert(load); }
+            if (entry.isInitialIntrinsic(load) || entry.isCurrentDocument(load)) {
+                domReads.insert(load);
+            }
         });
         function.walk([&](ctjs::InvokeOp invocation) {
             if (!entry.invocation(invocation)) { return; }
@@ -101,7 +105,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         });
     }
     for (mlir::BlockArgument parameter : entry.parameters()) {
-        if (llvm::any_of(domCalls, [&](const auto & item) {
+        if (parameter == domDocumentParameter || llvm::any_of(domCalls, [&](const auto & item) {
                 return item.second.usesStyle() && item.second.element == parameter;
             })) {
             domStyleParameters.push_back(parameter);
@@ -201,6 +205,34 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                    ? convertScalar(at, where, value, rawString)
                    : value;
     };
+    const auto documentCall = domCalls.find(operation);
+    const bool documentRoot = domDocumentRoots.contains(operation);
+    if (documentRoot || (documentCall != domCalls.end() &&
+                         documentCall->second.kind == HostDOMMethod::documentQuerySelector)) {
+        const auto documentType = ec::OpaqueType::get(context, "ctbrowser::document");
+        auto owner = ec::MemberOp::create(at, where, ec::PointerType::get(documentType), "owner",
+                                          domDocumentParameter);
+        auto document = ec::DereferenceOp::create(at, where, ec::LValueType::get(documentType),
+                                                  owner.getResult());
+        auto view = callWithConstValueOperands(
+            at, where, mlir::TypeRange{ec::OpaqueType::get(context, "ctnative::js_document_t")},
+            at.getStringAttr("ctnative::js_document_t"),
+            mlir::ValueRange{document.getResult(), domStyles.lookup(domDocumentParameter)});
+        mlir::ValueRange arguments;
+        if (!documentRoot) { arguments = llvm::cast<ctjs::CallOp>(operation).getArgs(); }
+        auto result = ec::MemberCallOpaqueOp::create(
+            at, where,
+            mlir::TypeRange{ec::OpaqueType::get(context, "std::optional<ctnative::js_element_t>")},
+            view.getResult(0), at.getStringAttr(documentRoot ? "documentElement" : "querySelector"),
+            mlir::ArrayAttr{}, mlir::ArrayAttr{}, arguments);
+        auto value = callWithConstValueOperands(
+            at, where, mlir::TypeRange{carrierType(context, carrier::domElement)},
+            at.getStringAttr("ctnative::element_or_null"), mlir::ValueRange{result.getResult(0)});
+        domStyles[value.getResult(0)] = domStyles.lookup(domDocumentParameter);
+        operation->getResult(0).replaceAllUsesWith(value.getResult(0));
+        eraseIfUnused(operation);
+        return true;
+    }
     if (auto found = domSymbols.find(operation); found != domSymbols.end()) {
         auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
         auto value = ec::ConstantOp::create(

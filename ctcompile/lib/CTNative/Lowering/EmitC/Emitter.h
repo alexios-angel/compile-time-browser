@@ -54,6 +54,8 @@ struct lowering {
     // Frozen emission plans copied only after complete live DOM admission.
     llvm::DenseMap<mlir::Operation *, HostDOMCall> domCalls;
     llvm::DenseSet<mlir::Operation *> domReads;
+    mlir::BlockArgument domDocumentParameter;
+    llvm::DenseSet<mlir::Operation *> domDocumentRoots;
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> domSymbols;
     llvm::DenseSet<mlir::Operation *> domSymbolDescriptions;
     llvm::DenseSet<mlir::Value> domDatasetParameters;

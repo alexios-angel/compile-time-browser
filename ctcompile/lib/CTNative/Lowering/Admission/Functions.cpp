@@ -146,7 +146,8 @@ bool admission::function(ctjs::FuncOp fn) {
             return;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
-            load && domEntry && domEntry->isInitialIntrinsic(load)) {
+            load && domEntry &&
+            (domEntry->isInitialIntrinsic(load) || domEntry->isCurrentDocument(load))) {
             return;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(o);

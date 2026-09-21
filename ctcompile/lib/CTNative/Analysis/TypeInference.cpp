@@ -441,7 +441,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        read && domEntry_ && domEntry_->isElementVectorIndex(read)) {
+        read && domEntry_ &&
+        (domEntry_->isElementVectorIndex(read) || domEntry_->isDocumentElement(read))) {
         propagateIfChanged(results[0], results[0]->join(TypeValue{DOMElementType::get(c)}));
         return mlir::success();
     }

@@ -55,7 +55,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         : contract.elementParameters.empty()) ||
         (!intrinsicEntry && !contract.intrinsicParameters.empty()) ||
         (intrinsicEntry &&
-         (!contract.datasetParameters.empty() ||
+         (contract.currentDocumentParameter || !contract.datasetParameters.empty() ||
           !llvm::is_contained(contract.initialIntrinsics, "Symbol") ||
           llvm::any_of(contract.initialIntrinsics,
                        [](const auto & name) { return name != "Symbol" && name != "String"; }))) ||
@@ -150,6 +150,17 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         }
         provedElements.push_back(targetBlock.getArgument(index + ctjs::implicit_arguments));
     }
+    mlir::BlockArgument documentParameter;
+    if (contract.currentDocumentParameter) {
+        if (!spend()) { return; }
+        if (*contract.currentDocumentParameter >= provedElements.size()) {
+            refusal = "DOM current_document_parameter must name a declared element input";
+            return;
+        }
+        documentParameter = provedElements[*contract.currentDocumentParameter];
+    }
+    llvm::DenseSet<ctjs::LoadGlobalOp> provedDocumentLoads;
+    llvm::DenseSet<ctjs::GetPropertyOp> provedDocumentRoots;
 
     std::vector<mlir::BlockArgument> provedDatasetElements;
     for (unsigned index : contract.datasetParameters) {
@@ -235,7 +246,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         for (ctjs::StoreGlobalOp store :
              declaration.getBody().front().getOps<ctjs::StoreGlobalOp>()) {
             if (!spend()) { return; }
-            if (llvm::is_contained(contract.initialIntrinsics, store.getName())) {
+            if (llvm::is_contained(contract.initialIntrinsics, store.getName()) ||
+                (documentParameter && store.getName() == "document")) {
                 refusal = "DOM entry source declaration replaces an initial intrinsic";
                 return;
             }
@@ -305,6 +317,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        suppliedElement,
                                        suppliedFunction,
                                        suppliedSymbol,
+                                       documentParameter,
+                                       provedDocumentLoads,
+                                       provedDocumentRoots,
                                        provedUndefinedReturn,
                                        values,
                                        increasingIndices,
@@ -455,6 +470,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     undefinedReturn = provedUndefinedReturn;
     checkedWrapper = declaration;
     elements = std::move(provedElements);
+    if (!provedDocumentLoads.empty()) { documentAnchor = documentParameter; }
+    documentLoads = std::move(provedDocumentLoads);
+    documentRoots = std::move(provedDocumentRoots);
     intrinsicParameters = std::move(provedIntrinsicParameters);
     tokenLists = std::move(provedTokens);
     datasets = std::move(provedDatasets);
@@ -511,7 +529,10 @@ bool DOMEntryAnalysis::isElement(mlir::Value value) const {
 }
 
 bool DOMEntryAnalysis::isElementIdentity(mlir::Value value) const {
-    return isElement(value) || llvm::any_of(calls, [&](const HostDOMCall & call) {
+    if (!value) { return false; }
+    auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
+    return isElement(value) || (read && isDocumentElement(read)) ||
+           llvm::any_of(calls, [&](const HostDOMCall & call) {
                return call.returnsElement() && call.operation->getResult(0) == value;
            });
 }
@@ -532,6 +553,14 @@ bool DOMEntryAnalysis::isDatasetElement(mlir::Value value) const {
 
 bool DOMEntryAnalysis::isElementPrototype(ctjs::GetPropertyOp read) const {
     return elementPrototypes.contains(read);
+}
+
+bool DOMEntryAnalysis::isCurrentDocument(ctjs::LoadGlobalOp load) const {
+    return documentLoads.contains(load);
+}
+
+bool DOMEntryAnalysis::isDocumentElement(ctjs::GetPropertyOp read) const {
+    return documentRoots.contains(read);
 }
 
 bool DOMEntryAnalysis::isStringVectorLength(ctjs::GetPropertyOp read) const {

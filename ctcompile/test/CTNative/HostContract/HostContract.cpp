@@ -62,6 +62,14 @@ module {
     check(strings && DOMEntryAnalysis(*module, *strings).proved(),
           "intrinsic String assumptions are explicit and order independent");
     if (!strings) { llvm::consumeError(strings.takeError()); }
+    auto document = parseHostContract(replaced(
+        json, "\"parameter_types\"", "\"current_document_parameter\":0,\"parameter_types\""));
+    check(!document, "intrinsic schema cannot declare a current document");
+    if (!document) { llvm::consumeError(document.takeError()); }
+    auto mixedDocument = *parsed;
+    mixedDocument.currentDocumentParameter = 0;
+    check(!DOMEntryAnalysis(*module, mixedDocument).proved(),
+          "programmatic intrinsic contracts cannot declare a current document");
     for (const auto & identities : std::vector<std::vector<std::string>>{
              {"String"}, {"Symbol", "String", "String"}, {"Symbol", "Number"}}) {
         auto forged = *parsed;
@@ -126,6 +134,24 @@ void checkSessionProvider(mlir::MLIRContext & context) {
               HostContractAnalysis(*module, *ordinary).proved(),
           "ordinary closed-source declarations retain their owning-callable contract");
     if (!ordinary) { llvm::consumeError(ordinary.takeError()); }
+    for (llvm::StringRef provider :
+         {"closed-source-v1", "closed-source-session-v1", "ctbrowser-dom-data-session-v1"}) {
+        auto base = replaced(json, "closed-source-session-v1", provider);
+        if (provider == "ctbrowser-dom-data-session-v1") {
+            base = replaced(base, "\"roots\"", "\"element_parameters\":[0],\"roots\"");
+        }
+        auto accepted = parseHostContract(base);
+        check(static_cast<bool>(accepted), "non-DOM-entry schema control parses");
+        if (!accepted) { llvm::consumeError(accepted.takeError()); }
+        auto document = parseHostContract(
+            replaced(base, "\"roots\"", "\"current_document_parameter\":0,\"roots\""));
+        check(!document, "current document binding is confined to DOM entry/session providers");
+        if (!document) { llvm::consumeError(document.takeError()); }
+    }
+    auto document = *parsed;
+    document.currentDocumentParameter = 0;
+    check(!HostContractAnalysis(*module, document).proved(),
+          "programmatic closed-source contracts cannot declare a current document");
     for (llvm::StringRef extra : {"\"element_parameters\":[0]", "\"cpp_type\":\"element_ref\"",
                                   "\"owning_callables\":false"}) {
         auto invalid = parseHostContract(replaced(json, "\"roots\"", (extra + ",\"roots\"").str()));
@@ -186,10 +212,34 @@ module {
                              "\",\"entry\":\"toggle$1\",\"element_parameters\":[0]}";
     auto parsed = parseHostContract(json);
     check(parsed && parsed->provider == HostContract::Provider::ctbrowserDOM &&
-              parsed->elementParameters == contract.elementParameters && parsed->roots.empty(),
+              parsed->elementParameters == contract.elementParameters && parsed->roots.empty() &&
+              !parsed->currentDocumentParameter,
           "DOM manifest declares only the selected function and its typed parameter positions");
     if (!parsed) { llvm::consumeError(parsed.takeError()); }
     for (const auto provider : {"ctbrowser-dom-v1", "ctbrowser-dom-session-v1"}) {
+        const auto document =
+            replaced(replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
+                     "\"current_document_parameter\":0,\"element_parameters\"");
+        auto current = parseHostContract(document);
+        check(current && current->currentDocumentParameter == 0 &&
+                  DOMEntryAnalysis(*module, *current).proved(),
+              "current document binding names an existing DOM input in either provider");
+        if (!current) { llvm::consumeError(current.takeError()); }
+        auto second =
+            parseHostContract(replaced(replaced(document, "\"current_document_parameter\":0",
+                                                "\"current_document_parameter\":1"),
+                                       "[0]", "[0,1]"));
+        check(second && second->currentDocumentParameter == 1,
+              "current document binding retains the selected element input index");
+        if (!second) { llvm::consumeError(second.takeError()); }
+        for (llvm::StringRef index : {"null", "true", "false", "\"0\"", "[]", "{}", "0.5", "-1",
+                                      "1", "4294967296", "18446744073709551616"}) {
+            auto invalid =
+                parseHostContract(replaced(document, "\"current_document_parameter\":0",
+                                           ("\"current_document_parameter\":" + index).str()));
+            check(!invalid, "current document schema requires an in-range element index");
+            if (!invalid) { llvm::consumeError(invalid.takeError()); }
+        }
         for (const auto identities :
              {"[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
               "[\"Error\",\"__ctbrowser_class_defined\"]", "[\"Error\"]",
@@ -270,6 +320,10 @@ module {
     mixed.elementParameters = {1};
     check(!DOMEntryAnalysis(*module, mixed).proved(),
           "typed C++ input cannot bypass the complete ordered parameter census");
+    mixed = contract;
+    mixed.currentDocumentParameter = 1;
+    check(!DOMEntryAnalysis(*module, mixed).proved(),
+          "typed C++ input cannot bypass the current document input bound");
     if (proof.proved()) {
         check(DOMEntryAnalysis(*module, contract, proof.steps()).proved(),
               "the exact completed DOM discovery budget succeeds");

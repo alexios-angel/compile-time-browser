@@ -114,6 +114,7 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     HostContract binding = contract;
     binding.provider = HostContract::Provider::closedSource;
     binding.elementParameters.clear();
+    binding.currentDocumentParameter.reset();
     llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
         return !host_detail::classIntrinsicArity(name) && name != "Error";
     });
