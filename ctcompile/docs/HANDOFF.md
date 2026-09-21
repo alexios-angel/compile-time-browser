@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved field snapshots and addition indices, 2026-09-21 UTC
+
+Continued clean **5d790a74**. **fbba77fa** admits global snapshots of scalar
+own-field reads from exact caller records in a completed DOM Data family. Both
+the source and owner proofs require the original allocation and exact read;
+read-time values survive later field mutation. The former global-snapshot refusal
+executes unchanged, with alias/mutation and arithmetic witnesses.
+**f5d36487** admits direct Number-literal addition as a UTF-16 String bound,
+reusing existing numeric addition. Direct-literal casing authority is unchanged.
+
+Focused validation passes: exact host-contract CTest **1/1**, final DOM lit
+**101.25 s** with **56 record and 24 object-key native executions**, plus DOM input
+and provider-object proof cases. The String selector passes **40 native
+executions, 868 proof refusals, 118 Node/VM agreements and 15 known differences**;
+four strengthened casing refusals pass separately. All eight final code/test
+hashes match the devbox. Scoped checks pass; repository formatting retains 16
+pre-existing diagnostics. All 107 earlier complete intrinsic cases and 33 general
+refusals are preserved. Full suites, broad corpus/matrices, full Bootstrap,
+WPT/test262, Windows and new sanitizers were skipped. No browser/runtime code
+changed; the initial fixture expectation was corrected to compare the saved global.
+
+**Next:** the complete vendor published class holder/constructor still refuses.
+Compose residual DOM uses with the completed public family, then the existing
+constructor/local-Map/record proof and exact owner function/allocation census.
+Global field snapshots are now supported; they do not establish class ownership.
+Multiple DOM-input alias partitions, original B/Data+B, broader Strings,
+conditional callees, mutable cells, String ordering, document views and the
+application driver remain. No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and remaining class boundary](handoff/2026-09-21-field-snapshots-addition.md).
+
 ## Published record fields and remainder indices, 2026-09-21 UTC
 
 Continued clean **c475dde8**. **f65dedd5** admits scalar own-field reads from exact
