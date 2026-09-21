@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Class field payloads and negated indices, 2026-09-21 UTC
+
+Continued clean **b3c7edae**. **356373ed** prepares public DOM Data calls whose
+payload comes from an explicitly overwritten class field. The existing local
+Map proof now retains each saved read's original constructor allocation; a
+bounded source-order field walk supplies category evidence after the complete
+class examination. Five witnesses retain the full vendor Data declaration,
+original class computation, five constructions and eight functions. Saved reads
+survive later object-valued mutation; other records, missing writes, escaping
+aliases and replacement-object constructors supply no evidence.
+**81e2c057** admits one outer negation of an already-proved Number-literal
+arithmetic String index, reusing existing UTF-16 lowering.
+
+Focused checks pass: exact host-contract CTest **1/1** and selected DOM lit
+**2/2, 103.68 s total**. New class-field checks pass **five Node/VM observations,
+five preparations and 29 refusals**. Existing DOM tests retain **56 record and
+24 object-key native executions**. The String selector passes **80 native
+executions and 70 related refusals**, with eight Node/VM agreements and one known
+UTF-16/byte-index difference. All ten final code/test hashes match the devbox.
+Scoped formatting passes; the repository formatter retains 16 pre-existing
+diagnostics. Full suites, broad corpus/matrices, full Bootstrap, WPT/test262,
+Windows and new sanitizers were skipped. No browser/runtime code changed.
+
+**Next:** native class-session ownership still refuses. Compose the retained
+constructors/local Maps with the provider source and native owner function/allocation
+censuses. Constructor-initialized fields without an explicit entry overwrite,
+and the complete vendor composite `result`, still lack scalar proof;
+the unchanged `published_source()` witnesses retain those refusals.
+Multiple DOM alias partitions, original B/Data+B, broader Strings, conditional
+callees, mutable cells, String ordering, document views and the application
+driver remain. No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and remaining native ownership boundary](handoff/2026-09-21-class-field-payloads-negated-indices.md).
+
+
 ## Class/public-family preparation and power indices, 2026-09-21 UTC
 
 Continued clean **ae517a4b**. **87789ef2** composes remaining DOM input uses
