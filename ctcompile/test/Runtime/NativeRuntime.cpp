@@ -10,6 +10,7 @@
 // reinsert, and null == undefined but null !== undefined.
 #define CTNATIVE_DOM 1
 #define CTNATIVE_ORDERED_MAPS 1
+#include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cstdio>
@@ -760,5 +761,99 @@ int main() {
     CHECK(!primitive_equal(one, nullable_string{std::string{"1\0", 2}}));
     CHECK(primitive_strict_equal(js_string{high}, nullable_boolean_string{js_string{high}}));
     CHECK(!primitive_equal(highUnit, lowUnit));
+
+    // Borrowed browser views reuse the live public DOM/Style objects. Absence
+    // is explicit; an invalid incoming handle never becomes a nullable element.
+    static_assert(!std::is_default_constructible_v<js_document_t>);
+    static_assert(!std::is_default_constructible_v<js_element_t>);
+    static_assert(std::is_trivially_copyable_v<js_document_t>);
+    static_assert(std::is_trivially_copyable_v<js_element_t>);
+    static_assert(!std::is_move_constructible_v<ctbrowser::document>);
+    static_assert(!std::is_convertible_v<js_element_t, ctbrowser::element_ref>);
+    static_assert(!std::is_constructible_v<js_element_t, undefined_t>);
+    static_assert(!std::is_constructible_v<js_element_t, js_null_t>);
+    ctbrowser::atom_table atoms;
+    ctbrowser::document dom{atoms};
+    ctbrowser::style::engine styles{atoms};
+    const js_document_t document{dom, styles};
+    static_assert(
+        std::is_same_v<decltype(document.documentElement()), std::optional<js_element_t>>);
+    static_assert(
+        std::is_same_v<decltype(document.querySelector(js_string{})), std::optional<js_element_t>>);
+    static_assert(std::is_same_v<decltype(document.querySelectorAll(js_string{})),
+                                 std::vector<js_element_t>>);
+    CHECK(!document.documentElement());
+    CHECK(!document.querySelector(js_string{"html"}));
+    CHECK(document.querySelectorAll(js_string{"*"}).empty());
+    const auto root = dom.create_element(atoms.intern("html"));
+    dom.set_document_element(root);
+    const auto button = dom.create_element(atoms.intern("button"));
+    dom.append_child(root, button).value();
+    dom.set_attribute(button, atoms.intern("class"), "selected").value();
+    const js_element_t element{{&dom, button}, styles};
+    const auto rootView = document.documentElement().value();
+    const js_string selected{".selected"};
+    CHECK(document.querySelector(js_string{"html"}) == rootView);
+    CHECK(document.querySelector(selected) == element);
+    CHECK(rootView.querySelector(selected) == element);
+    CHECK(!rootView.querySelector(js_string{"html"}));
+    CHECK(Element.prototype.querySelector.call(rootView, selected) == element);
+    CHECK(element.matches(selected));
+    CHECK(Element.prototype.matches.call(element, selected));
+    CHECK(element.closest(js_string{"html"}) == rootView);
+    CHECK(Element.prototype.closest.call(element, js_string{"html"}) == rootView);
+    CHECK(!element.closest(js_string{".missing"}));
+    CHECK(!Element.prototype.querySelector.call(rootView, js_string{".missing"}));
+    const auto snapshot = Element.prototype.querySelectorAll.call(rootView, selected);
+    CHECK(snapshot.size() == 1 && snapshot.front() == element);
+    CHECK(document.querySelectorAll(js_string{"html, button"}) ==
+          (std::vector<js_element_t>{rootView, element}));
+    static_assert(std::is_same_v<decltype(element.matches(selected)), js_boolean_t>);
+    static_assert(std::is_same_v<decltype(Element.prototype.closest.call(element, selected)),
+                                 std::optional<js_element_t>>);
+    static_assert(
+        std::is_same_v<decltype(Element.prototype.querySelectorAll.call(element, selected)),
+                       std::vector<js_element_t>>);
+    CHECK(!element.matches(js_string{":hover"}));
+    styles.set_state(button, ctbrowser::style::engine::state_hover, true);
+    CHECK(Element.prototype.matches.call(element, js_string{":hover"}));
+    dom.remove_attribute(button, atoms.intern("class")).value();
+    CHECK(!document.querySelector(selected));
+    CHECK(snapshot.front() == element && !snapshot.front().matches(selected));
+    dom.remove_child(button).value();
+    CHECK(element.matches(js_string{"button"}));
+    CHECK(!element.closest(js_string{"html"}));
+    CHECK(document.querySelectorAll(js_string{"button"}).empty());
+    dom.remove_document_element();
+    CHECK(!document.documentElement());
+    const auto replacement = dom.create_element(atoms.intern("body"));
+    dom.set_document_element(replacement);
+    CHECK(document.documentElement()->value() == (ctbrowser::element_ref{&dom, replacement}));
+    CHECK(document.documentElement() != rootView);
+
+    ctbrowser::document otherDOM{atoms};
+    const auto otherRoot = otherDOM.create_element(atoms.intern("html"));
+    CHECK(otherRoot == root);
+    const js_element_t otherElement{{&otherDOM, otherRoot}, styles};
+    CHECK(otherElement != rootView);
+    ctbrowser::style::engine sameAtoms{atoms};
+    CHECK((js_element_t{{&dom, root}, sameAtoms}) == rootView);
+    const auto rejects = [](auto action) {
+        try {
+            action();
+        } catch (const std::exception &) { return true; }
+        return false;
+    };
+    CHECK(rejects([&] { (void)js_element_t{{}, styles}; }));
+    CHECK(rejects([&] { (void)js_element_t{{&dom, dom.document_node()}, styles}; }));
+    auto stale = button;
+    ++stale.generation;
+    CHECK(rejects([&] { (void)js_element_t{{&dom, stale}, styles}; }));
+    CHECK(rejects([&] { (void)document.querySelector(js_string{"["}); }));
+    CHECK(rejects([&] { (void)Element.prototype.matches.call(element, js_string{"["}); }));
+    ctbrowser::atom_table otherAtoms;
+    ctbrowser::style::engine wrongStyles{otherAtoms};
+    CHECK(rejects([&] { (void)js_document_t{dom, wrongStyles}; }));
+    CHECK(rejects([&] { (void)js_element_t{{&dom, button}, wrongStyles}; }));
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

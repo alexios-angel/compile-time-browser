@@ -134,9 +134,7 @@ inline nullable_scalar to_nullable(nullable_scalar value) {
     return value;
 }
 inline js_num to_number(nullable_scalar value) {
-    if (value.tag == nullable_scalar::kind::undefined) {
-        return js_num{js_nan_t{}};
-    }
+    if (value.tag == nullable_scalar::kind::undefined) { return js_num{js_nan_t{}}; }
     if (value.tag == nullable_scalar::kind::null) { return js_num{}; }
     return js_num{value.value};
 }
@@ -1375,21 +1373,31 @@ inline js_boolean_t contains(ctbrowser::element_ref element, ctbrowser::element_
 // about as much to parse as the rest of a DOM program put together, so a
 // program that takes a `ctbrowser::style::engine &` includes it itself, after
 // this header, and the selector helpers instantiate against it there.
-template <class Style> void require_style(ctbrowser::element_ref element, Style & style) {
-    if (&style.atoms() != &element.owner->atoms()) {
+template <class Style> void require_style(ctbrowser::document & document, Style & style) {
+    if (&style.atoms() != &document.atoms()) {
         throw std::invalid_argument("DOM selector engine uses another atom table");
     }
 }
-inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::element_ref element,
+template <class Style> void require_style(ctbrowser::element_ref element, Style & style) {
+    require_style(*element.owner, style);
+}
+inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::document & document,
                                                         std::string_view selector) {
     bool bad = false;
-    auto parsed = ctbrowser::style::css::parse_selector_text(selector, element.owner->atoms(), bad);
+    auto parsed = ctbrowser::style::css::parse_selector_text(selector, document.atoms(), bad);
     if (bad) { throw std::invalid_argument("DOM selector is invalid"); }
     return parsed;
 }
+inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::element_ref element,
+                                                        std::string_view selector) {
+    return parse_selector(*element.owner, selector);
+}
 // Named method objects keep generated calls close to their source spelling.
 // They hold no state: each call borrows its explicit element and Style engine.
+// Browser.hpp adds checked borrowed views for receiver-only calls.
+class js_element_t;
 struct matches_method {
+    js_boolean_t call(const js_element_t & element, const js_string & selector) const;
     template <class Style>
     js_boolean_t call(ctbrowser::element_ref element, Style & style,
                       std::string_view selector) const {
@@ -1400,6 +1408,8 @@ struct matches_method {
 };
 
 struct closest_method {
+    std::optional<js_element_t> call(const js_element_t & element,
+                                     const js_string & selector) const;
     template <class Style>
     ctbrowser::element_ref call(ctbrowser::element_ref element, Style & style,
                                 std::string_view selector) const {
@@ -1410,6 +1420,8 @@ struct closest_method {
 };
 
 struct query_selector_method {
+    std::optional<js_element_t> call(const js_element_t & element,
+                                     const js_string & selector) const;
     template <class Style>
     ctbrowser::element_ref call(ctbrowser::element_ref element, Style & style,
                                 std::string_view selector) const {
@@ -1421,6 +1433,7 @@ struct query_selector_method {
 };
 
 struct query_selector_all_method {
+    std::vector<js_element_t> call(const js_element_t & element, const js_string & selector) const;
     template <class Style>
     std::vector<ctbrowser::element_ref> call(ctbrowser::element_ref element, Style & style,
                                              std::string_view selector) const {
