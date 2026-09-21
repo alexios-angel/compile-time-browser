@@ -170,9 +170,9 @@ authorize selecting the original default arm. Spread/concat requires its complet
 confined length and indexed-consumer proof; no default expression or source
 effect is replaced with a handwritten helper.
 
-This does not establish a root for an unguarded caller. Canonical indexed loops
-over `R.find` members are supported as described below; `for…of`, general borrowed
-transport, initialization and the application driver remain unfinished.
+This does not establish a root for an unguarded caller. Canonical indexed and
+`for…of` loops over `R.find` members are supported as described below. General
+borrowed transport, initialization and the application driver remain unfinished.
 
 The focused `CTNative/Browser/native-dom-document-default.test` passes **32 native
 executions and 92 refusals, 86.49 s**, with the unchanged vendor-pinned `R.find`
@@ -459,9 +459,35 @@ dataset-enabled loops still need a separate backedge alias proof. No supported
 operation can reclaim a selected node or reenter script.
 
 Snapshot writes, out-of-bounds or unproved indices, identity observation,
-borrowed returns, retained callbacks and NodeList `forEach`/iterator protocols
-remain refused. The original String-array iterator proof does not authorize
-NodeList iteration.
+borrowed returns, retained callbacks, NodeList `forEach` and custom iterator
+protocols remain refused.
+
+`for…of` over proved element snapshots and confined `R.find` copies uses the
+existing native loop lowering over `std::vector<js_element_t>`:
+
+```javascript
+for (const button of element.querySelectorAll('.selected')) {
+  button.classList.remove('selected');
+}
+```
+
+The manifest must additionally promise original `Array`, `Element`,
+`__ctbrowser_for_of_open`, `__ctbrowser_iter_next` and `__ctbrowser_iter_close`
+identities. The compiler proves each iterator input using a private prefix,
+retaining enclosing conditions so a guarded Bootstrap default retains its root
+authority. That proof observes length rather than returning a borrowed snapshot.
+It then removes the importer’s protocol alternative and reproves the complete
+live entry, including all effects and element uses. Emission uses ordinary C++
+indexed loops and checked vector access; it does not yet print range-for syntax.
+There is no VM iterator or generic runtime value.
+
+Direct NodeList iteration and spread/concat both preserve the VM’s 2^24 proxy
+materialization cap. Separate observations of the original NodeList remain
+uncapped. The vector owns membership; each member borrows its document and live
+Style. Supported DOM writes do not change saved membership. Sequential and
+conditional iterator opens are supported; opens nested inside another loop need
+an additional prefix/state proof. Custom hooks, snapshot mutation or escape,
+missing intrinsic guarantees and unguarded default roots remain diagnostics.
 
 A confined spread into an empty concat receiver supports `.length` and canonical
 indexed element loops:
@@ -510,7 +536,7 @@ candidate must pass the complete DOM proof before publication.
 
 Nonempty receivers, additional arguments/spreads, detached concat, replaced methods,
 unproved indices, array identity, escape or mutation remain refused. Unguarded
-default document roots and `for…of` consumers also refuse. The source proof tests
+default document roots also refuse. The source proof tests
 check the exact cap and selected arms;
 standalone native tests cover empty/scoped/detached results, saved counts across DOM
 writes, invalid-selector effect order and borrowed/owned document validation.
@@ -523,7 +549,7 @@ The focused `dom_nodes_wpt` check passes with huge absent, overflowing and
 noncanonical index reads; no collection with over one million members was executed.
 The separate `ownKeys` enumeration limit of 1,000,000 and proxy-spread limit of
 2^24 are unchanged. The confined indexed concat proof above does not admit general
-JavaScript Array behavior or NodeList iteration protocols.
+JavaScript Array behavior or custom NodeList iterator protocols.
 
 The focused `native-dom-find-elements.test` passes **48 native executions and
 114 refusals** with the unchanged vendor-pinned helper, explicit receiver and

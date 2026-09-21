@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native element for-of, 2026-09-21 UTC
+
+Continued clean **a4db6abb** and its recorded element-iteration boundary.
+**6a8415be** admits `for…of` over proved element query snapshots and unchanged
+Bootstrap `R.find` results, including guarded omitted/undefined receivers.
+Private prefix proofs retain document-root guards and observe snapshot length
+without returning borrowed elements. Direct NodeList iteration and confined
+spread/concat preserve the 2^24 materialization cap; original NodeList aliases
+remain uncapped. Complete live reproof checks effects, bounds and ownership.
+
+Generated code uses the existing C++ indexed loop lowering over
+`std::vector<js_element_t>`, with checked member access and public DOM/Style calls.
+It does not yet print C++ range-for syntax. No VM iterator, Script dependency,
+browser/shared implementation change or new runtime type was introduced.
+
+Focused checks pass: exact host-contract CTest **1/1, 0.64 s total**; selected
+element-iteration/find-elements/dataset lit **3/3, 196.05 s**. The new case completed
+**64 native executions/118 refusals**; indexed `R.find` completed **48/114**.
+Dataset regression completed **112 Node/VM source-double observations**, eight
+GCC/Clang binaries, its lifetime sanitizer and **432 refusals**. All seven code/test
+hashes match the devbox. Scoped checks pass; required formatting retains 16
+untouched diagnostics. Full suites and broad replays were skipped.
+
+**Next browser boundary:** loop-nested iterator opens need a prefix/state proof;
+custom protocols need callable/close/escape proofs. Literal range-for emission is
+also unfinished. Unguarded default roots, broader Array behavior and the application
+driver remain open, along with the remaining native plan. Full Bootstrap is not
+admitted. No above-cap collection or new element Node/VM comparison was executed.
+
+[Exact checks and next boundary](handoff/2026-09-21-element-for-of.md).
+
 ## Bootstrap indexed element consumers, 2026-09-21 UTC
 
 Continued clean **0ce0bdf3** from its recorded indexed-consumer boundary.

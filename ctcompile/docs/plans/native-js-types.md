@@ -54,7 +54,9 @@ element snapshots and extract checked members for existing operations. The origi
 Bootstrap `R.find` omitted/undefined default receiver now works under a source
 document-root guard with length observations and canonical indexed element loops.
 The copied result retains the proxy spread cap, while original NodeList aliases
-remain uncapped. `for…of`, general array behavior and the application driver need work.
+remain uncapped. Proved `for…of` consumers now use native indexed loops over those
+typed vectors. Custom iterator protocols, nested opens, general array behavior
+and the application driver need work.
 Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
@@ -482,8 +484,12 @@ confined spread/concat proof. Copied element indices must be guarded by the copy
 own length before rebinding to the original query snapshot. Live proof recognizes
 the exact `min(snapshot.length, 16777216)` bound, verifies unit-step indices and
 retains ordinary owner/Style borrowing. Original NodeList length aliases remain
-uncapped. Unguarded defaults, `for…of`, general array behavior and the application
-driver remain unfinished.
+uncapped. Element `for…of` now removes the proved importer protocol alternative
+and uses the existing native indexed loop lowering. Private prefix proofs retain
+document guards, observe length without returning borrowed views, and charge
+nested spread normalization. Complete live reproof still controls admission.
+Literal C++ range-for emission, custom protocols, nested opens, unguarded defaults,
+general array behavior and the application driver remain unfinished.
 
 The focused indexed `R.find` fixture passes **48 native executions/114 refusals**.
 Together with existing query-all **16/44** and spread-length **32/52**, the selected
@@ -728,12 +734,13 @@ existing `auto`/template deduction.
    above one million members was measured. The independent 1,000,000 `ownKeys`
    enumeration and 2^24 proxy-spread limits remain. Confined indexed `R.find`
    consumers now preserve their own capped-length guard and reuse typed snapshots;
-   this does not admit general Array behavior or NodeList iteration protocols.
+   ordinary element `for…of` now uses those snapshots too. Custom iterator
+   protocols and general Array behavior remain unproved.
 4. **Document/element views in progress.** Borrowed/owned entries now emit typed
    selectors, optional element results, explicitly bound document root/query calls
    and document/element query-all snapshots. Guarded Bootstrap default-root calls
-   and bounded indexed result consumers are proved. Extend element iterator
-   consumers and connect an application driver. A C++ accessor alone never
+   and bounded indexed/`for…of` result consumers are proved. Extend loop-nested
+   iterator proofs and connect an application driver. A C++ accessor alone never
    broadens source admission.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
