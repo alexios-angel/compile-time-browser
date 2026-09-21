@@ -561,6 +561,7 @@ def main():
             "class-map-record-nested-direct",
             "class-map-record-nested-conditional-repeat",
             "class-map-record-nested-shortcircuit-repeat",
+            "class-map-record-nested-captured-direct",
         ):
             prepare(
                 args,
@@ -592,6 +593,13 @@ def main():
             ):
                 # The second registration's false branch never allocates its child.
                 constructions -= 1
+            # Expanded helper calls may allocate distinct children from one source site.
+            constructions = {
+                "class-map-record-nested-captured-direct": 3,
+                "class-map-record-nested-captured-distinct": 4,
+                "class-map-record-nested-captured-holder": 4,
+                "class-map-record-nested-captured-shortcircuit": 2,
+            }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
         if name.startswith("class-map-") and name in POSITIVES | PREPARED_ONLY:
@@ -868,6 +876,7 @@ def main():
             "class-map-record-nested-direct",
             "class-map-record-nested-conditional-repeat",
             "class-map-record-nested-shortcircuit-repeat",
+            "class-map-record-nested-captured-direct",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

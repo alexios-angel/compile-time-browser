@@ -16,6 +16,25 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-captured-direct": (5991, 5991),
+    "class-map-record-nested-captured-distinct": (5961, 5961),
+    "class-map-record-nested-captured-holder": (5131, 5131),
+    "class-map-record-nested-captured-shortcircuit": (551, 551),
+    "class-map-record-nested-captured-dynamic-branch": (77, 77),
+    "class-map-record-nested-captured-missing-outer": (107, 107),
+    "class-map-record-nested-captured-missing-inner": (107, 107),
+    "class-map-record-nested-captured-outer-escaped": (7, 7),
+    "class-map-record-nested-captured-child-escaped": (7, 7),
+    "class-map-record-nested-captured-record-escaped": (7, 7),
+    "class-map-record-nested-captured-holder-escaped": (7, 7),
+    "class-map-record-nested-captured-dead-call": (7, 7),
+    "class-map-record-nested-captured-dead-coercion": (7, 7),
+    "class-map-record-nested-captured-reentry": (7, 7),
+    "class-map-record-nested-captured-region-owner": (7, 7),
+    "class-map-record-nested-captured-constructor": (7, 7),
+    "class-map-record-nested-captured-exception": (16, 16),
+    "class-map-record-nested-captured-object-key": (7, 7),
+    "class-map-record-nested-captured-number-key": (7, 7),
     "class-map-record-nested-shortcircuit-repeat": (5991, 5991),
     "class-map-record-nested-shortcircuit-distinct": (5961, 5961),
     "class-map-record-nested-shortcircuit-cached": (5131, 5131),
@@ -733,6 +752,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-captured-direct",
+    "class-map-record-nested-captured-distinct",
+    "class-map-record-nested-captured-holder",
+    "class-map-record-nested-captured-shortcircuit",
     "class-map-record-nested-shortcircuit-repeat",
     "class-map-record-nested-shortcircuit-distinct",
     "class-map-record-nested-shortcircuit-cached",

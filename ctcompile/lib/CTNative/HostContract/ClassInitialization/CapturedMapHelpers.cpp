@@ -53,6 +53,23 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
                 }
             }
         }
+        // Captures box caller locals too. Discharge these already-proved
+        // reads before a selected branch can retire their cached operations.
+        for (ctjs::CellGetOp read : cellReads) {
+            if (!step()) { return false; }
+            if (!llvm::is_contained(bindings, read.getCell())) { continue; }
+            for (mlir::Operation * user : read->getUsers()) {
+                (void)user;
+                if (!step()) { return false; }
+            }
+        }
+        llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
+            if (!llvm::is_contained(bindings, read.getCell())) { return false; }
+            cellOperations.erase(read);
+            read.getResult().replaceAllUsesWith(map.getResult());
+            eraseRooted(read);
+            return true;
+        });
         llvm::DenseSet<mlir::Operation *> operations;
         llvm::DenseSet<mlir::Operation *> conditional;
         llvm::SmallVector<ctjs::GetPropertyOp> selections;
@@ -351,14 +368,6 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
             }
         }
         for (mlir::Value cell : bindings) {
-            for (ctjs::CellGetOp read : cellReads) {
-                if (!step()) { return false; }
-                if (read.getCell() != cell) { continue; }
-                for (mlir::Operation * user : read->getUsers()) {
-                    (void)user;
-                    if (!step()) { return false; }
-                }
-            }
             for (mlir::Operation * user : cell.getUsers()) {
                 (void)user;
                 if (!step()) { return false; }
@@ -418,13 +427,6 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
         }
         // Fixed outer aliases are transport only; no captured observer remains.
         for (mlir::Value cell : bindings) {
-            llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
-                if (read.getCell() != cell) { return false; }
-                cellOperations.erase(read);
-                read.getResult().replaceAllUsesWith(map.getResult());
-                eraseRooted(read);
-                return true;
-            });
             for (mlir::Operation * user : llvm::make_early_inc_range(cell.getUsers())) {
                 cellOperations.erase(user);
                 user->erase();
@@ -447,8 +449,8 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope) {
 }
 
 bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
-    // ponytail: straight-line helpers called in their owning entry block.
-    // Nested calls and regions need a wider capture/lifetime proof.
+    // ponytail: Map-only helpers called in their owning entry block.
+    // Nested helper calls and other regions need a wider capture/lifetime proof.
     auto & entry = scope.getBody().front();
     llvm::SmallVector<ctjs::CreateClosureOp> closures;
     for (auto closure : entry.getOps<ctjs::CreateClosureOp>()) {
@@ -475,41 +477,89 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
         if (!returned) { return true; }
         llvm::DenseSet<mlir::Value> captures;
-        for (mlir::Operation & op : body) {
-            if (!step()) { return false; }
+        const auto checked = function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (op == function) { return mlir::WalkResult::advance(); }
             if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
                 if (read.getIndex() != 0 ||
                     read.getClosure() != body.getArgument(ctjs::arg_callee)) {
-                    return true;
+                    return mlir::WalkResult::interrupt();
                 }
                 captures.insert(read.getResult());
-                continue;
+                return mlir::WalkResult::advance();
+            }
+            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+                return load.getName() == "Map" ? mlir::WalkResult::advance()
+                                               : mlir::WalkResult::interrupt();
+            }
+            if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
+                auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (!load || load.getName() != "Map" || !made.getArgs().empty() ||
+                    made.getNewTarget() != made.getCallee()) {
+                    return mlir::WalkResult::interrupt();
+                }
+                captures.insert(made.getResult());
+                return mlir::WalkResult::advance();
             }
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-                if (!captures.contains(read.getObject())) { return true; }
+                if (!captures.contains(read.getObject())) { return mlir::WalkResult::interrupt(); }
                 const auto key = ctjs::constantKey(read.getKey());
                 if (key != "size" && key != "set" && key != "get" && key != "has" &&
                     key != "delete" && key != "clear") {
-                    return true;
+                    return mlir::WalkResult::interrupt();
                 }
-                continue;
+                return mlir::WalkResult::advance();
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!read || !captures.contains(call.getReceiver()) ||
                     read.getObject() != call.getReceiver()) {
-                    return true;
+                    return mlir::WalkResult::interrupt();
                 }
                 const auto key = ctjs::constantKey(read.getKey());
                 const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
-                if (key == "size" || call.getArgs().size() != arity) { return true; }
-                continue;
+                if (key == "size" || call.getArgs().size() != arity) {
+                    return mlir::WalkResult::interrupt();
+                }
+                // A get is only a candidate child origin. Nested routing and
+                // the unchanged record-owner proof must establish its identity.
+                if (key == "get") { captures.insert(call.getResult()); }
+                return mlir::WalkResult::advance();
             }
-            if (!llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
-                           ctjs::ReturnOp>(op)) {
-                return true;
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
+                if (branch.getNumResults() > 1) { return mlir::WalkResult::interrupt(); }
+                unsigned depth = 0;
+                for (auto * parent = op; parent != function; parent = parent->getParentOp()) {
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    if (++depth == 64) { return mlir::WalkResult::interrupt(); }
+                }
+                for (auto & region : branch->getRegions()) {
+                    if (!region.empty() &&
+                        (!region.hasOneBlock() || region.front().getNumArguments())) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                }
+                for (mlir::Value result : branch.getResults()) { captures.insert(result); }
+                return mlir::WalkResult::advance();
             }
-        }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
+                unary && unary.getKind() == ctjs::UnaryKind::Not) {
+                return mlir::WalkResult::advance();
+            }
+            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
+                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                return mlir::WalkResult::advance();
+            }
+            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
+                return op->getBlock() == &body ? mlir::WalkResult::advance()
+                                               : mlir::WalkResult::interrupt();
+            }
+            return llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
+                             mlir::scf::YieldOp>(op)
+                       ? mlir::WalkResult::advance()
+                       : mlir::WalkResult::interrupt();
+        });
+        if (checked.wasInterrupted()) { return reason.empty(); }
         for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
             if (!step()) { return false; }
             if (!llvm::isa<ctjs::LoadUpvalueOp, ctjs::RootOp>(use.getOwner())) { return true; }
@@ -679,13 +729,21 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                 (void)use;
                 if (!step()) { return false; }
             }
-            for (mlir::Operation & op : body) {
-                const uint64_t cost = uint64_t(1) + op.getNumOperands() + op.getNumResults();
+            for (auto [cell, initial] : cells) {
+                (void)cell;
+                (void)initial;
+                if (!step()) { return false; }
+            }
+            const auto counted = function.walk([&](mlir::Operation * op) {
+                const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
                 if (cost > remaining) {
-                    return refuse("class initialization work budget exhausted");
+                    refuse("class initialization work budget exhausted");
+                    return mlir::WalkResult::interrupt();
                 }
                 remaining -= static_cast<unsigned>(cost);
-            }
+                return mlir::WalkResult::advance();
+            });
+            if (counted.wasInterrupted()) { return false; }
         }
         for (ctjs::CellGetOp read : cellReads) {
             if (!step()) { return false; }
@@ -721,10 +779,30 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     mapping.map(read.getResult(), map.getResult());
                 } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
                                       ctjs::ReturnOp>(op)) {
-                    at.clone(op, mapping);
+                    auto * cloned = at.clone(op, mapping);
+                    // Region cloning retains branch-local capture loads.
+                    // Substitute each one before retiring the original callee.
+                    cloned->walk([&](mlir::Operation * nested) {
+                        if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(nested)) {
+                            read.getResult().replaceAllUsesWith(map.getResult());
+                            read.erase();
+                        } else if (llvm::isa<ctjs::RootOp>(nested)) {
+                            nested->erase();
+                        }
+                    });
+                    if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(cloned)) {
+                        maps.insert(made.getResult());
+                        mapOperations.insert(made);
+                        mapOperations.insert(made.getCallee().getDefiningOp());
+                    }
                 }
             }
-            call->getResult(0).replaceAllUsesWith(mapping.lookup(returned.getValue()));
+            auto result = mapping.lookup(returned.getValue());
+            for (auto & [cell, initial] : cells) {
+                (void)cell;
+                if (initial == call->getResult(0)) { initial = result; }
+            }
+            call->getResult(0).replaceAllUsesWith(result);
             call->erase();
         }
         for (ctjs::GetPropertyOp read : holderReads) { eraseRooted(read); }
