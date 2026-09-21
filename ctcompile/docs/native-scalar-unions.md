@@ -90,8 +90,15 @@ six observations from the unchanged optional Number/String and Boolean/String
 witnesses on GCC/Clang. Five refusal controls and two mutations pass.
 See [the equality handoff](handoff/2026-09-20-native-primitive-equality.md).
 
-Next support finite-union shared cells/captures, beginning with the unchanged
-`shared-mixed.js` case in `Scalars/strings.mlir`. Its String and Number assignments
-still need a proved widening rule. Ordering, broader unions and mixed scalar
-Map keys/payloads or array storage keep their separate proof requirements.
-This does not implement arbitrary `std::variant` lowering.
+The five String-containing carriers now support shared variables and capture
+pointers. The existing type join proves each store fits its selected carrier;
+scalar conversion widens single alternatives and compatible sub-unions. Owning
+reads preserve snapshots across later writes. Initial undefined is skipped only
+when the existing dominance proof makes it unobservable.
+
+`Closures/primitive-cells.test` checks 44 observations in eight native modes,
+plus the unchanged `shared-mixed.js` witness on GCC/Clang. Five refusals and two
+mutations pass. See [the cell handoff](handoff/2026-09-21-native-primitive-cells.md).
+Next reuse bounded structured-exit normalization for the retained `index-switch.js`
+refusal. Captured sibling-function calls, ordering, broader unions and mixed
+container storage remain separate. This is not arbitrary variant lowering.

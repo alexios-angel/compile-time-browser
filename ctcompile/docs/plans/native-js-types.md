@@ -27,7 +27,8 @@ carrier, retaining its tags through calls, joins, loops and global stores. Its
 optional form now preserves undefined, null, Number and String through source
 global reads, calls and coercions. Strict/loose equality now covers these proved
 String-containing unions while retaining type, absence, NaN and zero semantics.
-Object/Array prototypes and document views remain planned.
+Shared variables and nested capture pointers now carry those unions with owning
+snapshots and observable absence. Object/Array prototypes and document views remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
@@ -378,10 +379,17 @@ existing `auto`/template deduction.
    `primitive-equality.test`: 48 main observations in eight native modes, six
    further witness observations on GCC/Clang, five refusals and two mutations.
    Exact String pairs retain their direct C++ comparison.
-   Next carry finite String-containing unions through shared cells and captures,
-   starting with `shared-mixed.js` in `Scalars/strings.mlir`. Its before/call/after
-   comparison remains refused at the String and Number cell assignments; add
-   proved widening there and preserve owning copies and absence across writes.
+   Finite String-containing unions now use the existing shared-cell and capture
+   pointer path. The type join proves compatible stores, including whole
+   sub-unions; existing conversions preserve their tags. Loads own snapshots
+   across writes. The hoisted initial is omitted only when a write dominates
+   every read, matching inference; observable undefined/null remain distinct.
+   The original `shared-mixed.js` runs unchanged. `primitive-cells.test` checks
+   44 observations in eight native modes, five refusals and two mutations.
+   Next normalize ordinary return dispatch using its preserved `index-switch.js`
+   source. Reuse `normalizeStructuredExits` on a disposable clone under a work
+   budget; partial failure must not publish rewritten IR. Its separate
+   `nested-sibling.js` refusal still needs a captured-function binding proof.
    Broader unions and mixed container payloads remain separate; never stringify
    both sides unconditionally.
    Keep numeric relational conversion separate from String lexicographic ordering

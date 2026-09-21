@@ -106,10 +106,13 @@ General String UTF-16 length/index/casing alignment also remains separate.
    Strict/loose equality now visits those finite alternatives, preserving type
    identity, String/String comparison, null/undefined, NaN and signed zero.
    `primitive-equality.test` executes all three former equality refusals unchanged,
-   with Node, VM and native checks. Next handle finite-union shared-cell writes
-   and captures, using `shared-mixed.js` in `Scalars/strings.mlir` as the retained
-   source witness. Object hooks, String ordering and general Unicode alignment
-   remain separate.
+   with Node, VM and native checks. Shared-cell writes and nested capture pointers
+   now preserve these unions, owning snapshots and observable absence. The
+   unchanged `shared-mixed.js` and 44 new observations pass the cell fixture.
+   Next normalize ordinary return dispatch from its retained `index-switch.js`
+   source with the existing bounded, transactional `normalizeStructuredExits`.
+   The captured sibling-function refusal, object hooks, String ordering and
+   general Unicode alignment remain separate.
 3. **Array/object/prototype semantics.** Add concrete wrappers and proved
    `ToPrimitive`/property-key paths, then boxed primitives and `Symbol.hasInstance`.
    Pair every admitted hook with replaced/unknown/throwing-hook controls.

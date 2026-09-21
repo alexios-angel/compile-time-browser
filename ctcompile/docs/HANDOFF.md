@@ -22,6 +22,32 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Primitive union shared cells, 2026-09-21 UTC
+
+Continued clean **3a0fb32f**. **cdf2c0a5** carries the five admitted
+String-containing primitive families through shared variables and nested
+capture pointers. Stores reuse the existing type join and scalar conversions;
+reads own their String copies. Initial undefined is omitted only under the
+existing proof that a write precedes every read. Observable undefined and null
+remain distinct. The original `shared-mixed.js` now executes unchanged.
+
+Focused devbox checks pass: a seven-step explicit build and **four selected
+lit cases**. The new fixture checks **44 observations in eight native modes**,
+the original witness on GCC/Clang, five refusals and two mutations. All five
+code/test hashes match the devbox; both changed C++ files pass scoped formatting.
+Required repository formatting retains 16 existing diagnostics. Full suites and
+separate CTest/sanitizer runs were skipped.
+[Exact checks and source adaptations](handoff/2026-09-21-native-primitive-cells.md).
+
+**Next:** normalize ordinary return dispatch, beginning with the preserved
+`index-switch.js` refusal in `Closures/primitive-cells.test`. Reuse bounded
+`normalizeStructuredExits` on a disposable function clone and publish only on
+success. It already normalizes switch regions for specialized paths. The
+`nested-sibling.js` captured-function binding refusal is separate. String
+ordering, broader unions, containers, object hooks, Unicode alignment,
+`Symbol.hasInstance`, indexed Bootstrap and the application driver remain.
+No browser, VM or runtime implementation changed.
+
 ## Typed primitive equality, 2026-09-20 UTC
 
 Continued clean **92c0628e**, resuming the three preserved equality refusals.
