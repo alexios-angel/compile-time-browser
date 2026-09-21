@@ -328,6 +328,27 @@ DESCRIPTION_GUARDS = {
 }
 """,
 }
+STRING_METHODS = {
+    "string-prefix": r"""function stringPrefix(text) {
+  return (text.startsWith('bs') ? 'prefix' : 'other') +
+    (text.startsWith('') ? ':empty' : ':wrong') +
+    (text.startsWith('a\u0000') ? ':nul' : ':plain');
+}
+""",
+    "description-lowercase": """function descriptionLowercase(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  return typeof text === 'string' ? text.charAt(0).toLowerCase() + text.slice(1) : ':absent';
+}
+""",
+    "description-capture-prefix": """function descriptionCapturePrefix(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function check() { return text !== undefined ? text.startsWith('bs') : false; }
+  return check();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -350,6 +371,9 @@ PARAMETER_TYPES = {
     "capture-state": ["symbol", "symbol", "string", "number", "boolean"],
     "capture-types": ["symbol", "string", "number", "boolean"],
     "capture-description": ["symbol"],
+    "string-prefix": ["string"],
+    "description-lowercase": ["symbol"],
+    "description-capture-prefix": ["symbol"],
 }
 CASES = {
     "state": (
@@ -637,6 +661,57 @@ for name, source in DESCRIPTION_GUARDS.items():
 """,
         "true\n",
     )
+CASES["string-prefix"] = (
+    STRING_METHODS["string-prefix"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string)>);
+    assert(@ENTRY@(js_string{""}).value() == "other:empty:plain");
+    assert(@ENTRY@(js_string{"bs"}).value() == "prefix:empty:plain");
+    assert(@ENTRY@(js_string{"bs\xc3\xa9"}).value() == "prefix:empty:plain");
+    assert(@ENTRY@(js_string{"Bs"}).value() == "other:empty:plain");
+    assert(@ENTRY@(js_string{"a\0b"}).value() == "other:empty:nul");
+    assert(@ENTRY@(js_string{"a"}).value() == "other:empty:plain");
+    assert(@ENTRY@(js_string{"\xed\xa0\x80"}).value() == "other:empty:plain");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["description-lowercase"] = (
+    STRING_METHODS["description-lowercase"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_symbol_t)>);
+    assert(@ENTRY@(Symbol()).value() == ":absent");
+    assert(@ENTRY@(Symbol(undefined_t{})).value() == ":absent");
+    assert(@ENTRY@(Symbol(js_string{""})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"Ab"})).value() == "ab");
+    assert(@ENTRY@(Symbol(js_string{"A\0B"})).value() == std::string("a\0B", 3));
+    assert(@ENTRY@(Symbol(js_string{"\xc4\xb0X"})).value() == "i\xcc\x87X");
+    assert(@ENTRY@(Symbol(js_string{"\xce\xa3X"})).value() == "\xcf\x83X");
+    assert(@ENTRY@(Symbol(js_string{"\xf0\x90\x90\x80X"})).value() == "\xf0\x90\x90\x80X");
+    assert(@ENTRY@(Symbol(js_string{"\xed\xa0\x80X"})).value() == "\xed\xa0\x80X");
+    assert(@ENTRY@(Symbol.iterator).value() == "symbol.iterator");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["description-capture-prefix"] = (
+    STRING_METHODS["description-capture-prefix"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_boolean_t (*)(js_symbol_t)>);
+    assert(!@ENTRY@(Symbol()));
+    assert(!@ENTRY@(Symbol(undefined_t{})));
+    assert(!@ENTRY@(Symbol(js_string{""})));
+    assert(@ENTRY@(Symbol(js_string{"bs"})));
+    assert(@ENTRY@(Symbol(js_string{"bs\0"})));
+    assert(!@ENTRY@(Symbol(js_string{"Bs"})));
+    assert(!@ENTRY@(Symbol.iterator));
+    std::cout << "true\n";
+""",
+    "true\n",
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -727,6 +802,7 @@ def oracle(args):
         + CAPTURE_TYPES
         + CAPTURE_DESCRIPTION
         + "".join(DESCRIPTION_GUARDS.values())
+        + "".join(STRING_METHODS.values())
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -849,6 +925,24 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
             + ";\n"
             for i, kind in enumerate(("Type", "Undefined", "Capture"), 44)
         )
+        + r"""
+var symbol47StringPrefix = stringPrefix('') === 'other:empty:plain' &&
+  stringPrefix('bs') === 'prefix:empty:plain' && stringPrefix('bs\u00e9') === 'prefix:empty:plain' &&
+  stringPrefix('Bs') === 'other:empty:plain' && stringPrefix('a\u0000b') === 'other:empty:nul' &&
+  stringPrefix('a') === 'other:empty:plain' && stringPrefix('\ud800') === 'other:empty:plain';
+var symbol48DescriptionLowercase = descriptionLowercase(Symbol()) === ':absent' &&
+  descriptionLowercase(Symbol(undefined)) === ':absent' && descriptionLowercase(Symbol('')) === '' &&
+  descriptionLowercase(Symbol('Ab')) === 'ab' && descriptionLowercase(Symbol('A\u0000B')) === 'a\u0000B' &&
+  descriptionLowercase(Symbol('\ud801\udc00X')) === '\ud801\udc00X' &&
+  descriptionLowercase(Symbol('\ud800X')) === '\ud800X' &&
+  descriptionLowercase(Symbol.iterator) === 'symbol.iterator';
+var symbol49DescriptionCapturePrefix = !descriptionCapturePrefix(Symbol()) &&
+  !descriptionCapturePrefix(Symbol(undefined)) && !descriptionCapturePrefix(Symbol('')) &&
+  descriptionCapturePrefix(Symbol('bs')) && descriptionCapturePrefix(Symbol('bs\u0000')) &&
+  !descriptionCapturePrefix(Symbol('Bs')) && !descriptionCapturePrefix(Symbol.iterator);
+var symbol50DescriptionExpandedCase = descriptionLowercase(Symbol('\u0130X')) === 'i\u0307X';
+var symbol51DescriptionGreekCase = descriptionLowercase(Symbol('\u03a3X')) === '\u03c3X';
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -894,10 +988,20 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
         "DescriptionTypeGuard",
         "DescriptionUndefinedGuard",
         "DescriptionCaptureGuard",
+        "StringPrefix",
+        "DescriptionLowercase",
+        "DescriptionCapturePrefix",
+        "DescriptionExpandedCase",
+        "DescriptionGreekCase",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
+    # The VM deliberately uses ASCII casing (Script/builtins/text/string.cpp).
+    # Preserve those known differences; native uses the existing Unicode Core API.
+    vm_expected = expected.replace(
+        "symbol50DescriptionExpandedCase=true", "symbol50DescriptionExpandedCase=false"
+    ).replace("symbol51DescriptionGreekCase=true", "symbol51DescriptionGreekCase=false")
     actual = run([args.reference, str(vm)]).stdout
-    if actual != expected:
+    if actual != vm_expected:
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
     node = args.work / "oracle.cjs"
     node.write_text(
@@ -1018,7 +1122,7 @@ def main():
         ir, contract = prepare(
             args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
         )
-        if name in DESCRIPTION_GUARDS:
+        if name in DESCRIPTION_GUARDS or name in STRING_METHODS:
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
         for optimize in (False, True):
@@ -1210,7 +1314,7 @@ def main():
         raise RuntimeError("captured entry control did not find the source helper")
     refuse(ir, dict(contract, entry=captures[0], parameter_types=[]), "captured-entry")
 
-    for name in DESCRIPTION_GUARDS:
+    for name in (*DESCRIPTION_GUARDS, *STRING_METHODS):
         ir, contract = accepted[name]
         for optimize in (False, True):
             refuse(
@@ -1247,6 +1351,41 @@ def main():
         raise RuntimeError("description guard fingerprint control did not change its predicate")
     if "fingerprint mismatch" not in refuse(changed, contract, "description-guard-stale"):
         raise RuntimeError("changed description guard accepted a stale fingerprint")
+
+    for name, body in {
+        "prefix-coercion": "return text.startsWith(key);",
+        "prefix-unicode": "return text.startsWith('é');",
+        "prefix-position": "return text.startsWith('bs', 1);",
+        "detached-prefix": "const method=text.startsWith; return method('bs');",
+        "prefix-prototype-write": "String.prototype.startsWith=0; return text.startsWith('bs');",
+        "lowercase-prototype-write": "String.prototype.toLowerCase=0; return text.charAt(0).toLowerCase();",
+        "lowercase-whole-string": "return text.toLowerCase();",
+        "lowercase-argument": "return text.charAt(0).toLowerCase('unused');",
+        "description-unguarded": "return key.description.startsWith('bs');",
+        "description-absent-arm": "const saved=key.description; return saved === undefined ? saved.startsWith('bs') : false;",
+        "description-different-read": "const saved=key.description; return typeof saved === 'string' ? key.description.startsWith('bs') : false;",
+        "description-after-guard": "const saved=key.description; const prefix=typeof saved === 'string' ? saved.startsWith('bs') : false; return saved.startsWith('bs');",
+        "charat-index": "return text.charAt(1).toLowerCase();",
+        "slice-index": "return text.slice(0).toLowerCase();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "string-method-" + name,
+            f"function bad(key, text) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["symbol", "string"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"string-method-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-prefix"]
+    refuse(ir, contract, "string-method-budget", max_steps=100)
+    changed = args.work / "string-method-stale.mlir"
+    changed.write_text(ir.read_text().replace('"bs"', '"other"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("String method fingerprint control did not change its prefix")
+    if "fingerprint mismatch" not in refuse(changed, contract, "string-method-stale"):
+        raise RuntimeError("changed String method accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
@@ -1331,7 +1470,8 @@ def main():
     )
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
-        f"Symbol exports: typed parameters/helpers/captures, description guards, scalar equality and branch/loop return agree with Node/VM; "
+        f"Symbol exports: typed parameters/helpers/captures, guarded String methods, scalar equality and branch/loop return; "
+        f"49 Node/VM agreements, 2 known VM ASCII-case differences; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

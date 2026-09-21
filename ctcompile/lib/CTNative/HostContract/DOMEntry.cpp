@@ -376,8 +376,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     if (intrinsicEntry &&
         (!provedJSONObjects.empty() || llvm::any_of(provedCalls, [](const HostDOMCall & call) {
             return !call.returnsSymbol() && call.kind != HostDOMMethod::symbolToString &&
+                   call.kind != HostDOMMethod::startsWith &&
                    call.kind != HostDOMMethod::stringCharAt &&
-                   call.kind != HostDOMMethod::stringSlice;
+                   call.kind != HostDOMMethod::stringSlice &&
+                   call.kind != HostDOMMethod::stringLowercaseUnit;
         }))) {
         refusal =
             "intrinsic entry permits only primitive values and proved Symbol/String operations";
