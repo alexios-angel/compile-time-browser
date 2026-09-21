@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured Data helpers and fractional String indices, 2026-09-21 UTC
+
+Continued clean **5599188c** from the recorded captured Data helper boundary.
+**e7ba01dc** expands exact three-argument captured Map helpers in their owning
+entry before nested routing. Both literal key dimensions, conditional children,
+called holder slots and saved aliases retain their existing owner proofs.
+Recursive work is charged before cloning; branch-local captures, fixed-cell reads
+and cached call results are resolved before their producers retire.
+**72a99948** admits bounded fractional literal `charAt`/`slice` indices through
+the existing UTF-16 path. Truncation precedes sign testing and unsigned conversion;
+`-0.5` selects zero. Exact first-unit and dataset-tail authority stays unchanged.
+
+Focused devbox validation passes: **one exact CTest and four distinct lit cases**
+across corrected runs. Captured class checks measure **155 source observations,
+328 main native executions, 310 unprepared refusals and 198 preparation refusals**;
+the new direct helper's first complete budget is **1810**. Intrinsic exports measure
+**504 native executions, 502 refusals and two mutations**, with **71 Node/VM
+agreements and seven explicit known differences**. DOM Strings measure 809
+observations and eight native binaries. All **nine final code/test hashes** match
+the devbox; scoped checks and 43 original class source files pass. Repository
+formatting retains 16 existing diagnostics in untouched files. No browser/runtime
+implementation changed. Full suites, broad corpus/matrices, full Bootstrap,
+WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** constructor-time three-argument registration into the selected child
+Map, preserving both key origins, all holder observers and constructor
+exception/reentry order. Current publication normalization still expects a
+one/two-argument helper and terminal direct `Map.set`. Original Data also needs
+element-identity keys, conflict reporting, nullable lookup and conditional
+child/empty-parent cleanup. Original B/Data+B remains refused with complete sources.
+Dynamic/coercing String indices, broader methods, conditional callees,
+branch-mutated boxed locals, String ordering, document views and the application
+driver remain. No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-captured-data-fractional-indices.md).
+
 ## Short-circuit Maps and signed charAt indices, 2026-09-21 UTC
 
 Continued clean **3e3ebde3** from the recorded Data short-circuit boundary.

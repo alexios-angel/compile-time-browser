@@ -235,7 +235,10 @@ and owning String extraction (**2e6dc90a**). **7f226c55** adds literal uint32
 negative zero and mixed start/end signs. Magnitudes clamp to the UTF-16 length
 before unsigned subtraction. **d8f532c1** adds signed literal `charAt` indices
 with the same magnitude bound: negative indices yield an empty String and negative
-zero selects index zero. Only one-argument `slice(1)` supplies dataset-tail authority.
+zero selects index zero. **72a99948** extends the same finite literal range to
+fractional indices: truncation precedes sign testing and unsigned conversion, so
+`-0.5` selects index zero. Exact `charAt(0)` and one-argument `slice(1)` retain their
+separate first-unit and dataset-tail authority.
 **8e6e2e4d** also admits constant ASCII-prefix `startsWith` and
 `charAt(0).toLowerCase()` through their existing proofs and public Core helpers.
 Whole-string lowercase, non-ASCII prefixes and dynamic/coercing indices remain
@@ -247,11 +250,11 @@ the guard grant no String authority. Mixed null/description joins remain separat
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
 remain typed. With global/local helper composition, description guards and
-**d8f532c1** signed literal String indices, the export fixture checks **432 native executions,
-466 refusals and two mutations**, with **62 Node/VM agreements and six known VM
+**72a99948** bounded fractional String indices, the export fixture checks **504 native executions,
+502 refusals and two mutations**, with **71 Node/VM agreements and seven known VM
 casing/indexing differences**. Native/Node Unicode expectations remain intact;
 no runtime implementation changed.
-[Exact short-circuit Map and signed charAt evidence](../handoff/2026-09-21-shortcircuit-maps-signed-charat.md).
+[Exact captured Data and fractional-index evidence](../handoff/2026-09-21-captured-data-fractional-indices.md).
 
 **Next source slice:** broader String methods, dynamic/coercing indices and
 conditional callee transport. Branch-mutated boxed locals remain separate from immutable captures;
@@ -517,8 +520,8 @@ existing `auto`/template deduction.
    raw `std::string` with explicit adapters; callback parameters and results
    cross that boundary too. Printing and deduced-type pins retain exact types.
    General String length still counts stored bytes (ND-1), as does the current
-   VM. Admitted DOM/intrinsic `charAt`/`slice` with signed literal indices of
-   uint32 magnitude and isolated-first-unit lowercase keep their public Core
+   VM. Admitted DOM/intrinsic `charAt`/`slice` with bounded finite literal indices
+   truncated toward zero and isolated-first-unit lowercase keep their public Core
    UTF-16 operations and recorded VM differences.
    The class has no general length/index/casing API yet. Do not normalize all
    constructor bytes or silently broaden the ASCII-prefix admission.
@@ -644,8 +647,9 @@ existing `auto`/template deduction.
    return transport now emit in proved DOM and primitive-only entries. Source
    `.description` preserves owning undefined/String results. Exact primitive/Symbol
    parameters and local/global helper calls, including immutable local captures,
-   are implemented. Exact description guards permit signed literal `charAt` indices
-   and `slice` bounds with uint32 magnitudes and explicit String identity,
+   are implemented. Exact description guards permit finite literal `charAt` indices
+   and `slice` bounds with magnitudes at most 4294967295 and explicit String identity,
+   truncating fractional bounds toward zero,
    including ASCII-prefix checks and
    isolated-first-unit lowercase; broader methods and indices remain separate.
    Registry, symbol-keyed fields and hooks remain
