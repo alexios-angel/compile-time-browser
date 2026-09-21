@@ -408,6 +408,9 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
         }
         object.erase();
     }
+    // Calls may return fresh own-field records in a loop body. Project only
+    // their confined reads, retaining every source value producer and effect.
+    if (!forwardFields(function)) { return false; }
     active.erase(function);
     expanded.insert(function);
     return true;

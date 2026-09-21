@@ -8,6 +8,7 @@
 
 #include "ClassIntrinsics.h"
 #include "DOMBranchFilter.h"
+#include "DOMCustomIteration.h"
 #include "DOMDataset.h"
 #include "DOMIteration.h"
 #include "DOMJSON.h"
@@ -1013,6 +1014,7 @@ int main() {
     checkDOMStringPrefix(context);
     checkDOMBranchFilter(context);
     checkDOMIteration(context);
+    checkDOMCustomIteration(context);
     checkDOMURI(context);
     checkDOMJSON(context);
     checkDOMNullable(context);

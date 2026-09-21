@@ -3,9 +3,17 @@
 namespace ctcompile::ctnative::dom_source_detail {
 
 bool DOMSource::forwardFields(ctjs::FuncOp function) {
-    auto & block = function.getBody().front();
-    llvm::SmallVector<ctjs::CreateObjectOp> objects(block.getOps<ctjs::CreateObjectOp>());
+    llvm::SmallVector<ctjs::CreateObjectOp> objects;
+    const auto census = function.walk([&](mlir::Operation * operation) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
+            objects.push_back(object);
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (census.wasInterrupted()) { return false; }
     for (ctjs::CreateObjectOp object : objects) {
+        auto & block = *object->getBlock();
         llvm::DenseSet<mlir::Operation *> uses;
         bool confined = true, read = false;
         for (mlir::OpOperand & use : object.getResult().getUses()) {

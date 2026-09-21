@@ -400,7 +400,8 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         transformed.moduleSha256 = hostContractFingerprint(*composed);
     }
     if (!sourceError && !entryHandler) {
-        sourceError = expandDOMHelpers(*composed, contract.entry, maxSteps);
+        sourceError = normalizeDOMCustomIteration(*composed, transformed, maxSteps);
+        if (!sourceError) { sourceError = expandDOMHelpers(*composed, contract.entry, maxSteps); }
     }
     if (sourceError) {
         return refuse("native DOM source: " + llvm::toString(std::move(sourceError)));

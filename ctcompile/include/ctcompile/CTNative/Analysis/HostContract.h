@@ -135,6 +135,10 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
                                       unsigned maxSteps);
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps);
+// Confined custom protocols become ordinary calls and scalar completion state.
+// Only a private candidate may change; complete helper and DOM proofs follow.
+llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostContract & contract,
+                                        unsigned maxSteps);
 // Replace confined query-result spread/empty-concat observations.
 // Reprove on a private clone; refusal leaves the original module unchanged.
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
