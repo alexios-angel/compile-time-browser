@@ -55,8 +55,10 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                         : contract.elementParameters.empty()) ||
         (!intrinsicEntry && !contract.intrinsicParameters.empty()) ||
         (intrinsicEntry &&
-         (!contract.datasetParameters.empty() || contract.initialIntrinsics.size() != 1 ||
-          contract.initialIntrinsics.front() != "Symbol")) ||
+         (!contract.datasetParameters.empty() ||
+          !llvm::is_contained(contract.initialIntrinsics, "Symbol") ||
+          llvm::any_of(contract.initialIntrinsics,
+                       [](const auto & name) { return name != "Symbol" && name != "String"; }))) ||
         !contract.roots.empty() || !contract.observations.empty() ||
         !contract.absentBindings.empty() || !contract.undefinedBindings.empty() ||
         contract.initialIntrinsics.size() > supportedIntrinsics.size() ||
@@ -68,7 +70,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                      }) ||
         contract.realmGlobalThis || contract.classicScriptRealm ||
         !contract.realmOwnDataProperties.empty()) {
-        refusal = intrinsicEntry ? "intrinsic entry requires an isolated Symbol-only declaration"
+        refusal = intrinsicEntry ? "intrinsic entry requires an isolated Symbol/String declaration"
                                  : "DOM entry requires the isolated ctbrowser-dom-v1 declaration";
         return;
     }
@@ -373,9 +375,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     }
     if (intrinsicEntry &&
         (!provedJSONObjects.empty() || llvm::any_of(provedCalls, [](const HostDOMCall & call) {
-            return !call.returnsSymbol() && call.kind != HostDOMMethod::symbolToString;
+            return !call.returnsSymbol() && call.kind != HostDOMMethod::symbolToString &&
+                   call.kind != HostDOMMethod::stringCharAt &&
+                   call.kind != HostDOMMethod::stringSlice;
         }))) {
-        refusal = "intrinsic entry permits only primitive values and proved Symbol operations";
+        refusal =
+            "intrinsic entry permits only primitive values and proved Symbol/String operations";
         return;
     }
     // Joins and source spreads copy trees by value. A mutable target must

@@ -293,6 +293,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             // JSON's object tag includes null and arrays, never member
             // authority. It permits only their own-data spread.
             if (hasKind(unary.getOperand(), Kind::optionalString) ||
+                hasKind(unary.getOperand(), Kind::undefinedString) ||
                 hasKind(unary.getOperand(), Kind::json)) {
                 typeQueries[unary.getResult()] = unary.getOperand();
             }
@@ -324,6 +325,14 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                            hasKind(value, Kind::undefined);
                 };
                 if (stringOrUndefined(compare.getLhs()) && stringOrUndefined(compare.getRhs())) {
+                    for (auto [query, absent] : {std::pair{compare.getLhs(), compare.getRhs()},
+                                                 std::pair{compare.getRhs(), compare.getLhs()}}) {
+                        if (!spend()) { return false; }
+                        if (hasKind(query, Kind::undefinedString) &&
+                            hasKind(absent, Kind::undefined)) {
+                            predicates[compare.getResult()] = {query, false};
+                        }
+                    }
                     values[compare.getResult()] = Kind::boolean;
                     continue;
                 }
@@ -370,7 +379,9 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                     }
                     if (found != typeQueries.end()) {
                         const bool json = hasKind(found->second, Kind::json);
-                        if ((!json && (name == "string" || name == "object")) ||
+                        const bool description = hasKind(found->second, Kind::undefinedString);
+                        if ((!json && (name == "string" ||
+                                       name == (description ? "undefined" : "object"))) ||
                             (json && name == "object")) {
                             predicates[compare.getResult()] = {found->second,
                                                                json || name == "string"};

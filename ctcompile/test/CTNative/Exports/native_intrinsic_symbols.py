@@ -306,6 +306,28 @@ CAPTURE_DESCRIPTION = """function captureDescription(key) {
   return outer();
 }
 """
+DESCRIPTION_GUARDS = {
+    "description-type-guard": """function descriptionTypeGuard(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  return typeof text === 'string' ? text.charAt(0) + text.slice(1) : ':absent';
+}
+""",
+    "description-undefined-guard": """function descriptionUndefinedGuard(key) {
+  const text = key.description;
+  return (!(text === undefined) ? text.charAt(0) : '') +
+    (undefined == text ? ':absent' : text.slice(1));
+}
+""",
+    "description-capture-guard": """function descriptionCaptureGuard(key) {
+  const text = key.description;
+  function restore() {
+    return 'undefined' === typeof text ? ':absent' : text.charAt(0) + text.slice(1);
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -597,6 +619,24 @@ for name, source in CAPTURE_WITNESSES.items():
 CASES["capture-state"] = (CAPTURE_STATE, *CASES["parameter-state"][1:])
 CASES["capture-types"] = (CAPTURE_TYPES, *CASES["helper-types"][1:])
 CASES["capture-description"] = (CAPTURE_DESCRIPTION, *CASES["parameter-description"][1:])
+for name, source in DESCRIPTION_GUARDS.items():
+    PARAMETER_TYPES[name] = ["symbol"]
+    CASES[name] = (
+        source,
+        r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_symbol_t)>);
+    assert(@ENTRY@(Symbol()).value() == ":absent");
+    assert(@ENTRY@(Symbol(undefined_t{})).value() == ":absent");
+    assert(@ENTRY@(Symbol(js_string{""})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"Ab"})).value() == "Ab");
+    assert(@ENTRY@(Symbol(js_string{"a\0b"})).value() == std::string("a\0b", 3));
+    assert(@ENTRY@(Symbol(js_string{"\xed\xa0\x80"})).value() == "\xed\xa0\x80");
+    assert(@ENTRY@(Symbol.iterator).value() == "Symbol.iterator");
+    std::cout << "true\n";
+""",
+        "true\n",
+    )
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -686,6 +726,7 @@ def oracle(args):
         + CAPTURE_STATE
         + CAPTURE_TYPES
         + CAPTURE_DESCRIPTION
+        + "".join(DESCRIPTION_GUARDS.values())
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -791,6 +832,23 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
             f"var symbol{i}Capture{name.title().replace('-', '')} = observeCapture{i}();\n"
             for i, (name, body) in enumerate(CAPTURE_WITNESSES.items(), 38)
         )
+        + "".join(
+            f"\nvar symbol{i}Description{kind}Guard = "
+            + " && ".join(
+                f"description{kind}Guard({value}) === {expected}"
+                for value, expected in (
+                    ("Symbol()", "':absent'"),
+                    ("Symbol(undefined)", "':absent'"),
+                    ("Symbol('')", "''"),
+                    ("Symbol('Ab')", "'Ab'"),
+                    (r"Symbol('a\u0000b')", r"'a\u0000b'"),
+                    (r"Symbol('\ud800')", r"'\ud800'"),
+                    ("Symbol.iterator", "'Symbol.iterator'"),
+                )
+            )
+            + ";\n"
+            for i, kind in enumerate(("Type", "Undefined", "Capture"), 44)
+        )
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -833,6 +891,9 @@ var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, 
         "CaptureState",
         "CaptureTypes",
         "CaptureDescription",
+        "DescriptionTypeGuard",
+        "DescriptionUndefinedGuard",
+        "DescriptionCaptureGuard",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -957,6 +1018,8 @@ def main():
         ir, contract = prepare(
             args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
         )
+        if name in DESCRIPTION_GUARDS:
+            contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
         for optimize in (False, True):
             output_name = f"{name}-{optimize}"
@@ -1147,12 +1210,52 @@ def main():
         raise RuntimeError("captured entry control did not find the source helper")
     refuse(ir, dict(contract, entry=captures[0], parameter_types=[]), "captured-entry")
 
+    for name in DESCRIPTION_GUARDS:
+        ir, contract = accepted[name]
+        for optimize in (False, True):
+            refuse(
+                ir,
+                dict(contract, initial_intrinsics=["Symbol"]),
+                f"{name}-missing-string-{optimize}",
+                optimize=optimize,
+            )
+    for name, body in {
+        "unguarded": "return key.description.charAt(0);",
+        "absent-arm": "const text=key.description; return text === undefined ? text.charAt(0) : '';",
+        "wrong-typeof": "const text=key.description; return typeof text === 'object' ? '' : text.charAt(0);",
+        "false-truthy": "const text=key.description; return !text ? text.charAt(0) : '';",
+        "different-read": "const text=key.description; return typeof text === 'string' ? key.description.charAt(0) : '';",
+        "after-guard": "const text=key.description; const first=typeof text === 'string' ? text.charAt(0) : ''; return text.slice(1);",
+        "prototype-write": "String.prototype.charAt=0; const text=key.description; return typeof text === 'string' ? text.charAt(0) : '';",
+        "implicit-coercion": "const text=key.description; return typeof text === 'string' ? text.charAt(key) : '';",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "description-guard-" + name,
+            f"function bad(key) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["symbol"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"description-guard-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-type-guard"]
+    refuse(ir, contract, "description-guard-budget", max_steps=100)
+    changed = args.work / "description-guard-stale.mlir"
+    changed.write_text(ir.read_text().replace('"string"', '"object"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("description guard fingerprint control did not change its predicate")
+    if "fingerprint mismatch" not in refuse(changed, contract, "description-guard-stale"):
+        raise RuntimeError("changed description guard accepted a stale fingerprint")
+
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
     for name, fields in {
         "empty": {"initial_intrinsics": []},
         "extra": {"initial_intrinsics": ["Symbol", "Number"]},
         "duplicate": {"initial_intrinsics": ["Symbol", "Symbol"]},
+        "string-only": {"initial_intrinsics": ["String"]},
+        "duplicate-string": {"initial_intrinsics": ["Symbol", "String", "String"]},
         "roots": {"roots": []},
         "elements": {"element_parameters": []},
         "datasets": {"dataset_parameters": []},
@@ -1228,7 +1331,7 @@ def main():
     )
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
-        f"Symbol exports: typed parameters/local and global helpers with captures, scalar equality and branch/loop return agree with Node/VM; "
+        f"Symbol exports: typed parameters/helpers/captures, description guards, scalar equality and branch/loop return agree with Node/VM; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

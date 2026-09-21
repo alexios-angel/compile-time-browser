@@ -169,6 +169,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if (auto predicate = predicates.find(branch.getCondition());
                 predicate != predicates.end() &&
                 (hasKind(predicate->second.optional, Kind::optionalString) ||
+                 hasKind(predicate->second.optional, Kind::undefinedString) ||
                  hasKind(predicate->second.optional, Kind::nullableElement) ||
                  hasKind(predicate->second.optional, Kind::json))) {
                 // Reserve save/restore and the new evidence before visiting.
@@ -178,12 +179,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 const bool present = first == predicate->second.stringOnTrue;
                 // A closest result borrows the original document. Only this
                 // arm may dereference it; absence grants no scalar-null facts.
-                values[refined] = previous == Kind::nullableElement
-                                      ? (present ? Kind::element : Kind::nullableElement)
-                                  : previous == Kind::json
-                                      ? (present ? Kind::jsonAggregate : Kind::json)
-                                      : (present ? Kind::string : Kind::null);
-                if (present && previous == Kind::optionalString) {
+                values[refined] =
+                    previous == Kind::nullableElement
+                        ? (present ? Kind::element : Kind::nullableElement)
+                    : previous == Kind::json ? (present ? Kind::jsonAggregate : Kind::json)
+                    : previous == Kind::undefinedString ? (present ? Kind::string : Kind::undefined)
+                                                        : (present ? Kind::string : Kind::null);
+                if (present &&
+                    (previous == Kind::optionalString || previous == Kind::undefinedString)) {
                     activeRefinements[refined] = provedRefinements.size();
                     provedRefinements.push_back({&region.front(), refined, {}});
                 }

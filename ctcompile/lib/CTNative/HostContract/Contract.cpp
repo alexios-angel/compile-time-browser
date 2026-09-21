@@ -138,8 +138,10 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         if (auto failure = names(*object, "initial_intrinsics", result.initialIntrinsics, false)) {
             return std::move(failure);
         }
-        if (result.initialIntrinsics.size() != 1 || result.initialIntrinsics.front() != "Symbol") {
-            return error("intrinsic entry requires only the standard Symbol identity");
+        if (!llvm::is_contained(result.initialIntrinsics, "Symbol") ||
+            llvm::any_of(result.initialIntrinsics,
+                         [](const auto & name) { return name != "Symbol" && name != "String"; })) {
+            return error("intrinsic entry requires standard Symbol and optional String identities");
         }
         if (const auto * requested = object->get("parameter_types")) {
             const auto * parameters = requested->getAsArray();

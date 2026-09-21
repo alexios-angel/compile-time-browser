@@ -58,6 +58,17 @@ module {
               !proved.intrinsicParameter(function.getBody().front().getArgument(0)) &&
               proved.parameters().empty(),
           "live intrinsic proof exposes only explicit category facts, without DOM handles");
+    auto strings = parseHostContract(replaced(json, "[\"Symbol\"]", "[\"String\",\"Symbol\"]"));
+    check(strings && DOMEntryAnalysis(*module, *strings).proved(),
+          "intrinsic String assumptions are explicit and order independent");
+    if (!strings) { llvm::consumeError(strings.takeError()); }
+    for (const auto & identities : std::vector<std::vector<std::string>>{
+             {"String"}, {"Symbol", "String", "String"}, {"Symbol", "Number"}}) {
+        auto forged = *parsed;
+        forged.initialIntrinsics = identities;
+        check(!DOMEntryAnalysis(*module, forged).proved(),
+              "programmatic intrinsic contracts reject missing, duplicate and foreign identities");
+    }
     for (llvm::StringRef field : {"null", "{}", "\"symbol\"", "[null]", "[0]", "[\"Symbol\"]",
                                   "[\"object\"]", "[\"undefined\"]", "[[\"symbol\",\"string\"]]"}) {
         auto invalid = parseHostContract(

@@ -166,11 +166,22 @@ void lowering::prepareDOMStrings() {
         mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(refinement.block);
         // Copy only inside the proved-present arm. The original optional remains
         // intact, and Invoke's call body keeps its exact call/exit shape.
-        auto text = ec::MemberCallOpaqueOp::create(
-            at, refinement.optional.getLoc(),
-            mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)}, refinement.optional,
-            at.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
-        auto value = convertScalar(at, refinement.optional.getLoc(), text.getResult(0),
+        const auto rawString = ec::OpaqueType::get(context, kRawStringType);
+        mlir::Value text;
+        if (isNullableStringCarrier(refinement.optional.getType())) {
+            text = callWithConstValueOperands(at, refinement.optional.getLoc(),
+                                              mlir::TypeRange{rawString},
+                                              at.getStringAttr("ctnative::global_string"),
+                                              mlir::ValueRange{refinement.optional})
+                       .getResult(0);
+        } else {
+            text = ec::MemberCallOpaqueOp::create(at, refinement.optional.getLoc(),
+                                                  mlir::TypeRange{rawString}, refinement.optional,
+                                                  at.getStringAttr("value"), mlir::ArrayAttr{},
+                                                  mlir::ArrayAttr{}, mlir::ValueRange{})
+                       .getResult(0);
+        }
+        auto value = convertScalar(at, refinement.optional.getLoc(), text,
                                    carrierType(context, carrier::string));
         for (const auto & use : refinement.uses) {
             use.operation->setOperand(use.operandIndex, value);

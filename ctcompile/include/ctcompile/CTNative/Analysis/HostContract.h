@@ -52,8 +52,8 @@ struct HostContract {
         ctbrowserDOMDataSession,
         // A named native export in an isolated standard realm, with exact
         // primitive parameter categories supplied by its native caller.
-        // Only Symbol and undefined are fixed; the complete source proof permits
-        // primitive operations and proved Symbol calls, without browser inputs,
+        // Symbol, optional String and undefined are fixed; the source proof permits
+        // primitive operations and proved Symbol/String calls, without browser inputs,
         // arbitrary calls, global publication or external script reentry.
         ctbrowserIntrinsics
     };
