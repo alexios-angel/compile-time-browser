@@ -151,6 +151,11 @@ def main():
             for optimize in (False, True):
                 name = f"prototype-{case}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
+                if case in ("query", "matches") and (
+                    '"ctnative::js_element_t"' not in native.read_text()
+                    or "ctcompile/CTNative/Runtime/Browser.hpp" not in native.read_text()
+                ):
+                    raise RuntimeError(f"{case}: matches lost its typed browser receiver")
                 for method in {
                     "query": ("querySelector", "querySelectorAll"),
                     "query-all": ("querySelectorAll",),

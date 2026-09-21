@@ -17,14 +17,17 @@ matches the page. Every element and engine atom-table association is checked
 before source effects. The engine, document and their atom table must remain
 alive throughout the synchronous call.
 
-Generated selector calls use typed C++ prototype members from `ctnative.hpp`:
+Generated selector calls use typed C++ prototype members. `matches` carries its
+proved Style association in a borrowed `js_element_t` from `Runtime/Browser.hpp`:
 
 ```cpp
+auto receiver = ctnative::js_element_t{element, styles};
+auto matched = ctnative::Element.prototype.matches.call(receiver, ctnative::js_string{"button"});
 auto button = ctnative::Element.prototype.querySelector.call(element, styles, "button");
 auto buttons = ctnative::Element.prototype.querySelectorAll.call(element, styles, "button");
 ```
 
-`matches` and `closest` use the same `Element.prototype.<method>.call` form.
+`closest` uses the same explicit Style form as the query methods.
 `Element` is an `inline constexpr element_constructor` containing an
 `element_prototype` with the existing four stateless method objects. Their
 `const` members call public Style with explicit borrowed inputs. The flat
@@ -36,10 +39,18 @@ Source identity, receiver, mutation and lifetime proofs still apply; the C++
 `Element` spelling supplies no JavaScript proof on its own. This composition
 introduces no callable table, allocation or virtual dispatch.
 
-The [typed JavaScript interface plan](plans/native-js-types.md) separately tracks
-the remaining primitive classes, Object/Array prototype members and borrowed
-`js_document_t`/`js_element_t` views. Those migrations remain planned; current
-selector calls retain the explicit Style engine argument.
+`Runtime/Browser.hpp` also exposes `js_document_t{document, styles}` with
+`documentElement()`, `querySelector()` and `querySelectorAll()`. Both views borrow
+stable, live resources; they never own or extend their lifetime. Element views
+support all four selectors through instance methods or receiver-only prototype
+calls. Nullable results use `std::optional<js_element_t>` for DOM null, while
+query-all returns an owning `std::vector` snapshot of borrowed elements. Checked
+`.value()` extraction returns the underlying public `element_ref`.
+
+The [typed JavaScript interface plan](plans/native-js-types.md) tracks the remaining
+emitter migration and Object/Array interfaces. Source `document` globals and
+default `document.documentElement` arguments still need an explicit host binding
+proof; the C++ view supplies no such authority.
 
 This is an action entry, not native Bootstrap initialization. For example:
 

@@ -42,7 +42,10 @@ parameters after both functions pass the lift proof. Ordinary `instanceof`
 on exact local class constructions now folds under the complete class/prototype
 proof, preserving nominal identity and constructor effects. Broader Symbol
 operations, custom hooks and nonconstant `instanceof` still require proofs.
-Object/Array prototypes and document views remain planned.
+`Runtime/Browser.hpp` now supplies borrowed `js_document_t` and `js_element_t`
+views over public DOM/Style. Generated `matches` calls use the typed element
+receiver; document globals and the remaining selector emitter migration still
+need their source/ownership work. Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
@@ -372,7 +375,8 @@ This is valid C++ member composition; it does not require overloading `.` or
 building a dynamic prototype lookup mechanism. `Element.prototype.*` means a
 specific supported member after the final dot, not a runtime wildcard.
 
-The following is the **target interface**, not currently compilable output.
+The following combines implemented browser views with the **target interface**
+for Array/Object, which is not yet compilable output.
 `element` is a proved `js_element_t`, and `options` is a concrete generated
 closed-shape object:
 
@@ -381,7 +385,7 @@ ctnative::js_document_t document{dom, styles}; // Explicit borrowed resources.
 ctnative::js_string selector{".selected"};
 auto match = document.querySelector(selector);
 auto nodes = ctnative::Element.prototype.querySelectorAll.call(element, selector);
-ctnative::js_num count = nodes.length();
+auto count = nodes.size(); // Native snapshot; js_array_t is a separate interface.
 
 ctnative::js_array_t<ctnative::js_num> values;
 auto length = ctnative::Array.prototype.push.call(values, ctnative::js_num{1.0});
@@ -389,11 +393,12 @@ auto own = ctnative::Object.prototype.hasOwnProperty.call(
     options, ctnative::js_string{"enabled"});
 ```
 
-The first implemented step reuses the four stateless selector method
-types as members of `Element.prototype`, retaining the explicit
-Style argument: `Element.prototype.querySelector.call(element, styles, selector)`.
-Once the typed element/document view carries a proved Style association, that
-argument is supplied by the receiver. Both spellings call the same public core.
+The four stateless selector method types are members of `Element.prototype`.
+Raw `element_ref` callers retain the explicit Style argument. `Browser.hpp`
+adds receiver-only overloads for `js_element_t`; both spellings call the same
+public core. Generated `matches` calls now use this view with a typed String.
+The other generated selectors still use their existing raw nullable/snapshot
+carriers pending migration of their result and ownership flow.
 
 An intrinsic object's C++ type or spelling does not prove its JavaScript identity.
 HostContract must still establish the original binding, prototype, method,
@@ -410,6 +415,13 @@ inheritance or a mandatory heap-allocated superclass to every value.
 ## Browser ownership and accessors
 
 `js_document_t` borrows both the document and its associated live Style engine.
+This interface is implemented in `Runtime/Browser.hpp`, included after defining
+`CTNATIVE_DOM`. Element views cannot be default-constructed or implicitly created
+from null/undefined. Selectors return `std::optional<js_element_t>` for null-only
+absence and `std::vector<js_element_t>` for snapshots. A snapshot owns its sequence,
+while its elements still borrow their document and Style engine. Explicit checked
+`.value()` extraction bridges to public `element_ref` callers. Element identity
+compares document/node identity independently of the borrowed Style pointer.
 The existing borrowed-entry caller or owned-session object owns the atom table,
 document and engine. Views cannot outlive that owner; owner moves must not
 invalidate outstanding views. Validate document/node generations and engine atom

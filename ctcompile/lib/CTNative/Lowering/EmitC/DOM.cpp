@@ -671,7 +671,16 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
     }
-    for (mlir::Value & argument : arguments) { argument = rawText(argument); }
+    if (edge.kind == HostDOMMethod::matches) {
+        auto receiver = callWithConstValueOperands(
+            at, where, mlir::TypeRange{ec::OpaqueType::get(context, "ctnative::js_element_t")},
+            at.getStringAttr("ctnative::js_element_t"),
+            mlir::ValueRange{arguments[0], arguments[1]});
+        arguments.erase(arguments.begin(), arguments.begin() + 2);
+        arguments.insert(arguments.begin(), receiver.getResult(0));
+    } else {
+        for (mlir::Value & argument : arguments) { argument = rawText(argument); }
+    }
     static const llvm::DenseMap<HostDOMMethod, llvm::StringRef> callees{
         {HostDOMMethod::datasetKeys, "ctnative::dataset_keys"},
         {HostDOMMethod::toggleClass, "ctnative::toggle_class"},
