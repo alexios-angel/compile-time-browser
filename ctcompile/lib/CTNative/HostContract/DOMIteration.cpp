@@ -71,6 +71,20 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
                 elementAndUndefined(compare.getRhs(), compare.getLhs())) {
                 truth[compare.getResult()] = false;
                 booleans.emplace_back(operation, false);
+            } else {
+                const auto undefined = [](mlir::Value value) {
+                    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+                    auto global = value.getDefiningOp<ctjs::LoadGlobalOp>();
+                    // The DOM provider fixes this initial binding. Complete
+                    // entry reproof still rejects replacement and reentry.
+                    return (constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) ||
+                           (global && global.getName() == "undefined");
+                };
+                // Omitted and explicit undefined select their original default arm.
+                if (undefined(compare.getLhs()) && undefined(compare.getRhs())) {
+                    truth[compare.getResult()] = true;
+                    booleans.emplace_back(operation, true);
+                }
             }
         }
         if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);

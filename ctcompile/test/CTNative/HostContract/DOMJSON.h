@@ -414,6 +414,67 @@ module {
                   std::string::npos,
               "capture write locality is checked before comparing its order with any read");
     }
+
+    const std::string holderSource = R"MLIR(
+module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %flag = ctjs.constant #ctjs.boolean<true>
+    %condition = ctjs.truthy %flag
+    %key = ctjs.constant #ctjs.string<"same">
+    %holder = ctjs.create_object
+    %helper = ctjs.create_closure %callee[1] this %u
+    ctjs.set_property %holder[%key], %helper
+    %answer = scf.if %condition -> (!ctjs.value) {
+      %method = ctjs.get_property %holder[%key]
+      %called = ctjs.call %method(%holder, %element)
+      scf.yield %called : !ctjs.value
+    } else {
+      scf.yield %flag : !ctjs.value
+    }
+    ctjs.return %answer
+  }
+  ctjs.func private @same$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %answer = ctjs.compare strict_eq %element, %element
+    ctjs.return %answer
+  }
+}
+)MLIR";
+    auto holder = mlir::parseSourceString<mlir::ModuleOp>(holderSource, &context);
+    check(static_cast<bool>(holder), "guarded callable holder fixture parses");
+    if (holder) {
+        auto error = expandDOMHelpers(*holder, "entry$0", 100000);
+        check(!error, "immutable own callable slots remain known inside a source branch");
+        if (error) {
+            llvm::consumeError(std::move(error));
+        } else {
+            auto bound = contract;
+            bound.entry = "entry$0";
+            bound.moduleSha256 = hostContractFingerprint(*holder);
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                bound.provider = provider;
+                check(DOMEntryAnalysis(*holder, bound).proved(),
+                      "guarded callable expansion receives complete DOM reproof");
+            }
+        }
+    }
+    const std::string slot = "    ctjs.set_property %holder[%key], %helper\n";
+    for (const auto & invalid :
+         {replaced(holderSource, slot, ""),
+          replaced(replaced(holderSource, slot, ""), "      %method =", slot + "      %method ="),
+          replaced(replaced(holderSource, slot, ""), "    ctjs.return %answer",
+                   slot + "    ctjs.return %answer"),
+          replaced(holderSource, "      %method =", slot + "      %method ="),
+          replaced(holderSource, "%method(%holder, %element)", "%method(%element, %element)")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "invalid guarded callable holder fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(error),
+              "missing, conditional, late or replaced slots and wrong receivers refuse");
+        if (error) { llvm::consumeError(std::move(error)); }
+    }
 }
 
 } // namespace ctcompile::test::host_contract

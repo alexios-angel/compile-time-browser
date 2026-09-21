@@ -160,7 +160,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             const bool first = &region == &branch.getThenRegion();
             mlir::Value refined;
             Kind previous = Kind::implicit;
+            const bool previousRootPresent = documentRootPresent;
             const auto restore = llvm::make_scope_exit([&] {
+                documentRootPresent = previousRootPresent;
                 if (!refined) { return; }
                 // Look up by key: recursive visits can rehash both maps.
                 values[refined] = previous;
@@ -177,6 +179,12 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 refined = predicate->second.optional;
                 previous = values[refined];
                 const bool present = first == predicate->second.stringOnTrue;
+                if (present && previous == Kind::nullableElement &&
+                    provedDocumentRoots.contains(refined.getDefiningOp<ctjs::GetPropertyOp>())) {
+                    // Every admitted effect preserves the document root:
+                    // structural mutation and reentry fail the complete proof.
+                    documentRootPresent = true;
+                }
                 // A closest result borrows the original document. Only this
                 // arm may dereference it; absence grants no scalar-null facts.
                 values[refined] =

@@ -7,12 +7,23 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                            llvm::MutableArrayRef<Capture> captures, unsigned depth) {
     auto & block = function.getBody().front();
     auto & body = target.getBody().front();
+    mlir::OpBuilder at(call);
     mlir::IRMapping mapping;
     mapping.map(body.getArgument(ctjs::arg_callee), callee);
     mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
-    for (auto [formal, actual] :
-         llvm::zip(body.getArguments().drop_front(ctjs::implicit_arguments), arguments)) {
+    for (auto [index, formal] :
+         llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
         if (!step()) { return false; }
+        mlir::Value actual;
+        if (index < arguments.size()) {
+            actual = arguments[index];
+        } else {
+            // Missing JavaScript arguments are undefined. The complete helper
+            // proof excludes arguments/new.target observers before inlining.
+            actual = ctjs::ConstantOp::create(at, call->getLoc(),
+                                              ctjs::UndefinedAttr::get(call->getContext()));
+            ++operationCount;
+        }
         mapping.map(formal, actual);
     }
     const auto cloneBody = [&](auto && self, mlir::Block & source, mlir::OpBuilder & at) -> bool {
@@ -99,7 +110,6 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         }
         return true;
     };
-    mlir::OpBuilder at(call);
     if (!cloneBody(cloneBody, body, at)) { return false; }
     return true;
 }
@@ -341,7 +351,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
                             "DOM helper callable escapes or its call shape is unsupported");
                     }
                     if (!precedesInStructuredBody(closure, operation) ||
-                        arguments.size() + ctjs::implicit_arguments !=
+                        arguments.size() + ctjs::implicit_arguments >
                             target.getBody().front().getNumArguments()) {
                         return refuse("DOM helper call has unsupported arity or source order");
                     }

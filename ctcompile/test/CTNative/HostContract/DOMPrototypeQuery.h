@@ -1,6 +1,7 @@
 #pragma once
 
 #include "HostContractFixtures.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace ctcompile::test::host_contract {
 
@@ -46,7 +47,7 @@ module {
         });
         return empty;
     };
-    const auto query = [&](const std::string & text, bool expected) {
+    const auto query = [&](const std::string & text, bool expected, bool rootGuard = false) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(input), "independent prototype selector fixture parses");
         if (!input) { return; }
@@ -65,7 +66,8 @@ module {
         }
         if (!proof.proved()) { return; }
         const bool document = request.currentDocumentParameter.has_value();
-        unsigned intrinsics = 0, documents = 0, prototypes = 0, methods = 0, calls = 0, lengths = 0;
+        unsigned intrinsics = 0, documents = 0, prototypes = 0, methods = 0, calls = 0, lengths = 0,
+                 roots = 0;
         input->walk([&](ctjs::LoadGlobalOp load) {
             intrinsics += proof.isInitialIntrinsic(load);
             documents += proof.isCurrentDocument(load);
@@ -74,11 +76,18 @@ module {
             prototypes += proof.isElementPrototype(read);
             methods += proof.method(read).has_value();
             lengths += proof.isElementVectorLength(read);
+            roots += proof.isDocumentElement(read);
         });
         input->walk([&](ctjs::CallOp call) {
             const auto * edge = proof.call(call);
             if (!edge) { return; }
             ++calls;
+            if (rootGuard) {
+                check(!edge->explicitReceiver && edge->element == call.getReceiver() &&
+                          edge->kind == HostDOMMethod::matches && edge->usesStyle(),
+                      "a guarded root reread retains its receiver and Style association");
+                return;
+            }
             if (document) {
                 check(!edge->explicitReceiver && edge->element == proof.documentParameter() &&
                           edge->kind == HostDOMMethod::documentQuerySelectorAll &&
@@ -91,8 +100,9 @@ module {
                       (text == collection ? edge->returnsElementVector() : edge->returnsElement()),
                   "prototype call binds its explicit element, Style and result carrier");
         });
-        check(document ? documents == 1 && intrinsics == 0 && prototypes == 0 && methods == 1 &&
-                             calls == 1 && lengths == 1 &&
+        check(document ? documents == (rootGuard ? 2u : 1u) && intrinsics == 0 && prototypes == 0 &&
+                             methods == 1 && calls == 1 && lengths == (rootGuard ? 0u : 1u) &&
+                             roots == (rootGuard ? 2u : 0u) &&
                              proof.documentParameter() ==
                                  proof.parameters()[*request.currentDocumentParameter]
                        : documents == 0 && intrinsics == 1 && prototypes == 1 && methods == 2 &&
@@ -210,6 +220,85 @@ module {
     contract.moduleSha256 = hostContractFingerprint(*input);
     check(DOMEntryAnalysis(*input, contract).proved(),
           "restoring the original document receiver restores the live proof");
+
+    context.getOrLoadDialect<mlir::scf::SCFDialect>();
+    const std::string guardedRoot = R"MLIR(
+module {
+  ctjs.func @query$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value, %expected: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %document = ctjs.load_global "document"
+    %rootName = ctjs.constant #ctjs.string<"documentElement">
+    %selector = ctjs.constant #ctjs.string<"button">
+    %root = ctjs.get_property %document[%rootName]
+    %test = ctjs.truthy %root
+    %answer = scf.if %test -> (!ctjs.value) {
+      %current = ctjs.load_global "document"
+      %reread = ctjs.get_property %current[%rootName]
+      %methodName = ctjs.constant #ctjs.string<"matches">
+      %method = ctjs.get_property %reread[%methodName]
+      %matched = ctjs.call %method(%reread, %selector)
+      scf.yield %matched : !ctjs.value
+    } else {
+      %absent = ctjs.constant #ctjs.boolean<false>
+      scf.yield %absent : !ctjs.value
+    }
+    ctjs.return %answer
+  }
+}
+)MLIR";
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        contract.provider = provider;
+        contract.currentDocumentParameter.reset();
+        query(guardedRoot, false);
+        for (unsigned anchor : {0u, 1u}) {
+            contract.currentDocumentParameter = anchor;
+            query(guardedRoot, true, true);
+        }
+    }
+    for (const auto & invalid : {
+             replaced(guardedRoot, "%test = ctjs.truthy %root",
+                      "%not = ctjs.unary not %root\n    %test = ctjs.truthy %not"),
+             replaced(guardedRoot, "%test = ctjs.truthy %root",
+                      "%flag = ctjs.constant #ctjs.boolean<true>\n    %test = ctjs.truthy %flag"),
+             replaced(guardedRoot, "%root = ctjs.get_property %document[%rootName]",
+                      "%queryName = ctjs.constant #ctjs.string<\"querySelector\">\n"
+                      "    %query = ctjs.get_property %document[%queryName]\n"
+                      "    %root = ctjs.call %query(%document, %selector)"),
+             replaced(guardedRoot, "    ctjs.return %answer",
+                      "    %later = ctjs.get_property %document[%rootName]\n"
+                      "    %name = ctjs.constant #ctjs.string<\"matches\">\n"
+                      "    %method = ctjs.get_property %later[%name]\n"
+                      "    %matched = ctjs.call %method(%later, %selector)\n"
+                      "    ctjs.return %matched"),
+         }) {
+        query(invalid, false);
+    }
+    input = mlir::parseSourceString<mlir::ModuleOp>(guardedRoot, &context);
+    check(static_cast<bool>(input), "mutable document root guard fixture parses");
+    if (!input) { return; }
+    ctjs::TruthyOp guard;
+    ctjs::GetPropertyOp reread;
+    input->walk([&](ctjs::TruthyOp found) { guard = found; });
+    input->walk([&](ctjs::GetPropertyOp found) {
+        if (ctjs::constantKey(found.getKey()) == "documentElement") { reread = found; }
+    });
+    const auto guarded = guard.getValue();
+    mlir::OpBuilder at(guard);
+    auto forged =
+        ctjs::ConstantOp::create(at, guard.getLoc(), ctjs::BooleanAttr::get(&context, true));
+    reread->setAttr("ctnative.document_root_present", builder.getBoolAttr(true));
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    check(DOMEntryAnalysis(*input, contract).proved(), "live root guard ignores printed reports");
+    guard->setOperand(0, forged.getResult());
+    check(noEvidence(*input, DOMEntryAnalysis(*input, contract)),
+          "changed document root guard invalidates its source fingerprint");
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    check(noEvidence(*input, DOMEntryAnalysis(*input, contract)),
+          "fresh fingerprint and forged root report cannot replace a presence guard");
+    guard->setOperand(0, guarded);
+    contract.moduleSha256 = hostContractFingerprint(*input);
+    check(DOMEntryAnalysis(*input, contract).proved(),
+          "restoring the original root guard restores its live presence proof");
 }
 
 } // namespace ctcompile::test::host_contract

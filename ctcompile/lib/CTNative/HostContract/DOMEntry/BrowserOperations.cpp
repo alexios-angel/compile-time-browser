@@ -219,7 +219,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         const auto key = ctjs::constantKey(read.getKey());
         if (hasKind(read.getObject(), Kind::document)) {
             if (key == "documentElement") {
-                values[read.getResult()] = Kind::nullableElement;
+                values[read.getResult()] =
+                    documentRootPresent ? Kind::element : Kind::nullableElement;
                 provedDocumentRoots.insert(read);
                 return true;
             }

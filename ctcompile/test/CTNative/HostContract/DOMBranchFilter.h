@@ -159,6 +159,28 @@ module {
                   "each nested call retains its own saved input through both exception paths");
         }
     }
+    for (const auto & omitted :
+         {replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%u)"),
+          replaced(varying, "ctjs.call %helper(%u, %element)", "ctjs.call %helper(%u)")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(omitted, &context);
+        check(static_cast<bool>(input), "omitted helper argument fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "omitted helper arguments expand without specializing other calls");
+        if (error) {
+            llvm::consumeError(std::move(error));
+            continue;
+        }
+        unsigned missing = 0;
+        input->walk([&](ctjs::InvokeOp invoke) {
+            auto fallback =
+                llvm::cast<ctjs::InvokeYieldOp>(invoke.getUnwindBody().front().getTerminator());
+            auto constant = fallback.getValues().front().getDefiningOp<ctjs::ConstantOp>();
+            missing += constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+        });
+        check(missing == 2 && mlir::succeeded(mlir::verify(*input)),
+              "both exception continuations retain the omitted argument as undefined");
+    }
     auto lateCapture = replaced(captured, "    ctjs.cell_set %cell, %text\n", "");
     lateCapture = replaced(lateCapture, "    ctjs.return %answer",
                            "    ctjs.cell_set %cell, %text\n    ctjs.return %answer");
@@ -179,7 +201,8 @@ module {
           replaced(captured, "    %answer = scf.if",
                    "    ctjs.cell_set %cell, %u\n    %answer = scf.if"),
           replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%element, %text)"),
-          replaced(source, "ctjs.call %helper(%u, %text)", "ctjs.call %helper(%u)"),
+          replaced(source, "ctjs.call %helper(%u, %text)",
+                   "ctjs.call %helper(%u, %text, %element)"),
           replaced(source, "    %answer = scf.if",
                    "    ctjs.store_global \"saved\", %helper\n    %answer = scf.if")}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);

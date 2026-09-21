@@ -167,6 +167,7 @@ struct Body {
     ctjs::FuncOp & target;
     llvm::function_ref<bool()> spend;
     llvm::function_ref<bool(mlir::Value)> emptyString;
+    bool documentRootPresent = false;
 
     bool hasKind(mlir::Value value, Kind kind) const {
         const auto found = values.find(value);
