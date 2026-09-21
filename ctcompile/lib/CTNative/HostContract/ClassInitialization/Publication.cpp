@@ -82,7 +82,9 @@ bool classInitialization::sinkCapturedPublication(
     llvm::SmallVectorImpl<unsigned> & requiredHelpers) {
     // ponytail: terminal registration, or one unconstructed base with one leaf.
     // Shared/deeper families and observable suffixes need a wider publication proof.
-    if (contract.provider != HostContract::Provider::closedSource || setup.getArgs().size() != 1) {
+    const bool domData = contract.provider == HostContract::Provider::ctbrowserDOMDataSession;
+    if ((!domData && contract.provider != HostContract::Provider::closedSource) ||
+        setup.getArgs().size() != 1) {
         return true;
     }
     auto constructor = setup.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
@@ -280,11 +282,14 @@ bool classInitialization::sinkCapturedPublication(
         function.setUpvalueCount(0);
         return true;
     }
-    llvm::SmallVector<ctjs::StringAttr> keys;
+    llvm::SmallVector<mlir::Value> keys;
+    llvm::SmallSetVector<unsigned, 2> keyParameters;
     for (ctjs::ConstructOp made : instances) {
-        for (mlir::Value argument : invocation.getArgs().take_front(2)) {
+        for (auto [position, original] : llvm::enumerate(invocation.getArgs().take_front(2))) {
             if (!step()) { return false; }
-            if (auto parameter = llvm::dyn_cast<mlir::BlockArgument>(argument)) {
+            auto argument = original;
+            auto parameter = llvm::dyn_cast<mlir::BlockArgument>(argument);
+            if (parameter) {
                 if (parameter.getOwner() != &body ||
                     parameter.getArgNumber() < ctjs::implicit_arguments) {
                     return true;
@@ -296,21 +301,58 @@ bool classInitialization::sinkCapturedPublication(
             auto literal = argument.getDefiningOp<ctjs::ConstantOp>();
             auto text =
                 literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
-            if (!text) { return true; }
-            keys.push_back(text);
+            if (!text) {
+                // Only the outer key can carry identity. Keep the original
+                // allocation/input, and let nested routing prove every use.
+                if (position != 0 || !parameter) { return true; }
+                auto object = argument.getDefiningOp<ctjs::CreateObjectOp>();
+                auto input = llvm::dyn_cast<mlir::BlockArgument>(argument);
+                auto scope = made->getParentOfType<ctjs::FuncOp>();
+                const bool fresh = object && object->getBlock() == made->getBlock() &&
+                                   object->isBeforeInBlock(made);
+                const bool element =
+                    domData && input && scope.getSymName() == contract.entry &&
+                    input.getOwner() == &scope.getBody().front() &&
+                    input.getArgNumber() >= ctjs::implicit_arguments &&
+                    llvm::is_contained(contract.elementParameters,
+                                       input.getArgNumber() - ctjs::implicit_arguments);
+                if (!fresh && !element) { return true; }
+                for (mlir::OpOperand & use : parameter.getUses()) {
+                    if (!step()) { return false; }
+                    if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                        (use.getOwner() != invocation || use.getOperandNumber() != 2)) {
+                        return true;
+                    }
+                }
+                keyParameters.insert(parameter.getArgNumber() - ctjs::implicit_arguments);
+            }
+            keys.push_back(argument);
         }
     }
     // Precharge the new calls, constants, selection and rooted cleanup. The
     // outer pass owns a disposable candidate if any later proof refuses.
-    const uint64_t cost = uint64_t(24) * instances.size() + 8;
+    const uint64_t cost = (uint64_t(24) + 4 * keyParameters.size()) * instances.size() + 8;
     if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
     remaining -= static_cast<unsigned>(cost);
     if (!reason.empty()) { return false; }
     for (auto [index, made] : llvm::enumerate(instances)) {
         mlir::OpBuilder at(made);
         at.setInsertionPointAfter(made);
-        auto first = ctjs::ConstantOp::create(at, invocation.getLoc(), keys[2 * index]);
-        auto second = ctjs::ConstantOp::create(at, invocation.getLoc(), keys[2 * index + 1]);
+        auto first = keys[2 * index];
+        if (auto literal = first.getDefiningOp<ctjs::ConstantOp>()) {
+            first = ctjs::ConstantOp::create(at, invocation.getLoc(), literal.getValue());
+        }
+        auto second = ctjs::ConstantOp::create(
+            at, invocation.getLoc(),
+            keys[2 * index + 1].getDefiningOp<ctjs::ConstantOp>().getValue());
+        // The formal only fed this registration. Preserve evaluation of its
+        // actual, but stop transporting a host identity into the constructor.
+        for (unsigned parameter : keyParameters) {
+            auto absent = ctjs::ConstantOp::create(at, invocation.getLoc(),
+                                                   ctjs::UndefinedAttr::get(module.getContext()));
+            absent->moveBefore(made);
+            made.getArgsMutable()[parameter].set(absent);
+        }
         mlir::Value callee = source;
         mlir::Value receiver;
         if (holder) {

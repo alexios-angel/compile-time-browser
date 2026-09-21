@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Prepare complete Data with one DOM identity; retain the incomplete session refusal."""
+"""Prove constructor key transport; retain the incomplete DOM session refusal."""
 
 import argparse
 from pathlib import Path
 import re
 
 from CTNative.Browser import native_dom as dom
+from CTNative.Exports import boundary
 from CTNative.harness import run
 from CTNative.HostContract import contract as host
 from CTNative.Lowering.Objects import class_initialization_inputs as classes
 
 
-def source():
+def source(constructor=False):
     inputs = Path(__file__).resolve().parents[1] / "Lowering/Objects/Inputs/class-initialization"
     text = (inputs / "50.mlir").read_text()
-    original = text.split("//--- class-map-record-nested-vendor-holder.js\n", 1)[1].split(
+    kind = "constructor" if constructor else "holder"
+    original = text.split(f"//--- class-map-record-nested-vendor-{kind}.js\n", 1)[1].split(
         "//---", 1
     )[0]
     root = Path(__file__).resolve().parents[4]
@@ -29,6 +31,13 @@ def source():
     )
     if data not in original:
         raise RuntimeError("complete vendor Data declaration changed")
+    if constructor:
+        original = (
+            original.replace("constructor(n)", "constructor(n, key)")
+            .replace('e.set("element", "bs.item", this)', 'e.set(key, "bs.item", this)')
+            .replace("new Item(2)", "new Item(2, element)")
+            .replace("new Item(7)", "new Item(7, element)")
+        )
     adapted = (
         original.replace("function probe() {", "function probe(element) {", 1)
         .replace('"element"', "element")
@@ -40,6 +49,58 @@ def source():
     return adapted
 
 
+def object_constructors(args, constructor):
+    original = (
+        constructor.replace("probe(element)", "probe()")
+        .replace("    const t", "    const element = {};\n    const t", 1)
+        .replace("a = savedFirst.n", "return savedFirst.n", 1)
+        + "\nvar a = probe();\n"
+    )
+    checked = 0
+    for label, text, expected in (
+        ("object", original, 59112),
+        (
+            "alias",
+            original.replace("    const t", "    const alias = element;\n    const t", 1).replace(
+                "new Item(7, element)", "new Item(7, alias)"
+            ),
+            59112,
+        ),
+        (
+            "distinct",
+            original.replace("    const t", "    const other = {};\n    const t", 1)
+            .replace("new Item(7, element)", "new Item(7, other)")
+            .replace('e.get(element, "bs.item").n * 1000', 'e.get(other, "bs.item").n * 1000')
+            .replace(
+                "return savedFirst.n",
+                'return (e.get(element, "bs.item") === null) * 100000 + savedFirst.n',
+            ),
+            159112,
+        ),
+    ):
+        name = "class-map-record-constructor-key-" + label
+        js, ir, _ = boundary.prepare(args, name, text)
+        for command in ([args.node, "-e", classes.NODE, str(js)], [args.reference, str(js)]):
+            if run(command).stdout != f"a={expected}\n":
+                raise RuntimeError(f"{name}: source observation changed")
+        requested = host.manifest(args.opt, ir)
+        requested.update(initial_intrinsics=["Map", "__ctbrowser_class_defined"])
+        prepared = classes.prepare(args, name, ir, requested, success=True)
+        for optimize in (False, True):
+            native = args.work / f"{name}-{optimize}.native.mlir"
+            run(
+                [
+                    args.opt,
+                    str(prepared),
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    "-o",
+                    str(native),
+                ]
+            )
+            checked += classes.check_executable(args, f"{name}-{optimize}", native, expected)
+    return checked
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "node", "reference"):
@@ -49,6 +110,7 @@ def main():
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
     original = source()
+    constructor = source(constructor=True)
     cases = {
         "input": (original, 1, ""),
         "alias": (
@@ -82,7 +144,36 @@ def main():
             1,
             "unknown call, binding or reflective effect (op ctjs.create_closure)",
         ),
+        "constructor": (constructor, 1, ""),
+        "constructor-alias": (
+            constructor.replace(
+                "    class Item", "    const alias = element;\n    class Item", 1
+            ).replace("new Item(7, element)", "new Item(7, alias)"),
+            1,
+            "",
+        ),
+        "constructor-two-inputs": (
+            constructor.replace("probe(element)", "probe(element, other)").replace(
+                "new Item(7, element)", "new Item(7, other)"
+            ),
+            2,
+            "class nested Map DOM inputs require an alias proof",
+        ),
     }
+    for label, statement in (
+        ("field", "this.element = key;"),
+        ("property", "key.n;"),
+        ("coercion", "key + '';"),
+        ("capture", "const unused = () => key;"),
+        ("suffix", "a = 17;"),
+    ):
+        cases["constructor-" + label] = (
+            constructor.replace(
+                'e.set(key, "bs.item", this);', f'e.set(key, "bs.item", this); {statement}'
+            ),
+            1,
+            "class ",
+        )
     observed = prepared_count = refusals = native_refusals = 0
     for name, (text, parameters, diagnostic) in cases.items():
         if not diagnostic:
@@ -92,7 +183,8 @@ def main():
                 [args.node, "-e", classes.NODE, str(observed_source)],
                 [args.reference, str(observed_source)],
             ):
-                if run(command).stdout != "a=15927\n":
+                expected = 59112 if name.startswith("constructor") else 15927
+                if run(command).stdout != f"a={expected}\n":
                     raise RuntimeError(f"{name}: source observation changed")
             observed += 1
         ir, contract = dom.prepare(args, name, text, parameters, entry_name="probe")
@@ -147,10 +239,11 @@ def main():
         ):
             classes.prepare(args, f"{name}-{label}", ir, requested, success=False, options=options)
             refusals += 1
+    executions = object_constructors(args, constructor)
     print(
         f"class DOM Data: {observed} Node/VM observations, {prepared_count} prepared entries, "
         f"{refusals} preparation refusals, {native_refusals} incomplete-session refusals; "
-        "no native DOM admission"
+        f"{executions} native object-key executions; no native DOM admission"
     )
 
 

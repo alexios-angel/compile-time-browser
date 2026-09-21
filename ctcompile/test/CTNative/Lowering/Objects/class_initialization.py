@@ -40,6 +40,7 @@ OBSERVATIONS.update(
 )
 POSITIVES.update(
     {
+        "class-map-record-nested-constructor-object-key",
         "class-map-record-nested-object-holder",
         "class-map-record-nested-object-distinct",
         "class-map-record-nested-object-changing-key",
