@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed document query snapshots, 2026-09-21 UTC
+
+Continued **c786ecd6** and resumed the interrupted query-all draft.
+**d5149745** admits source `document.querySelectorAll(String)` through the explicit
+document binding. Native output keeps `std::vector<js_element_t>` snapshots and
+extracts checked members for existing element operations. Exact receiver, bounds,
+document/Style ownership, mutation and escape proofs remain enforced. Public
+ctbrowser DOM/Style supplies the browser behavior; native output has no Script
+dependency.
+
+**607cf1be** separately corrects Shell collection reads to use actual membership,
+removing the inconsistent numeric-index cap above 1,000,000. Overflow, canonical
+parsing and actual-length checks remain; `ownKeys` and proxy-spread caps are
+unchanged. This fixes supported-index consistency with `length`/`item()`. The
+browser check covers huge absent indices, not a million-member VM collection.
+
+Focused checks pass: new document-all lit **32 native executions, 84 refusals,
+87.38 s**; existing document/element-query-all lit **2/2, 122.39 s**, with
+**48/82** and **16/44** executions/refusals. Exact host-contract and dom_nodes_wpt
+CTests each pass **1/1**, respectively **0.56 s** and **0.07 s** total. All eleven
+code/test hashes match the devbox. Scoped checks pass; required formatting retains
+16 untouched diagnostics. Full suites and broad replays were skipped. No new
+Node/VM differential result or full-Bootstrap admission is claimed.
+
+**Next browser boundary:** the original Bootstrap `R.find` helper's omitted
+receiver needs a complete `document.documentElement` presence and helper/concat
+proof. The binding alone does not guarantee a root exists. Remaining element
+selector carrier migration, the application driver, overlapping DOM Map keys,
+original B/Data+B, object-valued fields, tagged Map snapshots, broader Strings,
+conditional callees and mutable cells remain unfinished.
+
+[Exact checks and next default-root boundary](handoff/2026-09-21-document-snapshots.md).
+
 ## Explicit source document binding, 2026-09-21 UTC
 
 Continued clean **8420a066** and implemented its next browser boundary.

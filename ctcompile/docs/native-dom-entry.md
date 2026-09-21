@@ -91,8 +91,9 @@ Both `ctbrowser-dom-v1` and `ctbrowser-dom-session-v1` accept the optional field
 The source `document` is that input's owning document, even when the input node is
 detached. An absent field grants no document binding; other providers reject it.
 This contract promises the original document binding, `documentElement` accessor,
-`querySelector` method and their lookup chains. The complete source proof rejects
-binding replacement, accessor/method/prototype mutation, unknown calls and escapes.
+`querySelector`/`querySelectorAll` methods and their lookup chains. The complete
+source proof rejects binding replacement, accessor/method/prototype mutation,
+unknown calls and escapes.
 A saved document alias retains the same authority; a saved query method must still
 be called with its exact original receiver.
 
@@ -114,10 +115,21 @@ only in the present arm. Unguarded use, borrowed returns/storage, branch/loop
 transport and explicit source null comparisons remain refused. Invalid selector
 syntax keeps the existing C++ exception and preceding source effects.
 
-`js_document_t::querySelectorAll` is available to C++ callers, but source
-`document.querySelectorAll` remains unproved. This binding also does not complete
-Bootstrap's default-root helpers, omitted element inputs, initialization or the
-application driver.
+Source `document.querySelectorAll(String)` uses the same explicit binding and
+proof of the original method and receiver. It retains `std::vector<ctnative::js_element_t>`
+locally: the vector owns snapshot membership, and its views borrow the anchor's
+document and live Style. Proved `.length` reads and bounded indexed loops reuse
+the element-snapshot proof below. Each indexed use emits `.at(index).value()`
+to pass a checked raw element to existing operations; the whole vector is never
+converted to a second raw-element vector. Document scope includes a matching root,
+preserves tree order and deduplication, and excludes shadow descendants. Empty or
+removed roots yield empty snapshots. Attribute/class writes preserve saved
+membership, while later queries see the changes. Returns, storage, joins,
+callback retention and unproved indices remain refused; dataset-enabled mutation
+loops still require a separate backedge alias proof.
+
+This binding does not complete Bootstrap's default-root presence proof and full
+helpers, omitted element inputs, initialization or the application driver.
 
 The focused `CTNative/Browser/native-dom-document.test` passes **48 native
 executions and 82 refusals** across borrowed/owned providers, both compilers,
@@ -127,6 +139,18 @@ cross-document identity, invalid input/Style rejection before effects, selector
 failure order and absence of Script symbols. The focused host-contract CTest passes
 **1/1** with schema and programmatic-provider controls; these are not full-suite or
 Node/VM differential results.
+
+The focused `CTNative/Browser/native-dom-document-all.test` passes **32 native
+executions and 84 refusals** in **87.38s**, across borrowed/owned providers,
+GCC/Clang, both printing layouts and optimization policies. It covers both anchor
+positions, typed snapshot storage, current-root selection, ordered writes,
+duplicate matches, live hover, invalid inputs/Style and selector failure order.
+The selected document and Element query-all regressions also pass **2/2** in
+**122.39s**: **48/82** and **16/44** native executions/refusals respectively.
+The exact host-contract CTest passes **1/1** in **0.56s** total, including live IR
+mutations, forged printed evidence and insufficient budgets for this query-all
+path. These are focused public DOM/Style checks; no new Node/VM differential or
+full-suite pass is claimed.
 
 ## Dataset key snapshots
 
@@ -345,8 +369,8 @@ selectors and unguarded nullable receivers refuse. An explicitly bound, guarded
 `document.documentElement` can supply an element; default-root helper admission
 still needs its complete nullability and call proof.
 
-`querySelectorAll(String)` calls public `engine::select` with `first_only=false`
-and returns a local `std::vector<ctbrowser::element_ref>`. The vector owns its
+Element `querySelectorAll(String)` calls public `engine::select` with
+`first_only=false` and returns a local `std::vector<ctbrowser::element_ref>`. The vector owns its
 slots; the caller or session document owns the nodes. The shared selector engine
 provides tree order, deduplication, root exclusion, `:scope`, detached-subtree
 queries and shadow boundaries. Attribute/class changes leave saved membership
@@ -414,13 +438,15 @@ are also refused. The source proof tests check the exact cap and selected arms;
 standalone native tests cover empty/scoped/detached results, saved counts across DOM
 writes, invalid-selector effect order and borrowed/owned document validation.
 
-**Known indexing boundary:** Shell's NodeList proxy returns `undefined` for numeric
-indices above 1,000,000 (`bindings/document/collections.cpp`). The existing direct
-query-all indexed lowering currently returns the corresponding element instead;
-large-index equivalence is unresolved. Count-only concat does not observe these
-values. Before admitting indexed concat consumers, preserve this distinction with
-an element-or-undefined proof and reconcile the existing direct indexed path;
-Script remains the oracle.
+Shell's collection numeric reads now check canonical index parsing, overflow and
+actual membership, matching `length` and `item`; the former 1,000,000 numeric read cap
+is removed from `bindings/document/collections.cpp`. Reading an existing vector
+member does not allocate by index, and the old guard ran after collection refresh.
+The focused `dom_nodes_wpt` check passes with huge absent, overflowing and
+noncanonical index reads; no collection with over one million members was executed.
+The separate `ownKeys` enumeration limit of 1,000,000 and proxy-spread limit of
+2^24 are unchanged. Indexed concat consumers still need their own presence and
+spread proof; a NodeList is not a JavaScript Array.
 
 A `closest`, `querySelector` or document-root result is a local borrowed identity,
 with a canonical empty `element_ref{}` for no match. Strict equality compares it

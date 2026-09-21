@@ -46,8 +46,9 @@ operations, custom hooks and nonconstant `instanceof` still require proofs.
 views over public DOM/Style. Generated `matches` calls use the typed element
 receiver. An explicit `current_document_parameter` host field now binds source
 `document` to an element input's owner and emits guarded root/querySelector access
-through the document view. Source document query-all, default-root helpers, the
-application driver and remaining selector carrier migration still need work.
+through the document view. Source document query-all now retains a typed element
+snapshot and extracts checked members for existing operations. Default-root
+helpers, the application driver and remaining selector carrier migration still need work.
 Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
@@ -402,6 +403,8 @@ adds receiver-only overloads for `js_element_t`; both spellings call the same
 public core. Generated `matches` calls now use this view with a typed String.
 Generated document-root and document `querySelector` calls now use `js_document_t`,
 then bridge their null-only optional result to the existing raw element carrier.
+Document `querySelectorAll` retains `std::vector<js_element_t>` locally; each
+proved indexed read extracts `.at(index).value()` for existing raw-element uses.
 Other generated selectors still use their existing raw nullable/snapshot carriers
 pending migration of their result and ownership flow.
 
@@ -449,7 +452,7 @@ The implemented host binding is optional `current_document_parameter` on
 `ctbrowser-dom-v1` and `ctbrowser-dom-session-v1`. Its index names a declared
 element input whose owner is the source `document`; detached anchors still select
 that document. Both JSON parsing and live proof reject invalid indices and foreign
-providers. The contract promises the original binding, root accessor, query method
+providers. The contract promises the original binding, root accessor, query methods
 and lookup chains. Complete source proof rejects their replacement or mutation,
 incorrect receivers, escaped handles and unsupported effects.
 
@@ -460,8 +463,17 @@ reads the current document root, and document queries include it. The
 `element_ref` carrier. Exact truthiness guards authorize present-result uses;
 borrowed returns, storage and joins remain refused. The existing caller/session
 owns every resource, with handle and Style validation before source effects.
-Source `document.querySelectorAll` remains unproved despite the C++ view method.
-The full Bootstrap default-root helpers and application driver remain unfinished.
+Source `document.querySelectorAll(String)` retains the typed owning snapshot of
+borrowed views and reuses the existing `.length`/bounded-index proof. Each indexed
+extraction preserves the anchor's live Style association; no whole-vector
+conversion is added. Saved membership survives attribute/class writes, and later
+queries see current membership. Snapshot escapes, joins, unproved indices and
+dataset-enabled mutation loops remain refused. The full Bootstrap default-root
+presence proof, complete helpers and application driver remain unfinished.
+The focused document query-all source test passes **32 native executions and
+84 refusals**, with both providers, compilers, printing layouts and optimization
+policies; the exact host-contract CTest passes **1/1** with live IR and bounded-proof
+controls. These are public DOM/Style checks, not new Node/VM differential results.
 See [native DOM entries](../native-dom-entry.md#explicit-source-document-binding)
 for the contract and focused validation scope.
 
@@ -672,14 +684,17 @@ existing `auto`/template deduction.
    and thrown exception), default matching, inheritance and primitive rejection
    against Node and the VM before extending source admission. The current VM
    skips custom hooks; record or resolve that gap without matching native to it.
-   Reconcile Shell's current NodeList indices above
-   1,000,000 returning undefined before broadening indexed `R.find` consumers;
-   retain the separate 2^24 proxy-spread cap. A NodeList is not a JavaScript Array.
+   Shell's collection numeric reads now use canonical parsing, overflow checks
+   and actual membership, removing the former 1,000,000 numeric read cap. Focused
+   browser checks cover huge absent/overflow/noncanonical reads; no collection
+   above one million members was measured. The independent 1,000,000 `ownKeys`
+   enumeration and 2^24 proxy-spread limits remain. Indexed `R.find` consumers
+   still need their own presence/spread proof. A NodeList is not a JavaScript Array.
 4. **Document/element views in progress.** Borrowed/owned entries now emit typed
-   `matches` receivers and explicitly bound document root/querySelector calls.
-   Migrate remaining nullable/snapshot carriers, prove source document query-all
-   and Bootstrap default-root calls, then connect an application driver. A C++
-   accessor alone never broadens source admission.
+   `matches` receivers, explicitly bound document root/querySelector calls and
+   document query-all snapshots. Migrate remaining nullable/element-selector
+   snapshot carriers, prove Bootstrap default-root calls, then connect an
+   application driver. A C++ accessor alone never broadens source admission.
 5. **BigInt and Symbol.** Symbol values, fresh creation, well-known properties
    and primitive methods now have a shared Core/native API. Direct well-known
    reads, absent/String construction, direct primitive methods and branch/loop/
