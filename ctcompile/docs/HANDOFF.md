@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Published record fields and remainder indices, 2026-09-21 UTC
+
+Continued clean **c475dde8**. **f65dedd5** admits scalar own-field reads from exact
+fresh local records as arguments to a real published DOM Data family. The
+existing complete caller-leaf census retains all fields, aliases and observers;
+read-time category evidence does not replace the original read. Four witnesses
+execute with real document owners, including aliases, saved reads before mutation
+and arithmetic. The complete vendor Data/class publication witnesses now have a
+real wrapper/factory/root, but **still refuse class preparation and emission**.
+**5bdb9644** admits remainder of two direct Number literals as
+UTF-16 `charAt`/`slice` bounds through the existing numeric and clamping path.
+
+Focused validation passes: DOM class/record lit **66.21 s**, with **32 new record
+and 24 existing object-key native executions**; DOM input proof **1.11 s**;
+provider object proof **3.34 s**; exact host-contract CTest **1/1**. The added global
+field-snapshot control separately refuses in both native policies; no whole DOM
+fixture replay after that addition is claimed. The String selector passes
+**40 native executions, 822 proof refusals, 115 Node/VM agreements and 14 known
+differences**. All seven final hashes match the devbox; scoped checks pass and
+repository formatting retains 16 pre-existing diagnostics. Earlier class source
+generators, 104 complete intrinsic cases and 33 general refusals are preserved.
+Full suites, broad corpus/matrices, full Bootstrap, WPT/test262, Windows and new
+sanitizers were skipped. No browser/runtime implementation changed.
+
+**Next:** compose the class/local-Map proof with the now-tested public family.
+Class preparation still rejects residual DOM input uses; retained constructors,
+local Maps and the complete owner function/allocation census remain separate
+requirements. Preserve those gates; `published_source()` supplies the complete
+vendor witnesses. Global field snapshots, multiple DOM-input alias partitions,
+original B/Data+B, broader Strings, conditional callees, mutable cells, String
+ordering, document views and the application driver remain unfinished.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-21-published-record-fields.md).
+
 ## Constructor identity keys and multiplication indices, 2026-09-21 UTC
 
 Continued clean **4b10fb96**. **37bfa1f5** preserves exact fresh-object or declared
