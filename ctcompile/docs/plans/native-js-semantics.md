@@ -1,6 +1,6 @@
 # JavaScript semantic edge cases in native C++
 
-**Status: selected primitive coverage; broader work planned, 2026-09-20.** This extends
+**Status: selected primitive and class coverage; broader work planned, 2026-09-21.** This extends
 [native JavaScript types](native-js-types.md). The purpose-built types must
 preserve JavaScript's observable behavior, including its surprising cases.
 Readable C++ is the interface; JavaScript semantics remain the contract.
@@ -60,7 +60,7 @@ the named primitive String witness above is claimed as a measured wtfjs example.
 | Primitive String coercion: `"b" + "a" + +"a" + "a"`, numeric/string `+`, `parseInt(1e-7)` | `js_string` owns values and supplies `.to_number()` for unary and binary numeric arithmetic. String `+` with Number, Boolean, finite nullable scalars or a closed Boolean/String temporary retains JavaScript text. Optional Strings and Boolean/String temporaries also support numeric arithmetic; generic primitive `+` selects concatenation or Number addition and retains a closed String/Number result. Optional Number/String and Boolean/String transport preserves null and undefined at early reads and later joins. Typed Boolean/String values also retain their tags through signatures and globals. Public Core supplies parsing/formatting; named fixtures pass runtime and optimized paths. | Object hooks and ordering need separate proofs. Distinguish Number conversion from prefix/radix parsing, coercive `isNaN` from `Number.isNaN`, and `toFixed`/precision formatting from locale-dependent C++ streams. Preserve UTF-16 length/index/comparison semantics where required, including lone surrogates; separately resolve existing byte-oriented oracle differences. |
 | Object coercion: `[] == ![]`, `[] + []`, `({valueOf(){ return 1; }}) + 1`, throwing `Symbol.toPrimitive` | Closed object identities and some proved method calls exist. | Prove `Symbol.toPrimitive` lookup/invocation, hint and primitive result; otherwise preserve the required `valueOf`/`toString` order, receiver, observable calls and exceptions. Array-to-string and Date's special default hint need their own admitted paths. Do not route loose equality through truthiness or erase conversion side effects. |
 | Arrays and property keys: sparse trailing commas, `[10, 1, 3].sort()`, objects/arrays used as property names | Dense vectors, snapshots, Map storage and exact field proofs exist. | Add `js_array_t<T>`/`js_vector<T>` interfaces with identity, holes versus explicit undefined, inherited indexed reads and length mutation rules. Default sort compares converted strings by UTF-16 code units, with stable ordering and specified treatment of undefined/holes. Prove callbacks, species/spreadability and iteration order. Use `ToPropertyKey`, preserving Symbols; an object property dictionary does not have Map key semantics. |
-| Primitive versus boxed object: `"str" instanceof String`, `new String("str")`, constructor/prototype mutation | Typed primitive values and `Element.prototype` composition exist. | Represent admitted boxed primitives as distinct object identities. Prove prototype chains and constructor identity. Implement the scheduled `instanceof` wrapper: invoke proved `Symbol.hasInstance` first; use `std::holds_alternative<T>` only for an equivalent default test. Preserve inheritance, invalid operands, effects and thrown exceptions. |
+| Primitive versus boxed object: `"str" instanceof String`, `new String("str")`, constructor/prototype mutation | Typed primitive values and `Element.prototype` composition exist. Exact local class constructions now support ordinary `instanceof` through nominal constructor/heritage proofs and constant folding; six Node/VM cases pass in 48 native executions with 26 refusals. | Represent admitted boxed primitives as distinct object identities. Extend constructor/prototype proofs to nonconstant values and primitives. Implement the scheduled wrapper for nonconstant tests: invoke proved `Symbol.hasInstance` first; use `std::holds_alternative<T>` only for an equivalent default test. Preserve inheritance, invalid operands, effects and thrown exceptions. |
 | Calls and references: chained `.call`, arrows, `arguments`, `foo.x = foo = {n: 2}`, getters | Direct calls, captured environments, method objects and typed exceptions exist for admitted shapes. | Preserve the reference captured for the left-hand side before evaluating the right-hand side; evaluate receiver, lookup and arguments in source order. Distinguish callable from constructible, lexical arrow `this`/`arguments`, bound calls and constructor return rules. Getters, proxies, abrupt completion and `finally` cannot be implemented by rearranging C++ expressions. |
 | Syntax and scope: ASI after `return`, labels, script HTML comments, redeclarations, tagged templates | The existing parser/importer and structured lowering own syntax and scope. | Keep source-form fixtures through parsing/import, with strict/sloppy and script/module context. Fix parser/importer or lowering defects at their owning layer. Value wrappers cannot repair a different parse, temporal dead zone, binding, or statement completion. |
 | Host and asynchronous behavior: `document.all`, timer coercion, Promise/thenable resolution | Browser calls use public subsystems; ordinary document/element views remain planned. | `document.all` requires its HTML legacy exotic behavior (`[[IsHTMLDDA]]`) for `typeof`, truthiness and loose equality, while retaining object identity. Never tag an ordinary document/element as undefined. Timers need host-specific coercion/scheduling and captured-owner lifetime; Promise jobs need thenable lookup, resolution and job ordering. String-evaluating callbacks or `Function` construction need a wholly proved compile-time body or refusal, never a hidden interpreter. |
@@ -73,8 +73,10 @@ prototype mutations invalidating earlier assumptions. Native Symbol values and
 snapshots and explicit formatting shared with the VM through public Core. The
 25-observation API fixture agrees with Node/VM. Proved DOM entries now emit
 well-known Symbol reads and preserve identity comparisons, truthiness and `typeof`
-while driving browser operations. Symbol transport, general script contracts,
-registry operations and hook dispatch remain unfinished. BigInt still needs a public
+while driving browser operations. Well-known identities now survive branches,
+loops and returns; a strict primitive-only export contract needs no DOM input.
+General scripts, fresh source construction, registry operations and hook dispatch
+remain unfinished. BigInt still needs a public
 non-Script implementation. Add these with their corresponding type/prototype
 milestones rather than treating the external inventory as exhaustive.
 
@@ -97,10 +99,21 @@ Node reports `calls = 1`, `result = true`. The current VM reports `calls = 0`,
 `result = false`: its opcode calls OrdinaryHasInstance directly. The existing
 `Function.prototype[Symbol.hasInstance]` method does not fix that missing hook
 lookup. Invalid RHS/prototype errors also need an audit before source admission.
-The new native Symbol API supplies the key only; no native hook wrapper or
-`instanceof` lowering is claimed. Implement the planned wrapper after lookup,
-receiver, result conversion, exception and prototype proofs exist. Use
-`std::holds_alternative<T>` only for a proved equivalent default case.
+The native class proof now folds exact ordinary `instanceof` under an explicit
+standard Function/default-hook contract and complete source census. It preserves
+constructor effects and distinguishes nominal ancestry from equal C++ shapes.
+Custom hooks remain refused; no native hook wrapper is claimed. Implement that
+wrapper after lookup, receiver, result conversion, exception and prototype proofs
+exist. Use `std::holds_alternative<T>` only for a proved equivalent default case.
+
+Before admitting hooks, split ordinary prototype matching from the VM operator:
+`Function.prototype[Symbol.hasInstance]` currently calls the same
+`context::instance_of` method, so adding hook lookup there directly would recurse.
+Audit the opcode's `may_reenter=0`, CTJS `InstanceOfOp`'s `NoEscape`, and the AOT
+Boolean result with no exception edge together. Hook calls can retain operands,
+reenter script and throw; preserve the constructor receiver and apply JavaScript
+ToBoolean to the result. The historical custom-hook witness above was not rerun
+in this session, and no VM semantics changed.
 
 The VM also retains documented implicit Symbol-to-String coercion divergences
 in `symbol_basics.cpp`. Native Symbols expose explicit `toString()` and reject

@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Symbol transport, intrinsic exports and class tests, 2026-09-21 UTC
+
+Continued clean **2e505136**, resuming the retained Symbol transport witnesses.
+**29039575** carries identities through branches, loops and returns.
+**0c2a6657** keeps ordinary `js_symbol_t` values and optional temporary state,
+with GCC 13's false-positive warning suppressed only around the Symbol class.
+A real uninitialized caller variable still fails compilation.
+**4400f0c4** adds the strict `ctbrowser-intrinsics-v1` contract for named
+zero-argument Symbol/primitive exports without DOM inputs or Script dependencies.
+**8091bb51** proves ordinary class `instanceof` from exact source constructors
+and heritage before structural lowering. It preserves constructor effects;
+unrelated equal shapes do not match. Custom hooks remain refused.
+
+Focused devbox checks pass: **two distinct CTests and five distinct lit cases**
+across the corrected runs. Symbol DOM transport checks **28 native executions,
+38 refusals and one mutation**; primitive exports add **16 executions and 56
+refusals**. Ordinary class tests add **six Node/VM cases, 48 native executions
+and 26 refusals**. A generated Symbol loop passes GCC ASan/UBSan. All **27 final
+code/test hashes** match the devbox; scoped formatting and Black pass. Required
+repository formatting retains 16 existing diagnostics. Full suites and broad
+corpus/matrix runs were skipped. No browser or VM implementation changed.
+[Exact checks and next boundaries](handoff/2026-09-21-native-symbol-transport.md).
+
+**Next:** prove fresh Symbol source construction and primitive methods, then
+broaden intrinsic exports to useful parameters/helper calls. Custom
+`Symbol.hasInstance` requires coherent VM lookup, reentry/escape and exception
+work before native hook dispatch; the historical custom-hook oracle gap remains.
+The type plan records a reentrant current-document accessor borrowing invocation
+owners with scoped save/restore; it is not implemented. String ordering, sibling
+captures, document views and full Bootstrap/application work remain unfinished.
+
 ## Proved Symbol reads in native DOM entries, 2026-09-21 UTC
 
 Continued clean **a11c4878**. **083349ac** connects the native Symbol API to

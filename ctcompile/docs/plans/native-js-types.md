@@ -33,9 +33,13 @@ Shared variables and nested capture pointers now carry those unions with owning
 snapshots and observable absence. `js_symbol_t` and the native `Symbol` object now
 provide fresh identities, immutable well-known keys such as `Symbol.hasInstance`,
 owning descriptions and `toString`/`valueOf` methods. Fingerprinted DOM entries now
-emit direct well-known Symbol reads, identity equality, truthiness and `typeof`.
-Broader Symbol operations and `instanceof` still require compiler proofs. Object/Array prototypes and
-document views remain planned.
+emit direct well-known Symbol reads, identity equality, truthiness and `typeof`,
+including branches, loops and typed returns. Parameterless Symbol-only exports
+now use a separate intrinsic contract without DOM inputs. Ordinary `instanceof`
+on exact local class constructions now folds under the complete class/prototype
+proof, preserving nominal identity and constructor effects. Broader Symbol
+operations, custom hooks and nonconstant `instanceof` still require proofs.
+Object/Array prototypes and document views remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
 master-plan part 24. Historical measurements retain their original scope.
@@ -98,7 +102,7 @@ implement every prototype up front.
 | `js_array_t<T>` | The interface for an admitted JavaScript Array, with `length()`, indexed operations and methods such as `push`, `pop` and `filter`. Use dense storage only under the existing density/content proof. Preserve reference identity, presence, mutation and eager evaluation. |
 | `js_object_t` | A non-virtual interface/tag for generated closed-shape objects. Concrete generated classes keep concrete fields and checked methods; no generic property dictionary, universal payload or slicing through this base. |
 | `js_bigint_t` | Owning arbitrary-precision integer with JavaScript BigInt semantics. Requires a public non-Script numeric implementation; a fixed-width integer or floating-point stand-in is insufficient. |
-| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. DOM entries admit direct well-known reads, identity equality, truthiness and `typeof`; transport, `Symbol.for`/`keyFor` and hook dispatch need further proofs. |
+| `js_symbol_t` | Implemented native primitive identity, distinct from its description. `Symbol` exposes 15 immutable well-known keys and fresh construction; descriptions, `toString` and `valueOf` reuse public Core. DOM and primitive-only entries admit direct well-known reads, identity equality, truthiness, `typeof`, branches, loops and returns; source construction, `Symbol.for`/`keyFor` and hook dispatch need further proofs. |
 | `js_document_t` | An explicit borrowed document interface over a public `ctbrowser::document` and its live `style::engine`. Exposes methods/accessors through ordinary `document.member(...)` syntax. A containing session owns the resources when ownership is required. |
 | `js_element_t` | The corresponding borrowed element interface, retaining document/node identity and its proved Style association. It enables receiver-only prototype calls without exposing a VM context. |
 
@@ -157,16 +161,39 @@ query. Generated C++ uses `ctnative::js_symbol_t` and `ctnative::Symbol.hasInsta
 properties, coercion and custom hooks remain refused. No new Script or VM
 dependency is introduced.
 
-**Next source slice:** resume the retained `join`, `loop` and `symbol-return`
-controls in `Browser/native_dom_symbols.py`. Carry proved Symbol values through
-structured state and returns without inventing a default/absent Symbol identity;
-`js_symbol_t` deliberately has no default constructor. Keep null/undefined and
-mixed alternatives separate. General Symbol-only scripts still need an intrinsic
-contract without the DOM provider's required element inputs; existing closed
-source providers require an owned root. Fresh construction, primitive methods,
-registry operations and symbol-keyed fields follow their own proofs. Custom
-hook lookup/call/Boolean conversion, default prototype matching and invalid RHS
-errors remain prerequisites for `instanceof`.
+**Transport is implemented:** the retained `join`, `loop` and `symbol-return`
+programs now compile unchanged. Structured state uses `std::optional<js_symbol_t>`
+only because C++ declares control-flow storage before assigning it. Every source
+edge supplies a Symbol; the empty storage state is never a JavaScript undefined,
+null or fabricated identity. Reads and returns copy `js_symbol_t`, preserving
+saved identities across later loop assignments and repeated calls. Mixed Symbol/
+primitive or absence joins remain refused. GCC 13's inactive String-arm warning
+is suppressed only around `js_symbol_t`; caller warnings remain enabled.
+
+**Primitive-only exports are implemented:** `ctbrowser-intrinsics-v1` accepts
+exactly `version`, `provider`, `module_sha256`, `entry` and
+`initial_intrinsics: ["Symbol"]`. The fingerprinted named export takes no
+parameters and may have an inert declaration wrapper. It reuses the complete
+bounded entry proof and permits primitive computations and well-known Symbol
+transport without any document, DOM input, owned root or script runtime.
+Top-level effects, helpers, extra host fields and other intrinsics remain refused.
+
+**Ordinary class tests are implemented:** the class initialization proof admits
+`value instanceof Constructor` for exact same-block source constructions and
+completed class setups. An explicit standard `Function` identity supplies the
+original inherited `Symbol.hasInstance` method; the complete source census
+excludes mutation, escape and reentry. The compiler compares nominal source
+constructors and their proved heritage, then folds only the test. Constructors,
+operand evaluation and their effects remain. Two unrelated classes with identical
+C++ field shapes do not match. Custom hooks, replacement objects, unknown origins
+and cross-block construction remain refused. No runtime wrapper is needed for
+these constant answers. Six Node/VM cases pass in 48 native executions, with
+26 refusal controls, including inheritance, aliases and retained effects.
+
+**Next source slice:** prove fresh construction and primitive Symbol methods,
+then extend the intrinsic entry contract for useful parameters and helper calls.
+Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
+conversion each retain their own proof and oracle obligations.
 
 The focused API fixture checks 25 primitive observations against Node and the
 VM, GCC/Clang compilation, two translation units, standalone-header use, a
@@ -179,6 +206,13 @@ execution in eight GCC/Clang modes. It includes 38 refused contracts/operations
 and one distinguishing identity mutation. Two selected CTests and four distinct
 lit cases pass; full suites were skipped.
 [Source integration evidence](../handoff/2026-09-21-native-symbol-source.md).
+
+The transport follow-up checks 28 native DOM executions, including zero-iteration
+loops, saved copies and repeated calls, with the same 38 refusal controls and
+one identity mutation. The new intrinsic export fixture adds 16 native executions
+and 56 refusals. Three selected Symbol lit cases and two exact CTests pass;
+a generated Symbol loop also passes GCC ASan/UBSan.
+[Transport and export evidence](../handoff/2026-09-21-native-symbol-transport.md).
 
 ## Operators and JavaScript semantics
 
@@ -204,7 +238,9 @@ two algorithms for one operation.
 - Keep `typeof` as a named operation. Null and objects, primitive wrappers and
   boxed primitive objects must retain their JavaScript distinctions. A
   `js_boolean_t` primitive is not `new Boolean(false)`.
-- Route admitted `instanceof` through a typed native wrapper. Invoke a proved
+- Fold exact ordinary class `instanceof` only under the source identity and
+  prototype proof above, retaining operand effects. Route later nonconstant
+  tests through a typed native wrapper. Invoke a proved
   `Symbol.hasInstance` hook with the constructor as receiver and the tested value
   as argument when present, then apply JavaScript Boolean conversion to its
   result. For the default path, use `std::holds_alternative<T>(value)` only when
@@ -305,6 +341,16 @@ runtime lookup tables. ctbrowser never depends on ctcompile.
 The document facade alone does not authorize a JavaScript `document` global or
 the default `document.documentElement` argument. That source binding, root
 nullability and session ownership still require the documented host proof.
+
+A global-looking current-document accessor is allowed when that host proof needs
+it. It must borrow the current invocation's document and Style association;
+the invocation/session remains the owner. Bind it with an RAII scope that saves
+and restores the previous binding on normal return and exceptions, including
+nested calls into another document. Concurrent invocations need independent
+bindings; thread-local storage alone is insufficient for interleaved asynchronous
+tasks. Reject access outside a bound scope, and do not let borrowed views escape
+their owner. Keep explicit document parameters available. Implement this accessor
+when a proved source `document` binding needs it; primitive-only exports need none.
 
 ## Existing implementation and migration
 
