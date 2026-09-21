@@ -3,6 +3,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Support/TypeID.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -134,10 +135,11 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
                                       unsigned maxSteps);
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps);
-// Replace only exact query-result spread/empty-concat length observations.
+// Replace confined query-result spread/empty-concat observations.
 // Reprove on a private clone; refusal leaves the original module unchanged.
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
-                                        unsigned maxSteps);
+                                        unsigned maxSteps, mlir::IRMapping * mapping = nullptr,
+                                        unsigned * workSteps = nullptr);
 
 enum class HostDOMMethod {
     toggleClass,

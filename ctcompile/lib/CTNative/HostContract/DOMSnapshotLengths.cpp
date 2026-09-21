@@ -3,6 +3,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Error.h"
 
 #include <bit>
@@ -10,8 +11,12 @@
 namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
-                                        unsigned maxSteps) {
+                                        unsigned maxSteps, mlir::IRMapping * mapping,
+                                        unsigned * workSteps) {
     unsigned remaining = maxSteps;
+    const llvm::scope_exit recordWork([&] {
+        if (workSteps) { *workSteps = maxSteps - remaining; }
+    });
     const auto error = [&](llvm::StringRef text) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                        remaining ? text : "DOM snapshot work budget exhausted");
@@ -44,7 +49,9 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         return error("DOM snapshot length requires original Array and Element identities");
     }
     if (!charge(candidate)) { return error("DOM snapshot work budget exhausted"); }
-    mlir::OwningOpRef<mlir::ModuleOp> changed(candidate.clone());
+    mlir::IRMapping localMapping;
+    mlir::OwningOpRef<mlir::ModuleOp> changed =
+        llvm::cast<mlir::ModuleOp>(candidate->clone(mapping ? *mapping : localMapping));
     mlir::DominanceInfo dominance(*changed);
     llvm::SmallVector<ctjs::CallSpreadOp> spreads;
     changed->walk([&](ctjs::CallSpreadOp call) { spreads.push_back(call); });
@@ -163,6 +170,19 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
             for (auto * parent = observation->getParentOp(); parent && !guarded;
                  parent = parent->getParentOp()) {
                 if (!spend()) { return error("DOM snapshot work budget exhausted"); }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
+                    branch && branch.getThenRegion().isAncestor(observation->getParentRegion())) {
+                    auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                    auto compare = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                         : ctjs::CompareOp{};
+                    auto bound = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>()
+                                         : ctjs::GetPropertyOp{};
+                    guarded = index && compare && compare.getKind() == ctjs::CompareKind::Lt &&
+                              compare.getLhs() == index && bound &&
+                              bound.getObject() == call.getResult() &&
+                              ctjs::constantKey(bound.getKey()) == "length";
+                    if (guarded) { break; }
+                }
                 auto consumer = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
                 if (!consumer || !index || !consumer.getAfter().hasOneBlock() ||
                     !consumer.getBefore().hasOneBlock() ||

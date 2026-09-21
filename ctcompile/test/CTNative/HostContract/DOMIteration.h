@@ -248,6 +248,56 @@ module {
         }
     }
 
+    // Independent importer-shaped element iteration: the proxy's eager copy
+    // is bounded, while a separate observation of the NodeList stays whole.
+    const auto iterated =
+        replaced(replaced(queried, "ctjs.get_property %keys[", "ctjs.get_property %iterable["),
+                 "    %lengthName =", R"MLIR(
+    %open = ctjs.load_global "__ctbrowser_for_of_open"
+    %undefined = ctjs.constant #ctjs.undefined
+    %record = ctjs.call %open(%undefined, %keys)
+    %iterable = ctjs.iterable of %keys
+    %aliasKey = ctjs.constant #ctjs.string<"length">
+    %aliasLength = ctjs.get_property %keys[%aliasKey]
+    %lengthName =)MLIR");
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(iterated, &context);
+        check(static_cast<bool>(input), "element for-of normalization fixture parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.provider = provider;
+        request.datasetParameters.clear();
+        request.initialIntrinsics = {"Array", "Element", "__ctbrowser_for_of_open",
+                                     "__ctbrowser_iter_next", "__ctbrowser_iter_close"};
+        request.moduleSha256 = hostContractFingerprint(*input);
+        if (auto failure = normalizeDOMIteration(*input, request, 100000)) {
+            check(false, "element for-of normalizes through the complete snapshot proof");
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+            continue;
+        }
+        request.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, request);
+        check(proof.proved(), "normalized element iteration reproves without iterator objects");
+        unsigned lengths = 0, indices = 0, caps = 0, iterables = 0;
+        input->walk([&](ctjs::GetPropertyOp read) {
+            lengths += proof.isElementVectorLength(read);
+            indices += proof.isElementVectorIndex(read);
+        });
+        input->walk([&](ctjs::ConstantOp constant) {
+            auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+            caps += number && number.getDouble() == double(1U << 24);
+        });
+        input->walk([&](ctjs::IterableOp) { ++iterables; });
+        check(lengths == 2 && indices == 1 && caps == 1 && iterables == 0,
+              "only iteration is capped; the original snapshot alias remains whole");
+        for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+            DOMEntryAnalysis limited(*input, request, budget);
+            check(limited.exhausted() && noEvidence(*input, limited),
+                  "incomplete normalized iteration exposes no element or index evidence");
+        }
+    }
+
     const std::string memberRead = "%value = ctjs.get_property %dataset[%key]";
     const std::string valueSource = replaced(
         source, "        %nextCount =", "        " + memberRead + "\n        %nextCount =");

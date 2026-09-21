@@ -7,6 +7,8 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
 
+#include <bit>
+
 namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
@@ -206,8 +208,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             return error("DOM iterator open requires one snapshot and an undefined receiver");
         }
 
-        // Reuse the complete dataset/filter proof, rather than a second recursive
-        // recognizer. Return the saved snapshot from an otherwise unchanged prefix.
+        // Reuse the complete DOM proof. Observe length in a private prefix;
+        // borrowed element snapshots must never gain a return capability.
         const auto chargeClone = candidate.walk([&](mlir::Operation * operation) {
             for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -221,13 +223,21 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         auto copiedOpen = llvm::cast<ctjs::CallOp>(mapping.lookup(open.getOperation()));
         auto snapshot = copiedOpen.getArgs().front();
         auto snapshotCall = snapshot.getDefiningOp<ctjs::CallOp>();
-        if (!snapshotCall) { return error("DOM iterator input is not a proved owning snapshot"); }
+        const bool copiedSnapshot = bool(snapshot.getDefiningOp<ctjs::CallSpreadOp>());
+        if (!snapshotCall && !copiedSnapshot) {
+            return error("DOM iterator input is not a proved owning snapshot");
+        }
         auto * body = copiedOpen->getBlock();
         while (&body->back() != copiedOpen) {
             if (!spend()) { return error("DOM iteration work budget exhausted"); }
             body->back().erase();
         }
         copiedOpen.erase();
+        mlir::OpBuilder observe(body, body->end());
+        auto lengthKey = ctjs::ConstantOp::create(
+            observe, open.getLoc(), ctjs::StringAttr::get(candidate.getContext(), "length"));
+        ctjs::GetPropertyOp::create(observe, open.getLoc(), snapshot.getType(), snapshot,
+                                    lengthKey);
         // The prefix witnesses just the path reaching this open. Keep each
         // condition producer and dominating operation, but discard its suffix
         // and other arm only in this private proof. The final entry proof still
@@ -239,7 +249,20 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                 parent->back().erase();
             }
             if (!spend()) { return error("DOM iteration work budget exhausted"); }
-            parent->getOperations().splice(branch->getIterator(), body->getOperations());
+            // Retain the condition and its selected arm so document-root guards
+            // keep their authority. The unused arm has no prefix observations.
+            const bool selectedThen = body->getParent() == &branch.getThenRegion();
+            mlir::OpBuilder keep(branch);
+            auto kept = mlir::scf::IfOp::create(keep, branch.getLoc(), mlir::TypeRange{},
+                                                branch.getCondition());
+            for (mlir::Region & region : kept->getRegions()) {
+                auto & arm = region.emplaceBlock();
+                if ((&region == &kept.getThenRegion()) == selectedThen) {
+                    arm.getOperations().splice(arm.end(), body->getOperations());
+                }
+                mlir::OpBuilder exit(&arm, arm.end());
+                mlir::scf::YieldOp::create(exit, branch.getLoc());
+            }
             branch.erase();
             body = parent;
         }
@@ -254,7 +277,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         if (copiedLoad.getResult().use_empty()) { copiedLoad.erase(); }
         mlir::OpBuilder at(body, body->end());
         if (frame) { ctjs::FrameExitOp::create(at, open.getLoc(), frame.getContext()); }
-        ctjs::ReturnOp::create(at, open.getLoc(), snapshot);
+        auto emptyResult = ctjs::ConstantOp::create(
+            at, open.getLoc(), ctjs::UndefinedAttr::get(candidate.getContext()));
+        ctjs::ReturnOp::create(at, open.getLoc(), emptyResult);
         // A callback created only in the removed suffix has no identity in
         // this temporary prefix. The original candidate retains its whole body
         // and every invocation for the final DOM proof before publication.
@@ -297,14 +322,31 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             return error("DOM iteration work budget exhausted");
         }
         prefixContract.moduleSha256 = hostContractFingerprint(*prefix);
+        mlir::IRMapping snapshotMapping;
+        unsigned snapshotWork = 0;
+        if (auto failure = normalizeDOMSnapshotLengths(*prefix, prefixContract, remaining,
+                                                       &snapshotMapping, &snapshotWork)) {
+            return failure;
+        }
+        remaining -= snapshotWork;
+        if (snapshotCall) {
+            snapshotCall = llvm::cast<ctjs::CallOp>(
+                snapshotMapping.lookupOrDefault(snapshotCall.getOperation()));
+        }
+        prefixContract.moduleSha256 = hostContractFingerprint(*prefix);
         const DOMEntryAnalysis proof(*prefix, prefixContract, remaining);
         if (!proof.proved()) {
             return error(("DOM iterator snapshot prefix: " + proof.reason()).str());
         }
         remaining -= proof.steps();
-        const auto * edge = proof.call(snapshotCall);
-        if (!edge || !edge->returnsStringVector()) {
-            return error("DOM iterator input is not a proved owning String snapshot");
+        const auto * edge = snapshotCall ? proof.call(snapshotCall) : nullptr;
+        if (!copiedSnapshot &&
+            (!edge || (!edge->returnsStringVector() && !edge->returnsElementVector()))) {
+            return error("DOM iterator input is not a proved owning snapshot");
+        }
+        const bool proxySnapshot = edge && edge->returnsElementVector();
+        if (proxySnapshot && !llvm::is_contained(contract.initialIntrinsics, "Element")) {
+            return error("DOM element iteration requires original Element wrapper identities");
         }
         const mlir::Value originalSnapshot = open.getArgs().front();
         auto * iterationBody = open->getBlock();
@@ -319,8 +361,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         open.erase();
 
         // Select only exact constant branches. Unselected effects are unreachable
-        // because original Array iteration on this dense, immutable snapshot cannot
-        // use the protocol-record path. No user callback or browser code runs here.
+        // because the original helpers select eager, indexed iteration for these
+        // snapshots. No user callback or browser code runs in the protocol arm.
         bool changed = true;
         while (changed) {
             changed = false;
@@ -398,8 +440,45 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                 }
                 if (auto iterable = llvm::dyn_cast<ctjs::IterableOp>(operation);
                     iterable && iterable->getOperand(0) == originalSnapshot) {
+                    llvm::SmallVector<ctjs::GetPropertyOp> lengths;
+                    if (proxySnapshot) {
+                        for (mlir::Operation * user : iterable->getUsers()) {
+                            if (!spend()) { return error("DOM iteration work budget exhausted"); }
+                            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                            if (read && read.getObject() == iterable.getResult() &&
+                                ctjs::constantKey(read.getKey()) == "length") {
+                                lengths.push_back(read);
+                            }
+                        }
+                    }
                     iterable.getResult().replaceAllUsesWith(originalSnapshot);
                     iterable.erase();
+                    for (ctjs::GetPropertyOp length : lengths) {
+                        // Proxy iteration copies only the first 2^24 slots. The
+                        // original query snapshot and other aliases stay whole.
+                        at.setInsertionPoint(length);
+                        auto size =
+                            ctjs::GetPropertyOp::create(at, length.getLoc(), length.getType(),
+                                                        originalSnapshot, length.getKey());
+                        auto cap = ctjs::ConstantOp::create(
+                            at, length.getLoc(),
+                            ctjs::NumberAttr::get(candidate.getContext(),
+                                                  std::bit_cast<uint64_t>(double(1U << 24))));
+                        auto less = ctjs::CompareOp::create(at, length.getLoc(), length.getType(),
+                                                            ctjs::CompareKind::Lt, size, cap);
+                        auto test =
+                            ctjs::TruthyOp::create(at, length.getLoc(), at.getI1Type(), less);
+                        auto bounded = mlir::scf::IfOp::create(at, length.getLoc(),
+                                                               length->getResultTypes(), test);
+                        for (auto [region, value] : llvm::zip(
+                                 bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
+                            auto & arm = region.emplaceBlock();
+                            mlir::OpBuilder exit(&arm, arm.end());
+                            mlir::scf::YieldOp::create(exit, length.getLoc(), value);
+                        }
+                        length.getResult().replaceAllUsesWith(bounded.getResult(0));
+                        length.erase();
+                    }
                     changed = true;
                     break;
                 }
