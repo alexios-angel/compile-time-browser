@@ -1011,6 +1011,7 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
                 return refuse("class retained Map get requires a present record");
             }
             reads.push_back(operation.getResult());
+            retainedRecordOrigins[operation.getResult()] = entries.lookup(text.getValue());
         }
     }
     return reason.empty();

@@ -97,6 +97,9 @@ struct analyzer {
     llvm::DenseMap<mlir::Operation *, HostCallableEdge> capturedCalls;
     llvm::DenseSet<mlir::Operation *> capturedOperations;
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> capturedResults;
+    // Private class-preparation evidence only; the provider and native owner
+    // reprove the resulting module without these categories or source attributes.
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> classScalarReads;
     llvm::DenseSet<mlir::Operation *> mutableScalarReads;
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);

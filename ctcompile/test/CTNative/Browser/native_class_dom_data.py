@@ -169,7 +169,9 @@ def published_prepare(args, name, text):
     return ir, contract
 
 
-def published_observation(args, name, text, expected=15927, *, snapshot=False, class_result=False):
+def published_observation(
+    args, name, text, expected=15927, *, snapshot=False, class_result=False, class_value=None
+):
     observed = args.work / f"{name}.oracle.js"
     observed.write_text(
         text
@@ -184,7 +186,7 @@ def published_observation(args, name, text, expected=15927, *, snapshot=False, c
     if snapshot:
         wanted = f"saved={expected}\n" + wanted
     if class_result:
-        wanted = f"classResult={expected}\n" + wanted
+        wanted = f"classResult={expected if class_value is None else class_value}\n" + wanted
     node = session.source.NODE.replace(
         "typeof value !== 'number'", "typeof value !== 'number' && typeof value !== 'undefined'"
     ).replace(
@@ -302,6 +304,123 @@ def published_families(args):
     print(
         f"class public family: {observed} Node/VM observations, {prepared_count} preparations, "
         f"{refusals} refusals; native class ownership remains refused"
+    )
+
+
+def published_class_fields(args):
+    original = (
+        published_source()
+        .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
+        .replace("host.slot.set(element, result)", "host.slot.set(element, savedFirst.n)")
+    )
+    constructor = (
+        published_source(True)
+        .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
+        .replace("host.slot.set(element, result)", "host.slot.set(element, savedFirst.n)")
+    )
+    sources = {
+        "saved-record": (original, 5, 15927),
+        "constructor": (constructor, 5, 59112),
+        "distinct-record": (
+            original.replace(
+                "host.slot.set(element, savedFirst.n)", "host.slot.set(element, second.n)"
+            ),
+            9,
+            15927,
+        ),
+        "read-snapshot": (
+            original.replace(
+                "  traceEntered = 1;",
+                "  const scalar = savedFirst.n; savedFirst.n = {};\n  traceEntered = 1;",
+            ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, scalar)"),
+            5,
+            15927,
+        ),
+        "arithmetic": (
+            original.replace(
+                "host.slot.set(element, savedFirst.n)",
+                "host.slot.set(element, savedFirst.n + second.n)",
+            ),
+            14,
+            15927,
+        ),
+    }
+    refusals = 0
+    for label, (text, expected, class_value) in sources.items():
+        name = "class-field-" + label
+        published_observation(
+            args, name, text, expected, class_result=True, class_value=class_value
+        )
+        ir, contract = published_prepare(args, name, text)
+        contract["observations"] = ["classResult", *contract["observations"]]
+        prepared = classes.prepare(args, name, ir, contract, success=True)
+        body = prepared.read_text()
+        if body.count("ctjs.construct") != 5 or len(dom.FUNCTION.findall(body)) != 8:
+            raise RuntimeError(f"{name}: preparation lost constructor, Map or function owners")
+        if 'name = "classResult"' not in body:
+            raise RuntimeError(f"{name}: original class computation lost its observation")
+        checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        for optimize in (False, True):
+            dom.lower(
+                args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
+            )
+            refusals += 1
+        if label == "saved-record":
+            for suffix, request, options in (
+                ("stale", dict(contract, module_sha256="0" * 64), ""),
+                ("no-root", dict(contract, roots=[]), ""),
+                ("no-input", dict(contract, element_parameters=[]), ""),
+                ("no-map", dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]), ""),
+                ("budget", contract, "max-steps=0"),
+                ("small-budget", contract, "max-steps=100"),
+            ):
+                classes.prepare(
+                    args, name + "-" + suffix, ir, request, success=False, options=options
+                )
+                refusals += 1
+    controls = {
+        "constructor-only": original.replace("savedFirst.n = 5;", ""),
+        "wrong-record": original.replace("savedFirst.n = 5;", "second.n = 5;"),
+        "early-read": original.replace(
+            "savedFirst.n = 5;", "const early = savedFirst.n; savedFirst.n = 5;"
+        ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, early)"),
+        "object-field": original.replace("savedFirst.n = 5;", "savedFirst.n = {};"),
+        "unproved-field-source": original.replace(
+            "savedFirst.n = 5;", "const outside = {n: 5}; savedFirst.n = outside.n;"
+        ),
+        "late-object-field": original.replace(
+            "  traceEntered = 1;", "  savedFirst.n = {}; traceEntered = 1;"
+        ),
+        "escaped-alias": original.replace(
+            "  traceEntered = 1;", "  unknown(savedFirst); traceEntered = 1;"
+        ),
+        "captured-alias": original.replace(
+            "  traceEntered = 1;", "  const unused = () => savedFirst; traceEntered = 1;"
+        ),
+        "getter": original.replace(
+            "  traceEntered = 1;",
+            '  Object.defineProperty(savedFirst, "n", {get() { return 5; }}); traceEntered = 1;',
+        ),
+        "replacement": original.replace("this.n = n;", "this.n = n; return {};"),
+        "constructor-effect": original.replace("this.n = n;", "this.n = n; unknown();"),
+        "missing-key": original.replace(
+            "host.slot.set(element, savedFirst.n)", "host.slot.set(element, savedFirst.missing)"
+        ),
+        "missing-record": original.replace(
+            'const savedChild = t.get(element), savedFirst = e.get(element, "bs.item");',
+            'const savedChild = t.get(element), savedFirst = e.get(element, "missing");',
+        ),
+    }
+    for label, text in controls.items():
+        if text == original:
+            raise RuntimeError(f"{label}: class-field refusal did not change the source")
+        name = "class-field-refused-" + label
+        ir, contract = published_prepare(args, name, text)
+        contract["observations"] = ["classResult", *contract["observations"]]
+        classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
+        refusals += 1
+    print(
+        f"class scalar fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {refusals} refusals; native class ownership remains refused"
     )
 
 
@@ -539,6 +658,7 @@ def main():
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
     published_families(args)
+    published_class_fields(args)
     if args.class_families_only:
         return
     original = source()

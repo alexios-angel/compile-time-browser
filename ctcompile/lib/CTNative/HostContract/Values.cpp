@@ -380,6 +380,9 @@ PrimitiveAlternatives analyzer::entryCategories(
                                      !dominance.properlyDominates(definition, consumer)))) {
         return {};
     }
+    if (auto known = classScalarReads.find(value); known != classScalarReads.end()) {
+        return known->second.categories();
+    }
     if (auto known = results.find(value); known != results.end()) {
         if (dependencies) {
             if (!step()) { return {}; }

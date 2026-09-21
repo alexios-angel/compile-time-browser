@@ -55,6 +55,7 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> helperCalls;
     llvm::DenseSet<mlir::Operation *> domEntryHelpers;
     llvm::DenseSet<mlir::Operation *> domDataOperations;
+    llvm::DenseMap<mlir::Value, mlir::Value> retainedRecordOrigins;
     llvm::DenseSet<mlir::Operation *> getters;
     llvm::DenseSet<mlir::Operation *> throwingGetters;
     llvm::DenseSet<mlir::Operation *> errorOperations;
@@ -151,6 +152,7 @@ struct classInitialization {
 
     bool prove(const HostContract & contract, bool domEntry = false);
     bool proveDOMDataFamily(const HostContract & contract);
+    bool proveDOMDataScalars(host_detail::analyzer & analysis);
 
     bool proveDOMMethods(const HostContract & contract);
 

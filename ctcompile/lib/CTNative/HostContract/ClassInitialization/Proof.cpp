@@ -220,9 +220,6 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             }
         }
     }
-    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
-        if (!proveDOMDataFamily(contract)) { return false; }
-    }
     if (!heritage.empty()) {
         HostContract binding = contract;
         binding.provider = HostContract::Provider::closedSource;
@@ -352,6 +349,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         return refuse("base publication lacks a completed unique leaf proof");
     }
     if (!proveMaps()) { return false; }
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+        if (!proveDOMDataFamily(contract)) { return false; }
+    }
     // No ambient object, unknown callee, accessor, dynamic key or reflective
     // instruction can replace the fixed helper between entry and any call.
     // Reject the whole module, including suffixes and uncalled bodies.

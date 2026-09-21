@@ -4,6 +4,108 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) {
+    auto entry = analysis.entry;
+    llvm::DenseMap<mlir::Value, mlir::Value> origins;
+    // ponytail: only primitive constructor stores and explicit entry overwrites.
+    // Constructor evaluation and method effects need their own read-time proof.
+    for (ctjs::ConstructOp made : entry.getBody().front().getOps<ctjs::ConstructOp>()) {
+        if (!step()) { return false; }
+        auto closure = sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>();
+        auto constructor = target(closure);
+        if (!constructor || !constructors.contains(constructor) ||
+            heritage.contains(closure.getResult())) {
+            continue;
+        }
+        auto & body = constructor.getBody().front();
+        const auto primitive = [&](mlir::Value value) {
+            if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+                if (argument.getOwner() != &body ||
+                    argument.getArgNumber() < ctjs::implicit_arguments) {
+                    return false;
+                }
+                const unsigned index = argument.getArgNumber() - ctjs::implicit_arguments;
+                if (index >= made.getArgs().size()) { return false; }
+                value = made.getArgs()[index];
+            }
+            auto literal = sourceValue(value).getDefiningOp<ctjs::ConstantOp>();
+            return literal && ctjs::isPrimitiveAttr(literal.getValue());
+        };
+        bool safe = true, returned = false;
+        for (mlir::Operation & op : body) {
+            if (!step()) { return false; }
+            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+                safe &= write.getObject() == body.getArgument(ctjs::arg_receiver) &&
+                        ctjs::ordinaryKey(write.getKey()) && primitive(write.getValue());
+            } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
+                returned = true;
+                // A returned formal could replace this allocation at another site.
+                auto literal = result.getValue().getDefiningOp<ctjs::ConstantOp>();
+                safe &= literal && ctjs::isPrimitiveAttr(literal.getValue());
+            } else {
+                safe &= llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameEnterOp,
+                                  ctjs::FrameExitOp>(op);
+            }
+        }
+        if (!safe || !returned) { continue; }
+        llvm::SmallVector<mlir::Value> aliases{made.getResult()};
+        for (auto [read, owner] : retainedRecordOrigins) {
+            if (!step()) { return false; }
+            if (owner == made.getResult()) { aliases.push_back(read); }
+        }
+        for (mlir::Value alias : aliases) {
+            for (mlir::OpOperand * use : sourceUses(alias)) {
+                if (!step()) { return false; }
+                auto * op = use->getOwner();
+                if (op->getParentOfType<ctjs::FuncOp>() != entry ||
+                    (op->getParentOp() != entry && !llvm::isa<ctjs::GetPropertyOp>(op))) {
+                    safe = false;
+                }
+                if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                if (call && use->getOperandNumber() == 3 && mapOperations.contains(call) &&
+                    ctjs::constantKey(
+                        call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) == "set") {
+                    continue;
+                }
+                mlir::Value key;
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
+                if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
+                safe &= use->getOperandNumber() == 0 && key && ctjs::ordinaryKey(key);
+            }
+        }
+        if (!safe) { continue; }
+        for (mlir::Value alias : aliases) {
+            if (!step()) { return false; }
+            origins[alias] = made.getResult();
+        }
+    }
+    llvm::DenseMap<mlir::Value, llvm::StringMap<PrimitiveAlternatives>> fields;
+    const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> noResults;
+    for (mlir::Operation & op : entry.getBody().front()) {
+        if (!step()) { return false; }
+        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+            auto owner = origins.lookup(sourceValue(write.getObject()));
+            if (!owner) { continue; }
+            analysis.remaining = remaining;
+            std::vector<mlir::Value> dependencies;
+            auto category =
+                analysis.entryCategories(write.getValue(), noResults, write, 0, &dependencies);
+            remaining = analysis.remaining;
+            // Other records need their own complete use census. Only literals,
+            // their scalar expressions and already checked class reads qualify.
+            if (!dependencies.empty()) { category = {}; }
+            fields[owner][ctjs::constantKey(write.getKey())] = category;
+        } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+            auto owner = origins.lookup(sourceValue(read.getObject()));
+            if (!owner) { continue; }
+            auto category = fields[owner].lookup(ctjs::constantKey(read.getKey()));
+            if (category.tag()) { analysis.classScalarReads[read.getResult()] = category; }
+        }
+    }
+    return reason.empty() && !analysis.exhausted;
+}
+
 bool classInitialization::proveDOMDataFamily(const HostContract & contract) {
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     llvm::SmallVector<std::pair<mlir::BlockArgument, mlir::OpOperand *>> uses;
@@ -18,6 +120,11 @@ bool classInitialization::proveDOMDataFamily(const HostContract & contract) {
     // These facts authorize source effects only, never native storage. The
     // provider and owned-global analyses still reprove the rewritten module.
     host_detail::analyzer analysis(module, contract, remaining);
+    remaining = analysis.remaining;
+    if (!proveDOMDataScalars(analysis)) {
+        return refuse("class initialization work budget exhausted");
+    }
+    analysis.remaining = remaining;
     const llvm::scope_exit recordWork([&] { remaining = analysis.remaining; });
     const auto reject = [&] {
         return refuse(analysis.exhausted
