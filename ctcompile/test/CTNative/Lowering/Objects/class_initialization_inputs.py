@@ -16,6 +16,18 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-constructor-helper-overwrite": (5959, 5959),
+    "class-map-record-constructor-helper-delete": (552, 552),
+    "class-map-record-constructor-helper-write-after": (808, 808),
+    "class-map-record-constructor-helper-observer": (707, 707),
+    "class-map-record-constructor-helper-return-value": (707, 707),
+    "class-map-record-constructor-helper-other-observer": (707, 707),
+    "class-map-record-constructor-helper-shared-callers": (207, 207),
+    "class-map-record-constructor-helper-map-escaped": (707, 707),
+    "class-map-record-constructor-helper-constructor-write": (808, 808),
+    "class-map-record-constructor-helper-constructor-throw": (709, 709),
+    "class-map-record-constructor-helper-recursive": (202, 202),
+    "class-map-record-constructor-helper-alias-cell": (707, 707),
     "class-map-inherited-leaf-direct": (799, 799),
     "class-map-inherited-leaf-overwrite": (5959, 5959),
     "class-map-inherited-leaf-delete": (5452, 5452),
@@ -573,6 +585,9 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-constructor-helper",
+    "class-map-record-constructor-helper-overwrite",
+    "class-map-record-constructor-helper-delete",
     "class-map-inherited-leaf-direct",
     "class-map-inherited-leaf-overwrite",
     "class-map-inherited-leaf-delete",

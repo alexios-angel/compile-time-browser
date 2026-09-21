@@ -1,4 +1,4 @@
-"""Check terminal leaf publication and the neighboring initialization boundaries."""
+"""Check terminal leaf/helper publication and neighboring initialization boundaries."""
 
 from CTNative.Lowering.Objects import class_initialization as check
 
@@ -23,7 +23,8 @@ assert SELECTED <= check.OBSERVATIONS.keys()
 check.OBSERVATIONS = {
     name: value
     for name, value in check.OBSERVATIONS.items()
-    if name in SELECTED or name.startswith("class-map-inherited-leaf-")
+    if name in SELECTED
+    or name.startswith(("class-map-inherited-leaf-", "class-map-record-constructor-helper-"))
 }
-assert len(check.OBSERVATIONS) == len(SELECTED) + 6
+assert len(check.OBSERVATIONS) == len(SELECTED) + 18
 check.main()

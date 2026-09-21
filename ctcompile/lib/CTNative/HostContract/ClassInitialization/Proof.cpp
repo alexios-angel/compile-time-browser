@@ -205,6 +205,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     for (ctjs::CallOp call : calls) {
         if (!examine(call, contract, domEntry)) { return false; }
     }
+    if (!earlyCaptures.empty()) {
+        return refuse("class local cell is observed before initialization");
+    }
     if (!proveInstanceOf(contract)) { return false; }
     const auto recordHelper = [&](mlir::Operation * op) {
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);

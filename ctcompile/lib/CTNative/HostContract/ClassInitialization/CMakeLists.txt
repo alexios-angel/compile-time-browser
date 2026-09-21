@@ -1,5 +1,6 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
   Sources.cpp
+  Publication.cpp
   OwnFieldLoops.cpp
   Inheritance.cpp
   Proof.cpp

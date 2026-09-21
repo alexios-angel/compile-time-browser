@@ -655,6 +655,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     llvm::SmallVector<ctjs::GetPropertyOp> staticReads;
     llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
     bool testedConstructor = false;
+    if (!normalizePublicationHelper(closure, contract)) { return false; }
     // Prove original slots once, before super expansion mixes base and leaf
     // operations. The copied reads retain these exact helper identities.
     if (!closure.getUpvalues().empty() &&

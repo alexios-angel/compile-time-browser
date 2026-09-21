@@ -790,6 +790,7 @@ def main():
             "static-throw-chain",
             "class-map-record-overwrite",
             "class-map-record-constructor-direct",
+            "class-map-record-constructor-helper",
             "class-map-record-alias-snapshot-overwrite-delete",
             "local-helper-branches",
             "local-holder-arrow",

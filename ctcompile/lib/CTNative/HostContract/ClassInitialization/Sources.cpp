@@ -76,7 +76,12 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
             // A fixed cell may be read in a later arm or loop. All
             // writes/captures still belong to its original ordered block.
             if (first && !first->isBeforeInBlock(readPosition(op))) {
-                return refuse("class local cell is observed before initialization");
+                // Capturing the cell does not read it. Only the exact publication
+                // helper normalization can discharge this deferred obligation.
+                if (!llvm::isa<ctjs::CreateClosureOp>(op)) {
+                    return refuse("class local cell is observed before initialization");
+                }
+                earlyCaptures.insert(op);
             }
             if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op);
                 read && use.getOperandNumber() == 0) {
@@ -244,6 +249,9 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
                                          llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads,
                                          bool domEntry, unsigned depth) {
     if (!step()) { return false; }
+    if (earlyCaptures.contains(method)) {
+        return refuse("class local cell is observed before initialization");
+    }
     // ponytail: bound the proof stack; use an explicit worklist for deeper chains.
     if (depth >= 64) { return refuse("class helper capture nesting limit exceeded"); }
     auto fn = target(method);
@@ -568,132 +576,6 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
     if (!reason.empty()) { return false; }
     helpers.insert(fn);
     helperCalls.insert(use.getOwner());
-    return true;
-}
-
-bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp constructor,
-                                                     llvm::ArrayRef<ctjs::ConstructOp> instances,
-                                                     const HostContract & contract) {
-    // ponytail: one terminal registration in a complete leaf constructor.
-    // Bases and earlier publication need partial-initialization/reentry proofs.
-    auto function = target(constructor);
-    if (contract.provider != HostContract::Provider::closedSource || instances.empty() ||
-        baseClasses.contains(constructor.getResult()) || !function.getBody().hasOneBlock() ||
-        constructor.getUpvalues().size() != 1) {
-        return true;
-    }
-    auto & body = function.getBody().front();
-    auto self = body.getArgument(ctjs::arg_receiver);
-    auto cell = constructor.getUpvalues().front();
-    auto map = sourceValue(cells.lookup(cell)).getDefiningOp<ctjs::ConstructOp>();
-    if (!map || !maps.contains(map.getResult()) || map->getBlock() != constructor->getBlock() ||
-        map->getBlock() != &constructor->getParentOfType<ctjs::FuncOp>().getBody().front()) {
-        return true;
-    }
-    ctjs::CallOp publication;
-    for (mlir::OpOperand & use : self.getUses()) {
-        if (!step()) { return false; }
-        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-        if (!call || use.getOperandNumber() != 3 || call.getArgs().size() != 2 ||
-            sourceValue(call.getReceiver()) != map.getResult()) {
-            continue;
-        }
-        if (publication || call->getBlock() != &body) { return true; }
-        publication = call;
-    }
-    if (!publication) { return true; }
-    auto selection = publication.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    auto captured = publication.getReceiver().getDefiningOp<ctjs::LoadUpvalueOp>();
-    auto key = publication.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-    auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
-    if (!selection || selection.getObject() != publication.getReceiver() ||
-        ctjs::constantKey(selection.getKey()) != "set" || !captured ||
-        mapCaptures.lookup(captured.getResult()) != map.getResult() || !key ||
-        !llvm::isa<ctjs::StringAttr>(key.getValue()) || !returned ||
-        !undefined(returned.getValue())) {
-        return true;
-    }
-    for (mlir::Operation * op = publication->getNextNode(); op; op = op->getNextNode()) {
-        if (!step()) { return false; }
-        if (!llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
-            return true;
-        }
-    }
-    // This sole capture must have no other observer, including another class
-    // or helper. Every remaining Map use stays in the completed-owner census.
-    for (mlir::OpOperand & use : cell.getUses()) {
-        if (!step()) { return false; }
-        if (use.getOwner() != constructor && !cellOperations.contains(use.getOwner())) {
-            return true;
-        }
-    }
-    for (mlir::Operation & op : body) {
-        if (!step()) { return false; }
-        if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op); load && load != captured) {
-            return true;
-        }
-    }
-    for (mlir::Operation * user : captured->getUsers()) {
-        if (!step()) { return false; }
-        if (user != selection && user != publication && !llvm::isa<ctjs::RootOp>(user)) {
-            return true;
-        }
-    }
-    for (mlir::Operation * user : selection->getUsers()) {
-        if (!step()) { return false; }
-        if (user != publication && !llvm::isa<ctjs::RootOp>(user)) { return true; }
-    }
-    for (mlir::Operation * user : publication->getUsers()) {
-        if (!step()) { return false; }
-        if (!llvm::isa<ctjs::RootOp>(user)) { return true; }
-    }
-    for (ctjs::ConstructOp made : instances) {
-        if (!step()) { return false; }
-        if (made->getBlock() != map->getBlock() || !map->isBeforeInBlock(made)) { return true; }
-    }
-    // Numeric closure uses were completely enumerated by examine. A symbol
-    // call would bypass that census and must keep the original constructor.
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return true; }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef()) == function) {
-                return true;
-            }
-        }
-    }
-    if (!proveMaps()) { return false; }
-    if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
-        return refuse(problem);
-    }
-    // There is no observable work between the original set and return. Keep
-    // registration immediately after each exact new, before its caller resumes.
-    // A throwing prefix still skips it; a throwing set still skips the caller.
-    for (ctjs::ConstructOp made : instances) {
-        if (!step()) { return false; }
-        mlir::OpBuilder at(made);
-        at.setInsertionPointAfter(made);
-        auto name = ctjs::ConstantOp::create(at, selection.getLoc(),
-                                             ctjs::StringAttr::get(module.getContext(), "set"));
-        auto select = ctjs::GetPropertyOp::create(at, selection.getLoc(), map.getResult(), name);
-        auto literal = ctjs::ConstantOp::create(at, key.getLoc(), key.getValue());
-        ctjs::CallOp::create(at, publication.getLoc(), publication.getType(), select,
-                             map.getResult(), mlir::ValueRange{literal, made.getResult()});
-    }
-    mapCaptures.erase(captured.getResult());
-    mapOperations.erase(publication);
-    mapOperations.erase(selection);
-    mapOperations.erase(captured);
-    eraseRooted(publication);
-    eraseRooted(selection);
-    eraseRooted(captured);
-    constructor.getUpvaluesMutable().clear();
-    constructor.removeEnclosingIndicesAttr();
-    function.setUpvalueCount(0);
-    mapClosures.erase(constructor);
-    mapCells.erase(cell);
     return true;
 }
 

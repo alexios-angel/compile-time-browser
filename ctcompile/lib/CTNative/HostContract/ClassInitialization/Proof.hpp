@@ -65,6 +65,7 @@ struct classInitialization {
     llvm::SmallVector<ctjs::CreateClosureOp> staticMethodClosures;
     llvm::MapVector<mlir::Value, mlir::Value> cells;
     llvm::DenseSet<mlir::Operation *> cellOperations;
+    llvm::DenseSet<mlir::Operation *> earlyCaptures;
     llvm::SmallVector<ctjs::CellGetOp> cellReads;
     llvm::SmallVector<ctjs::LoadUpvalueOp> captureReads;
     llvm::DenseSet<mlir::Value> maps;
@@ -104,6 +105,8 @@ struct classInitialization {
                              unsigned depth = 0);
     bool clearOwnFieldLoop(ctjs::CallOp snapshot, llvm::ArrayRef<llvm::StringRef> fields,
                            const HostContract & contract);
+    bool normalizePublicationHelper(ctjs::CreateClosureOp constructor,
+                                    const HostContract & contract);
     bool sinkConstructorPublication(ctjs::CreateClosureOp constructor,
                                     llvm::ArrayRef<ctjs::ConstructOp> instances,
                                     const HostContract & contract);
