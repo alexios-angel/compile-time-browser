@@ -217,9 +217,15 @@ Equality, truthiness, `typeof`, branches, loops and returns preserve that distin
 saved descriptions survive later Symbol assignments. String-method narrowing and
 mixed null/description joins remain separate proofs.
 
+**Primitive entry equality is implemented:** exact Number/Boolean operands use
+the existing native strict/loose equality operations, including mixed kinds,
+NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
+remain typed. The export fixture checks 168 native executions, 161 refusals and
+two mutations, with 29 Node/VM observations; no runtime implementation changed.
+
 **Next source slice:** prove global or captured helper identities within the
-intrinsic entry contract. Number/Boolean equality in this provider and description
-String-method narrowing also retain their separate admission boundaries.
+intrinsic entry contract. Description String-method narrowing, mixed primitive
+unions and object coercion retain their separate admission boundaries.
 Registry operations, symbol-keyed fields and custom hook lookup/call/Boolean
 conversion each retain their own proof and oracle obligations.
 

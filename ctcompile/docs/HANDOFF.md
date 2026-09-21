@@ -22,6 +22,34 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Numeric publication and scalar equality, 2026-09-21 UTC
+
+Continued clean **0e96b1dd**, resuming the retained file-33 arithmetic witness.
+**836ea47f** admits numeric leaf initialization after base Map publication:
+every exact construction must supply literal Numbers for the used parameters,
+and the complete tail must contain only proved numeric operations and own-field
+writes. Existing family, observer and stack-owner restrictions remain.
+**ac33706d** admits Number/Boolean strict and loose equality through the existing
+typed intrinsic-entry proof and native operators/helpers.
+
+Focused devbox validation passes: **two exact CTests and three distinct lit
+cases** across corrected runs. The class gate checks **58 source observations
+and 160 main native executions**; four new admissions add 32. Intrinsic exports
+check **168 executions, 161 refusals and two mutations**, with 29 Node/VM
+observations. All **eight final code/test hashes** match the devbox.
+Scoped formatting passes; required repository formatting retains 16 existing
+diagnostics. Full suites, broad corpus/matrices, new sanitizers and full Bootstrap
+were skipped. No browser or runtime implementation changed.
+
+**Next:** compose captured/nested Data Map origin tracking with concrete record
+owner lifetime proofs for original B/Data+B, preserving registration, conflicts,
+nullable gets and cleanup. File 34 retains nonnumber inputs, coercion/reentry,
+field reads and helper results; shared/deeper families and String fields remain
+separate. Global/captured intrinsic helpers and description String-method
+narrowing remain. No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-numeric-publication-scalar-equality.md).
+
 ## Base publication and intrinsic helpers, 2026-09-21 UTC
 
 Continued clean **d45c82d4**. **9e0c7f05** admits the unchanged file-30
