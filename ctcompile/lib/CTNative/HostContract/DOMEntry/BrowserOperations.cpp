@@ -3,6 +3,7 @@
 #include "llvm/ADT/StringMap.h"
 
 #include <cmath>
+#include <limits>
 
 namespace ctcompile::ctnative::dom_entry_detail {
 
@@ -43,7 +44,7 @@ std::optional<double> stringIndex(mlir::Value value) {
         binary &&
         (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
          binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
-         binary.getKind() == ctjs::BinaryKind::Add)) {
+         binary.getKind() == ctjs::BinaryKind::Add || binary.getKind() == ctjs::BinaryKind::Pow)) {
         auto left = binary.getLhs().getDefiningOp<ctjs::ConstantOp>();
         auto right = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
         auto lhs = left ? llvm::dyn_cast<ctjs::NumberAttr>(left.getValue()) : ctjs::NumberAttr{};
@@ -58,6 +59,13 @@ std::optional<double> stringIndex(mlir::Value value) {
         if (binary.getKind() == ctjs::BinaryKind::Add) { return lhs.getDouble() + rhs.getDouble(); }
         if (binary.getKind() == ctjs::BinaryKind::Mod) {
             return std::fmod(lhs.getDouble(), rhs.getDouble());
+        }
+        if (binary.getKind() == ctjs::BinaryKind::Pow) {
+            // Number::exponentiate differs from pow for |base|=1 and infinite exponent.
+            if (std::abs(lhs.getDouble()) == 1 && !std::isfinite(rhs.getDouble())) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            return std::pow(lhs.getDouble(), rhs.getDouble());
         }
         return lhs.getDouble() * rhs.getDouble();
     }
@@ -85,13 +93,14 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
         (binary &&
          (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-          binary.getKind() == ctjs::BinaryKind::Mul ||
-          binary.getKind() == ctjs::BinaryKind::Mod))) {
+          binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
+          binary.getKind() == ctjs::BinaryKind::Pow))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
-            refusal = "DOM String indexing negation/division/subtraction/multiplication/remainder "
-                      "requires direct Number literals";
+            refusal =
+                "DOM String indexing negation/division/subtraction/multiplication/remainder/power "
+                "requires direct Number literals";
             return false;
         }
         unsigned bounds = 0;

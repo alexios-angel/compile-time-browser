@@ -807,6 +807,40 @@ ADDITION_INDICES = {
 }
 """,
 }
+POWER_WITNESSES = {
+    # Preserve the complete former addition-index arithmetic refusal body.
+    "addition-index-other-arithmetic": (
+        "function bad(text, index) { return text.charAt(0 ** 1); }\n",
+        ("", "a", "a"),
+    ),
+}
+POWER_INDICES = {
+    **{name: source for name, (source, _) in POWER_WITNESSES.items()},
+    "string-power-indices": """function stringPowerIndices(text, first, middle, tail) {
+  const missing = 1 ** 1e999;
+  const next = 2.25 ** 0.5;
+  return text.charAt(missing) === first && text.slice(missing) === text &&
+    text.slice(0, missing) === '' && text.slice(undefined, missing) === '' &&
+    text.charAt(next) === middle && text.slice(next, 2) === middle &&
+    text.slice(next) === middle + tail && text.charAt(0 ** 0) === middle &&
+    text.charAt(1e999 ** 0) === middle && text.charAt(0 ** 0.5) === first &&
+    text.slice(0.5 ** 1e999) === text && text.slice(0 ** 1e999) === text &&
+    text.charAt(2 ** 1e999) === '' && text.slice(1e308 ** 2) === '' &&
+    text.slice(2, 2 ** 32) === tail && text.slice(0, 2 ** 32) === text &&
+    text.charAt(5e-324 ** 2) === first && text.slice(0.5 ** 2) === text;
+}
+""",
+    "description-capture-power-index": """function descriptionCapturePowerIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const first = 1 ** 1e999;
+    return text !== undefined ? text.charAt(first) + text.slice(2.25 ** 0.5) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -877,6 +911,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in ADDITION_WITNESSES},
     "string-addition-indices": ["string", "string", "string", "string"],
     "description-capture-addition-index": ["symbol"],
+    **{name: ["string", "number"] for name in POWER_WITNESSES},
+    "string-power-indices": ["string", "string", "string", "string"],
+    "description-capture-power-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1471,6 +1508,7 @@ for name, (source, expected) in (
     | MULTIPLICATION_WITNESSES
     | REMAINDER_WITNESSES
     | ADDITION_WITNESSES
+    | POWER_WITNESSES
 ).items():
     CASES[name] = (
         source,
@@ -1596,6 +1634,14 @@ CASES["description-capture-addition-index"] = (
     ADDITION_INDICES["description-capture-addition-index"],
     *CASES["description-type-guard"][1:],
 )
+CASES["string-power-indices"] = (
+    POWER_INDICES["string-power-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-power-index"] = (
+    POWER_INDICES["description-capture-power-index"],
+    *CASES["description-type-guard"][1:],
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -1719,6 +1765,7 @@ def oracle(args):
             body for name, body in REMAINDER_INDICES.items() if name not in REMAINDER_WITNESSES
         )
         + "".join(body for name, body in ADDITION_INDICES.items() if name not in ADDITION_WITNESSES)
+        + "".join(body for name, body in POWER_INDICES.items() if name not in POWER_WITNESSES)
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -2208,6 +2255,32 @@ var symbol133StringUTF16AdditionIndices = stringAdditionIndices('\u00c9xy', '\u0
   stringAdditionIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringAdditionIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observePower{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}PowerWitness{i} = observePower{i}();\n"
+            for i, (body, expected) in enumerate(POWER_WITNESSES.values(), 134)
+        )
+        + r"""
+var symbol135StringPowerIndices = stringPowerIndices('', '', '', '') &&
+  stringPowerIndices('a', 'a', '', '') && stringPowerIndices('abcd', 'a', 'b', 'cd') &&
+  stringPowerIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringPowerIndices('abc', 'a', 'bc', 'c') && !stringPowerIndices('abc', 'a', 'b', 'bc');
+var symbol136DescriptionCapturePowerIndex = descriptionCapturePowerIndex(Symbol()) === ':absent' &&
+  descriptionCapturePowerIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCapturePowerIndex(Symbol('')) === '' &&
+  descriptionCapturePowerIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCapturePowerIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCapturePowerIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCapturePowerIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol137StringUTF16PowerIndices = stringPowerIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringPowerIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringPowerIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringPowerIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -2314,6 +2387,10 @@ var symbol133StringUTF16AdditionIndices = stringAdditionIndices('\u00c9xy', '\u0
         "StringAdditionIndices",
         "DescriptionCaptureAdditionIndex",
         "StringUTF16AdditionIndices",
+        "PowerWitness134",
+        "StringPowerIndices",
+        "DescriptionCapturePowerIndex",
+        "StringUTF16PowerIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -2360,6 +2437,10 @@ var symbol133StringUTF16AdditionIndices = stringAdditionIndices('\u00c9xy', '\u0
     vm_expected = vm_expected.replace(
         "symbol133StringUTF16AdditionIndices=true",
         "symbol133StringUTF16AdditionIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol137StringUTF16PowerIndices=true",
+        "symbol137StringUTF16PowerIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -2519,6 +2600,7 @@ def main():
             | MULTIPLICATION_INDICES
             | REMAINDER_INDICES
             | ADDITION_INDICES
+            | POWER_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -2742,6 +2824,7 @@ def main():
         *MULTIPLICATION_INDICES,
         *REMAINDER_INDICES,
         *ADDITION_INDICES,
+        *POWER_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -3313,7 +3396,6 @@ def main():
         "coercion": "return text.charAt('0' + 1);",
         "boolean": "return text.charAt(false + 0);",
         "null": "return text.slice(0 + null);",
-        "other-arithmetic": "return text.charAt(0 ** 1);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} + 1);",
         "nested-expression": "return text.charAt((0 + 1) + 1);",
         "negated-expression": "return text.slice(-(0 + 1));",
@@ -3348,6 +3430,51 @@ def main():
         raise RuntimeError("addition index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "addition-index-stale"):
         raise RuntimeError("changed addition index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-left": "return text.charAt(index ** 1);",
+        "dynamic-right": "return text.slice(1 ** index);",
+        "coercion": "return text.charAt('0' ** 1);",
+        "boolean": "return text.charAt(false ** 0);",
+        "null": "return text.slice(0 ** null);",
+        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} ** 1);",
+        "nested-expression": "return text.charAt((0 ** 1) ** 1);",
+        "negated-expression": "return text.slice(-(0 ** 1));",
+        "negative-left": "return text.charAt((-1) ** 2);",
+        "negative-right": "return text.slice(2 ** -1);",
+        "negative-zero": "return text.charAt((-0) ** 1);",
+        "result-escape": "const missing=1 ** 1e999; text.charAt(missing); return missing;",
+        "unused-result": "const missing=1 ** 1e999; return text.charAt(0);",
+        "nan-global": "return text.charAt(NaN ** 1);",
+        "infinity-global": "return text.slice(1 ** Infinity);",
+        "extra-argument": "return text.charAt(0, 0 ** 1);",
+        "charat-authority": "return text.charAt(0 ** 1).toLowerCase();",
+        "slice-authority": "return text.slice(1 ** 0).toLowerCase();",
+        "replacement": "String.prototype.slice=0; return text.slice(0 ** 1);",
+        "detached": "const method=text.charAt; return method(0 ** 1);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(0 ** 1);",
+        "description-unguarded": "return Symbol(text).description.charAt(0 ** 1);",
+        "mutable-capture": "let bound=0 ** 1; function part() { return text.charAt(bound); } bound=2; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "power-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"power-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-power-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"power-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "power-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("power index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "power-index-stale"):
+        raise RuntimeError("changed power index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
