@@ -149,6 +149,33 @@ HELPER_TYPES = """function helperTypes(key, text, number, flag) {
     (before === text && after === 'changed' ? ':evaluation' : ':wrong');
 }
 """
+SCALAR_EQUALITY = """function scalarEquality(left, right, flag, other) {
+  return (left === right ? '1' : '0') + (left == right ? '1' : '0') +
+    (left !== right ? '1' : '0') + (left != right ? '1' : '0') +
+    (flag === other ? '1' : '0') + (flag == other ? '1' : '0') +
+    (flag !== other ? '1' : '0') + (flag != other ? '1' : '0') +
+    (left === flag ? '1' : '0') + (left == flag ? '1' : '0') +
+    (flag === left ? '1' : '0') + (flag == left ? '1' : '0') +
+    (left !== undefined && flag !== undefined ? '1' : '0');
+}
+"""
+# The same input tuples drive Node/VM and the typed native clients.
+EQUALITY_INPUTS = (
+    ("Zero", "0, -0, false, true", "0.0, -0.0, false, true", "1100001101011"),
+    ("One", "1, 1, true, true", "1.0, 1.0, true, true", "1100110001011"),
+    ("Unequal", "2, 3, true, false", "2.0, 3.0, true, false", "0011001100001"),
+    ("NaN", "0 / 0, 0 / 0, false, false", "nan, nan, false, false", "0011110000001"),
+    ("Infinity", "1 / 0, 1 / 0, true, true", "inf, inf, true, true", "1100110000001"),
+    ("Opposite", "-1 / 0, 1 / 0, true, false", "-inf, inf, true, false", "0011001100001"),
+)
+HELPER_EQUALITY = """function helperEquality(number, flag, count) {
+  function equal(left, right) { return left == right; }
+  function strict(left, right) { return left === right; }
+  let matched = flag;
+  for (let i = 0; i < count; i++) matched = equal(number, matched);
+  return strict(matched, flag) && !strict(number, flag);
+}
+"""
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -160,6 +187,8 @@ PARAMETER_TYPES = {
     "helper-description": ["symbol"],
     "helper-undefined": ["symbol"],
     "helper-types": ["symbol", "string", "number", "boolean"],
+    "scalar-equality": ["number", "number", "boolean", "boolean"],
+    "helper-equality": ["number", "boolean", "number"],
 }
 CASES = {
     "state": (
@@ -358,6 +387,42 @@ CASES["helper-types"] = (
 """,
     "true\n",
 )
+CASES["scalar-equality"] = (
+    SCALAR_EQUALITY,
+    r"""
+    static_assert(std::is_same_v<decltype(&@ENTRY@), ctnative::js_string (*)(
+        ctnative::js_num, ctnative::js_num, ctnative::js_boolean_t, ctnative::js_boolean_t)>);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+"""
+    + "".join(
+        "    assert(@ENTRY@("
+        + ", ".join(
+            f"ctnative::{kind}{{{value}}}"
+            for kind, value in zip(
+                ("js_num", "js_num", "js_boolean_t", "js_boolean_t"), native.split(", ")
+            )
+        )
+        + f').value() == "{expected}");\n'
+        for _, _, native, expected in EQUALITY_INPUTS
+    )
+    + '    std::cout << "true\\n";\n',
+    "true\n",
+)
+CASES["helper-equality"] = (
+    HELPER_EQUALITY,
+    r"""
+    static_assert(std::is_same_v<decltype(&@ENTRY@), ctnative::js_boolean_t (*)(
+        ctnative::js_num, ctnative::js_boolean_t, ctnative::js_num)>);
+    assert(@ENTRY@(ctnative::js_num{0.0}, ctnative::js_boolean_t{false}, ctnative::js_num{0.0}));
+    assert(!@ENTRY@(ctnative::js_num{-0.0}, ctnative::js_boolean_t{false}, ctnative::js_num{1.0}));
+    assert(@ENTRY@(ctnative::js_num{0.0}, ctnative::js_boolean_t{false}, ctnative::js_num{2.0}));
+    assert(@ENTRY@(ctnative::js_num{1.0}, ctnative::js_boolean_t{true}, ctnative::js_num{3.0}));
+    assert(@ENTRY@(ctnative::js_num{ctnative::js_nan_t{}}, ctnative::js_boolean_t{false}, ctnative::js_num{1.0}));
+    std::cout << "true\n";
+""",
+    "true\n",
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -434,6 +499,8 @@ def oracle(args):
         + HELPER_DESCRIPTION
         + HELPER_UNDEFINED
         + HELPER_TYPES
+        + SCALAR_EQUALITY
+        + HELPER_EQUALITY
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -491,7 +558,13 @@ symbol21HelperTypes = helperTypes(key, 'a\\u0000b', -0, false) === 'symbol:strin
 symbol22HelperUndefined = helperUndefined(key) === undefined;
 }}
 observeHelpers();
+var symbol29HelperEquality = helperEquality(0, false, 0) && !helperEquality(-0, false, 1) &&
+  helperEquality(0, false, 2) && helperEquality(1, true, 3) && helperEquality(0 / 0, false, 1);
 """
+        + "".join(
+            f"\nvar symbol{i}Equality{name} = scalarEquality({inputs}) === '{expected}';"
+            for i, (name, inputs, _, expected) in enumerate(EQUALITY_INPUTS, 23)
+        )
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -518,6 +591,8 @@ observeHelpers();
         "HelperDescription",
         "HelperTypes",
         "HelperUndefined",
+        *("Equality" + item[0] for item in EQUALITY_INPUTS),
+        "HelperEquality",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -696,6 +771,27 @@ def main():
         )
         for optimize in (False, True):
             refuse(ir, contract, f"helper-{name}-{optimize}", optimize=optimize)
+    for name, body in {
+        "strict-symbol": "return number === Symbol.iterator;",
+        "loose-symbol": "return number == Symbol.iterator;",
+        "strict-string": "return number === '1';",
+        "loose-string": "return number == '1';",
+        "loose-undefined": "return number == undefined;",
+        "strict-null": "return number === null;",
+        "loose-null": "return number == null;",
+        "description": "return Symbol().description == number;",
+        "object": "return {valueOf() { return 1; }} == number;",
+        "mixed-join": "return (flag ? number : flag) == number;",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "equality-" + name,
+            f"function bad(number, flag) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["number", "boolean"],
+        )
+        for optimize in (False, True):
+            refuse(ir, contract, f"equality-{name}-{optimize}", optimize=optimize)
     ir, contract = accepted["helper-state"]
     for budget in (0, 1, 100, 500):
         refuse(ir, contract, f"helper-budget-{budget}", max_steps=budget)
@@ -781,7 +877,7 @@ def main():
     )
     refuse(ir, manifest, "parameter-shadow-refused")
     print(
-        f"Symbol exports: typed parameters/helpers, branch/loop return and primitive transcript agree with Node/VM; "
+        f"Symbol exports: typed parameters/helpers, scalar equality and branch/loop return agree with Node/VM; "
         f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 

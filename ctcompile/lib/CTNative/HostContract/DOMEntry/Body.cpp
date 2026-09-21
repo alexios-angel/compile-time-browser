@@ -310,6 +310,11 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             };
             const bool strings =
                 hasKind(compare.getLhs(), Kind::string) && hasKind(compare.getRhs(), Kind::string);
+            const auto numberOrBoolean = [&](mlir::Value value) {
+                return hasKind(value, Kind::number) || hasKind(value, Kind::boolean);
+            };
+            const bool scalars =
+                numberOrBoolean(compare.getLhs()) && numberOrBoolean(compare.getRhs());
             const bool strict = compare.getKind() == ctjs::CompareKind::StrictEq;
             const bool description = hasKind(compare.getLhs(), Kind::undefinedString) ||
                                      hasKind(compare.getRhs(), Kind::undefinedString);
@@ -351,7 +356,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             }
             const bool symbols =
                 hasKind(compare.getLhs(), Kind::symbol) && hasKind(compare.getRhs(), Kind::symbol);
-            if (strings || symbols ||
+            if (strings || symbols || scalars ||
                 (strict &&
                  ((elementIdentity(compare.getLhs()) && elementIdentity(compare.getRhs())) ||
                   (stringOrNull(compare.getLhs()) && stringOrNull(compare.getRhs()))))) {
