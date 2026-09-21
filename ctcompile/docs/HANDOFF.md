@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native Bootstrap results and browser prototype calls, 2026-09-21 UTC
+
+Continued clean **d74968ab**, then resumed the saved draft after an interruption.
+**58803194** publishes the unchanged original vendor-derived class/Data results
+through native DOM sessions: holder **15927**, constructor **59112**. Preparation
+reuses the proved local Map operations and read-time field categories, including
+read-only branch arms and Boolean arithmetic. Five previous refusal sources now
+execute unchanged; a sixth complete-source witness observes Map has/delete/clear.
+The provider and owner proofs still run independently; no VM/GC fallback was added.
+
+Following the user's browser-integration direction, **95ea1b19** connects source
+`Element.prototype.matches.call` and `closest.call` to their existing typed C++
+method objects over public ctbrowser DOM/Style. Boolean results, nullable element
+borrows, document identity and explicit Style association remain checked.
+**616ea0f6** separately admits two literal negations in String indices.
+
+Focused validation: composite/constructor selectors **48 native executions,
+46 refusals and six Node/VM observations**; prototype-selector lit **64 executions,
+100 refusals, 167.72 s**; two selected DOM-input/provider lit cases pass; final
+exact host-contract CTest **1/1, 0.60 s total**. String selection passes **64
+executions, 148 refusals, six Node/VM agreements and one known UTF-16 difference**.
+The whole native-class-DOM replay was interrupted; it is **not a full-case pass**.
+Scoped checks pass; repository formatting retains 16 untouched diagnostics.
+No browser/shared implementation changed; full suites and broad replays were skipped.
+
+**Next:** the existing two-input class witnesses still require
+`class nested Map DOM inputs require an alias proof` in
+`ClassInitialization/CapturedMapHelpers.cpp`. Prove both equal/distinct DOM-input
+partitions without treating different formals as distinct nodes or discarding
+Map observers. Browser integration also needs the planned typed document/element
+views and application driver. Original B/Data+B, object-field ownership, tagged
+Map snapshots, broader Strings, conditional callees and mutable cells remain.
+Full Bootstrap is unfinished.
+
+[Exact checks, interruption scope and next boundary](handoff/2026-09-21-composite-results-double-negation.md).
+
 ## Optional Map payloads and negated primitive indices, 2026-09-21 UTC
 
 Continued clean **72040551**. **c3dc2da0** carries closed optional scalar
