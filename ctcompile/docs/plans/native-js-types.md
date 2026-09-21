@@ -239,6 +239,9 @@ zero selects index zero. **72a99948** extends the same finite literal range to
 fractional indices: truncation precedes sign testing and unsigned conversion, so
 `-0.5` selects index zero. Exact `charAt(0)` and one-argument `slice(1)` retain their
 separate first-unit and dataset-tail authority.
+**cf37fb24** removes the uint32 magnitude ceiling for Number literals, including
+literal overflow infinities. Lowering guards the unsigned conversion itself and
+then clamps in `size_t`; NaN and dynamic/coercing origins remain refused.
 **8e6e2e4d** also admits constant ASCII-prefix `startsWith` and
 `charAt(0).toLowerCase()` through their existing proofs and public Core helpers.
 Whole-string lowercase, non-ASCII prefixes and dynamic/coercing indices remain
@@ -250,11 +253,11 @@ the guard grant no String authority. Mixed null/description joins remain separat
 the existing native strict/loose equality operations, including mixed kinds,
 NaN and signed zero. Parameters, local helpers and loop-carried Boolean results
 remain typed. With global/local helper composition, description guards and
-**72a99948** bounded fractional String indices, the export fixture checks **504 native executions,
-502 refusals and two mutations**, with **71 Node/VM agreements and seven known VM
+**cf37fb24** wide literal String indices, the export fixture checks **648 native executions,
+536 refusals and two mutations**, with **89 Node/VM agreements and seven known VM
 casing/indexing differences**. Native/Node Unicode expectations remain intact;
 no runtime implementation changed.
-[Exact captured Data and fractional-index evidence](../handoff/2026-09-21-captured-data-fractional-indices.md).
+[Exact constructor Data and wide-index evidence](../handoff/2026-09-21-constructor-data-wide-indices.md).
 
 **Next source slice:** broader String methods, dynamic/coercing indices and
 conditional callee transport. Branch-mutated boxed locals remain separate from immutable captures;
@@ -647,11 +650,11 @@ existing `auto`/template deduction.
    return transport now emit in proved DOM and primitive-only entries. Source
    `.description` preserves owning undefined/String results. Exact primitive/Symbol
    parameters and local/global helper calls, including immutable local captures,
-   are implemented. Exact description guards permit finite literal `charAt` indices
-   and `slice` bounds with magnitudes at most 4294967295 and explicit String identity,
-   truncating fractional bounds toward zero,
-   including ASCII-prefix checks and
-   isolated-first-unit lowercase; broader methods and indices remain separate.
+   are implemented. Exact description guards permit Number-literal `charAt` indices
+   and `slice` bounds, including overflow infinities, with explicit String identity.
+   Bounds truncate toward zero and unsigned conversion is guarded. ASCII-prefix
+   checks and isolated-first-unit lowercase retain their separate proofs;
+   broader methods and dynamic/coercing indices remain separate.
    Registry, symbol-keyed fields and hooks remain
    separate. BigInt still needs its public non-Script core and ownership
    proofs. Unsupported uses remain compile-time diagnostics.

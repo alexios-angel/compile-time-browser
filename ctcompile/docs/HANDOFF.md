@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor Data publication and wide String indices, 2026-09-21 UTC
+
+Continued clean **d5631824** from the recorded constructor-time Data boundary.
+**f5b9fa07** moves an exact terminal three-argument registration call
+immediately after each ordinary construction, preserving both literal key
+arguments and the constructed receiver. The original holder/cell/callee/symbol
+census remains required. The unchanged captured Map expander must consume every
+moved helper before the candidate can pass; nested routing and concrete record
+ownership still run afterward. Saved child and record aliases survive replacement
+and recreation. The original file-44 constructor witness now executes unchanged.
+**cf37fb24** admits Number-literal String indices beyond uint32, including
+literal overflow infinities. Unsigned conversion is guarded before clamping;
+fractional truncation and exact first-unit/dataset-tail authority remain intact.
+
+Focused devbox validation passes: **one exact CTest and four distinct lit cases**.
+The corrected captured class fixture measures **169 source observations, 360 main
+native executions, 338 unprepared refusals and 219 preparation refusals**; the new
+direct constructor's first complete budget is **3619**. Intrinsic exports measure
+**648 native executions, 536 refusals and two mutations**, with **89 Node/VM
+agreements and seven explicit known differences**. DOM Strings measure 809
+observations and eight native binaries. All **ten final code/test hashes** match
+the devbox. Scoped formatting and all 44 earlier class source files pass;
+repository formatting retains 16 existing diagnostics in untouched files.
+No browser/runtime implementation changed. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** compose three-argument registration with base-to-leaf completion and
+the original Data holder, retaining every observer and exception/reentry path.
+The current new slice requires an ordinary constructor and two literal String
+keys. Original Data still needs element-identity keys, conflict reporting,
+nullable lookup and conditional child/empty-parent cleanup. Original B/Data+B
+remains refused with complete sources. Dynamic/coercing String indices, NaN
+origins, broader String methods, conditional callees, branch-mutated boxed
+locals, String ordering, document views and the application driver remain.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next proof seam](handoff/2026-09-21-constructor-data-wide-indices.md).
+
 ## Captured Data helpers and fractional String indices, 2026-09-21 UTC
 
 Continued clean **5599188c** from the recorded captured Data helper boundary.
