@@ -310,6 +310,8 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
            "Maximum graph discovery work in the default pipeline">,
     Option<"exceptionMaxSteps", "exception-max-steps", "unsigned", "100000",
            "Maximum exception-region recovery work per function">,
+    Option<"structureMaxSteps", "structure-max-steps", "unsigned", "100000",
+           "Maximum ordinary structured-exit normalization work per function">,
     Option<"hostManifest", "host-manifest", "std::string", "\"\"",
            "Explicit ordinary global owner contract; preserve the fingerprinted source IR before admission">,
     Option<"hostMaxSteps", "host-max-steps", "unsigned", "100000",

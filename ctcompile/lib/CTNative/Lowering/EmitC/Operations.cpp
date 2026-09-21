@@ -150,6 +150,11 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             if (expected == carrierType(context, carrier::string)) {
                 if (!emptyString) { emptyString = stringConstant(b, where, ""); }
                 use.set(emptyString);
+            } else if (isNumberStringCarrier(expected) || isBooleanStringCarrier(expected) ||
+                       isNullableNumberStringCarrier(expected) ||
+                       isNullableBooleanStringCarrier(expected)) {
+                if (!emptyString) { emptyString = stringConstant(b, where, ""); }
+                use.set(convertScalar(b, where, emptyString, expected));
             } else if (isNullableStringCarrier(expected)) {
                 if (!emptyNullableString) {
                     emptyNullableString = ec::ConstantOp::create(

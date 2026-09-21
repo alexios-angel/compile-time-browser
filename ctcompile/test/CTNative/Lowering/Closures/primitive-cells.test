@@ -27,7 +27,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/container.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index-switch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=INDEX-SWITCH
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index-switch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=INDEX-SWITCH --implicit-check-not=ctnative.not_native --implicit-check-not=scf.index_switch --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-sibling.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=NESTED-SIBLING
 
 # RUNTIME-DAG: !emitc.ptr<!emitc.opaque<"ctnative::number_string">>
@@ -47,7 +47,8 @@
 # NUMERIC-MUTATION: global 'numericSnapshot' differs
 # STRING-MUTATION: global 'nestedSnapshot' differs
 # REFUSED: ctnative.not_native =
-# INDEX-SWITCH: ctnative.not_native = "`scf.index_switch` is not native yet"
+# INDEX-SWITCH: emitc.func @numberCell_1
+# INDEX-SWITCH-SAME: !emitc.opaque<"ctnative::number_string">
 # NESTED-SIBLING: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases
 
 #--- values.js

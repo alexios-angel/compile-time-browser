@@ -6,6 +6,9 @@
 namespace ctcompile::ctnative::lowering_detail {
 
 bool admission::function(ctjs::FuncOp fn) {
+    if (auto why = fn->getAttrOfType<mlir::StringAttr>("ctnative.structure_refusal")) {
+        return refuse(why.getValue().str());
+    }
     mlir::Block & entry = fn.getBody().front();
     const auto unsupported = [&](mlir::Value value) {
         if (nativeMapRecordPayload(value) ||

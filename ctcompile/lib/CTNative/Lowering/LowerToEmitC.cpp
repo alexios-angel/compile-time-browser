@@ -327,20 +327,55 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             guards.addPass(createCTNativePrecompute(options));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
         }
-        // Recovery is speculative until type/effect admission and the entire
+        // Recovery/normalization is speculative until type/effect admission and the entire
         // closed call component pass. Refused functions keep their original
         // status edges for boxed lowering; a diagnostic is never a proof.
         llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>, 0>
-            exceptionOriginals;
+            recoveryOriginals;
         module.walk([&](ctjs::FuncOp fn) {
             if (hostContract) { return; }
             fn->removeAttr("ctnative.exception_refusal");
+            fn->removeAttr("ctnative.structure_refusal");
             bool handlers = false;
             fn.walk([&](ctjs::PushHandlerOp) { handlers = true; });
-            if (!handlers) { return; }
+            if (!handlers) {
+                bool switches = false;
+                fn.walk([&](mlir::scf::IndexSwitchOp) { switches = true; });
+                if (!switches) { return; }
+                unsigned remaining = structureMaxSteps;
+                // Reserve the copy's cost before allocating it, as class
+                // method normalization and exception recovery already do.
+                auto walked = fn.walk([&](mlir::Operation * op) {
+                    const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
+                    if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                    remaining -= static_cast<unsigned>(cost);
+                    return mlir::WalkResult::advance();
+                });
+                if (walked.wasInterrupted()) {
+                    fn->setAttr("ctnative.structure_refusal",
+                                mlir::StringAttr::get(
+                                    &getContext(), "native structured-exit work budget exhausted"));
+                    return;
+                }
+                mlir::OwningOpRef<ctjs::FuncOp> normalized(llvm::cast<ctjs::FuncOp>(fn->clone()));
+                if (auto error = normalizeStructuredExits(*normalized, remaining)) {
+                    fn->setAttr(
+                        "ctnative.structure_refusal",
+                        mlir::StringAttr::get(&getContext(), llvm::toString(std::move(error))));
+                    return;
+                }
+                // Keep the original body for the same final admission rollback
+                // used by exception recovery. No solver facts exist yet.
+                mlir::OwningOpRef<ctjs::FuncOp> original(
+                    llvm::cast<ctjs::FuncOp>(fn->cloneWithoutRegions()));
+                original->getBody().takeBody(fn.getBody());
+                fn.getBody().takeBody(normalized->getBody());
+                recoveryOriginals.emplace_back(fn, std::move(original));
+                return;
+            }
             auto recovery = recoverPrimitiveExceptionRegion(fn, exceptionMaxSteps);
             if (recovery.recovered) {
-                exceptionOriginals.emplace_back(fn, std::move(recovery.original));
+                recoveryOriginals.emplace_back(fn, std::move(recovery.original));
             } else if (!recovery.refusal.empty()) {
                 fn->setAttr("ctnative.exception_refusal",
                             mlir::StringAttr::get(&getContext(), recovery.refusal));
@@ -692,7 +727,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // creation site, and whether a shape's definition is a template is a
         // property of every site in the program at once, so no site's type can
         // be spelled until all of them have been seen.
-        for (auto & [fn, original] : exceptionOriginals) {
+        for (auto & [fn, original] : recoveryOriginals) {
             if (llvm::is_contained(accepted, fn)) { continue; }
             fn.getBody().takeBody(original->getBody());
             if (auto marker = (*original)->getAttr("ctjs.not_structured")) {
