@@ -16,6 +16,12 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-inherited-leaf-direct": (799, 799),
+    "class-map-inherited-leaf-overwrite": (5959, 5959),
+    "class-map-inherited-leaf-delete": (5452, 5452),
+    "class-map-inherited-leaf-method": (889, 889),
+    "class-map-inherited-leaf-write-after": (799, 799),
+    "class-map-inherited-leaf-throw-after": (709, 709),
     "class-map-record-constructor-return-object": (709, 709),
     "class-map-record-constructor-inherited": (799, 799),
     "class-map-record-constructor-dynamic-key": (707, 707),
@@ -567,6 +573,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-inherited-leaf-direct",
+    "class-map-inherited-leaf-overwrite",
+    "class-map-inherited-leaf-delete",
+    "class-map-inherited-leaf-method",
     "class-map-record-alias-method-constructor-publication",
     "class-map-record-constructor-direct",
     "class-map-record-constructor-overwrite",
@@ -1324,7 +1334,7 @@ def check_executable(args, name, native, expected):
         cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
         if any(token in cpp for token in ("ctbrowser::", '"prototype"', '"__home"')):
             raise RuntimeError(f"{name}: native class retained runtime or prototype storage")
-        if name.startswith("class-map-record-") and (
+        if name.startswith(("class-map-record-", "class-map-inherited-leaf-")) and (
             not re.search(r"map_storage<std::string, ctn_\w+(?:<[^>]+>)? \*>", cpp)
             or "ctnative::map_get_present(" not in cpp
             or "std::make_shared<ctnative::identity_object>" in cpp

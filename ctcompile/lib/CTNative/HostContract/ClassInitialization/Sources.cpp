@@ -574,12 +574,12 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
 bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp constructor,
                                                      llvm::ArrayRef<ctjs::ConstructOp> instances,
                                                      const HostContract & contract) {
-    // ponytail: one terminal registration in a non-inherited constructor.
-    // Earlier publication needs partial-initialization and reentry proofs.
+    // ponytail: one terminal registration in a complete leaf constructor.
+    // Bases and earlier publication need partial-initialization/reentry proofs.
     auto function = target(constructor);
     if (contract.provider != HostContract::Provider::closedSource || instances.empty() ||
-        heritage.count(constructor.getResult()) || baseClasses.contains(constructor.getResult()) ||
-        !function.getBody().hasOneBlock() || constructor.getUpvalues().size() != 1) {
+        baseClasses.contains(constructor.getResult()) || !function.getBody().hasOneBlock() ||
+        constructor.getUpvalues().size() != 1) {
         return true;
     }
     auto & body = function.getBody().front();
@@ -756,14 +756,6 @@ bool classInitialization::ownFieldSnapshots(ctjs::CreateClosureOp constructor,
     }
     if (contract.provider != HostContract::Provider::closedSource) {
         return refuse("class own-key snapshot requires fixed constructor fields");
-    }
-    if (inherited) {
-        auto baseClosure = base.getDefiningOp<ctjs::CreateClosureOp>();
-        auto baseFunction = target(baseClosure);
-        if (!constructors.contains(baseFunction) ||
-            !normalizeSuper(constructor, baseClosure, contract)) {
-            return false;
-        }
     }
     // ponytail: fixed named fields, with one ordered shape across an inherited
     // snapshot's receivers. Variable presence needs a separate proof.

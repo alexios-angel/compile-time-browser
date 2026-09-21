@@ -798,6 +798,16 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     llvm::DenseSet<mlir::Operation *> methodHomes;
+    if (auto inherited = heritage.lookup(closure.getResult())) {
+        auto baseClosure =
+            sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>();
+        if (!constructors.contains(target(baseClosure)) ||
+            !normalizeSuper(closure, baseClosure, contract)) {
+            return false;
+        }
+    }
+    // Publication and own-key snapshots both need the complete leaf body,
+    // including all effects and field writes from its proved super chain.
     if (!sinkConstructorPublication(closure, instances, contract)) { return false; }
     if (!ownFieldSnapshots(closure, instances, definitions, methodKeys, contract)) { return false; }
     llvm::SmallVector<ctjs::SetPropertyOp> allMethods(definitions);
@@ -900,13 +910,6 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                 return false;
             }
             staticReads.append(receiverReads);
-        }
-        auto baseClosure =
-            sourceValue(inherited.getArgs()[1]).getDefiningOp<ctjs::CreateClosureOp>();
-        auto base = target(baseClosure);
-        if (!constructors.contains(base) || (!snapshotFields.contains(closure.getResult()) &&
-                                             !normalizeSuper(closure, baseClosure, contract))) {
-            return false;
         }
         setup.insert(inherited);
         retainedSetup.insert(inherited.getCallee().getDefiningOp());
