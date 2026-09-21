@@ -146,6 +146,32 @@ def check_captured_key_inputs(args, source, manifest):
     return len(variants)
 
 
+def check_constructor_publication_inputs(args, source, manifest):
+    text = source.read_text()
+    bodies = re.findall(r"^  ctjs.func\b[^\n]*\n.*?^  }\n", text, re.M | re.S)
+    captured = [body for body in bodies if "ctjs.load_upvalue " in body]
+    if len(captured) != 2:
+        raise RuntimeError("publication control lost its constructor or registration helper")
+    for index, body in enumerate(captured):
+        symbol = re.search(r"ctjs.func\s+(?:private\s+)?@([^\s(]+)", body)[1]
+        changed = text.replace(
+            "module attributes {", f"module attributes {{test.publication_ref = @{symbol}, ", 1
+        )
+        if changed == text:
+            raise RuntimeError("publication symbol control did not change its source")
+        name = f"constructor-publication-symbol-{index}"
+        path = args.work / f"{name}.mlir"
+        path.write_text(changed)
+        prepare(
+            args,
+            name,
+            path,
+            dict(manifest, module_sha256=host.fingerprint(args.opt, path)),
+            success=False,
+        )
+    return len(captured)
+
+
 def check_record_map_inputs(args, prepared):
     text = prepared.read_text()
     keys = dict(re.findall(r'(%\w+) = ctjs.constant #ctjs.string<"([^"]*)">', text))
@@ -340,6 +366,7 @@ def main():
                         "class-map-record-alias-method-inherited",
                         "class-map-record-constructor-inherited",
                         "class-map-record-alias-snapshot-inherited",
+                        "class-map-record-nested-constructor-inherited",
                     )
                     else []
                 ),
@@ -396,6 +423,7 @@ def main():
             "class-map-record-alias-method-inherited",
             "class-map-record-alias-snapshot-inherited",
             "class-map-record-constructor-inherited",
+            "class-map-record-nested-constructor-inherited",
         ):
             # Declare the mutable implementation hooks emitted by the source.
             # Their identities do not establish ancestry or super semantics.
@@ -562,6 +590,7 @@ def main():
             "class-map-record-nested-conditional-repeat",
             "class-map-record-nested-shortcircuit-repeat",
             "class-map-record-nested-captured-direct",
+            "class-map-record-nested-constructor-direct",
         ):
             prepare(
                 args,
@@ -571,6 +600,8 @@ def main():
                 success=False,
             )
             preparation_refusals += 1
+        if name == "class-map-record-nested-constructor-direct":
+            preparation_refusals += check_constructor_publication_inputs(args, structured, manifest)
         if name.startswith("class-map-record-") and name in POSITIVES:
             # Super normalization removes the imported ReferenceError guards;
             # the inherited source still constructs its Map and leaf record.
@@ -599,6 +630,9 @@ def main():
                 "class-map-record-nested-captured-distinct": 4,
                 "class-map-record-nested-captured-holder": 4,
                 "class-map-record-nested-captured-shortcircuit": 2,
+                "class-map-record-nested-constructor-direct": 6,
+                "class-map-record-nested-constructor-holder": 4,
+                "class-map-record-nested-constructor-shortcircuit": 3,
             }.get(name, constructions)
             if constructions != prepared.read_text().count("ctjs.construct"):
                 raise RuntimeError(f"{name}: preparation discarded a record or Map construction")
@@ -877,6 +911,7 @@ def main():
             "class-map-record-nested-conditional-repeat",
             "class-map-record-nested-shortcircuit-repeat",
             "class-map-record-nested-captured-direct",
+            "class-map-record-nested-constructor-direct",
             "local-helper-branches",
             "local-holder-arrow",
             "global-holder-chain",

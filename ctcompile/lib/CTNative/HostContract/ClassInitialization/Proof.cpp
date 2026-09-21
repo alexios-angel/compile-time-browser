@@ -191,6 +191,10 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         }
     }
     if (!maps.empty()) {
+        llvm::SmallVector<unsigned> requiredHelpers;
+        for (ctjs::CallOp call : calls) {
+            if (!sinkCapturedPublication(call, contract, requiredHelpers)) { return false; }
+        }
         llvm::DenseSet<mlir::Operation *> scopes;
         for (ctjs::CallOp call : calls) {
             if (!step()) { return false; }
@@ -198,6 +202,12 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             if (scopes.insert(scope).second &&
                 (!normalizeCapturedMapHelpers(scope) || !normalizeNestedMaps(scope))) {
                 return false;
+            }
+        }
+        for (unsigned helper : requiredHelpers) {
+            if (!step()) { return false; }
+            if (functions.contains(helper)) {
+                return refuse("constructor registration requires complete captured Map expansion");
             }
         }
     }

@@ -16,6 +16,20 @@ from Target.Cpp.harness import FLAGS
 # The implementation hook and function metadata retain separate Node/VM
 # observations. Inherited static getter lookup now agrees between the engines.
 OBSERVATIONS = {
+    "class-map-record-nested-constructor-direct": (599642, 599642),
+    "class-map-record-nested-constructor-holder": (5131, 5131),
+    "class-map-record-nested-constructor-shortcircuit": (5991, 5991),
+    "class-map-record-nested-constructor-observer": (8, 8),
+    "class-map-record-nested-constructor-throw": (16, 16),
+    "class-map-record-nested-constructor-return-object": (709, 709),
+    "class-map-record-nested-constructor-dynamic-key": (7, 7),
+    "class-map-record-nested-constructor-object-key": (7, 7),
+    "class-map-record-nested-constructor-child-escaped": (7, 7),
+    "class-map-record-nested-constructor-record-escaped": (7, 7),
+    "class-map-record-nested-constructor-reentry": (7, 7),
+    "class-map-record-nested-constructor-unused-slot": (7, 7),
+    "class-map-record-nested-constructor-inherited": (7, 7),
+    "class-map-record-nested-constructor-helper-effect": (7, 7),
     "class-map-record-nested-captured-direct": (5991, 5991),
     "class-map-record-nested-captured-distinct": (5961, 5961),
     "class-map-record-nested-captured-holder": (5131, 5131),
@@ -752,6 +766,10 @@ GLOBAL_HOLDERS = {
     "global-holder-dispatch",
 }
 POSITIVES = GLOBAL_HOLDERS | {
+    "class-map-record-nested-constructor-direct",
+    "class-map-record-nested-constructor-holder",
+    "class-map-record-nested-constructor-shortcircuit",
+    "class-map-record-nested-captured-constructor",
     "class-map-record-nested-captured-direct",
     "class-map-record-nested-captured-distinct",
     "class-map-record-nested-captured-holder",

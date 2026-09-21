@@ -109,6 +109,8 @@ struct classInitialization {
     bool normalizePublicationHelper(ctjs::CreateClosureOp constructor,
                                     const HostContract & contract);
     bool normalizePublicationKey(ctjs::CreateClosureOp constructor, const HostContract & contract);
+    bool sinkCapturedPublication(ctjs::CallOp setup, const HostContract & contract,
+                                 llvm::SmallVectorImpl<unsigned> & requiredHelpers);
     bool normalizeCapturedMapHelpers(ctjs::FuncOp scope);
     bool normalizeNestedMaps(ctjs::FuncOp scope);
     bool sinkConstructorPublication(ctjs::CreateClosureOp constructor,
