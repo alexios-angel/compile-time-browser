@@ -717,11 +717,12 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
     }
-    if (edge.kind == HostDOMMethod::matches) {
+    if (edge.kind == HostDOMMethod::matches || edge.returnsElement()) {
         auto receiver = callWithConstValueOperands(
             at, where, mlir::TypeRange{ec::OpaqueType::get(context, "ctnative::js_element_t")},
             at.getStringAttr("ctnative::js_element_t"),
             mlir::ValueRange{arguments[0], arguments[1]});
+        domStyles[receiver.getResult(0)] = arguments[1];
         arguments.erase(arguments.begin(), arguments.begin() + 2);
         arguments.insert(arguments.begin(), receiver.getResult(0));
     } else {
@@ -768,18 +769,28 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             : edge.returnsNumber()        ? carrierType(context, carrier::number)
             : edge.returnsString()        ? carrierType(context, carrier::string)
                                           : carrierType(context, carrier::boolean);
-        const mlir::Type resultType = callee == "ctbrowser::string_to_number"
-                                          ? mlir::Type(at.getF64Type())
-                                      : edge.returnsString() ? mlir::Type(rawString)
-                                                             : type;
-        auto value = callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{resultType},
-                                                at.getStringAttr(callee), arguments);
+        const mlir::Type resultType =
+            edge.returnsElement()
+                ? ec::OpaqueType::get(context, "std::optional<ctnative::js_element_t>")
+            : callee == "ctbrowser::string_to_number" ? mlir::Type(at.getF64Type())
+            : edge.returnsString()                    ? mlir::Type(rawString)
+                                                      : type;
+        mlir::Value value =
+            callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{resultType},
+                                       at.getStringAttr(callee), arguments)
+                .getResult(0);
+        if (edge.returnsElement()) {
+            value = callWithConstValueOperands(at, where, mlir::TypeRange{type},
+                                               at.getStringAttr("ctnative::element_or_null"),
+                                               mlir::ValueRange{value})
+                        .getResult(0);
+        }
         if (edge.returnsElement() || edge.returnsElementVector()) {
             // Every chain begins with a parameter's selector call, which already
             // requires that parameter's engine in the native signature.
-            domStyles[value.getResult(0)] = domStyles.lookup(arguments.front());
+            domStyles[value] = domStyles.lookup(arguments.front());
         }
-        call.getResult().replaceAllUsesWith(convertScalar(at, where, value.getResult(0), type));
+        call.getResult().replaceAllUsesWith(convertScalar(at, where, value, type));
     } else {
         callWithConstValueOperands(at, call.getLoc(), mlir::TypeRange{}, at.getStringAttr(callee),
                                    arguments);

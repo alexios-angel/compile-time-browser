@@ -151,18 +151,24 @@ def main():
             for optimize in (False, True):
                 name = f"prototype-{case}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                if case in ("query", "matches") and (
-                    '"ctnative::js_element_t"' not in native.read_text()
-                    or "ctcompile/CTNative/Runtime/Browser.hpp" not in native.read_text()
+                emitted = native.read_text()
+                if case in ("query", "matches", "closest") and (
+                    '"ctnative::js_element_t"' not in emitted
+                    or "ctcompile/CTNative/Runtime/Browser.hpp" not in emitted
                 ):
-                    raise RuntimeError(f"{case}: matches lost its typed browser receiver")
+                    raise RuntimeError(f"{case}: selector lost its typed browser receiver")
+                if case in ("query", "closest") and (
+                    '"std::optional<ctnative::js_element_t>"' not in emitted
+                    or '"ctnative::element_or_null"' not in emitted
+                ):
+                    raise RuntimeError(f"{case}: selector lost its typed nullable result")
                 for method in {
                     "query": ("querySelector", "querySelectorAll"),
                     "query-all": ("querySelectorAll",),
                     "matches": ("matches",),
                     "closest": ("closest",),
                 }[case]:
-                    if f'"ctnative::Element.prototype.{method}.call"' not in native.read_text():
+                    if f'"ctnative::Element.prototype.{method}.call"' not in emitted:
                         raise RuntimeError(f"{case}: prototype call bypassed the native method")
                 dom.standalone(
                     args,
