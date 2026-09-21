@@ -56,10 +56,10 @@
 // RUN:   | FileCheck %s --check-prefix=LOOPARRAY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tilde.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
-// RUN:   | FileCheck %s --check-prefix=TILDE
+// RUN:   | FileCheck %s --check-prefix=TILDE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bits.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
-// RUN:   | FileCheck %s --check-prefix=BITS
+// RUN:   | FileCheck %s --check-prefix=BITS --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/frameslot.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=FRAMESLOT
@@ -126,11 +126,10 @@
 // LOOPARRAY: ctjs.func {{.*}}@ab$1
 // LOOPARRAY-SAME: ctnative.not_native = "an array literal that is loop-carried - more than one value reaches the variable that holds it (assigned again inside a loop, or on only one path before it)"
 
-// --- the two "not native yet" operator arms ---------------------------------
+// --- formerly refused Number bitwise operators -----------------------------
 //
-// They are worded almost alike and come from different operations - ctjs.unary
-// and ctjs.binary_static - so a reader cannot tell them apart by eye and a
-// rewrite that merged them would look like a tidy-up.
+// Preserve both original source bodies as positives. Unary ~ and binary |
+// operate on js_num, whose overloads implement JavaScript's 32-bit conversion.
 //
 // MEASURED, AND IT SURPRISES: `x | y`, `x >> y` and `x >>> y` all arrive as
 // ctjs.binary_static, so the BinaryOp arm's own default ("a bitwise or string
@@ -138,11 +137,9 @@
 // tried here. It is left unpinned rather than pinned against a construct that
 // does not produce it.
 //
-// TILDE: ctjs.func {{.*}}@bits$1
-// TILDE-SAME: ctnative.not_native = "void and ~ are not native yet"
+// TILDE: bitwise_not {{.*}} : (!emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
-// BITS: ctjs.func {{.*}}@shift$1
-// BITS-SAME: ctnative.not_native = "a static bitwise operator is not native yet"
+// BITS: bitwise_or {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
 // --- obligation O-4: one literal, one frame slot ----------------------------
 //

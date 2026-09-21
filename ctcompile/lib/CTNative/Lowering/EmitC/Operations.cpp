@@ -366,30 +366,42 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         }
         return;
     }
-    if (auto bin = llvm::dyn_cast<BinaryOp>(o)) {
-        const bool strings = bin.getResult().getType() == carrierType(context, carrier::string);
-        const mlir::Value l = strings ? bin.getLhs() : number(b, where, bin.getLhs());
-        const mlir::Value r = strings ? bin.getRhs() : number(b, where, bin.getRhs());
-        switch (bin.getKind()) {
+    if (llvm::isa<BinaryOp, BinaryStaticOp>(o)) {
+        const auto kind = llvm::isa<BinaryOp>(o) ? llvm::cast<BinaryOp>(o).getKind()
+                                                 : llvm::cast<BinaryStaticOp>(o).getKind();
+        const auto resultType = o->getResult(0).getType();
+        const bool strings = resultType == carrierType(context, carrier::string);
+        const mlir::Value l = strings ? o->getOperand(0) : number(b, where, o->getOperand(0));
+        const mlir::Value r = strings ? o->getOperand(1) : number(b, where, o->getOperand(1));
+        switch (kind) {
         case BinaryKind::Add:
-        case BinaryKind::Concat:
-            swap(ec::AddOp::create(b, where, bin.getResult().getType(), l, r));
-            return;
+        case BinaryKind::Concat: swap(ec::AddOp::create(b, where, resultType, l, r)); return;
         case BinaryKind::Sub: swap(ec::SubOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::Mul: swap(ec::MulOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::Div: swap(ec::DivOp::create(b, where, numeric, l, r)); return;
         case BinaryKind::Mod: swap(libmCall(b, where, "std::fmod", {l, r})); return;
         case BinaryKind::Pow: swap(exponentiate(b, where, l, r)); return;
+        case BinaryKind::BitAnd: swap(ec::BitwiseAndOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::BitOr: swap(ec::BitwiseOrOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::BitXor: swap(ec::BitwiseXorOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::Shl: swap(ec::BitwiseLeftShiftOp::create(b, where, numeric, l, r)); return;
+        case BinaryKind::Shr:
+            swap(ec::BitwiseRightShiftOp::create(b, where, numeric, l, r));
+            return;
+        case BinaryKind::UShr:
+            swap(ec::MemberCallOpaqueOp::create(
+                     b, where, mlir::TypeRange{numeric}, l, b.getStringAttr("unsigned_shift_right"),
+                     mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{r})
+                     .getResult(0));
+            return;
         default: llvm_unreachable("admission refused it");
         }
     }
-    if (auto bin = llvm::dyn_cast<BinaryStaticOp>(o)) {
-        swap(ec::AddOp::create(b, where, numeric, number(b, where, bin.getLhs()),
-                               number(b, where, bin.getRhs())));
-        return;
-    }
     if (auto u = llvm::dyn_cast<UnaryOp>(o)) {
         switch (u.getKind()) {
+        case UnaryKind::BitNot:
+            swap(ec::BitwiseNotOp::create(b, where, numeric, number(b, where, u.getOperand())));
+            return;
         case UnaryKind::Neg:
             swap(ec::UnaryMinusOp::create(b, where, numeric, number(b, where, u.getOperand())));
             return;

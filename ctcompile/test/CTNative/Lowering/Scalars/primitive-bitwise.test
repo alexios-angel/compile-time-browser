@@ -1,0 +1,307 @@
+# Number bitwise operators use JavaScript 32-bit conversion and masked shifts.
+# Other admitted primitives convert through the existing typed Number boundary.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=RUNTIME --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: ctjs-opt %t/runtime.mlir --ctnative-print-deduced -o %t/runtime.deduced.mlir
+# RUN: ctjs-opt %t/optimized.mlir --ctnative-print-deduced -o %t/optimized.deduced.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name bitwise_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name bitwise_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name bitwise_runtime_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.deduced.mlir --js %t/values.js --work %t --name bitwise_runtime_deduced_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name bitwise_optimized_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.mlir --js %t/values.js --work %t --name bitwise_optimized_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name bitwise_optimized_deduced_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/optimized.deduced.mlir --js %t/values.js --work %t --name bitwise_optimized_deduced_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name bitwise_numeric_mutation --mutate zAnd --core-build %build 2>&1 | FileCheck %s --check-prefix=NUMERIC-MUTATION
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name bitwise_unsigned_mutation --mutate zUnsigned --core-build %build 2>&1 | FileCheck %s --check-prefix=UNSIGNED-MUTATION
+# RUN: %node %t/witness-expected.cjs %t/tilde.js -4
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tilde.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/tilde.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/tilde.mlir --js %t/tilde.js --work %t --name bitwise_tilde_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/tilde.mlir --js %t/tilde.js --work %t --name bitwise_tilde_clang --core-build %build
+# RUN: %node %t/witness-expected.cjs %t/bits.js 7
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bits.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/bits.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/bits.mlir --js %t/bits.js --work %t --name bitwise_bits_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/bits.mlir --js %t/bits.js --work %t --name bitwise_bits_clang --core-build %build
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-hook.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bigint.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/symbol.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/broad-union.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# RUNTIME-DAG: bitwise_not
+# RUNTIME-DAG: bitwise_and
+# RUNTIME-DAG: bitwise_or
+# RUNTIME-DAG: bitwise_xor
+# RUNTIME-DAG: bitwise_left_shift
+# RUNTIME-DAG: bitwise_right_shift
+# RUNTIME-DAG: member_call_opaque {{.*}} "unsigned_shift_right"
+# RUNTIME-DAG: !emitc.opaque<"ctnative::number_string">
+# RUNTIME-DAG: !emitc.opaque<"ctnative::boolean_string">
+# RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_number_string">
+# RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_boolean_string">
+# RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_scalar">
+# RUNTIME-DAG: !emitc.opaque<"ctnative::nullable_string">
+# CPP-DAG: ctnative::js_num
+# CPP-DAG: .unsigned_shift_right(
+# NUMERIC-MUTATION: global 'zAnd' differs
+# UNSIGNED-MUTATION: global 'zUnsigned' differs
+# REFUSED: ctnative.not_native =
+
+#--- values.js
+function bitNot(value) { return ~value; }
+function bitAnd(left, right) { return left & right; }
+function bitOr(left, right) { return left | right; }
+function bitXor(left, right) { return left ^ right; }
+function shiftLeft(left, right) { return left << right; }
+function shiftRight(left, right) { return left >> right; }
+function unsignedRight(left, right) { return left >>> right; }
+function textNot(value) { return ~value; }
+function booleanNot(value) { return ~value; }
+function textAnd(left, right) { return left & right; }
+function booleanLeft(left, right) { return left << right; }
+function numberChoice(flag, number, text) { return flag ? number : text; }
+function booleanChoice(flag, boolean, text) { return flag ? boolean : text; }
+function optionalNumber(mode, number, text) {
+    var value;
+    if (mode === 1) { value = null; }
+    if (mode === 2) { value = number; }
+    if (mode === 3) { value = text; }
+    return value;
+}
+function optionalBoolean(mode, boolean, text) {
+    var value;
+    if (mode === 1) { value = null; }
+    if (mode === 2) { value = boolean; }
+    if (mode === 3) { value = text; }
+    return value;
+}
+function optionalScalar(mode, scalar) {
+    var value;
+    if (mode === 1) { value = null; }
+    if (mode === 2) { value = scalar; }
+    return value;
+}
+function optionalString(mode, text) {
+    var value;
+    if (mode === 1) { value = null; }
+    if (mode === 2) { value = text; }
+    return value;
+}
+function evaluationOrder() {
+    var calls = 0;
+    function step(value) { calls = calls * 10 + value; return value; }
+    var shifted = step(1) << step(2);
+    return shifted + calls * 10;
+}
+
+var notThree = bitNot(3);
+var notNaN = bitNot(0 / 0);
+var notInfinity = bitNot(1 / 0);
+var notNegativeInfinity = bitNot(-1 / 0);
+var notNegativeZero = bitNot(-0);
+var notFraction = bitNot(3.9);
+var notNegativeFraction = bitNot(-3.9);
+var notHighBit = bitNot(2147483648);
+var notMaximum = bitNot(1.7976931348623157e308);
+var andPositive = bitAnd(13, 7);
+var andNegative = bitAnd(-3, 6);
+var orPositive = bitOr(3, 5);
+var xorPositive = bitXor(13, 7);
+var xorNegative = bitXor(-1, 2147483647);
+var zeroFromNegativeZero = bitOr(-0, 0);
+var zeroFromNaN = bitOr(0 / 0, 0);
+var zeroFromInfinity = bitOr(1 / 0, 0);
+var zeroFromMaximum = bitOr(1.7976931348623157e308, 0);
+var truncatePositive = bitOr(3.9, 0);
+var truncateNegative = bitOr(-3.9, 0);
+var moduloPositive = bitOr(4294967297, 0);
+var moduloNegative = bitOr(-4294967297, 0);
+var signedBoundary = bitOr(2147483648, 0);
+var unsignedBoundary = unsignedRight(-1, 0);
+var leftOverflow = shiftLeft(1073741824, 1);
+var leftWrap = shiftLeft(2147483648, 1);
+var countThirtyTwo = shiftLeft(1, 32);
+var countThirtyThree = shiftLeft(1, 33);
+var countNegative = shiftLeft(1, -1);
+var countFraction = shiftLeft(1, 33.9);
+var countNaN = shiftLeft(3, 0 / 0);
+var countInfinity = shiftLeft(3, 1 / 0);
+var countModulo = shiftLeft(1, 4294967329);
+var rightNegative = shiftRight(-5, 1);
+var rightHighBit = shiftRight(2147483648, 31);
+var rightZeroCount = shiftRight(2147483648, 32);
+var unsignedOne = unsignedRight(-1, 1);
+var unsignedHighBit = unsignedRight(-2147483648, 0);
+var unsignedMasked = unsignedRight(-1, 32);
+var unsignedNegativeCount = unsignedRight(-1, -31);
+var textNumeric = textNot("3.9");
+var textInvalid = textNot("invalid");
+var textNul = textNot("3\u0000");
+var textWhitespace = textNot("\u00a0 \t");
+var textRadix = textAnd("0x1f", "7");
+var booleanTrue = booleanNot(true);
+var booleanFalse = booleanNot(false);
+var booleanCount = booleanLeft(true, "33");
+var scalarMissing = ~optionalScalar(0, 7);
+var scalarNull = ~optionalScalar(1, 7);
+var scalarNumber = ~optionalScalar(2, 7);
+var scalarBoolean = ~optionalScalar(2, true);
+var textMissing = ~optionalString(0, "7");
+var textNull = ~optionalString(1, "7");
+var textPresent = ~optionalString(2, "7");
+var numberUnionNumber = ~numberChoice(true, 7, "3");
+var numberUnionText = ~numberChoice(false, 7, "3");
+var booleanUnionBoolean = ~booleanChoice(true, true, "3");
+var booleanUnionText = ~booleanChoice(false, true, "3");
+var optionalNumberMissing = ~optionalNumber(0, 7, "3");
+var optionalNumberNull = ~optionalNumber(1, 7, "3");
+var optionalNumberNumber = ~optionalNumber(2, 7, "3");
+var optionalNumberText = ~optionalNumber(3, 7, "3");
+var optionalBooleanMissing = optionalBoolean(0, true, "7") | 0;
+var optionalBooleanNull = optionalBoolean(1, true, "7") | 0;
+var optionalBooleanBoolean = optionalBoolean(2, true, "7") | 0;
+var optionalBooleanText = optionalBoolean(3, true, "7") | 0;
+var mixedAnd = "15" & true;
+var mixedOr = false | "12.9";
+var mixedXor = numberChoice(false, 3, "7") ^ optionalBoolean(2, true, "7");
+var mixedLeft = optionalNumber(3, 3, "7") << optionalString(2, "1");
+var mixedRight = optionalScalar(2, -5) >> booleanChoice(true, true, "0");
+var mixedUnsigned = "-1" >>> numberChoice(false, 3, "1");
+var ordered = evaluationOrder();
+var zAnd = bitAnd(13, 7);
+var zUnsigned = unsignedRight(-1, 0);
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+const expected = {
+    notThree: -4,
+    notNaN: -1,
+    notInfinity: -1,
+    notNegativeInfinity: -1,
+    notNegativeZero: -1,
+    notFraction: -4,
+    notNegativeFraction: 2,
+    notHighBit: 2147483647,
+    notMaximum: -1,
+    andPositive: 5,
+    andNegative: 4,
+    orPositive: 7,
+    xorPositive: 10,
+    xorNegative: -2147483648,
+    zeroFromNegativeZero: 0,
+    zeroFromNaN: 0,
+    zeroFromInfinity: 0,
+    zeroFromMaximum: 0,
+    truncatePositive: 3,
+    truncateNegative: -3,
+    moduloPositive: 1,
+    moduloNegative: -1,
+    signedBoundary: -2147483648,
+    unsignedBoundary: 4294967295,
+    leftOverflow: -2147483648,
+    leftWrap: 0,
+    countThirtyTwo: 1,
+    countThirtyThree: 2,
+    countNegative: -2147483648,
+    countFraction: 2,
+    countNaN: 3,
+    countInfinity: 3,
+    countModulo: 2,
+    rightNegative: -3,
+    rightHighBit: -1,
+    rightZeroCount: -2147483648,
+    unsignedOne: 2147483647,
+    unsignedHighBit: 2147483648,
+    unsignedMasked: 4294967295,
+    unsignedNegativeCount: 2147483647,
+    textNumeric: -4,
+    textInvalid: -1,
+    textNul: -1,
+    textWhitespace: -1,
+    textRadix: 7,
+    booleanTrue: -2,
+    booleanFalse: -1,
+    booleanCount: 2,
+    scalarMissing: -1,
+    scalarNull: -1,
+    scalarNumber: -8,
+    scalarBoolean: -2,
+    textMissing: -1,
+    textNull: -1,
+    textPresent: -8,
+    numberUnionNumber: -8,
+    numberUnionText: -4,
+    booleanUnionBoolean: -2,
+    booleanUnionText: -4,
+    optionalNumberMissing: -1,
+    optionalNumberNull: -1,
+    optionalNumberNumber: -8,
+    optionalNumberText: -4,
+    optionalBooleanMissing: 0,
+    optionalBooleanNull: 0,
+    optionalBooleanBoolean: 1,
+    optionalBooleanText: 7,
+    mixedAnd: 1,
+    mixedOr: 12,
+    mixedXor: 6,
+    mixedLeft: 14,
+    mixedRight: -3,
+    mixedUnsigned: 2147483647,
+    ordered: 124,
+    zAnd: 5,
+    zUnsigned: 4294967295
+};
+assert.equal(Object.keys(expected).length, 76);
+for (const [name, value] of Object.entries(expected)) {
+    assert.equal(typeof scope[name], typeof value, `${name} type`);
+    assert.ok(Object.is(scope[name], value), `${name} value`);
+}
+console.log("76 primitive bitwise observations agree with JavaScript");
+
+#--- tilde.js
+function bits(x) { return ~x; }
+var r = bits(3);
+
+#--- bits.js
+function shift(x, y) { return x | y; }
+var r = shift(3, 5);
+
+#--- witness-expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+assert.equal(typeof scope.r, "number");
+assert.ok(Object.is(scope.r, Number(process.argv[3])));
+
+#--- object-hook.js
+function convert(value) { return ~value; }
+convert({valueOf: function() { return 3; }});
+
+#--- bigint.js
+function convert(value) { return value & 3n; }
+convert(7n);
+
+#--- symbol.js
+function convert(value) { return ~value; }
+convert(Symbol("3"));
+
+#--- broad-union.js
+function convert(mode) {
+    var value = 3;
+    if (mode === 1) { value = true; }
+    if (mode === 2) { value = "3"; }
+    return value | 0;
+}
+convert(0);
+convert(1);
+convert(2);

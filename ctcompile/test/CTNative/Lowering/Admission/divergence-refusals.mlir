@@ -55,10 +55,12 @@
 // JavaScript, and `static_cast<int32_t>(2147483648.0)` is UNDEFINED BEHAVIOUR
 // in C++ - not merely a different number, an unbounded one. NaN and the
 // infinities are 0 under ToInt32 and are undefined behaviour under the cast
-// too. So the operator is refused until it is emitted with the wrap written
-// out, which is the same shape the `**` guard has.
+// too. The typed Number operator now uses the public Core conversion shared
+// with the VM, including the wrap and non-finite cases.
 //
-// BITWISE: ctnative.not_native = "a static bitwise operator is not native yet"
+// BITWISE: bitwise_or
+// BITWISE-SAME: !emitc.opaque<"ctnative::js_num">
+// BITWISE-NOT: ctnative.not_native
 
 // Exact Number/String concatenation uses the typed String overload and public
 // Core formatting; string-coercions.test checks the executable results.

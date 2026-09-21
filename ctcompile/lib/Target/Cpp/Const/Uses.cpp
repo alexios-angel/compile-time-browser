@@ -26,6 +26,11 @@ bool readsBinding(mlir::OpOperand & operand) {
             return false;
         }
         const auto result = call.getResult(0).getType();
+        if (receiver.getValue() == "ctnative::js_num" &&
+            call.getCallee() == "unsigned_shift_right" && call.getArgOperands().size() == 1) {
+            const auto number = llvm::dyn_cast<ec::OpaqueType>(result);
+            return number && number == receiver && call.getArgOperands()[0].getType() == number;
+        }
         if (receiver.getValue() == "ctnative::nullable_scalar" && call.getCallee() == "to_string" &&
             call.getArgOperands().empty()) {
             const auto string = llvm::dyn_cast<ec::OpaqueType>(result);

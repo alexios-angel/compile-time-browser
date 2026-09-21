@@ -614,6 +614,12 @@ bool admission::op(mlir::Operation * o) {
         case BinaryKind::Div:
         case BinaryKind::Mod:
         case BinaryKind::Pow:
+        case BinaryKind::BitAnd:
+        case BinaryKind::BitOr:
+        case BinaryKind::BitXor:
+        case BinaryKind::Shl:
+        case BinaryKind::Shr:
+        case BinaryKind::UShr:
             return numericOperand(b.getLhs(), "binary") && numericOperand(b.getRhs(), "binary");
         // (`**` is not std::pow; exponentiate() below is why.)
         default: return refuse("a bitwise or string operator is not native yet");
@@ -621,12 +627,15 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto b = llvm::dyn_cast<BinaryStaticOp>(o)) {
         if (b.getKind() != BinaryKind::Add) {
-            return refuse("a static bitwise operator is not native yet");
+            // The verifier restricts the remaining static kinds to bitwise
+            // operations. Primitive conversion cannot invoke object hooks.
+            return numericOperand(b.getLhs(), "bitwise") && numericOperand(b.getRhs(), "bitwise");
         }
         return numeric(b.getLhs(), "++") && numeric(b.getRhs(), "++");
     }
     if (auto u = llvm::dyn_cast<UnaryOp>(o)) {
         switch (u.getKind()) {
+        case UnaryKind::BitNot:
         case UnaryKind::Neg:
         case UnaryKind::Plus: return numericOperand(u.getOperand(), "unary");
         case UnaryKind::TypeOf:
@@ -640,7 +649,7 @@ bool admission::op(mlir::Operation * o) {
                 return refuse("! of " + printed(typeOf(u.getOperand())));
             }
             return true;
-        default: return refuse("void and ~ are not native yet");
+        default: return refuse("void is not native yet");
         }
     }
     if (auto cmp = llvm::dyn_cast<CompareOp>(o)) {
