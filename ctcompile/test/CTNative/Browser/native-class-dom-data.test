@@ -1,2 +1,2 @@
-# Scalar records execute with real DOM owners; complete classes prepare public families with exact overwritten scalar fields.
+# Scalar records execute with real DOM owners; prepared class/local-Map provider proofs recheck live IR and retain the native ownership refusal.
 # RUN: python3 %S/native_class_dom_data.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t

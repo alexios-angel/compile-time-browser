@@ -17,6 +17,7 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   PrefixMutations.cpp
   ProviderState.cpp
   ProviderObjects.cpp
+  ProviderRecords.cpp
   ProviderDiagnostics.cpp
   ProviderCallbacks.cpp
   Analysis.h

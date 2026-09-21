@@ -443,6 +443,7 @@ bool analyzer::capturedMapOuterKeys(
 }
 
 std::string analyzer::environmentProblem() {
+    if (auto problem = localRecordProblem(); !problem.empty()) { return problem; }
     std::string reason;
     const auto reject = [&](llvm::StringRef why) {
         if (reason.empty()) { reason = why.str(); }

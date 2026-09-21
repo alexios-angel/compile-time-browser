@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish proved scalar record fields and snapshots; retain the class/session boundary."""
+"""Reprove prepared class providers and scalar records; retain the native owner boundary."""
 
 import argparse
 from pathlib import Path
@@ -198,6 +198,157 @@ def published_observation(
             raise RuntimeError(f"{name}: scalar publication/reset source observation changed")
 
 
+def published_provider(args, name, prepared, contract, *, adversarial=False):
+    report, annotated, _ = host.analyze(
+        args.opt, prepared, contract, args.work / (name + "-provider")
+    )
+    if (
+        not report["proved"]
+        or report["outer_key_inputs"] != 1
+        or report["outer_key_objects"] != 0
+        or report["observation_stores"] != len(contract["observations"])
+        or len(report["slots"]) != 1
+        or report["slots"][0]["proved_edges"] != 5
+    ):
+        raise RuntimeError(f"{name}: incomplete prepared class provider proof: {report}")
+    text = annotated.read_text()
+    if (
+        host.fingerprint(args.opt, annotated) != contract["module_sha256"]
+        or dom.FUNCTION.findall(text) != dom.FUNCTION.findall(prepared.read_text())
+        or text.count("ctjs.construct") != 5
+    ):
+        raise RuntimeError(f"{name}: provider analysis changed the retained source graph")
+    if not adversarial:
+        return
+
+    # Mutate already prepared IR, carrying its successful report along. Each
+    # fresh fingerprint must still reprove the live graph without preparation.
+    constructor = re.search(r"(?ms)^  ctjs.func @Item\$(\d+)\([^\n]+\n.*?^  }", text)
+    if not constructor:
+        raise RuntimeError("provider controls lost the retained constructor")
+    creation = re.search(
+        rf"(?m)^    (%\w+) = ctjs.create_closure %arg2\[{constructor[1]}\] this %\w+$", text
+    )
+    if not creation:
+        raise RuntimeError("provider controls lost the constructor closure")
+    instance = re.search(
+        rf"(?m)^    (%\w+) = ctjs.construct {creation[1]}\({creation[1]}, (%\w+)\)$", text
+    )
+    local_map = re.search(
+        r'(?m)^    (%\w+) = ctjs.load_global "Map"\n' r"    (%\w+) = ctjs.construct \1\(\1\)$",
+        text,
+    )
+    if not instance or not local_map:
+        raise RuntimeError("provider controls lost original instance or local Map allocation")
+    method = re.search(rf"(?m)^    (%\w+) = ctjs.get_property {local_map[2]}\[(%\w+)\]$", text)
+    getter = re.search(
+        r'(?m)^    (%\w+) = ctjs.constant #ctjs.string<"get">\n'
+        rf"    (%\w+) = ctjs.get_property {local_map[2]}\[\1\]$",
+        text,
+    )
+    if not method or not getter:
+        raise RuntimeError("provider controls lost local Map method selections")
+    get = re.search(rf"(?m)^    (%\w+) = ctjs.call {getter[2]}\({local_map[2]}, (%\w+)\)$", text)
+    stored = re.search(
+        rf"(?m)^    (%\w+) = ctjs.call %\w+\({local_map[2]}, %\w+, {instance[1]}\)$", text
+    )
+    if not get or not stored:
+        raise RuntimeError("provider controls lost local Map get/set calls")
+    key = f'    {get[2]} = ctjs.constant #ctjs.string<"bs.item">'
+    method_key = f'    {method[2]} = ctjs.constant #ctjs.string<"has">'
+    if text.count(key) != 1 or text.count(method_key) != 1:
+        raise RuntimeError("provider controls lost exact local Map keys")
+    effect = constructor[0].replace(
+        "    ctjs.frame_exit",
+        '    %provider_effect = ctjs.load_global "provider_unknown"\n    ctjs.frame_exit',
+        1,
+    )
+    replacement = re.sub(
+        r"ctjs.return %\w+",
+        "ctjs.return %provider_replacement",
+        constructor[0].replace(
+            "    ctjs.frame_exit",
+            "    %provider_replacement = ctjs.create_object\n    ctjs.frame_exit",
+            1,
+        ),
+    )
+    variants = {
+        "constructor-skipped": text.replace(
+            constructor[0], constructor[0].replace("attributes {", "attributes {ctjs.skipped,", 1)
+        ),
+        "map-read-skipped": text.replace(method[0], method[0] + " {ctjs.skipped}", 1),
+        "constructor-effect": text.replace(constructor[0], effect),
+        "constructor-replacement": text.replace(constructor[0], replacement),
+        "constructor-argument": text.replace(
+            instance[0], instance[0].replace(", " + instance[2] + ")", ", %arg3)")
+        ),
+        "missing-get": text.replace(key, key.replace('"bs.item"', '"provider-missing"')),
+        "unknown-map-method": text.replace(method_key, method_key.replace('"has"', '"clear"')),
+        "map-receiver": text.replace(
+            get[0], get[0].replace("(" + local_map[2] + ",", "(" + instance[1] + ",")
+        ),
+    }
+    for label, anchor, value in (
+        ("constructor-escape", creation[0], creation[1]),
+        ("map-escape", local_map[0], local_map[2]),
+        ("map-method-escape", method[0], method[1]),
+        ("map-result-escape", stored[0], stored[1]),
+        ("instance-escape", instance[0], instance[1]),
+        ("instance-alias-escape", get[0], get[1]),
+    ):
+        variants[label] = text.replace(
+            anchor, anchor + f'\n    ctjs.store_global "provider_escape", {value}', 1
+        )
+    for label, changed in variants.items():
+        if changed == text:
+            raise RuntimeError(f"{label}: provider control did not change prepared IR")
+        path = args.work / f"{name}-provider-{label}.mlir"
+        path.write_text(changed)
+        fresh = dict(contract, module_sha256=host.fingerprint(args.opt, path))
+        rejected, _, _ = host.analyze(
+            args.opt, path, fresh, args.work / f"{name}-provider-{label}-check"
+        )
+        if (
+            rejected["proved"]
+            or not rejected["reason"]
+            or any(slot["proved_edges"] for slot in rejected["slots"])
+        ):
+            raise RuntimeError(
+                f"{label}: forged success survived live provider reproof: {rejected}"
+            )
+    for label, request, options, reason in (
+        ("stale", dict(contract, module_sha256="0" * 64), "", "fingerprint mismatch"),
+        ("budget", contract, "max-steps=0", "budget"),
+    ):
+        rejected, _, _ = host.analyze(
+            args.opt, annotated, request, args.work / f"{name}-provider-{label}", options=options
+        )
+        if (
+            rejected["proved"]
+            or reason not in rejected["reason"]
+            or any(slot["proved_edges"] for slot in rejected["slots"])
+        ):
+            raise RuntimeError(f"{label}: provider failed to withhold all proof: {rejected}")
+    forged = args.work / f"{name}-provider-forged-report.mlir"
+    changed, count = re.subn(
+        r"ctnative.host_outer_key_inputs = 1 : i64",
+        "ctnative.host_outer_key_inputs = 99 : i64",
+        text,
+    )
+    if count != 1:
+        raise RuntimeError("provider report control lost its input attribute")
+    forged.write_text(changed)
+    rechecked, _, _ = host.analyze(
+        args.opt,
+        forged,
+        dict(contract, module_sha256=host.fingerprint(args.opt, forged)),
+        args.work / f"{name}-provider-forged-report-check",
+    )
+    if rechecked != report:
+        raise RuntimeError("forged report changed the recomputed class provider proof")
+    print(f"class provider: {len(variants) + 2} prepared-IR refusals, forged report reproof passed")
+
+
 def published_families(args):
     prepared_count = refusals = observed = 0
     original = (
@@ -234,6 +385,7 @@ def published_families(args):
         if 'name = "classResult"' not in body:
             raise RuntimeError(f"{name}: original class computation lost its observation")
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        published_provider(args, name, prepared, checked)
         for optimize in (False, True):
             dom.lower(
                 args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
@@ -303,7 +455,7 @@ def published_families(args):
             refusals += 1
     print(
         f"class public family: {observed} Node/VM observations, {prepared_count} preparations, "
-        f"{refusals} refusals; native class ownership remains refused"
+        f"{prepared_count} provider proofs, {refusals} refusals; native class ownership remains refused"
     )
 
 
@@ -360,6 +512,7 @@ def published_class_fields(args):
         if 'name = "classResult"' not in body:
             raise RuntimeError(f"{name}: original class computation lost its observation")
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        published_provider(args, name, prepared, checked)
         for optimize in (False, True):
             dom.lower(
                 args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
@@ -415,7 +568,7 @@ def published_class_fields(args):
         classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
         refusals += 1
     print(
-        f"class scalar fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {refusals} refusals; native class ownership remains refused"
+        f"class scalar fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {len(sources)} provider proofs, {refusals} refusals; native class ownership remains refused"
     )
 
 
@@ -491,6 +644,7 @@ def published_constructor_fields(args):
         if 'name = "classResult"' not in body:
             raise RuntimeError(f"{name}: original class computation lost its observation")
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        published_provider(args, name, prepared, checked, adversarial=label == "constructor-only")
         for optimize in (False, True):
             dom.lower(
                 args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
@@ -538,7 +692,7 @@ def published_constructor_fields(args):
         classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
         refusals += 1
     print(
-        f"class constructor fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {refusals} refusals; native class ownership remains refused"
+        f"class constructor fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {len(sources)} provider proofs, {refusals} refusals; native class ownership remains refused"
     )
 
 
