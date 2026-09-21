@@ -273,7 +273,7 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
     ):
         raise RuntimeError(f"{name}: provider analysis changed the retained source graph")
     if not adversarial:
-        return
+        return report, annotated
 
     # Mutate already prepared IR, carrying its successful report along. Each
     # fresh fingerprint must still reprove the live graph without preparation.
@@ -598,21 +598,151 @@ def published_families(args):
         contract["observations"] = ["classResult", *contract["observations"]]
         classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
         refusals += 1
-    # The actual class-result payload still needs constructor scalar evidence.
-    for constructor in (False, True):
-        name = "class-family-result-" + str(constructor)
-        text = published_source(constructor)
-        published_observation(args, name, text, 59112 if constructor else 15927)
-        observed += 1
-        ir, contract = published_prepare(args, name, text)
-        classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
-        refusals += 1
-        for optimize in (False, True):
-            dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
-            refusals += 1
     print(
         f"class public family: {observed} Node/VM observations, {prepared_count} preparations, "
         f"{prepared_count} provider proofs, {executions} native executions, {refusals} refusals"
+    )
+
+
+def published_composite_results(args):
+    executions = refusals = 0
+    for constructor, observations in ((False, False), (True, False), (False, True)):
+        name = "published-composite-" + ("constructor" if constructor else "holder")
+        text = published_source(constructor)
+        expected = 59112 if constructor else 15927
+        if observations:
+            name += "-observations"
+            text = text.replace(
+                "+ count;",
+                '+ count + savedChild.has("late") * 100000'
+                '+ savedChild.delete("late") * 1000000'
+                " + (savedChild.clear() === void 0) * 10000000;",
+            )
+            expected += 11100000
+        published_observation(args, name, text, expected)
+        ir, contract = published_prepare(args, name, text)
+        prepared = classes.prepare(args, name, ir, contract, success=True)
+        body = prepared.read_text()
+        if body.count("ctjs.construct") != 5 or len(dom.FUNCTION.findall(body)) != 8:
+            raise RuntimeError(
+                f"{name}: preparation lost original constructor, Map or function owners"
+            )
+        checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        _, annotated = published_provider(args, name, prepared, checked)
+        for optimize in (False, True):
+            # The original unprepared source still needs its complete class proof.
+            dom.lower(
+                args, ir, contract, f"{name}-raw-{optimize}", optimize=optimize, success=False
+            )
+            refusals += 1
+            native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
+            executions += check_record_executable(args, f"{name}-{optimize}", native, expected)
+        if constructor or observations:
+            continue
+        for suffix, request, options in (
+            ("stale", dict(contract, module_sha256="0" * 64), ""),
+            ("no-root", dict(contract, roots=[]), ""),
+            ("no-input", dict(contract, element_parameters=[]), ""),
+            ("no-map", dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]), ""),
+            ("budget", contract, "max-steps=0"),
+            ("small-budget", contract, "max-steps=100"),
+        ):
+            classes.prepare(args, name + "-" + suffix, ir, request, success=False, options=options)
+            refusals += 1
+        controls = {
+            "map-operand": text.replace("+ savedChild.size", "+ savedChild"),
+            "string-operand": text.replace("+ (absent === null)", '+ "1"'),
+            "branch-object": text.replace("? 31 : 5 + second.n", "? {} : 5 + second.n"),
+            "branch-field-write": text.replace(
+                "? 31 : 5 + second.n", "? (second.n = 31) : 5 + second.n"
+            ),
+            "branch-dom-operand": text.replace("? 31 : 5 + second.n", "? 31 : 5 + element"),
+            "map-size-receiver": text.replace("+ savedChild.size", "+ element.size"),
+            "unknown-map-member": text.replace('savedChild.has("missing")', "savedChild.valueOf()"),
+            "map-key-operand": text.replace('savedChild.has("missing")', "savedChild.has(element)"),
+            "child-escape": text.replace(
+                "  traceEntered = 1;", "  escaped = savedChild; traceEntered = 1;"
+            ),
+            "record-escape": text.replace(
+                "  traceEntered = 1;", "  escaped = savedFirst; traceEntered = 1;"
+            ),
+        }
+        for label, changed in controls.items():
+            if changed == text:
+                raise RuntimeError(f"{label}: composite source control changed no source")
+            variant = name + "-" + label
+            bad_ir, bad_contract = published_prepare(args, variant, changed)
+            classes.prepare(args, variant, bad_ir, bad_contract, success=False, diagnostic="class ")
+            refusals += 1
+
+        # Carry a successful report into altered prepared IR. A fresh digest
+        # authorizes rechecking the source, never trusting the saved categories.
+        proved = annotated.read_text()
+        entry = re.search(
+            rf"(?ms)^  ctjs.func (?:private )?@{re.escape(checked['entry'])}\([^\n]+\n.*?^  }}",
+            proved,
+        )
+        if not entry:
+            raise RuntimeError("composite provider controls lost the complete entry")
+        multiply = re.search(r"(?m)^    (%\w+) = ctjs.binary mul (%\w+), (%\w+)$", entry[0])
+        size = re.search(
+            r'(?m)^    (%\w+) = ctjs.constant #ctjs.string<"size">\n'
+            r"    (%\w+) = ctjs.get_property (%\w+)\[\1\]$",
+            entry[0],
+        )
+        branch_read = re.search(
+            r"(?m)^      (%\w+) = ctjs.get_property (%\w+)\[(%\w+)\]$", entry[0]
+        )
+        if not multiply or not size or not branch_read:
+            raise RuntimeError(
+                "composite provider controls lost arithmetic, Map size or branch read"
+            )
+        size_read = size[0].split("\n")[1]
+        variants = {
+            "object-operand": proved.replace(
+                multiply[0],
+                "    %composite_object = ctjs.create_object\n"
+                + multiply[0].replace(", " + multiply[3], ", %composite_object"),
+                1,
+            ),
+            "dom-operand": proved.replace(
+                multiply[0], multiply[0].replace(", " + multiply[3], ", %arg3"), 1
+            ),
+            "size-receiver": proved.replace(
+                size_read, size_read.replace("get_property " + size[3], "get_property %arg3"), 1
+            ),
+            "size-skipped": proved.replace(size_read, size_read + " {ctjs.skipped}", 1),
+            "arithmetic-skipped": proved.replace(multiply[0], multiply[0] + " {ctjs.skipped}", 1),
+            "branch-write": proved.replace(
+                branch_read[0],
+                branch_read[0]
+                + f"\n      ctjs.set_property {branch_read[2]}[{branch_read[3]}], {branch_read[1]}",
+                1,
+            ),
+        }
+        for label, changed in variants.items():
+            if changed == proved:
+                raise RuntimeError(f"{label}: composite provider control changed no IR")
+            variant = name + "-provider-" + label
+            path = args.work / f"{variant}.mlir"
+            path.write_text(changed)
+            fresh = dict(checked, module_sha256=host.fingerprint(args.opt, path))
+            rejected, _, _ = host.analyze(args.opt, path, fresh, args.work / (variant + "-check"))
+            if (
+                rejected["proved"]
+                or not rejected["reason"]
+                or any(slot["proved_edges"] for slot in rejected["slots"])
+            ):
+                raise RuntimeError(f"{label}: composite retained forged provider proof: {rejected}")
+            refusals += 1
+            for optimize in (False, True):
+                dom.lower(
+                    args, path, fresh, f"{variant}-{optimize}", optimize=optimize, success=False
+                )
+                refusals += 1
+    print(
+        "original composite DOM Data: three Node/VM observations, three preparations, "
+        f"three provider proofs, {executions} native executions, {refusals} refusals"
     )
 
 
@@ -791,6 +921,31 @@ def published_constructor_fields(args):
             2,
             12927,
         ),
+        "boolean-arithmetic": (
+            categories.replace(
+                "host.slot.set(element, savedFirst.n)",
+                "host.slot.set(element, savedFirst.marker + 1)",
+            ),
+            2,
+            15927,
+        ),
+        "last-store-kind": (
+            categories.replace(
+                "this.marker = marker;", "this.marker = marker; this.marker = true;"
+            ).replace(
+                "host.slot.set(element, savedFirst.n)", "host.slot.set(element, second.marker + 1)"
+            ),
+            2,
+            15927,
+        ),
+        "read-time-kind": (
+            categories.replace(
+                "  traceEntered = 1;",
+                "  const early = savedFirst.marker; savedFirst.marker = 7; traceEntered = 1;",
+            ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, early + 1)"),
+            2,
+            15927,
+        ),
     }
     refusals = executions = 0
     for label, (text, expected, class_value) in sources.items():
@@ -839,18 +994,6 @@ def published_constructor_fields(args):
         "constructor-expression": initialized.replace("this.n = n;", "this.n = n + 1;"),
         "replacement": initialized.replace("this.n = n;", "this.n = n; return {};"),
         "effect": initialized.replace("this.n = n;", "this.n = n; unknown();"),
-        "boolean-arithmetic": categories.replace(
-            "host.slot.set(element, savedFirst.n)", "host.slot.set(element, savedFirst.marker + 1)"
-        ),
-        "last-store-kind": categories.replace(
-            "this.marker = marker;", "this.marker = marker; this.marker = true;"
-        ).replace(
-            "host.slot.set(element, savedFirst.n)", "host.slot.set(element, second.marker + 1)"
-        ),
-        "read-time-kind": categories.replace(
-            "  traceEntered = 1;",
-            "  const early = savedFirst.marker; savedFirst.marker = 7; traceEntered = 1;",
-        ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, early + 1)"),
     }
     for label, text in controls.items():
         if text == initialized:
@@ -985,18 +1128,8 @@ def published_records(args):
         for optimize in (False, True):
             dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
             refusals += 1
-    for constructor in (False, True):
-        name = "published-class-" + ("constructor" if constructor else "holder")
-        text = published_source(constructor)
-        published_observation(args, name, text, 59112 if constructor else 15927)
-        ir, contract = published_prepare(args, name, text)
-        classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
-        refusals += 1
-        for optimize in (False, True):
-            dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
-            refusals += 1
     print(
-        f"published DOM Data: {len(sources) + 2} Node/VM observations, {executions} native record executions, {refusals} refusals; original composite-result publication remains refused"
+        f"published DOM Data: {len(sources)} Node/VM observations, {executions} native record executions, {refusals} refusals"
     )
 
 
@@ -1065,6 +1198,7 @@ def main():
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
     published_families(args)
+    published_composite_results(args)
     published_class_fields(args)
     published_constructor_fields(args)
     if args.class_families_only:

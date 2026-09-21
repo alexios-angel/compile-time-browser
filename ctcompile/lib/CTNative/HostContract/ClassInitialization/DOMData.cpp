@@ -91,8 +91,31 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
     }
     llvm::DenseMap<mlir::Value, llvm::StringMap<PrimitiveAlternatives>> fields;
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> noResults;
-    for (mlir::Operation & op : entry.getBody().front()) {
+    // The complete Map census proves these operations' categories, not their
+    // values. In particular, has/delete evidence cannot select a source arm.
+    for (mlir::Operation * op : mapOperations) {
         if (!step()) { return false; }
+        if (op->getParentOfType<ctjs::FuncOp>() != entry) { continue; }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            const auto key = ctjs::constantKey(read.getKey());
+            if (key == "has" || key == "delete") {
+                analysis.classScalarReads[call.getResult()] =
+                    PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
+            } else if (key == "clear") {
+                analysis.classScalarReads[call.getResult()] =
+                    PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::UndefinedAttr>());
+            }
+        } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+                   read && ctjs::constantKey(read.getKey()) == "size") {
+            analysis.classScalarReads[read.getResult()] =
+                PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
+        }
+    }
+    // Alias validation above forbids nested writes. Postorder visits both
+    // read-only arms before a scalar join, retaining each read-time field tag.
+    const auto walked = entry.walk([&](mlir::Operation * op) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
             if (auto initial = initialFields.find(made.getResult());
                 initial != initialFields.end()) {
@@ -100,7 +123,7 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
             }
         } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
             auto owner = origins.lookup(sourceValue(write.getObject()));
-            if (!owner) { continue; }
+            if (!owner) { return mlir::WalkResult::advance(); }
             analysis.remaining = remaining;
             std::vector<mlir::Value> dependencies;
             auto category =
@@ -112,12 +135,13 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
             fields[owner][ctjs::constantKey(write.getKey())] = category;
         } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
             auto owner = origins.lookup(sourceValue(read.getObject()));
-            if (!owner) { continue; }
+            if (!owner) { return mlir::WalkResult::advance(); }
             auto category = fields[owner].lookup(ctjs::constantKey(read.getKey()));
             if (category.tag()) { analysis.classScalarReads[read.getResult()] = category; }
         }
-    }
-    return reason.empty() && !analysis.exhausted;
+        return mlir::WalkResult::advance();
+    });
+    return !walked.wasInterrupted() && reason.empty() && !analysis.exhausted;
 }
 
 bool classInitialization::proveDOMDataFamily(const HostContract & contract) {

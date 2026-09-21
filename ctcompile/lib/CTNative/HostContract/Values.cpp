@@ -430,16 +430,23 @@ PrimitiveAlternatives analyzer::entryCategories(
         default: return {};
         }
         const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
-        if (entryCategories(binary.getLhs(), results, binary, depth + 1, dependencies).tag() !=
-                number ||
-            entryCategories(binary.getRhs(), results, binary, depth + 1, dependencies).tag() !=
-                number) {
-            return {};
-        }
+        const auto numeric = [&](mlir::Value operand) {
+            auto tag = entryCategories(operand, results, binary, depth + 1, dependencies).tag();
+            return tag == number || tag == mlir::TypeID::get<ctjs::BooleanAttr>();
+        };
+        if (!numeric(binary.getLhs()) || !numeric(binary.getRhs())) { return {}; }
         // This is a category, never an evaluated Number. Zero, signed zero,
         // NaN and infinities remain possible; primitive()/truth() must not
         // consume this evidence to select a source arm or substitute a value.
         return PrimitiveAlternatives::forTag(number);
+    }
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(definition);
+        compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+        if (!entryCategories(compare.getLhs(), results, compare, depth + 1, dependencies).known ||
+            !entryCategories(compare.getRhs(), results, compare, depth + 1, dependencies).known) {
+            return {};
+        }
+        return PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
     }
     if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(definition)) {
         if (!step() || !dominance.dominates(branch.getCondition(), branch)) { return {}; }
