@@ -41,7 +41,8 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
 std::optional<double> stringIndex(mlir::Value value) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         binary &&
-        (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub)) {
+        (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
+         binary.getKind() == ctjs::BinaryKind::Mul)) {
         auto left = binary.getLhs().getDefiningOp<ctjs::ConstantOp>();
         auto right = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
         auto lhs = left ? llvm::dyn_cast<ctjs::NumberAttr>(left.getValue()) : ctjs::NumberAttr{};
@@ -51,8 +52,9 @@ std::optional<double> stringIndex(mlir::Value value) {
         }
         // Both operands are already Numbers; no coercion or user code can run.
         // Nested expressions and globals still need their own origin proof.
-        return binary.getKind() == ctjs::BinaryKind::Div ? lhs.getDouble() / rhs.getDouble()
-                                                         : lhs.getDouble() - rhs.getDouble();
+        if (binary.getKind() == ctjs::BinaryKind::Div) { return lhs.getDouble() / rhs.getDouble(); }
+        if (binary.getKind() == ctjs::BinaryKind::Sub) { return lhs.getDouble() - rhs.getDouble(); }
+        return lhs.getDouble() * rhs.getDouble();
     }
     bool negative = false;
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
@@ -76,13 +78,14 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
     auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
     if ((unary && unary.getKind() == ctjs::UnaryKind::Neg) ||
-        (binary && (binary.getKind() == ctjs::BinaryKind::Div ||
-                    binary.getKind() == ctjs::BinaryKind::Sub))) {
+        (binary &&
+         (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
+          binary.getKind() == ctjs::BinaryKind::Mul))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
-            refusal = "DOM String indexing negation/division/subtraction requires direct Number "
-                      "literals";
+            refusal = "DOM String indexing negation/division/subtraction/multiplication requires "
+                      "direct Number literals";
             return false;
         }
         unsigned bounds = 0;
@@ -467,7 +470,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
                     refusal = "DOM String indexing requires primitive literals, proved undefined "
-                              "or one Number-literal division/subtraction";
+                              "or one Number-literal division/subtraction/multiplication";
                     return false;
                 }
             }

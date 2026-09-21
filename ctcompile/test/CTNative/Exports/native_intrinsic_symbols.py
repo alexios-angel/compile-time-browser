@@ -166,7 +166,12 @@ EQUALITY_INPUTS = (
     ("Unequal", "2, 3, true, false", "2.0, 3.0, true, false", "0011001100001"),
     ("NaN", "0 / 0, 0 / 0, false, false", "nan, nan, false, false", "0011110000001"),
     ("Infinity", "1 / 0, 1 / 0, true, true", "inf, inf, true, true", "1100110000001"),
-    ("Opposite", "-1 / 0, 1 / 0, true, false", "-inf, inf, true, false", "0011001100001"),
+    (
+        "Opposite",
+        "-1 / 0, 1 / 0, true, false",
+        "-inf, inf, true, false",
+        "0011001100001",
+    ),
 )
 HELPER_EQUALITY = """function helperEquality(number, flag, count) {
   function equal(left, right) { return left == right; }
@@ -702,6 +707,40 @@ SUBTRACTION_INDICES = {
 }
 """,
 }
+MULTIPLICATION_WITNESSES = {
+    # Preserve the complete former subtraction-index arithmetic refusal body.
+    "subtraction-index-other-arithmetic": (
+        "function bad(text, index) { return text.charAt(0 * 1e999); }\n",
+        ("", "a", "a"),
+    ),
+}
+MULTIPLICATION_INDICES = {
+    **{name: source for name, (source, _) in MULTIPLICATION_WITNESSES.items()},
+    "string-multiplication-indices": """function stringMultiplicationIndices(text, first, middle, tail) {
+  const missing = 0 * 1e999;
+  const next = 3 * 0.5;
+  return text.charAt(missing) === first && text.slice(missing) === text &&
+    text.slice(0, missing) === '' && text.slice(undefined, missing) === '' &&
+    text.charAt(1e999 * 0) === first && text.slice(1e999 * 0) === text &&
+    text.charAt(next) === middle && text.slice(next, 2) === middle &&
+    text.slice(next) === middle + tail && text.slice(2, 1e308 * 1e308) === tail &&
+    text.charAt(65536 * 65536) === '' && text.slice(65536 * 65536) === '' &&
+    text.slice(0, 65536 * 65536) === text && text.charAt(5e-324 * 0.5) === first &&
+    text.slice(5e-324 * 0.5) === text && text.slice(1, 0.5 * 0.5) === '';
+}
+""",
+    "description-capture-multiplication-index": """function descriptionCaptureMultiplicationIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const missing = 0 * 1e999;
+    return text !== undefined ? text.charAt(missing) + text.slice(3 * 0.5) +
+      text.slice(0, missing) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -763,6 +802,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in SUBTRACTION_WITNESSES},
     "string-subtraction-indices": ["string", "string", "string", "string"],
     "description-capture-subtraction-index": ["symbol"],
+    **{name: ["string", "number"] for name in MULTIPLICATION_WITNESSES},
+    "string-multiplication-indices": ["string", "string", "string", "string"],
+    "description-capture-multiplication-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1010,10 +1052,16 @@ CASES["global-helper"] = (
 CASES["global-state"] = (GLOBAL_STATE, *CASES["parameter-state"][1:])
 CASES["global-types"] = (GLOBAL_TYPES, *CASES["helper-types"][1:])
 CASES["global-description"] = (GLOBAL_DESCRIPTION, *CASES["parameter-description"][1:])
-CASES["global-local-declaration"] = (GLOBAL_LOCAL_DECLARATION, *CASES["global-helper"][1:])
+CASES["global-local-declaration"] = (
+    GLOBAL_LOCAL_DECLARATION,
+    *CASES["global-helper"][1:],
+)
 CASES["global-local-state"] = (GLOBAL_LOCAL_STATE, *CASES["parameter-state"][1:])
 CASES["global-local-types"] = (GLOBAL_LOCAL_TYPES, *CASES["helper-types"][1:])
-CASES["global-local-description"] = (GLOBAL_LOCAL_DESCRIPTION, *CASES["parameter-description"][1:])
+CASES["global-local-description"] = (
+    GLOBAL_LOCAL_DESCRIPTION,
+    *CASES["parameter-description"][1:],
+)
 for name, source in CAPTURE_WITNESSES.items():
     name = "capture-witness-" + name
     PARAMETER_TYPES[name] = ["symbol"]
@@ -1031,7 +1079,10 @@ for name, source in CAPTURE_WITNESSES.items():
     )
 CASES["capture-state"] = (CAPTURE_STATE, *CASES["parameter-state"][1:])
 CASES["capture-types"] = (CAPTURE_TYPES, *CASES["helper-types"][1:])
-CASES["capture-description"] = (CAPTURE_DESCRIPTION, *CASES["parameter-description"][1:])
+CASES["capture-description"] = (
+    CAPTURE_DESCRIPTION,
+    *CASES["parameter-description"][1:],
+)
 for name, source in DESCRIPTION_GUARDS.items():
     PARAMETER_TYPES[name] = ["symbol"]
     CASES[name] = (
@@ -1345,6 +1396,7 @@ for name, (source, expected) in (
     | DEFAULT_WITNESSES
     | DIVISION_WITNESSES
     | SUBTRACTION_WITNESSES
+    | MULTIPLICATION_WITNESSES
 ).items():
     CASES[name] = (
         source,
@@ -1444,6 +1496,14 @@ CASES["string-subtraction-indices"] = (
 )
 CASES["description-capture-subtraction-index"] = (
     SUBTRACTION_INDICES["description-capture-subtraction-index"],
+    *CASES["description-type-guard"][1:],
+)
+CASES["string-multiplication-indices"] = (
+    MULTIPLICATION_INDICES["string-multiplication-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-multiplication-index"] = (
+    MULTIPLICATION_INDICES["description-capture-multiplication-index"],
     *CASES["description-type-guard"][1:],
 )
 # The complete former refused programs now execute unchanged.
@@ -1559,6 +1619,11 @@ def oracle(args):
         + "".join(body for name, body in DIVISION_INDICES.items() if name not in DIVISION_WITNESSES)
         + "".join(
             body for name, body in SUBTRACTION_INDICES.items() if name not in SUBTRACTION_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in MULTIPLICATION_INDICES.items()
+            if name not in MULTIPLICATION_WITNESSES
         )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
@@ -1971,6 +2036,32 @@ var symbol121StringUTF16SubtractionIndices = stringSubtractionIndices('\u00c9xy'
   stringSubtractionIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringSubtractionIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeMultiplication{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}MultiplicationWitness{i} = observeMultiplication{i}();\n"
+            for i, (body, expected) in enumerate(MULTIPLICATION_WITNESSES.values(), 122)
+        )
+        + r"""
+var symbol123StringMultiplicationIndices = stringMultiplicationIndices('', '', '', '') &&
+  stringMultiplicationIndices('a', 'a', '', '') && stringMultiplicationIndices('abcd', 'a', 'b', 'cd') &&
+  stringMultiplicationIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringMultiplicationIndices('abc', 'a', 'bc', 'c') && !stringMultiplicationIndices('abc', 'a', 'b', 'bc');
+var symbol124DescriptionCaptureMultiplicationIndex = descriptionCaptureMultiplicationIndex(Symbol()) === ':absent' &&
+  descriptionCaptureMultiplicationIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureMultiplicationIndex(Symbol('')) === '' &&
+  descriptionCaptureMultiplicationIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureMultiplicationIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureMultiplicationIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureMultiplicationIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol125StringUTF16MultiplicationIndices = stringMultiplicationIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringMultiplicationIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringMultiplicationIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringMultiplicationIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -2065,6 +2156,10 @@ var symbol121StringUTF16SubtractionIndices = stringSubtractionIndices('\u00c9xy'
         "StringSubtractionIndices",
         "DescriptionCaptureSubtractionIndex",
         "StringUTF16SubtractionIndices",
+        "MultiplicationWitness122",
+        "StringMultiplicationIndices",
+        "DescriptionCaptureMultiplicationIndex",
+        "StringUTF16MultiplicationIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -2079,19 +2174,30 @@ var symbol121StringUTF16SubtractionIndices = stringSubtractionIndices('\u00c9xy'
         "symbol64StringUTF16SignedSlices=true", "symbol64StringUTF16SignedSlices=false"
     ).replace("symbol68StringUTF16SignedCharAt=true", "symbol68StringUTF16SignedCharAt=false")
     vm_expected = vm_expected.replace(
-        "symbol71StringUTF16FractionalIndices=true", "symbol71StringUTF16FractionalIndices=false"
-    ).replace("symbol101StringUTF16DefaultIndices=true", "symbol101StringUTF16DefaultIndices=false")
-    vm_expected = vm_expected.replace(
-        "symbol107StringUTF16UndefinedIndices=true", "symbol107StringUTF16UndefinedIndices=false"
+        "symbol71StringUTF16FractionalIndices=true",
+        "symbol71StringUTF16FractionalIndices=false",
     ).replace(
-        "symbol112StringUTF16PrimitiveIndices=true", "symbol112StringUTF16PrimitiveIndices=false"
+        "symbol101StringUTF16DefaultIndices=true",
+        "symbol101StringUTF16DefaultIndices=false",
     )
     vm_expected = vm_expected.replace(
-        "symbol117StringUTF16DivisionIndices=true", "symbol117StringUTF16DivisionIndices=false"
+        "symbol107StringUTF16UndefinedIndices=true",
+        "symbol107StringUTF16UndefinedIndices=false",
+    ).replace(
+        "symbol112StringUTF16PrimitiveIndices=true",
+        "symbol112StringUTF16PrimitiveIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol117StringUTF16DivisionIndices=true",
+        "symbol117StringUTF16DivisionIndices=false",
     )
     vm_expected = vm_expected.replace(
         "symbol121StringUTF16SubtractionIndices=true",
         "symbol121StringUTF16SubtractionIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol125StringUTF16MultiplicationIndices=true",
+        "symbol125StringUTF16MultiplicationIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -2137,7 +2243,17 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
             binary = args.work / f"{name}.{mode}.{index}"
-            run([compiler, *FLAGS, *includes, str(source), *libraries, "-o", str(binary)])
+            run(
+                [
+                    compiler,
+                    *FLAGS,
+                    *includes,
+                    str(source),
+                    *libraries,
+                    "-o",
+                    str(binary),
+                ]
+            )
             if FORBIDDEN.search(run([args.nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: intrinsic binary links DOM/Script/AOT")
             if run([str(binary)]).stdout != expected:
@@ -2217,7 +2333,11 @@ def main():
             else re.search(r"function (\w+)\(", source)[1]
         )
         ir, contract = prepare(
-            args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
+            args,
+            name,
+            source,
+            entry_name=entry_name,
+            parameter_types=PARAMETER_TYPES.get(name),
         )
         if (
             name
@@ -2234,13 +2354,23 @@ def main():
             | PRIMITIVE_INDICES
             | DIVISION_INDICES
             | SUBTRACTION_INDICES
+            | MULTIPLICATION_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
         for optimize in (False, True):
             output_name = f"{name}-{optimize}"
             native = dom.lower(args, ir, contract, output_name, optimize=optimize)
-            standalone(args, native, output_name, checks, expected, compilers, includes, libraries)
+            standalone(
+                args,
+                native,
+                output_name,
+                checks,
+                expected,
+                compilers,
+                includes,
+                libraries,
+            )
 
     refusals = 0
 
@@ -2360,7 +2490,12 @@ def main():
             refuse(ir, contract, f"capture-{name}-{optimize}", optimize=optimize)
     for name, source, entry, types in (
         ("capture-selected", CAPTURE_SELECTED, "captureState", "capture-state"),
-        ("capture-mutable-result", CAPTURE_MUTABLE_RESULT, "captureState", "capture-state"),
+        (
+            "capture-mutable-result",
+            CAPTURE_MUTABLE_RESULT,
+            "captureState",
+            "capture-state",
+        ),
     ):
         ir, contract = prepare(
             args, name, source, entry_name=entry, parameter_types=PARAMETER_TYPES[types]
@@ -2440,6 +2575,7 @@ def main():
         *PRIMITIVE_INDICES,
         *DIVISION_INDICES,
         *SUBTRACTION_INDICES,
+        *MULTIPLICATION_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -2886,7 +3022,6 @@ def main():
         "nested-expression": "return text.charAt((1 - 1) - 0);",
         "negated-expression": "return text.slice(-(1 - 1));",
         "negated-operand": "return text.charAt(0 - (-1));",
-        "other-arithmetic": "return text.charAt(0 * 1e999);",
         "result-escape": "const missing=1e999 - 1e999; text.charAt(missing); return missing;",
         "unused-result": "const missing=1e999 - 1e999; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, 1 - 1);",
@@ -2917,6 +3052,52 @@ def main():
         raise RuntimeError("subtraction index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "subtraction-index-stale"):
         raise RuntimeError("changed subtraction index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-left": "return text.charAt(index * 0);",
+        "dynamic-right": "return text.slice(0 * index);",
+        "coercion": "return text.charAt('0' * 1);",
+        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} * 1);",
+        "nested-expression": "return text.charAt((0 * 1) * 1);",
+        "negated-expression": "return text.slice(-(0 * 1));",
+        "negated-operand": "return text.charAt(0 * (-1));",
+        "other-arithmetic": "return text.charAt(0 + 0);",
+        "nan-global": "return text.charAt(NaN * 0);",
+        "result-escape": "const missing=0 * 1e999; text.charAt(missing); return missing;",
+        "unused-result": "const missing=0 * 1e999; return text.charAt(0);",
+        "extra-argument": "return text.charAt(0, 0 * 1);",
+        "charat-authority": "return text.charAt(0 * 1).toLowerCase();",
+        "slice-authority": "return text.slice(1 * 1).toLowerCase();",
+        "replacement": "String.prototype.slice=0; return text.slice(0 * 1);",
+        "detached": "const method=text.charAt; return method(0 * 1);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(0 * 1);",
+        "description-unguarded": "return Symbol(text).description.charAt(0 * 1);",
+        "mutable-capture": "let bound=0 * 1; function part() { return text.charAt(bound); } bound=2; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "multiplication-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(
+                ir,
+                contract,
+                f"multiplication-index-{name}-{optimize}",
+                optimize=optimize,
+            )
+    ir, contract = accepted["description-capture-multiplication-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"multiplication-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "multiplication-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("multiplication index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "multiplication-index-stale"):
+        raise RuntimeError("changed multiplication index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
