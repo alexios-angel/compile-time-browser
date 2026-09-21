@@ -523,6 +523,33 @@ WIDE_INDICES = {
 }
 """,
 }
+DEFAULT_WITNESSES = {
+    # Preserve both complete former missing-argument refusals as native witnesses.
+    "string-index-charat-missing": (
+        "function bad(text, index) { return text.charAt(); }\n",
+        ("", "a", "a"),
+    ),
+    "string-index-slice-missing": (
+        "function bad(text, index) { return text.slice(); }\n",
+        ("", "a", "abc"),
+    ),
+}
+DEFAULT_INDICES = {
+    **{name: source for name, (source, _) in DEFAULT_WITNESSES.items()},
+    "string-default-indices": """function stringDefaultIndices(text, first) {
+  return text.charAt() === first && text.slice() === text;
+}
+""",
+    "description-capture-default-index": """function descriptionCaptureDefaultIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    return text !== undefined ? text.slice().charAt() + text.slice(1) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -567,6 +594,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in WIDE_WITNESSES},
     "string-wide-indices": ["string"],
     "description-capture-wide-index": ["symbol"],
+    **{name: ["string", "number"] for name in DEFAULT_WITNESSES},
+    "string-default-indices": ["string", "string"],
+    "description-capture-default-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1143,7 +1173,7 @@ CASES["description-capture-signed-charat"] = (
 """,
     "true\n",
 )
-for name, (source, expected) in (FRACTIONAL_WITNESSES | WIDE_WITNESSES).items():
+for name, (source, expected) in (FRACTIONAL_WITNESSES | WIDE_WITNESSES | DEFAULT_WITNESSES).items():
     CASES[name] = (
         source,
         """
@@ -1181,6 +1211,14 @@ CASES["string-wide-indices"] = (
 )
 CASES["description-capture-wide-index"] = (
     WIDE_INDICES["description-capture-wide-index"],
+    *CASES["description-type-guard"][1:],
+)
+CASES["string-default-indices"] = (
+    DEFAULT_INDICES["string-default-indices"],
+    *CASES["string-signed-charat"][1:],
+)
+CASES["description-capture-default-index"] = (
+    DEFAULT_INDICES["description-capture-default-index"],
     *CASES["description-type-guard"][1:],
 )
 # The complete former refused programs now execute unchanged.
@@ -1286,6 +1324,7 @@ def oracle(args):
             body for name, body in FRACTIONAL_INDICES.items() if name not in FRACTIONAL_WITNESSES
         )
         + "".join(body for name, body in WIDE_INDICES.items() if name not in WIDE_WITNESSES)
+        + "".join(body for name, body in DEFAULT_INDICES.items() if name not in DEFAULT_WITNESSES)
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -1568,6 +1607,31 @@ var symbol80DescriptionCaptureWideIndex = descriptionCaptureWideIndex(Symbol()) 
             + f"; }}\nvar symbol{i}WideWitness{i} = observeWide{i}();\n"
             for i, (body, expected) in enumerate(WIDE_WITNESSES.values(), 81)
         )
+        + "".join(
+            f"\nfunction observeDefault{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}DefaultWitness{i} = observeDefault{i}();\n"
+            for i, (body, expected) in enumerate(DEFAULT_WITNESSES.values(), 97)
+        )
+        + r"""
+var symbol99StringDefaultIndices = stringDefaultIndices('', '') &&
+  stringDefaultIndices('a', 'a') && stringDefaultIndices('abc', 'a') &&
+  stringDefaultIndices('\u0000ab', '\u0000') &&
+  !stringDefaultIndices('abc', '') && !stringDefaultIndices('abc', 'b');
+var symbol100DescriptionCaptureDefaultIndex = descriptionCaptureDefaultIndex(Symbol()) === ':absent' &&
+  descriptionCaptureDefaultIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureDefaultIndex(Symbol('')) === '' &&
+  descriptionCaptureDefaultIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureDefaultIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureDefaultIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureDefaultIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol101StringUTF16DefaultIndices = stringDefaultIndices('\u00c9xy', '\u00c9') &&
+  stringDefaultIndices('\ud801\udc00x', '\ud801') && stringDefaultIndices('\ud800xy', '\ud800') &&
+  stringDefaultIndices('\udc00xy', '\udc00');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -1642,6 +1706,10 @@ var symbol80DescriptionCaptureWideIndex = descriptionCaptureWideIndex(Symbol()) 
         "StringWideIndices",
         "DescriptionCaptureWideIndex",
         *(f"WideWitness{i}" for i in range(81, 97)),
+        *(f"DefaultWitness{i}" for i in range(97, 99)),
+        "StringDefaultIndices",
+        "DescriptionCaptureDefaultIndex",
+        "StringUTF16DefaultIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1657,9 +1725,9 @@ var symbol80DescriptionCaptureWideIndex = descriptionCaptureWideIndex(Symbol()) 
     ).replace("symbol68StringUTF16SignedCharAt=true", "symbol68StringUTF16SignedCharAt=false")
     vm_expected = vm_expected.replace(
         "symbol71StringUTF16FractionalIndices=true", "symbol71StringUTF16FractionalIndices=false"
-    )
+    ).replace("symbol101StringUTF16DefaultIndices=true", "symbol101StringUTF16DefaultIndices=false")
     actual = run([args.reference, str(vm)]).stdout
-    if actual != vm_expected:
+    if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
     node = args.work / "oracle.cjs"
     node.write_text(
@@ -1794,6 +1862,7 @@ def main():
             | SIGNED_CHARAT
             | FRACTIONAL_INDICES
             | WIDE_INDICES
+            | DEFAULT_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -1995,6 +2064,7 @@ def main():
         *SIGNED_CHARAT,
         *FRACTIONAL_INDICES,
         *WIDE_INDICES,
+        *DEFAULT_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -2074,8 +2144,6 @@ def main():
         "charat-coercion": "return text.charAt('1');",
         "slice-coercion": "return text.slice('2');",
         "charat-extra": "return text.charAt(1, 2);",
-        "charat-missing": "return text.charAt();",
-        "slice-missing": "return text.slice();",
         "slice-prototype-write": "String.prototype.slice=0; return text.slice(2);",
     }.items():
         ir, contract = prepare(
@@ -2299,6 +2367,38 @@ def main():
     contract = dict(contract, module_sha256=fingerprint(args.opt, changed))
     for optimize in (False, True):
         refuse(changed, contract, f"wide-index-nan-literal-{optimize}", optimize=optimize)
+
+    for name, body in {
+        "charat-undefined": "return text.charAt(undefined);",
+        "slice-undefined": "return text.slice(undefined);",
+        "charat-detached": "const method=text.charAt; return method();",
+        "slice-detached": "const method=text.slice; return method();",
+        "charat-replacement": "String.prototype.charAt=0; return text.charAt();",
+        "slice-replacement": "String.prototype.slice=0; return text.slice();",
+        "charat-authority": "return text.charAt().toLowerCase();",
+        "slice-authority": "return text.slice().toLowerCase();",
+        "description-unguarded": "return Symbol(text).description.charAt();",
+        "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice() : '';",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "default-index-" + name,
+            f"function bad(text) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"default-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-default-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"default-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "default-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("default index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "default-index-stale"):
+        raise RuntimeError("changed default index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

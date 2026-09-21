@@ -436,8 +436,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (hasKind(invoke.getCallee(), Kind::charAt) || hasKind(invoke.getCallee(), Kind::slice)) {
             const bool first = hasKind(invoke.getCallee(), Kind::charAt);
-            if (arguments.empty() || arguments.size() > (first ? 1U : 2U)) {
-                refusal = "DOM String indexing requires one index and an optional slice end";
+            if (arguments.size() > (first ? 1U : 2U)) {
+                refusal = "DOM String indexing permits an optional index and optional slice end";
                 return false;
             }
             for (mlir::Value argument : arguments) {
@@ -451,7 +451,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                                    first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
                                    invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
-            auto literal = arguments.front().getDefiningOp<ctjs::ConstantOp>();
+            auto literal = arguments.empty() ? ctjs::ConstantOp{}
+                                             : arguments.front().getDefiningOp<ctjs::ConstantOp>();
             if (arguments.size() == 1 && literal &&
                 *stringIndex(arguments.front()) == (first ? 0 : 1)) {
                 if (!spend()) { return false; }

@@ -554,9 +554,14 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                 at.getStringAttr("ctbrowser::wtf8_to_utf16"),
                                                 mlir::ValueRange{rawText(call.getReceiver())});
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
-        auto length = ec::MemberCallOpaqueOp::create(
-            at, where, mlir::TypeRange{indexType}, units.getResult(0), at.getStringAttr("size"),
-            mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
+        mlir::Value length;
+        if (!call.getArgs().empty()) {
+            length = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{indexType},
+                                                    units.getResult(0), at.getStringAttr("size"),
+                                                    mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                                                    mlir::ValueRange{})
+                         .getResult(0);
+        }
         const auto offset = [&](mlir::Value argument) -> mlir::Value {
             // Truncate before testing the sign: -0.5 selects index zero, not
             // the end of the String, for both charAt and slice.
@@ -585,23 +590,26 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             auto inside = mlir::OpBuilder::atBlockBegin(&branch.getThenRegion().front());
             auto index = ec::CastOp::create(inside, where, indexType, magnitude);
             auto inRange = ec::CmpOp::create(inside, where, inside.getI1Type(),
-                                             ec::CmpPredicate::lt, index, length.getResult(0));
-            auto bounded = ec::ConditionalOp::create(inside, where, indexType, inRange, index,
-                                                     length.getResult(0));
+                                             ec::CmpPredicate::lt, index, length);
+            auto bounded =
+                ec::ConditionalOp::create(inside, where, indexType, inRange, index, length);
             mlir::scf::YieldOp::create(inside, where, mlir::ValueRange{bounded});
             inside.setInsertionPointToStart(&branch.getElseRegion().front());
-            mlir::scf::YieldOp::create(inside, where, length.getResults());
+            mlir::scf::YieldOp::create(inside, where, mlir::ValueRange{length});
             auto clamped = branch.getResult(0);
             if (edge.kind == HostDOMMethod::stringCharAt) {
-                return ec::ConditionalOp::create(at, where, indexType, negative,
-                                                 length.getResult(0), clamped);
+                return ec::ConditionalOp::create(at, where, indexType, negative, length, clamped);
             }
             // Subtract only the clamped magnitude; neither the String length
             // nor a negative source Number is converted to a signed index.
-            auto fromEnd = ec::SubOp::create(at, where, indexType, length.getResult(0), clamped);
+            auto fromEnd = ec::SubOp::create(at, where, indexType, length, clamped);
             return ec::ConditionalOp::create(at, where, indexType, negative, fromEnd, clamped);
         };
-        llvm::SmallVector<mlir::Value> range{offset(call.getArgs().front())};
+        mlir::Value start =
+            call.getArgs().empty()
+                ? ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"))
+                : offset(call.getArgs().front());
+        llvm::SmallVector<mlir::Value> range{start};
         if (edge.kind == HostDOMMethod::stringCharAt) {
             range.push_back(
                 ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1")));
