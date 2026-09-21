@@ -293,6 +293,26 @@ void classInitialization::rewrite() {
     // Complete current-IR checks precede setup erasure. Normalized super
     // bodies exist only on the private candidate; reports grant no authority.
     module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+    for (auto [operation, answer] : instanceOfResults) {
+        auto test = llvm::cast<ctjs::InstanceOfOp>(operation);
+        mlir::OpBuilder at(test);
+        // The importer boxes the i1 before JavaScript value operations.
+        for (auto * user : llvm::make_early_inc_range(test.getResult().getUsers())) {
+            if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(user)) {
+                at.setInsertionPoint(boxed);
+                auto value = ctjs::ConstantOp::create(
+                    at, boxed.getLoc(), ctjs::BooleanAttr::get(module.getContext(), answer));
+                boxed.getResult().replaceAllUsesWith(value.getResult());
+                boxed.erase();
+            }
+        }
+        if (!test.getResult().use_empty()) {
+            at.setInsertionPoint(test);
+            auto value = mlir::arith::ConstantIntOp::create(at, test.getLoc(), answer, 1);
+            test.getResult().replaceAllUsesWith(value.getResult());
+        }
+        test.erase(); // Keep both original operand producers and their effects.
+    }
     // The complete source census proved these immutable callable identities.
     // Reuse them on each constructed leaf's already unobservable prototype;
     // ordinary method lowering still proves every call and borrowed receiver.
@@ -541,14 +561,15 @@ void classInitialization::rewrite() {
             getter.erase();
         }
     }
-    // Unconstructed bases and shadowed methods can lose their last setup
+    // Unconstructed classes and shadowed methods can lose their last setup
     // use. Complete original bodies passed the census before this check;
     // a remaining callable or symbol reference keeps them alive.
     // Erase all closures before bodies that might contain another closure.
     llvm::SmallVector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> unusedCallables;
     module.walk([&](ctjs::CreateClosureOp closure) {
         auto function = target(closure);
-        if ((!baseClasses.contains(closure.getResult()) && !methods.contains(function)) ||
+        if ((!baseClasses.contains(closure.getResult()) && !constructors.contains(function) &&
+             !methods.contains(function)) ||
             !llvm::all_of(closure->getUsers(),
                           [](mlir::Operation * use) { return llvm::isa<ctjs::RootOp>(use); }) ||
             !mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) ||

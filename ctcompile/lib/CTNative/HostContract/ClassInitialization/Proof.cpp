@@ -2,6 +2,75 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+bool classInitialization::proveInstanceOf(const HostContract & contract) {
+    llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
+    for (ctjs::CallOp call : calls) {
+        if (!step()) { return false; }
+        auto [at, fresh] = completed.try_emplace(sourceValue(call.getArgs().front()), call);
+        if (!fresh) { at->second = {}; }
+    }
+    const auto walked = module.walk([&](ctjs::InstanceOfOp test) {
+        const auto reject = [&](llvm::StringRef message) {
+            refuse(message);
+            return mlir::WalkResult::interrupt();
+        };
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (llvm::count(contract.initialIntrinsics, "Function") != 1) {
+            return reject("class instanceof requires the standard Function identity");
+        }
+        // The full source census excludes hook/prototype mutation and reentry.
+        // Function supplies its initial inherited @@hasInstance. Only an exact
+        // source construction carries nominal identity: equal C++ shapes do not.
+        auto constructor =
+            sourceValue(test.getConstructor()).getDefiningOp<ctjs::CreateClosureOp>();
+        auto made = sourceValue(test.getObject()).getDefiningOp<ctjs::ConstructOp>();
+        auto original = made ? sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>()
+                             : ctjs::CreateClosureOp{};
+        auto wanted = constructor ? completed.lookup(constructor.getResult()) : ctjs::CallOp{};
+        auto initialized = original ? completed.lookup(original.getResult()) : ctjs::CallOp{};
+        auto scope = test->getParentOfType<ctjs::FuncOp>();
+        if (!constructor || !made || !original || !wanted || !initialized ||
+            !constructors.contains(target(constructor)) ||
+            !constructors.contains(target(original)) ||
+            sourceValue(made.getNewTarget()) != original.getResult() ||
+            wanted->getBlock() != test->getBlock() || initialized->getBlock() != test->getBlock() ||
+            made->getBlock() != test->getBlock() || !wanted->isBeforeInBlock(test) ||
+            !initialized->isBeforeInBlock(made) || !made->isBeforeInBlock(test) ||
+            methods.contains(scope) || constructors.contains(scope) || getters.contains(scope)) {
+            return reject("class instanceof requires a completed local constructor and exact "
+                          "same-block construction");
+        }
+        bool returned = false;
+        const auto returns = target(original).walk([&](ctjs::ReturnOp result) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            returned = true;
+            // Derived super normalization has already proved and preserved its
+            // receiver. Other replacement-return proofs can extend this slice.
+            if (!result.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+                refuse("class instanceof constructor may replace its instance");
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (returns.wasInterrupted()) { return mlir::WalkResult::interrupt(); }
+        if (!returned) { return reject("class instanceof constructor has no proved completion"); }
+        mlir::Value ancestor = original.getResult();
+        bool matches = false;
+        while (ancestor) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (ancestor == constructor.getResult()) {
+                matches = true;
+                break;
+            }
+            auto parent = heritage.lookup(ancestor);
+            ancestor = parent ? sourceValue(parent.getArgs()[1]) : mlir::Value{};
+        }
+        instanceOfResults[test] = matches;
+        return mlir::WalkResult::advance();
+    });
+    return !walked.wasInterrupted();
+}
+
 bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || !functionIndex(entry)) {
@@ -136,6 +205,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     for (ctjs::CallOp call : calls) {
         if (!examine(call, contract, domEntry)) { return false; }
     }
+    if (!proveInstanceOf(contract)) { return false; }
     const auto recordHelper = [&](mlir::Operation * op) {
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
         auto method = llvm::dyn_cast<ctjs::CallOp>(op);
@@ -256,7 +326,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             return mlir::WalkResult::advance();
         }
         if (mapOperations.contains(op) || setup.contains(op) || retainedSetup.contains(op) ||
-            methodCalls.contains(op) || helperCalls.contains(op) || llvm::is_contained(calls, op) ||
+            instanceOfResults.contains(op) || methodCalls.contains(op) ||
+            helperCalls.contains(op) || llvm::is_contained(calls, op) ||
             llvm::is_contained(constructorReads, op) || cellOperations.contains(op) ||
             llvm::is_contained(captureReads, op)) {
             return mlir::WalkResult::advance();

@@ -44,6 +44,12 @@ bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> all
     return true;
 }
 
+bool closedSourceIntrinsic(llvm::StringRef name) {
+    static const llvm::StringSet<> names{"Map", "Array", "Error", "Object", "Function"};
+    return names.contains(name) || host_detail::classIntrinsicArity(name) ||
+           host_detail::iteratorIntrinsicArity(name);
+}
+
 std::string realmReceiverProblem(const HostContract & contract) {
     if (!contract.classicScriptRealm && !contract.realmOwnDataProperties.empty()) {
         return "realm own-data properties require the classic-script-realm entry receiver";
@@ -207,9 +213,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return std::move(failure);
         }
         for (const auto & name : result.initialIntrinsics) {
-            if (name != "Map" && name != "Array" && name != "Error" && name != "Object" &&
-                !host_detail::classIntrinsicArity(name) &&
-                !host_detail::iteratorIntrinsicArity(name)) {
+            if (!closedSourceIntrinsic(name)) {
                 return error("unsupported initial intrinsic identity");
             }
             if (llvm::is_contained(result.absentBindings, name) ||
@@ -423,9 +427,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
         return "invalid initial realm globalThis declaration";
     }
     for (const auto & name : contract.initialIntrinsics) {
-        if ((name != "Map" && name != "Array" && name != "Error" && name != "Object" &&
-             !classIntrinsicArity(name) && !iteratorIntrinsicArity(name)) ||
-            llvm::is_contained(contract.absentBindings, name) ||
+        if (!closedSourceIntrinsic(name) || llvm::is_contained(contract.absentBindings, name) ||
             llvm::is_contained(contract.undefinedBindings, name)) {
             return "invalid standard initial intrinsic declaration";
         }

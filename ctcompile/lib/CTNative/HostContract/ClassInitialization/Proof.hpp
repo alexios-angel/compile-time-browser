@@ -45,6 +45,7 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> setup;
     llvm::DenseSet<mlir::Operation *> retainedSetup;
     llvm::DenseSet<mlir::Operation *> constructors;
+    llvm::MapVector<mlir::Operation *, bool> instanceOfResults;
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
     llvm::SmallVector<std::pair<ctjs::ConstructOp, ctjs::SetPropertyOp>> methodProbes;
@@ -121,6 +122,7 @@ struct classInitialization {
                        llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper);
 
     bool proveHeritage(const HostContract & contract);
+    bool proveInstanceOf(const HostContract & contract);
 
     bool heritageUse(mlir::OpOperand & use, mlir::Value constructor);
 

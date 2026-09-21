@@ -84,8 +84,10 @@ struct HostContract {
     // and iterator-prototype chain, with no custom next or return hooks. Element
     // promises its original own prototype and querySelector/querySelectorAll
     // methods. Function additionally promises those methods' original prototype
-    // chains and Function.prototype.call, without own call shadows or accessors. DOM
-    // iteration additionally requires the original __ctbrowser_for_of_open,
+    // chains and Function.prototype.call, without own call shadows or accessors.
+    // For ordinary class instanceof, Function also promises its original prototype
+    // and inherited Symbol.hasInstance method. DOM iteration additionally requires
+    // the original __ctbrowser_for_of_open,
     // __ctbrowser_iter_next and __ctbrowser_iter_close source-helper bindings. Source
     // replacement/escape and external script reentry still refuse the complete live proof.
     std::vector<std::string> initialIntrinsics;

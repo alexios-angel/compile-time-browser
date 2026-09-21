@@ -1,0 +1,1 @@
+# RUN: python3 %S/class_instanceof.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t

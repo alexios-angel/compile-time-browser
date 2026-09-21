@@ -1173,6 +1173,9 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
         if (!step()) { return false; }
         auto * op = use.getOwner();
         if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+        if (llvm::isa<ctjs::InstanceOfOp>(op) && use.getOperandNumber() == 0) {
+            continue; // The complete instance/constructor proof runs after class setup.
+        }
         if (retainedMapReads(use, methodKeys, staticReads)) { continue; }
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op)) {
             llvm::SmallVector<ctjs::GetPropertyOp> reads;

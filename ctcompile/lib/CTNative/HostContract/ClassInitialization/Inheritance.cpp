@@ -654,6 +654,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     llvm::SmallVector<ctjs::CallOp> staticInvocations;
     llvm::SmallVector<ctjs::GetPropertyOp> staticReads;
     llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
+    bool testedConstructor = false;
     // Prove original slots once, before super expansion mixes base and leaf
     // operations. The copied reads retain these exact helper identities.
     if (!closure.getUpvalues().empty() &&
@@ -667,6 +668,10 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         if (op == call && use.getOperandNumber() == 2) { continue; }
         if (llvm::isa<ctjs::RootOp>(op)) { continue; }
         if (heritageUse(use, closure.getResult())) { continue; }
+        if (llvm::isa<ctjs::InstanceOfOp>(op) && use.getOperandNumber() == 1) {
+            testedConstructor = true; // Checked after every class setup has been proved.
+            continue;
+        }
         if (auto invocation = llvm::dyn_cast<ctjs::CallOp>(op)) {
             auto read = invocation.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (use.getOperandNumber() == 1 && read &&
@@ -733,7 +738,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     auto prototype = attachment ? attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>()
                                 : ctjs::CreateObjectOp{};
     if (!prototype || !home || !backedge ||
-        (instances.empty() && !baseClasses.contains(closure.getResult())) ||
+        (instances.empty() && !baseClasses.contains(closure.getResult()) && !testedConstructor) ||
         prototype->getBlock() != call->getBlock() || home.getValue() != prototype.getResult() ||
         backedge.getObject() != prototype.getResult()) {
         return refuse("class setup needs its exact fresh prototype, constructor and home");
