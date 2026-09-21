@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Class/public-family preparation and power indices, 2026-09-21 UTC
+
+Continued clean **ae517a4b**. **87789ef2** composes remaining DOM input uses
+with a complete published captured-Map family during class preparation. Exact
+input operands, the root slot, wrapper/factory calls and initialization order
+are checked; wrapper/factory bodies retain the complete source census. Three
+witnesses preserve complete vendor Data, observable class results, five
+constructions and eight functions. Their public payload is independently proved;
+**actual class-result publication and native class-session ownership still refuse**.
+**b3cf5e4c** adds direct Number-literal power String bounds through existing
+JavaScript exponentiation, preserving the bounds-use and literal-only casing gates.
+
+Focused validation passes: exact host-contract CTest **1/1** and selected DOM lit
+**2/2, 101.80 s total**. New family checks pass **five Node/VM observations,
+three preparations and 29 refusals**; the existing DOM fixture passes **56 record
+and 24 object-key native executions**. The power selector passes **40 native
+executions and 60 related refusals**, with three Node/VM agreements and one known
+UTF-16/byte-index difference. All eight code/test hashes match the devbox. Scoped
+checks pass; repository formatting retains 16 pre-existing diagnostics. Full
+suites, broad corpus/matrices, full Bootstrap, WPT/test262, Windows and new
+sanitizers were skipped. No browser/runtime code changed.
+
+**Next:** carry the actual class-derived scalar into the public family using
+original constructor/record allocation and read-time evidence, then compose the
+native provider and owner function/allocation census. The new
+`published_families()` supplies the complete preparation shape;
+`published_source()` retains the unchanged actual-result refusals. Multiple DOM
+alias partitions in local class Maps, original B/Data+B, broader Strings,
+conditional callees, mutable cells, String ordering, document views and the
+application driver remain. No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks and next ownership boundary](handoff/2026-09-21-class-public-family-power.md).
+
 ## Saved field snapshots and addition indices, 2026-09-21 UTC
 
 Continued clean **5d790a74**. **fbba77fa** admits global snapshots of scalar
