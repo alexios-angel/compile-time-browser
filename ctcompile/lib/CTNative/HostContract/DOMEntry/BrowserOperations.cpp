@@ -53,17 +53,20 @@ std::optional<double> signedNumberLiteral(mlir::Value value) {
     return negative ? -number.getDouble() : number.getDouble();
 }
 
-std::optional<double> stringIndex(mlir::Value value) {
+std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 2) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         binary &&
         (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
          binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
          binary.getKind() == ctjs::BinaryKind::Add || binary.getKind() == ctjs::BinaryKind::Pow)) {
-        const auto lhs = signedNumberLiteral(binary.getLhs());
-        const auto rhs = signedNumberLiteral(binary.getRhs());
+        // ponytail: two binary levels bound this literal proof's work. Deeper
+        // expressions need a separately budgeted origin analysis.
+        if (!arithmeticDepth) { return std::nullopt; }
+        const auto lhs = stringIndex(binary.getLhs(), arithmeticDepth - 1);
+        const auto rhs = stringIndex(binary.getRhs(), arithmeticDepth - 1);
         if (!lhs || !rhs) { return std::nullopt; }
         // Both operands are already Numbers; no coercion or user code can run.
-        // Nested expressions and globals still need their own origin proof.
+        // Globals and coercing operands still need their own origin proof.
         if (binary.getKind() == ctjs::BinaryKind::Div) { return *lhs / *rhs; }
         if (binary.getKind() == ctjs::BinaryKind::Sub) { return *lhs - *rhs; }
         if (binary.getKind() == ctjs::BinaryKind::Add) { return *lhs + *rhs; }
@@ -80,7 +83,7 @@ std::optional<double> stringIndex(mlir::Value value) {
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
         if (unary.getOperand().getDefiningOp<ctjs::BinaryOp>()) {
-            const auto offset = stringIndex(unary.getOperand());
+            const auto offset = stringIndex(unary.getOperand(), arithmeticDepth);
             return offset ? std::optional<double>{-*offset} : std::nullopt;
         }
     }
@@ -108,44 +111,46 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (!stringIndex(result)) {
             refusal =
                 "DOM String indexing negation/division/subtraction/multiplication/remainder/power "
-                "requires optionally signed Number literals";
+                "requires at most two arithmetic levels over signed Number literals";
             return false;
         }
-        unsigned bounds = 0;
-        for (mlir::OpOperand & use : result.getUses()) {
-            if (!spend()) { return false; }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-            if (auto arithmetic = llvm::dyn_cast<ctjs::BinaryOp>(use.getOwner());
-                unary && arithmetic && signedNumberLiteral(result) &&
-                stringIndex(arithmetic.getResult())) {
-                // Each signed leaf and its arithmetic result must reach only
-                // the checked bound uses; no additional arithmetic depth is admitted.
+        llvm::SmallVector<mlir::Value> pending{result};
+        while (!pending.empty()) {
+            unsigned bounds = 0;
+            for (mlir::OpOperand & use : pending.pop_back_val().getUses()) {
+                if (!spend()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                if (auto arithmetic = llvm::dyn_cast<ctjs::BinaryOp>(use.getOwner());
+                    arithmetic && stringIndex(arithmetic.getResult())) {
+                    // Follow all intermediate uses, including Add: ordinary
+                    // scalar Add has its own path and does not run this census.
+                    pending.push_back(arithmetic.getResult());
+                    ++bounds;
+                    continue;
+                }
+                if (auto negation = llvm::dyn_cast<ctjs::UnaryOp>(use.getOwner());
+                    negation && negation.getKind() == ctjs::UnaryKind::Neg &&
+                    stringIndex(negation.getResult())) {
+                    pending.push_back(negation.getResult());
+                    ++bounds;
+                    continue;
+                }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                   : ctjs::GetPropertyOp{};
+                auto key = method ? ctjs::constantKey(method.getKey()) : llvm::StringRef{};
+                if (!method || method.getObject() != call.getReceiver() ||
+                    (key != "slice" && key != "charAt") || use.getOperandNumber() < 2 ||
+                    use.getOperandNumber() > (key == "charAt" ? 2U : 3U)) {
+                    refusal = "DOM String indexing literal expression escapes its bounds";
+                    return false;
+                }
                 ++bounds;
-                continue;
             }
-            if (auto negation = llvm::dyn_cast<ctjs::UnaryOp>(use.getOwner());
-                binary && negation && negation.getKind() == ctjs::UnaryKind::Neg &&
-                stringIndex(negation.getResult())) {
-                // This one outer sign is checked by the same complete bound-use
-                // census when its operation is visited; no arithmetic chain escapes.
-                ++bounds;
-                continue;
-            }
-            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-            auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                               : ctjs::GetPropertyOp{};
-            auto key = method ? ctjs::constantKey(method.getKey()) : llvm::StringRef{};
-            if (!method || method.getObject() != call.getReceiver() ||
-                (key != "slice" && key != "charAt") || use.getOperandNumber() < 2 ||
-                use.getOperandNumber() > (key == "charAt" ? 2U : 3U)) {
-                refusal = "DOM String indexing literal expression escapes its bounds";
+            if (!bounds) {
+                refusal = "DOM String indexing literal expression has no bound use";
                 return false;
             }
-            ++bounds;
-        }
-        if (!bounds) {
-            refusal = "DOM String indexing literal expression has no bound use";
-            return false;
         }
         values[result] = Kind::number;
         return true;
@@ -509,7 +514,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
                     refusal = "DOM String indexing requires primitive literals, proved undefined "
-                              "or one optionally negated signed-literal arithmetic expression";
+                              "or at most two arithmetic levels over signed Number literals";
                     return false;
                 }
             }
