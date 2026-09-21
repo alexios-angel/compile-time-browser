@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Optional Map payloads and negated primitive indices, 2026-09-21 UTC
+
+Continued clean **72040551**. **c3dc2da0** carries closed optional scalar
+Map payloads through existing tagged storage, arguments and reads, preserving
+null, undefined, missing entries, Boolean identity, NaN and negative zero.
+Nine unchanged class/Data sources now execute in addition to the previous six:
+**15 vendor-derived sources, 120 native class executions**. Constructor-only
+fields, saved reads and Boolean fields retain their original class computations.
+Source/provider/ownership proofs are unchanged; the two object-valued field
+mutation witnesses still refuse. Tagged scalar value snapshots also remain refused.
+**ffb18caa** admits exact negated null/Boolean String indices and supplies the
+missing exact host-null-to-Number conversion. Dynamic coercion and literal-only
+dataset authority remain unchanged.
+
+Focused checks pass: native DOM lit **296.24 s**, including **120 class, 56 record
+and 24 object-key executions**; two selected Map-key lit cases **10.83 s**;
+mixed-Map lit **73.63 s**; exact runtime/host CTests **2/2, 0.57 s total**.
+The scalar Map selector passes **20 executions and ten Node/VM agreements**.
+String selection passes **64 executions, 136 refusals, six Node/VM agreements
+and one known UTF-16 difference**. All eleven code/test hashes match the devbox;
+scoped formatting passes, while the required repository check retains the same
+16 untouched diagnostics. Full suites and broad replays were skipped. No browser
+or shared implementation changed.
+
+**Next:** both unchanged original composite-result publications still refuse
+preparation with `class DOM input has an observer outside its proved Map keys`.
+Extend category evidence for the complete local Map/record computation, including
+Map observations and Boolean numeric coercion, without dropping any observer or
+owner. Multiple DOM-input alias partitions, original B/Data+B, tagged Map value
+snapshots, broader Strings, conditional callees, mutable cells, String ordering,
+document views and the application driver remain. Full Bootstrap is unfinished.
+
+[Exact validation and next preparation boundary](handoff/2026-09-21-optional-map-payloads.md).
+
 ## Constructor lifting and native class sessions, 2026-09-21 UTC
 
 Continued clean **0bbed840**. **6a333142** lifts exact proved constructors in the
