@@ -315,6 +315,8 @@ UTF16_REFUSALS = {
     )
 }
 UTF16_CASES["class_utf16_lowercase"] = (UTF16_REFUSALS.pop("class_utf16_lowercase"), "1111")
+for name in ("class_utf16_char_index", "class_utf16_slice_index"):
+    UTF16_CASES[name] = (UTF16_REFUSALS.pop(name), "0000")
 CLASS_CASES.update(UTF16_CASES)
 CLASS_REFUSALS.update(UTF16_REFUSALS)
 # The arrow saves lexical this, but its original Bootstrap predicate never reads it.

@@ -2,6 +2,8 @@
 
 #include "llvm/ADT/StringMap.h"
 
+#include <cmath>
+
 namespace ctcompile::ctnative::dom_entry_detail {
 
 namespace {
@@ -390,18 +392,22 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                                                  : ctjs::ConstantOp{};
             auto index =
                 literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
-            // ponytail: Bootstrap's exact indices avoid general
-            // ToIntegerOrInfinity; broader slices need that proof.
-            if (!index || index.getDouble() != (first ? 0 : 1)) {
-                refusal = "DOM String indexing requires charAt(0) or slice(1)";
+            const double offset = index ? index.getDouble() : -1;
+            // ponytail: literal uint32 indices fit size_t on every native target;
+            // broader inputs need ToIntegerOrInfinity and negative-slice proofs.
+            if (!index || !std::isfinite(offset) || offset < 0 || offset > 4294967295.0 ||
+                std::floor(offset) != offset) {
+                refusal = "DOM String indexing requires one nonnegative uint32 integer literal";
                 return false;
             }
             provedCalls.push_back({invoke,
                                    first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
                                    invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
-            if (!spend()) { return false; }
-            (first ? firstUnits : stringTails)[invoke.getResult()] = invoke.getReceiver();
+            if (offset == (first ? 0 : 1)) {
+                if (!spend()) { return false; }
+                (first ? firstUnits : stringTails)[invoke.getResult()] = invoke.getReceiver();
+            }
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::lowercaseUnit) && arguments.empty()) {

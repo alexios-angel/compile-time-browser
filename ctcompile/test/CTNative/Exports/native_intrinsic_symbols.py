@@ -349,6 +349,26 @@ STRING_METHODS = {
 }
 """,
 }
+STRING_INDICES = {
+    "string-indices": """function stringIndices(text, unit, tail) {
+  return text.charAt(1) === unit && text.slice(2) === tail && text.slice(0) === text &&
+    text.charAt(4294967295) === '' && text.slice(4294967295) === '';
+}
+""",
+    "description-slice": """function descriptionSlice(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  return typeof text === 'string' ? text.slice(2) : ':absent';
+}
+""",
+    "description-capture-index": """function descriptionCaptureIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function unit() { return text !== undefined ? text.charAt(2) : ':absent'; }
+  return unit();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -374,6 +394,9 @@ PARAMETER_TYPES = {
     "string-prefix": ["string"],
     "description-lowercase": ["symbol"],
     "description-capture-prefix": ["symbol"],
+    "string-indices": ["string", "string", "string"],
+    "description-slice": ["symbol"],
+    "description-capture-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -712,6 +735,64 @@ CASES["description-capture-prefix"] = (
 """,
     "true\n",
 )
+CASES["string-indices"] = (
+    STRING_INDICES["string-indices"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@),
+        js_boolean_t (*)(js_string, js_string, js_string)>);
+    assert(@ENTRY@(js_string{""}, js_string{""}, js_string{""}));
+    assert(@ENTRY@(js_string{"a"}, js_string{""}, js_string{""}));
+    assert(@ENTRY@(js_string{"abc"}, js_string{"b"}, js_string{"c"}));
+    assert(@ENTRY@(js_string{"a\0b"}, js_string{"\0"}, js_string{"b"}));
+    assert(@ENTRY@(js_string{"\xc3\x89xy"}, js_string{"x"}, js_string{"y"}));
+    assert(@ENTRY@(js_string{"\xf0\x90\x90\x80x"}, js_string{"\xed\xb0\x80"}, js_string{"x"}));
+    assert(@ENTRY@(js_string{"\xed\xa0\x80xy"}, js_string{"x"}, js_string{"y"}));
+    assert(@ENTRY@(js_string{"A\xed\xb0\x80x"}, js_string{"\xed\xb0\x80"}, js_string{"x"}));
+    assert(!@ENTRY@(js_string{"abc"}, js_string{"a"}, js_string{"c"}));
+    assert(!@ENTRY@(js_string{"abc"}, js_string{"b"}, js_string{"bc"}));
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["description-slice"] = (
+    STRING_INDICES["description-slice"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_symbol_t)>);
+    assert(@ENTRY@(Symbol()).value() == ":absent");
+    assert(@ENTRY@(Symbol(undefined_t{})).value() == ":absent");
+    assert(@ENTRY@(Symbol(js_string{""})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"a"})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"abc"})).value() == "c");
+    assert(@ENTRY@(Symbol(js_string{"a\0b"})).value() == "b");
+    assert(@ENTRY@(Symbol(js_string{"\xc3\x89xy"})).value() == "y");
+    assert(@ENTRY@(Symbol(js_string{"\xf0\x90\x90\x80x"})).value() == "x");
+    assert(@ENTRY@(Symbol(js_string{"\xed\xa0\x80xy"})).value() == "y");
+    assert(@ENTRY@(Symbol.iterator).value() == "mbol.iterator");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["description-capture-index"] = (
+    STRING_INDICES["description-capture-index"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_symbol_t)>);
+    assert(@ENTRY@(Symbol()).value() == ":absent");
+    assert(@ENTRY@(Symbol(undefined_t{})).value() == ":absent");
+    assert(@ENTRY@(Symbol(js_string{""})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"ab"})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"abcd"})).value() == "c");
+    assert(@ENTRY@(Symbol(js_string{"ab\0d"})).value() == std::string("\0", 1));
+    assert(@ENTRY@(Symbol(js_string{"\xc3\x89xyz"})).value() == "y");
+    assert(@ENTRY@(Symbol(js_string{"A\xf0\x90\x90\x80x"})).value() == "\xed\xb0\x80");
+    assert(@ENTRY@(Symbol(js_string{"AB\xed\xa0\x80x"})).value() == "\xed\xa0\x80");
+    assert(@ENTRY@(Symbol.iterator).value() == "m");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -803,6 +884,7 @@ def oracle(args):
         + CAPTURE_DESCRIPTION
         + "".join(DESCRIPTION_GUARDS.values())
         + "".join(STRING_METHODS.values())
+        + "".join(STRING_INDICES.values())
         + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
@@ -942,6 +1024,24 @@ var symbol49DescriptionCapturePrefix = !descriptionCapturePrefix(Symbol()) &&
   !descriptionCapturePrefix(Symbol('Bs')) && !descriptionCapturePrefix(Symbol.iterator);
 var symbol50DescriptionExpandedCase = descriptionLowercase(Symbol('\u0130X')) === 'i\u0307X';
 var symbol51DescriptionGreekCase = descriptionLowercase(Symbol('\u03a3X')) === '\u03c3X';
+var symbol52StringIndices = stringIndices('', '', '') && stringIndices('a', '', '') &&
+  stringIndices('abc', 'b', 'c') && stringIndices('a\u0000b', '\u0000', 'b') &&
+  !stringIndices('abc', 'a', 'c') && !stringIndices('abc', 'b', 'bc');
+var symbol53DescriptionSlice = descriptionSlice(Symbol()) === ':absent' &&
+  descriptionSlice(Symbol(undefined)) === ':absent' && descriptionSlice(Symbol('')) === '' &&
+  descriptionSlice(Symbol('a')) === '' && descriptionSlice(Symbol('abc')) === 'c' &&
+  descriptionSlice(Symbol('a\u0000b')) === 'b' && descriptionSlice(Symbol.iterator) === 'mbol.iterator';
+var symbol54DescriptionCaptureIndex = descriptionCaptureIndex(Symbol()) === ':absent' &&
+  descriptionCaptureIndex(Symbol(undefined)) === ':absent' && descriptionCaptureIndex(Symbol('')) === '' &&
+  descriptionCaptureIndex(Symbol('ab')) === '' && descriptionCaptureIndex(Symbol('abcd')) === 'c' &&
+  descriptionCaptureIndex(Symbol('ab\u0000d')) === '\u0000' && descriptionCaptureIndex(Symbol.iterator) === 'm';
+var symbol55StringUTF16Indices = stringIndices('\u00c9xy', 'x', 'y') &&
+  stringIndices('\ud801\udc00x', '\udc00', 'x') && stringIndices('\ud800xy', 'x', 'y') &&
+  stringIndices('A\udc00x', '\udc00', 'x') && descriptionSlice(Symbol('\u00c9xy')) === 'y' &&
+  descriptionSlice(Symbol('\ud801\udc00x')) === 'x' && descriptionSlice(Symbol('\ud800xy')) === 'y' &&
+  descriptionCaptureIndex(Symbol('\u00c9xyz')) === 'y' &&
+  descriptionCaptureIndex(Symbol('A\ud801\udc00x')) === '\udc00' &&
+  descriptionCaptureIndex(Symbol('AB\ud800x')) === '\ud800';
 """
     )
     vm = args.work / "oracle.js"
@@ -993,13 +1093,20 @@ var symbol51DescriptionGreekCase = descriptionLowercase(Symbol('\u03a3X')) === '
         "DescriptionCapturePrefix",
         "DescriptionExpandedCase",
         "DescriptionGreekCase",
+        "StringIndices",
+        "DescriptionSlice",
+        "DescriptionCaptureIndex",
+        "StringUTF16Indices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
-    # The VM deliberately uses ASCII casing (Script/builtins/text/string.cpp).
+    # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
     # Preserve those known differences; native uses the existing Unicode Core API.
     vm_expected = expected.replace(
         "symbol50DescriptionExpandedCase=true", "symbol50DescriptionExpandedCase=false"
     ).replace("symbol51DescriptionGreekCase=true", "symbol51DescriptionGreekCase=false")
+    vm_expected = vm_expected.replace(
+        "symbol55StringUTF16Indices=true", "symbol55StringUTF16Indices=false"
+    )
     actual = run([args.reference, str(vm)]).stdout
     if actual != vm_expected:
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
@@ -1122,7 +1229,7 @@ def main():
         ir, contract = prepare(
             args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
         )
-        if name in DESCRIPTION_GUARDS or name in STRING_METHODS:
+        if name in DESCRIPTION_GUARDS or name in STRING_METHODS or name in STRING_INDICES:
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
         for optimize in (False, True):
@@ -1314,7 +1421,7 @@ def main():
         raise RuntimeError("captured entry control did not find the source helper")
     refuse(ir, dict(contract, entry=captures[0], parameter_types=[]), "captured-entry")
 
-    for name in (*DESCRIPTION_GUARDS, *STRING_METHODS):
+    for name in (*DESCRIPTION_GUARDS, *STRING_METHODS, *STRING_INDICES):
         ir, contract = accepted[name]
         for optimize in (False, True):
             refuse(
@@ -1386,6 +1493,49 @@ def main():
         raise RuntimeError("String method fingerprint control did not change its prefix")
     if "fingerprint mismatch" not in refuse(changed, contract, "string-method-stale"):
         raise RuntimeError("changed String method accepted a stale fingerprint")
+
+    for name, body in {
+        "charat-negative": "return text.charAt(-1);",
+        "slice-negative": "return text.slice(-1);",
+        "charat-fraction": "return text.charAt(1.5);",
+        "slice-fraction": "return text.slice(1.5);",
+        "charat-large": "return text.charAt(4294967296);",
+        "slice-large": "return text.slice(4294967296);",
+        "charat-infinity": "return text.charAt(1e999);",
+        "slice-infinity": "return text.slice(1e999);",
+        "charat-dynamic": "return text.charAt(index);",
+        "slice-dynamic": "return text.slice(index);",
+        "charat-coercion": "return text.charAt('1');",
+        "slice-coercion": "return text.slice('2');",
+        "charat-extra": "return text.charAt(1, 2);",
+        "slice-end": "return text.slice(0, 2);",
+        "charat-missing": "return text.charAt();",
+        "slice-missing": "return text.slice();",
+        "slice-prototype-write": "String.prototype.slice=0; return text.slice(2);",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "string-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"string-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-index"]
+    refuse(ir, contract, "string-index-budget", max_steps=100)
+    changed = args.work / "string-index-stale.mlir"
+    # Number attributes store IEEE-754 bits: change the literal 2 to 1.
+    changed.write_text(
+        ir.read_text().replace(
+            "#ctjs.number<4611686018427387904>", "#ctjs.number<4607182418800017408>", 1
+        )
+    )
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("String index fingerprint control did not change its index")
+    if "fingerprint mismatch" not in refuse(changed, contract, "string-index-stale"):
+        raise RuntimeError("changed String index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

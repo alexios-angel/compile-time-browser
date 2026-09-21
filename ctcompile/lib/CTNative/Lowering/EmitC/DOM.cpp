@@ -554,16 +554,19 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                 at.getStringAttr("ctbrowser::wtf8_to_utf16"),
                                                 mlir::ValueRange{rawText(call.getReceiver())});
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
-        auto zero = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "0"));
-        auto one = ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1"));
-        llvm::SmallVector<mlir::Value> range{zero, one};
-        if (edge.kind == HostDOMMethod::stringSlice) {
-            auto empty = ec::MemberCallOpaqueOp::create(
-                at, where, mlir::TypeRange{at.getI1Type()}, units.getResult(0),
-                at.getStringAttr("empty"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
-                mlir::ValueRange{});
-            range = {
-                ec::ConditionalOp::create(at, where, indexType, empty.getResult(0), zero, one)};
+        auto index =
+            ec::CastOp::create(at, where, indexType,
+                               convertScalar(at, where, call.getArgs().front(), at.getF64Type()));
+        auto length = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{indexType}, units.getResult(0), at.getStringAttr("size"),
+            mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
+        auto inRange = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, index,
+                                         length.getResult(0));
+        llvm::SmallVector<mlir::Value> range{
+            ec::ConditionalOp::create(at, where, indexType, inRange, index, length.getResult(0))};
+        if (edge.kind == HostDOMMethod::stringCharAt) {
+            range.push_back(
+                ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1")));
         }
         auto part = ec::MemberCallOpaqueOp::create(at, where, mlir::TypeRange{unitsType},
                                                    units.getResult(0), at.getStringAttr("substr"),
