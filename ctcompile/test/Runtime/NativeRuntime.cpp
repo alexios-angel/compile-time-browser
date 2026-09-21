@@ -26,6 +26,20 @@ concept string_addable = requires(ctnative::js_string text, T value) {
     value + text;
 };
 template <class T>
+concept number_bitwise_operand = requires(ctnative::js_num number, T value) {
+    number & value;
+    value & number;
+    number | value;
+    value | number;
+    number ^ value;
+    value ^ number;
+    number << value;
+    value << number;
+    number >> value;
+    value >> number;
+    number.unsigned_shift_right(value);
+};
+template <class T>
 concept primitive_addable = requires(ctnative::number_string result, const T & value) {
     ctnative::add(result, value);
     ctnative::add(value, result);
@@ -87,6 +101,81 @@ int main() {
     CHECK(std::isnan(global_number(object_value{notANumber}).value()));
     CHECK(global_number(object_value{two}) == two);
     CHECK(!scalar_strict_equal(to_nullable(one), nullable_scalar{true}));
+
+    static_assert(number_bitwise_operand<ctnative::js_num>);
+    static_assert(!number_bitwise_operand<int> && !number_bitwise_operand<double>);
+    static_assert(!number_bitwise_operand<bool> && !number_bitwise_operand<js_boolean_t>);
+    static_assert(!number_bitwise_operand<js_string> && !number_bitwise_operand<nullable_scalar>);
+    static_assert(!number_bitwise_operand<convertible_number>);
+    static_assert(std::is_same_v<decltype(one.to_int32()), std::int32_t>);
+    static_assert(std::is_same_v<decltype(one.to_uint32()), std::uint32_t>);
+    static_assert(std::is_same_v<decltype(~one), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(one & two), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(one | two), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(one ^ two), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(one << two), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(one >> two), ctnative::js_num>);
+    static_assert(std::is_same_v<decltype(one.unsigned_shift_right(two)), ctnative::js_num>);
+    struct integer_conversion {
+        double input;
+        std::int32_t signed_result;
+        std::uint32_t unsigned_result;
+    };
+    const integer_conversion integer_cases[] = {
+        {0.0, 0, 0},
+        {-0.0, 0, 0},
+        {std::numeric_limits<double>::quiet_NaN(), 0, 0},
+        {std::numeric_limits<double>::infinity(), 0, 0},
+        {-std::numeric_limits<double>::infinity(), 0, 0},
+        {std::numeric_limits<double>::max(), 0, 0},
+        {-std::numeric_limits<double>::max(), 0, 0},
+        {std::numeric_limits<double>::denorm_min(), 0, 0},
+        {-std::numeric_limits<double>::denorm_min(), 0, 0},
+        {0.9, 0, 0},
+        {-0.9, 0, 0},
+        {1.9, 1, 1},
+        {-1.9, -1, 4294967295u},
+        {2147483647.9, 2147483647, 2147483647u},
+        {2147483648.0, -2147483647 - 1, 2147483648u},
+        {-2147483648.0, -2147483647 - 1, 2147483648u},
+        {-2147483649.0, 2147483647, 2147483647u},
+        {4294967295.0, -1, 4294967295u},
+        {4294967296.0, 0, 0},
+        {-4294967296.0, 0, 0},
+        {4294967297.9, 1, 1},
+        {-4294967297.9, -1, 4294967295u},
+        {9007199254740991.0, -1, 4294967295u},
+    };
+    for (const auto & test : integer_cases) {
+        CHECK(ctnative::js_num{test.input}.to_int32() == test.signed_result);
+        CHECK(ctnative::js_num{test.input}.to_uint32() == test.unsigned_result);
+    }
+    CHECK(~one == ctnative::js_num{-2.0} && ~notANumber == -one);
+    CHECK((ctnative::js_num{6.9} & ctnative::js_num{3.9}) == two);
+    CHECK((ctnative::js_num{6.0} | ctnative::js_num{3.0}) == ctnative::js_num{7.0});
+    CHECK((ctnative::js_num{6.0} ^ ctnative::js_num{3.0}) == ctnative::js_num{5.0});
+    CHECK((ctnative::js_num{4294967295.0} | zero) == -one);
+    CHECK((notANumber & -one) == zero && (negativeZero ^ notANumber) == zero);
+    CHECK(!std::signbit((negativeZero | zero).value()));
+    CHECK((one << ctnative::js_num{31.0}) == ctnative::js_num{-2147483648.0});
+    CHECK((-one << one) == ctnative::js_num{-2.0});
+    CHECK((one << ctnative::js_num{33.0}) == two);
+    CHECK((one << -one) == ctnative::js_num{-2147483648.0});
+    CHECK((one << ctnative::js_num{-32.0}) == one);
+    CHECK((one << ctnative::js_num{4294967329.0}) == two);
+    CHECK((one << ctnative::js_num{1.9}) == two);
+    CHECK((one << ctnative::js_num{-1.9}) == ctnative::js_num{-2147483648.0});
+    CHECK((one << notANumber) == one);
+    CHECK((one << ctnative::js_num{std::numeric_limits<double>::infinity()}) == one);
+    CHECK((ctnative::js_num{-3.0} >> one) == ctnative::js_num{-2.0});
+    CHECK((ctnative::js_num{2147483648.0} >> ctnative::js_num{31.0}) == -one);
+    CHECK((ctnative::js_num{4294967296.0} >> zero) == zero);
+    CHECK((-one).unsigned_shift_right(zero) == ctnative::js_num{4294967295.0});
+    CHECK((-one).unsigned_shift_right(one) == ctnative::js_num{2147483647.0});
+    CHECK((-one).unsigned_shift_right(-one) == one);
+    CHECK((-one).unsigned_shift_right(ctnative::js_num{32.0}) == ctnative::js_num{4294967295.0});
+    CHECK(notANumber.unsigned_shift_right(two) == zero);
+    CHECK(!std::signbit(negativeZero.unsigned_shift_right(zero).value()));
 
     static_assert(std::is_constructible_v<js_boolean_t, bool>);
     static_assert(!std::is_convertible_v<bool, js_boolean_t>);
