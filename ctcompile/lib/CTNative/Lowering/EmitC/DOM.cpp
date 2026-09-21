@@ -411,6 +411,28 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (found == domCalls.end()) { return false; }
     auto call = llvm::cast<ctjs::CallOp>(operation);
     const auto & edge = found->second;
+    if (edge.kind == HostDOMMethod::symbol) {
+        llvm::SmallVector<mlir::Value, 1> description;
+        if (!call.getArgs().empty() &&
+            call.getArgs()[0].getType() == carrierType(context, carrier::string)) {
+            description.push_back(call.getArgs()[0]);
+        }
+        swap(callWithConstValueOperands(at, where,
+                                        mlir::TypeRange{carrierType(context, carrier::symbol)},
+                                        at.getStringAttr("ctnative::Symbol"), description)
+                 .getResult(0));
+        return true;
+    }
+    if (edge.kind == HostDOMMethod::symbolToString || edge.kind == HostDOMMethod::symbolValueOf) {
+        const bool text = edge.kind == HostDOMMethod::symbolToString;
+        swap(ec::MemberCallOpaqueOp::create(
+                 at, where,
+                 mlir::TypeRange{carrierType(context, text ? carrier::string : carrier::symbol)},
+                 call.getReceiver(), at.getStringAttr(text ? "toString" : "valueOf"),
+                 mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{})
+                 .getResult(0));
+        return true;
+    }
     if (edge.kind == HostDOMMethod::decodeURIComponent || edge.kind == HostDOMMethod::jsonParse) {
         return true;
     }

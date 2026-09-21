@@ -349,8 +349,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         refusal = "DOM entry contains an uninvoked callback function";
         return;
     }
-    if (intrinsicEntry && (!provedJSONObjects.empty() || !provedCalls.empty())) {
-        refusal = "intrinsic entry permits only primitive values and well-known Symbol reads";
+    if (intrinsicEntry &&
+        (!provedJSONObjects.empty() || llvm::any_of(provedCalls, [](const HostDOMCall & call) {
+            return !call.returnsSymbol() && call.kind != HostDOMMethod::symbolToString;
+        }))) {
+        refusal = "intrinsic entry permits only primitive values and proved Symbol operations";
         return;
     }
     // Joins and source spreads copy trees by value. A mutable target must

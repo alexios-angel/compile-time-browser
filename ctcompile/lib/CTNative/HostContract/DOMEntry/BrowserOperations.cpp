@@ -90,6 +90,14 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             provedSymbols.try_emplace(read, key);
             return true;
         }
+        if (suppliedSymbol && hasKind(read.getObject(), Kind::symbol) &&
+            (key == "toString" || key == "valueOf")) {
+            const bool text = key == "toString";
+            values[read.getResult()] = text ? Kind::symbolToString : Kind::symbolValueOf;
+            provedMethods.try_emplace(read, text ? HostDOMMethod::symbolToString
+                                                 : HostDOMMethod::symbolValueOf);
+            return true;
+        }
         if (hasKind(read.getObject(), Kind::elementIntrinsic) && key == "prototype") {
             values[read.getResult()] = Kind::elementPrototype;
             provedElementPrototypes.insert(read);
@@ -317,6 +325,20 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[invoke.getResult()] = Kind::json;
             return true;
         }
+        if (hasKind(invoke.getCallee(), Kind::symbolIntrinsic)) {
+            // No ToPrimitive/ToString hook can run for these exact input kinds.
+            // Broader descriptions need their coercion and exception proof.
+            if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() > 1 ||
+                (!arguments.empty() && !hasKind(arguments[0], Kind::string) &&
+                 !hasKind(arguments[0], Kind::undefined))) {
+                refusal = "Symbol call requires its initial builtin, undefined receiver "
+                          "and at most one String/undefined description";
+                return false;
+            }
+            provedCalls.push_back({invoke, HostDOMMethod::symbol, {}});
+            values[invoke.getResult()] = Kind::symbol;
+            return true;
+        }
         if (hasKind(invoke.getCallee(), Kind::numberIntrinsic)) {
             if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() != 1 ||
                 (!hasKind(arguments[0], Kind::string) && !hasKind(arguments[0], Kind::null) &&
@@ -333,6 +355,16 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (!method || method.getObject() != invoke.getReceiver()) {
             refusal = "DOM call does not preserve its proved method receiver";
             return false;
+        }
+        if ((hasKind(invoke.getCallee(), Kind::symbolToString) ||
+             hasKind(invoke.getCallee(), Kind::symbolValueOf)) &&
+            arguments.empty()) {
+            const bool text = hasKind(invoke.getCallee(), Kind::symbolToString);
+            provedCalls.push_back(
+                {invoke, text ? HostDOMMethod::symbolToString : HostDOMMethod::symbolValueOf,
+                 invoke.getReceiver()});
+            values[invoke.getResult()] = text ? Kind::string : Kind::symbol;
+            return true;
         }
         if (hasKind(invoke.getCallee(), Kind::selectorCall)) {
             if (arguments.size() != 2 || !hasKind(arguments[0], Kind::element) ||

@@ -452,6 +452,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 edge->returnsOptionalString()
                     ? mlir::Type(OptType::get(c, StrType::get(c, StrEncoding::UTF8)))
                 : edge->returnsNumber()  ? doubleType(c)
+                : edge->returnsSymbol()  ? mlir::Type(SymbolType::get(c))
                 : edge->returnsString()  ? mlir::Type(StrType::get(c, StrEncoding::UTF8))
                 : edge->returnsElement() ? mlir::Type(DOMElementType::get(c))
                 : edge->returnsStringVector()

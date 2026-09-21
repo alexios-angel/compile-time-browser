@@ -81,7 +81,6 @@ REFUSALS = {
     "escape-constructor": "return Symbol;",
     "dynamic-key": "return typeof Symbol[element.getAttribute('data-key')];",
     "unknown-key": "return typeof Symbol.unknown;",
-    "fresh": "return typeof Symbol();",
     "registry": "return typeof Symbol.for('x');",
     "number": "return +Symbol.iterator;",
     "concat": "return '' + Symbol.iterator;",
@@ -95,6 +94,7 @@ REFUSALS = {
 
 
 TRANSPORT = {
+    "fresh": "return typeof Symbol();",
     "symbol-return": "return Symbol.iterator;",
     "join": "const key=element.hasAttribute('x') ? Symbol.iterator : Symbol.hasInstance; return !!key;",
     "loop": "let key=Symbol.iterator; for(let i=0;i<2;i++) key=Symbol.hasInstance; return !!key;",
@@ -248,6 +248,8 @@ def main():
         contract["initial_intrinsics"] = ["Symbol"]
         native = dom.lower(args, original, contract, "original-" + name)
         expected = " == ctnative::Symbol.iterator" if name == "symbol-return" else ""
+        if name == "fresh":
+            expected = '.value() == "symbol"'
         checks = f"(void)pressed; (void)foreign; (void)alias; assert(@ENTRY@(element){expected});"
         dom.standalone(args, native, "original-" + name, checks, compilers, includes, libraries)
     state_ir, state_contract = dom.prepare(args, "state", STATE, 1)
@@ -270,7 +272,7 @@ def main():
     if "fingerprint mismatch" not in dom.lower(args, stale_ir, manifest, "stale", success=False):
         raise RuntimeError("changed Symbol source accepted a stale fingerprint")
     forged, contract = dom.prepare(
-        args, "forged", "function bad(element) { return typeof Symbol(); }", 1
+        args, "forged", "function bad(element) { return typeof Symbol.for('x'); }", 1
     )
     forged.write_text(
         forged.read_text().replace(
@@ -285,7 +287,7 @@ def main():
     dom.lower(args, forged, contract, "forged-refused", success=False)
     print(
         f"Symbol DOM: {len(OBSERVATIONS)} attributes and 2 returns agree with Node/VM; "
-        f"28 native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"
+        f"{16 + 4 * len(TRANSPORT)} native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"
     )
 
 

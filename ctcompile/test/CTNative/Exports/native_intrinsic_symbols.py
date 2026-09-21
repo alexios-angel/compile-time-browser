@@ -32,6 +32,40 @@ OBSERVE = """function observe() {
 }
 """
 TRANSCRIPT = "symbol:same:different:loose:truthy:false"
+CONSTRUCT = """function construct() {
+  let description = 'same';
+  const key = Symbol(description);
+  description = 'changed';
+  return key;
+}
+"""
+METHODS = r"""function methods() {
+  const make = Symbol;
+  const first = make('same');
+  const saved = first.valueOf();
+  let key = first;
+  for (let i = 0; i < 3; i++) key = Symbol('same');
+  const absent = Symbol();
+  const explicit = Symbol(undefined);
+  return (first === saved ? 'copy' : 'wrong') +
+    (first !== Symbol('same') ? ':fresh' : ':wrong') +
+    (first != key ? ':loop' : ':wrong') +
+    (key == key.valueOf() ? ':value' : ':wrong') +
+    (absent !== explicit ? ':absent' : ':wrong') +
+    (absent.toString() === 'Symbol()' ? ':text' : ':wrong') +
+    (explicit.toString() === 'Symbol()' ? ':undefined' : ':wrong') +
+    (Symbol('').toString() === 'Symbol()' ? ':empty' : ':wrong') +
+    (Symbol('a\u0000b').toString() === 'Symbol(a\u0000b)' ? ':nul' : ':wrong') +
+    (Symbol('\ud800\u00e9').toString() === 'Symbol(\ud800\u00e9)' ? ':unicode' : ':wrong') +
+    (Symbol.iterator.valueOf() === Symbol.iterator ? ':known' : ':wrong') +
+    (Symbol('Symbol.iterator') !== Symbol.iterator ? ':distinct' : ':wrong') +
+    (first ? ':truthy' : ':wrong') +
+    (typeof first === 'symbol' ? ':type' : ':wrong');
+}
+"""
+METHOD_TRANSCRIPT = (
+    "copy:fresh:loop:value:absent:text:undefined:empty:nul:unicode:known:distinct:truthy:type"
+)
 CASES = {
     "state": (
         STATE,
@@ -56,7 +90,40 @@ CASES = {
 """,
         TRANSCRIPT + "\n",
     ),
+    "construct": (
+        CONSTRUCT,
+        """
+    static_assert(std::is_same_v<decltype(@ENTRY@()), ctnative::js_symbol_t>);
+    const auto first = @ENTRY@();
+    const auto second = @ENTRY@();
+    assert(first != second);
+    assert(first.valueOf() == first);
+    assert(first.toString().value() == "Symbol(same)");
+    std::cout << "true\\n";
+""",
+        "true\n",
+    ),
+    "methods": (
+        METHODS,
+        f"""
+    const auto saved = @ENTRY@();
+    assert(saved.value() == "{METHOD_TRANSCRIPT}");
+    assert(@ENTRY@() == saved);
+    std::cout << saved.value() << '\\n';
+""",
+        METHOD_TRANSCRIPT + "\n",
+    ),
 }
+# The complete former refused programs now execute unchanged.
+for name, body, expected in (
+    ("fresh", "return typeof Symbol();", "symbol"),
+    ("method", "return Symbol.iterator.toString();", "Symbol(Symbol.iterator)"),
+):
+    CASES[name] = (
+        f"function bad() {{ {body} }}\n",
+        f'assert(@ENTRY@().value() == "{expected}"); std::cout << "true\\n";',
+        "true\n",
+    )
 REFUSALS = {
     "global-replacement": "Symbol=0; return Symbol.iterator;",
     "member-replacement": "Symbol.hasInstance=Symbol.iterator; return false;",
@@ -65,10 +132,19 @@ REFUSALS = {
     "constructor-typeof": "return typeof Symbol;",
     "dynamic-key": "return Symbol[typeof Symbol.iterator];",
     "unknown-key": "return Symbol.unknown;",
-    "fresh": "return typeof Symbol();",
     "registry": "return typeof Symbol.for('x');",
     "description": "return Symbol.iterator.description;",
-    "method": "return Symbol.iterator.toString();",
+    "new-symbol": "return new Symbol('x');",
+    "number-description": "return Symbol(1);",
+    "null-description": "return Symbol(null);",
+    "symbol-description": "return Symbol(Symbol.iterator);",
+    "object-description": "return Symbol({toString() { return 'x'; }});",
+    "extra-description": "return Symbol('x', 'y');",
+    "detached-method": "const method=Symbol.iterator.toString; return method();",
+    "prototype-call": "return Symbol.prototype.valueOf.call(Symbol.iterator);",
+    "method-arguments": "return Symbol.iterator.toString(1);",
+    "method-mutation": "Symbol.prototype.toString=0; return Symbol.iterator.toString();",
+    "value-mutation": "const key=Symbol(); key.toString=0; return key.toString();",
     "object": "return {};",
     "symbol-field": "const item={}; item[Symbol.iterator]=1; return false;",
     "number": "return +Symbol.iterator;",
@@ -92,23 +168,39 @@ def prepare(args, name, source, *, entry_name=None):
 
 
 def oracle(args):
-    source = STATE + OBSERVE + f"""
+    source = STATE + OBSERVE + CONSTRUCT + METHODS + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
 var symbol03Observe = observe() === {json.dumps(TRANSCRIPT)};
+var symbol04Fresh = construct() !== construct();
+var symbol05Snapshot = construct().toString() === 'Symbol(same)';
+var symbol06Methods = methods() === {json.dumps(METHOD_TRANSCRIPT)};
+var symbol07FreshType = typeof Symbol() === 'symbol';
+var symbol08KnownText = Symbol.iterator.toString() === 'Symbol(Symbol.iterator)';
 """
     vm = args.work / "oracle.js"
     vm.write_text(source)
-    expected = "symbol01State=true\nsymbol02Repeat=true\nsymbol03Observe=true\n"
+    observations = (
+        "State",
+        "Repeat",
+        "Observe",
+        "Fresh",
+        "Snapshot",
+        "Methods",
+        "FreshType",
+        "KnownText",
+    )
+    expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
     if actual != expected:
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
     node = args.work / "oracle.cjs"
     node.write_text(
         source
-        + "\nconsole.log('symbol01State=' + symbol01State);"
-        + "\nconsole.log('symbol02Repeat=' + symbol02Repeat);"
-        + "\nconsole.log('symbol03Observe=' + symbol03Observe);\n"
+        + "".join(
+            f"\nconsole.log('symbol{i:02}{name}=' + symbol{i:02}{name});"
+            for i, name in enumerate(observations, 1)
+        )
     )
     if run([args.node, str(node)]).stdout != expected:
         raise RuntimeError("Node Symbol export observations differ")
@@ -144,6 +236,32 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
                 raise RuntimeError(f"{name}/{mode}: intrinsic binary links DOM/Script/AOT")
             if run([str(binary)]).stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: native Symbol observations differ")
+            if name == "construct-False" and mode == "explicit" and index == 0:
+                mutant, count = re.subn(r"\bctnative::Symbol\(", "symbol_mutant(", cpp)
+                if count != 1:
+                    raise RuntimeError("fresh identity mutation did not replace one construction")
+                mutant_source = args.work / "shared-identity.cpp"
+                mutant_binary = args.work / "shared-identity"
+                mutant_source.write_text(
+                    '#include "ctcompile/CTNative/Runtime/ctnative.hpp"\n'
+                    "ctnative::js_symbol_t symbol_mutant(const ctnative::js_string & text) {\n"
+                    "  static const auto shared = ctnative::Symbol(text); return shared;\n}\n"
+                    + mutant
+                    + client
+                )
+                run(
+                    [
+                        compiler,
+                        *FLAGS,
+                        *includes,
+                        str(mutant_source),
+                        *libraries,
+                        "-o",
+                        str(mutant_binary),
+                    ]
+                )
+                if "first != second" not in run([str(mutant_binary)], success=False).stderr:
+                    raise RuntimeError("fresh identity mutation failed for an unrelated reason")
 
 
 def main():
@@ -178,7 +296,7 @@ def main():
         return result
 
     for name, body in REFUSALS.items():
-        ir, contract = prepare(args, name, f"function bad() {{ {body} }}\n")
+        ir, contract = prepare(args, name, f"function bad() {{ {body} }}\n", entry_name="bad")
         for optimize in (False, True):
             refuse(ir, contract, name + str(optimize), optimize=optimize)
     source_refusals = {
@@ -219,7 +337,7 @@ def main():
     if "fingerprint mismatch" not in refuse(stale, contract, "stale"):
         raise RuntimeError("changed Symbol identity accepted a stale fingerprint")
 
-    forged, manifest = prepare(args, "forged", "function bad() { return typeof Symbol(); }")
+    forged, manifest = prepare(args, "forged", "function bad() { return typeof Symbol.for('x'); }")
     text, count = re.subn(
         r"\bmodule( attributes)? \{",
         lambda match: 'module attributes {ctnative.host_proved = true, ctnative.host_reason = ""'
@@ -234,7 +352,7 @@ def main():
     refuse(forged, manifest, "forged-refused")
     print(
         f"Symbol exports: typed branch/loop return and primitive transcript agree with Node/VM; "
-        f"16 native executions, {refusals} refusals; Core only, no DOM inputs"
+        f"{8 * len(CASES)} native executions, {refusals} refusals, 1 identity mutation; Core only, no DOM inputs"
     )
 
 

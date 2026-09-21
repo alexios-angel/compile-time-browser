@@ -45,7 +45,7 @@ struct HostContract {
         ctbrowserDOMDataSession,
         // A parameterless named native export in an isolated standard realm.
         // Only Symbol and undefined are fixed; the complete source proof permits
-        // primitive operations and well-known identities, without browser inputs,
+        // primitive operations and proved Symbol calls, without browser inputs,
         // arbitrary calls, global publication or external script reentry.
         ctbrowserIntrinsics
     };
@@ -86,7 +86,10 @@ struct HostContract {
     // methods. Function additionally promises those methods' original prototype
     // chains and Function.prototype.call, without own call shadows or accessors.
     // For ordinary class instanceof, Function also promises its original prototype
-    // and inherited Symbol.hasInstance method. DOM iteration additionally requires
+    // and inherited Symbol.hasInstance method. Symbol promises its standard
+    // constructor, well-known keys and Symbol.prototype toString/valueOf methods,
+    // with no replacement or accessor on those lookup paths.
+    // DOM iteration additionally requires
     // the original __ctbrowser_for_of_open,
     // __ctbrowser_iter_next and __ctbrowser_iter_close source-helper bindings. Source
     // replacement/escape and external script reentry still refuse the complete live proof.
@@ -137,6 +140,9 @@ enum class HostDOMMethod {
     querySelectorAll,
     number,
     numberToString,
+    symbol,
+    symbolToString,
+    symbolValueOf,
     decodeURIComponent,
     jsonParse,
     datasetKeys,
@@ -168,17 +174,21 @@ struct HostDOMCall {
         return kind == HostDOMMethod::querySelectorAll;
     }
     [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
+    [[nodiscard]] bool returnsSymbol() const {
+        return kind == HostDOMMethod::symbol || kind == HostDOMMethod::symbolValueOf;
+    }
     // An owning ctbrowser::json_value tree, from the shared public Core parser.
     [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
     [[nodiscard]] bool returnsString() const {
-        return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::decodeURIComponent ||
+        return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::symbolToString ||
+               kind == HostDOMMethod::decodeURIComponent ||
                kind == HostDOMMethod::removeStringPrefix ||
                kind == HostDOMMethod::replaceUppercase || kind == HostDOMMethod::stringCharAt ||
                kind == HostDOMMethod::stringSlice || kind == HostDOMMethod::stringLowercaseUnit;
     }
     [[nodiscard]] bool returnsBoolean() const {
         return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
-               !returnsString() && !returnsJSON() && !returnsStringVector() &&
+               !returnsSymbol() && !returnsString() && !returnsJSON() && !returnsStringVector() &&
                !returnsElementVector() && kind != HostDOMMethod::setAttribute &&
                kind != HostDOMMethod::removeAttribute && kind != HostDOMMethod::addClass &&
                kind != HostDOMMethod::removeClass;

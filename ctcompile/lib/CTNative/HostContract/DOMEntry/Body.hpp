@@ -28,6 +28,8 @@ enum class Kind {
     elementIntrinsic,
     symbolIntrinsic,
     symbol,
+    symbolToString,
+    symbolValueOf,
     elementPrototype,
     prototypeSelector,
     selectorCall,
