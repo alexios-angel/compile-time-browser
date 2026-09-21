@@ -39,55 +39,54 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
     {"remove", {Kind::removeClass, HostDOMMethod::removeClass}},
 };
 
-std::optional<double> stringIndex(mlir::Value value) {
-    if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
-        binary &&
-        (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
-         binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
-         binary.getKind() == ctjs::BinaryKind::Add || binary.getKind() == ctjs::BinaryKind::Pow)) {
-        auto left = binary.getLhs().getDefiningOp<ctjs::ConstantOp>();
-        auto right = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
-        auto lhs = left ? llvm::dyn_cast<ctjs::NumberAttr>(left.getValue()) : ctjs::NumberAttr{};
-        auto rhs = right ? llvm::dyn_cast<ctjs::NumberAttr>(right.getValue()) : ctjs::NumberAttr{};
-        if (!lhs || !rhs || std::isnan(lhs.getDouble()) || std::isnan(rhs.getDouble())) {
-            return std::nullopt;
-        }
-        // Both operands are already Numbers; no coercion or user code can run.
-        // Nested expressions and globals still need their own origin proof.
-        if (binary.getKind() == ctjs::BinaryKind::Div) { return lhs.getDouble() / rhs.getDouble(); }
-        if (binary.getKind() == ctjs::BinaryKind::Sub) { return lhs.getDouble() - rhs.getDouble(); }
-        if (binary.getKind() == ctjs::BinaryKind::Add) { return lhs.getDouble() + rhs.getDouble(); }
-        if (binary.getKind() == ctjs::BinaryKind::Mod) {
-            return std::fmod(lhs.getDouble(), rhs.getDouble());
-        }
-        if (binary.getKind() == ctjs::BinaryKind::Pow) {
-            // Number::exponentiate differs from pow for |base|=1 and infinite exponent.
-            if (std::abs(lhs.getDouble()) == 1 && !std::isfinite(rhs.getDouble())) {
-                return std::numeric_limits<double>::quiet_NaN();
-            }
-            return std::pow(lhs.getDouble(), rhs.getDouble());
-        }
-        return lhs.getDouble() * rhs.getDouble();
-    }
+std::optional<double> signedNumberLiteral(mlir::Value value) {
     bool negative = false;
     if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
-        if (unary.getOperand().getDefiningOp<ctjs::BinaryOp>()) {
-            const auto offset = stringIndex(unary.getOperand());
-            return offset ? std::optional<double>{-*offset} : std::nullopt;
-        }
         negative = true;
         value = unary.getOperand();
     }
     auto literal = value.getDefiningOp<ctjs::ConstantOp>();
     auto number =
         literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
-    if (!number) { return std::nullopt; }
-    const double offset = negative ? -number.getDouble() : number.getDouble();
+    if (!number || std::isnan(number.getDouble())) { return std::nullopt; }
+    return negative ? -number.getDouble() : number.getDouble();
+}
+
+std::optional<double> stringIndex(mlir::Value value) {
+    if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
+        binary &&
+        (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
+         binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
+         binary.getKind() == ctjs::BinaryKind::Add || binary.getKind() == ctjs::BinaryKind::Pow)) {
+        const auto lhs = signedNumberLiteral(binary.getLhs());
+        const auto rhs = signedNumberLiteral(binary.getRhs());
+        if (!lhs || !rhs) { return std::nullopt; }
+        // Both operands are already Numbers; no coercion or user code can run.
+        // Nested expressions and globals still need their own origin proof.
+        if (binary.getKind() == ctjs::BinaryKind::Div) { return *lhs / *rhs; }
+        if (binary.getKind() == ctjs::BinaryKind::Sub) { return *lhs - *rhs; }
+        if (binary.getKind() == ctjs::BinaryKind::Add) { return *lhs + *rhs; }
+        if (binary.getKind() == ctjs::BinaryKind::Mod) { return std::fmod(*lhs, *rhs); }
+        if (binary.getKind() == ctjs::BinaryKind::Pow) {
+            // Number::exponentiate differs from pow for |base|=1 and infinite exponent.
+            if (std::abs(*lhs) == 1 && !std::isfinite(*rhs)) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            return std::pow(*lhs, *rhs);
+        }
+        return *lhs * *rhs;
+    }
+    if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+        unary && unary.getKind() == ctjs::UnaryKind::Neg) {
+        if (unary.getOperand().getDefiningOp<ctjs::BinaryOp>()) {
+            const auto offset = stringIndex(unary.getOperand());
+            return offset ? std::optional<double>{-*offset} : std::nullopt;
+        }
+    }
     // Size and infinity clamp before unsigned conversion in lowering. NaN has
     // no Number-literal source spelling; only the arithmetic above proves its origin.
-    if (std::isnan(offset)) { return std::nullopt; }
-    return offset;
+    return signedNumberLiteral(value);
 }
 } // namespace
 
@@ -98,19 +97,32 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         (binary &&
          (binary.getKind() == ctjs::BinaryKind::Div || binary.getKind() == ctjs::BinaryKind::Sub ||
           binary.getKind() == ctjs::BinaryKind::Mul || binary.getKind() == ctjs::BinaryKind::Mod ||
-          binary.getKind() == ctjs::BinaryKind::Pow))) {
+          binary.getKind() == ctjs::BinaryKind::Pow ||
+          (binary.getKind() == ctjs::BinaryKind::Add &&
+           ((binary.getLhs().getDefiningOp<ctjs::UnaryOp>() &&
+             signedNumberLiteral(binary.getLhs())) ||
+            (binary.getRhs().getDefiningOp<ctjs::UnaryOp>() &&
+             signedNumberLiteral(binary.getRhs()))))))) {
         if (!spend()) { return false; }
         const auto result = operation.getResult(0);
         if (!stringIndex(result)) {
             refusal =
                 "DOM String indexing negation/division/subtraction/multiplication/remainder/power "
-                "requires direct Number literals";
+                "requires optionally signed Number literals";
             return false;
         }
         unsigned bounds = 0;
         for (mlir::OpOperand & use : result.getUses()) {
             if (!spend()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (auto arithmetic = llvm::dyn_cast<ctjs::BinaryOp>(use.getOwner());
+                unary && arithmetic && signedNumberLiteral(result) &&
+                stringIndex(arithmetic.getResult())) {
+                // Each signed leaf and its arithmetic result must reach only
+                // the checked bound uses; no additional arithmetic depth is admitted.
+                ++bounds;
+                continue;
+            }
             if (auto negation = llvm::dyn_cast<ctjs::UnaryOp>(use.getOwner());
                 binary && negation && negation.getKind() == ctjs::UnaryKind::Neg &&
                 stringIndex(negation.getResult())) {
@@ -497,7 +509,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     literal && llvm::isa<ctjs::NullAttr, ctjs::BooleanAttr>(literal.getValue());
                 if (!primitive && !hasKind(argument, Kind::undefined) && !stringIndex(argument)) {
                     refusal = "DOM String indexing requires primitive literals, proved undefined "
-                              "or one optionally negated Number-literal arithmetic expression";
+                              "or one optionally negated signed-literal arithmetic expression";
                     return false;
                 }
             }

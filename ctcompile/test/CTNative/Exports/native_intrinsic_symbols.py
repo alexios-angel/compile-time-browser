@@ -898,6 +898,86 @@ NEGATED_INDICES = {
 }
 """,
 }
+SIGNED_OPERAND_WITNESSES = {
+    # Preserve all eleven complete former signed-operand refusal sources.
+    "subtraction-index-negated-operand": (
+        "function bad(text, index) { return text.charAt(0 - (-1)); }\n",
+        ("", "", "b"),
+    ),
+    "multiplication-index-negated-operand": (
+        "function bad(text, index) { return text.charAt(0 * (-1)); }\n",
+        ("", "a", "a"),
+    ),
+    "remainder-index-negative-left": (
+        "function bad(text, index) { return text.charAt(-1 % 2); }\n",
+        ("", "", ""),
+    ),
+    "remainder-index-negative-right": (
+        "function bad(text, index) { return text.slice(1 % -2); }\n",
+        ("", "", "bc"),
+    ),
+    "remainder-index-negative-zero": (
+        "function bad(text, index) { return text.charAt(-0 % 1); }\n",
+        ("", "a", "a"),
+    ),
+    "addition-index-negative-left": (
+        "function bad(text, index) { return text.charAt(-1 + 2); }\n",
+        ("", "", "b"),
+    ),
+    "power-index-negative-left": (
+        "function bad(text, index) { return text.charAt((-1) ** 2); }\n",
+        ("", "", "b"),
+    ),
+    "power-index-negative-right": (
+        "function bad(text, index) { return text.slice(2 ** -1); }\n",
+        ("", "a", "abc"),
+    ),
+    "power-index-negative-zero": (
+        "function bad(text, index) { return text.charAt((-0) ** 1); }\n",
+        ("", "a", "a"),
+    ),
+    "negated-index-negative-operand": (
+        "function bad(text, index) { return text.charAt(-((-1) ** 2)); }\n",
+        ("", "", ""),
+    ),
+    "negated-index-negative-infinity-operand": (
+        "function bad(text, index) { return text.slice(-(1 / -1e999)); }\n",
+        ("", "a", "abc"),
+    ),
+}
+SIGNED_OPERAND_INDICES = {
+    **{name: source for name, (source, _) in SIGNED_OPERAND_WITNESSES.items()},
+    "string-signed-operand-indices": """function stringSignedOperandIndices(text, first, middle, tail) {
+  const negative = -1;
+  const next = -3 / -2;
+  const missing = -1e999 + 1e999;
+  return text.charAt(missing) === first && text.slice(missing) === text &&
+    text.slice(0, missing) === '' && text.slice(undefined, missing) === '' &&
+    text.charAt(next) === middle && text.slice(next, 2) === middle &&
+    text.slice(next) === middle + tail && text.slice(2, -1e308 * -1e308) === tail &&
+    text.charAt(-0 / -0) === first && text.charAt(-1 / -0) === '' &&
+    text.slice(1 / -0) === text && text.charAt(0 - negative) === middle &&
+    text.slice(negative) === text.slice(-1) && text.slice(-2 + 1) === text.slice(-1) &&
+    text.charAt(2 + negative) === middle && text.charAt(-1 * -1) === middle &&
+    text.charAt(-3 % -2) === '' && text.slice(-3 % -2) === text.slice(-1) &&
+    text.charAt(3 % -2) === middle && text.charAt((-1) ** -1e999) === first &&
+    text.charAt((-1) ** 0.5) === first && text.charAt((-0) ** -1) === '' &&
+    text.slice((-0) ** -1) === text && text.slice((-1e999) ** -3) === text &&
+    text.slice(0, -1 * -4294967296) === text && text.charAt(-5e-324 / 2) === first &&
+    text.charAt(-(-3 / 2)) === middle && text.slice(-(-1 + -1)) === tail;
+}
+""",
+    "description-capture-signed-operand-index": """function descriptionCaptureSignedOperandIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    const first = -1e999 + 1e999;
+    return text !== undefined ? text.charAt(first) + text.slice(-1 * -1) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -974,6 +1054,9 @@ PARAMETER_TYPES = {
     **{name: ["string", "number"] for name in NEGATED_WITNESSES},
     "string-negated-indices": ["string", "string", "string", "string"],
     "description-capture-negated-index": ["symbol"],
+    **{name: ["string", "number"] for name in SIGNED_OPERAND_WITNESSES},
+    "string-signed-operand-indices": ["string", "string", "string", "string"],
+    "description-capture-signed-operand-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1570,6 +1653,7 @@ for name, (source, expected) in (
     | ADDITION_WITNESSES
     | POWER_WITNESSES
     | NEGATED_WITNESSES
+    | SIGNED_OPERAND_WITNESSES
 ).items():
     CASES[name] = (
         source,
@@ -1711,6 +1795,14 @@ CASES["description-capture-negated-index"] = (
     NEGATED_INDICES["description-capture-negated-index"],
     *CASES["description-type-guard"][1:],
 )
+CASES["string-signed-operand-indices"] = (
+    SIGNED_OPERAND_INDICES["string-signed-operand-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-signed-operand-index"] = (
+    SIGNED_OPERAND_INDICES["description-capture-signed-operand-index"],
+    *CASES["description-type-guard"][1:],
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -1836,6 +1928,11 @@ def oracle(args):
         + "".join(body for name, body in ADDITION_INDICES.items() if name not in ADDITION_WITNESSES)
         + "".join(body for name, body in POWER_INDICES.items() if name not in POWER_WITNESSES)
         + "".join(body for name, body in NEGATED_INDICES.items() if name not in NEGATED_WITNESSES)
+        + "".join(
+            body
+            for name, body in SIGNED_OPERAND_INDICES.items()
+            if name not in SIGNED_OPERAND_WITNESSES
+        )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -2377,6 +2474,32 @@ var symbol146StringUTF16NegatedIndices = stringNegatedIndices('\u00c9xy', '\u00c
   stringNegatedIndices('\ud800xy', '\ud800', 'x', 'y') &&
   stringNegatedIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeSignedOperand{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}SignedOperandWitness{i} = observeSignedOperand{i}();\n"
+            for i, (body, expected) in enumerate(SIGNED_OPERAND_WITNESSES.values(), 147)
+        )
+        + r"""
+var symbol158StringSignedOperandIndices = stringSignedOperandIndices('', '', '', '') &&
+  stringSignedOperandIndices('a', 'a', '', '') && stringSignedOperandIndices('abcd', 'a', 'b', 'cd') &&
+  stringSignedOperandIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringSignedOperandIndices('abc', 'a', 'bc', 'c') && !stringSignedOperandIndices('abc', 'a', 'b', 'bc');
+var symbol159DescriptionCaptureSignedOperandIndex = descriptionCaptureSignedOperandIndex(Symbol()) === ':absent' &&
+  descriptionCaptureSignedOperandIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureSignedOperandIndex(Symbol('')) === '' &&
+  descriptionCaptureSignedOperandIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureSignedOperandIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureSignedOperandIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureSignedOperandIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol160StringUTF16SignedOperandIndices = stringSignedOperandIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringSignedOperandIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringSignedOperandIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringSignedOperandIndices('A\udc00x', 'A', '\udc00', 'x');
+"""
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -2491,6 +2614,10 @@ var symbol146StringUTF16NegatedIndices = stringNegatedIndices('\u00c9xy', '\u00c
         "StringNegatedIndices",
         "DescriptionCaptureNegatedIndex",
         "StringUTF16NegatedIndices",
+        *(f"SignedOperandWitness{i}" for i in range(147, 158)),
+        "StringSignedOperandIndices",
+        "DescriptionCaptureSignedOperandIndex",
+        "StringUTF16SignedOperandIndices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -2545,6 +2672,10 @@ var symbol146StringUTF16NegatedIndices = stringNegatedIndices('\u00c9xy', '\u00c
     vm_expected = vm_expected.replace(
         "symbol146StringUTF16NegatedIndices=true",
         "symbol146StringUTF16NegatedIndices=false",
+    )
+    vm_expected = vm_expected.replace(
+        "symbol160StringUTF16SignedOperandIndices=true",
+        "symbol160StringUTF16SignedOperandIndices=false",
     )
     actual = run([args.reference, str(vm)]).stdout
     if actual != "".join(sorted(vm_expected.splitlines(keepends=True))):
@@ -2706,6 +2837,7 @@ def main():
             | ADDITION_INDICES
             | POWER_INDICES
             | NEGATED_INDICES
+            | SIGNED_OPERAND_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -3374,7 +3506,6 @@ def main():
         "coercion": "return text.charAt('0' - 0);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} - 0);",
         "nested-expression": "return text.charAt((1 - 1) - 0);",
-        "negated-operand": "return text.charAt(0 - (-1));",
         "result-escape": "const missing=1e999 - 1e999; text.charAt(missing); return missing;",
         "unused-result": "const missing=1e999 - 1e999; return text.charAt(0);",
         "extra-argument": "return text.charAt(0, 1 - 1);",
@@ -3412,7 +3543,6 @@ def main():
         "coercion": "return text.charAt('0' * 1);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} * 1);",
         "nested-expression": "return text.charAt((0 * 1) * 1);",
-        "negated-operand": "return text.charAt(0 * (-1));",
         "nan-global": "return text.charAt(NaN * 0);",
         "result-escape": "const missing=0 * 1e999; text.charAt(missing); return missing;",
         "unused-result": "const missing=0 * 1e999; return text.charAt(0);",
@@ -3456,9 +3586,6 @@ def main():
         "coercion": "return text.charAt('0' % 1);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} % 1);",
         "nested-expression": "return text.charAt((0 % 1) % 1);",
-        "negative-left": "return text.charAt(-1 % 2);",
-        "negative-right": "return text.slice(1 % -2);",
-        "negative-zero": "return text.charAt(-0 % 1);",
         "nan-global": "return text.charAt(NaN % 1);",
         "infinity-global": "return text.slice(1 % Infinity);",
         "result-escape": "const missing=1 % 0; text.charAt(missing); return missing;",
@@ -3500,7 +3627,6 @@ def main():
         "null": "return text.slice(0 + null);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} + 1);",
         "nested-expression": "return text.charAt((0 + 1) + 1);",
-        "negative-left": "return text.charAt(-1 + 2);",
         "nan-global": "return text.charAt(NaN + 1);",
         "infinity-global": "return text.slice(1 + Infinity);",
         "extra-argument": "return text.charAt(0, 0 + 1);",
@@ -3540,9 +3666,6 @@ def main():
         "null": "return text.slice(0 ** null);",
         "object-coercion": "return text.slice(0, {valueOf() { return 0; }} ** 1);",
         "nested-expression": "return text.charAt((0 ** 1) ** 1);",
-        "negative-left": "return text.charAt((-1) ** 2);",
-        "negative-right": "return text.slice(2 ** -1);",
-        "negative-zero": "return text.charAt((-0) ** 1);",
         "result-escape": "const missing=1 ** 1e999; text.charAt(missing); return missing;",
         "unused-result": "const missing=1 ** 1e999; return text.charAt(0);",
         "nan-global": "return text.charAt(NaN ** 1);",
@@ -3585,9 +3708,7 @@ def main():
         "object-coercion": "return text.slice(-(0 / {valueOf() { return 0; }}));",
         "nested-expression": "return text.charAt(-((0 / 0) / 1));",
         "double-negation": "return text.slice(-(-(0 / 0)));",
-        "negative-operand": "return text.charAt(-((-1) ** 2));",
         "number-global": "return text.charAt(-(NaN / 0));",
-        "negative-infinity-operand": "return text.slice(-(1 / -1e999));",
         "result-escape": "const bound=-(0 / 0); text.charAt(bound); return bound;",
         "inner-result-escape": "const bound=0 / 0; text.charAt(-bound); return bound;",
         "unused-result": "const bound=-(0 / 0); return text.charAt(0);",
@@ -3620,6 +3741,53 @@ def main():
         raise RuntimeError("negated index fingerprint control did not change its method")
     if "fingerprint mismatch" not in refuse(changed, contract, "negated-index-stale"):
         raise RuntimeError("changed negated index accepted a stale fingerprint")
+
+    for name, body in {
+        "dynamic-left": "return text.charAt(-index / 2);",
+        "dynamic-right": "return text.slice(-1 + index);",
+        "coercion": "return text.charAt(-'1' * -1);",
+        "boolean": "return text.charAt(-false + 0);",
+        "null": "return text.slice(-null + 1);",
+        "object-coercion": "return text.slice(-{valueOf() { return 0; }} / 1);",
+        "nested-negation": "return text.charAt(-(-1) + 1);",
+        "nested-expression": "return text.charAt((-1 + 1) * 1);",
+        "nested-signed-expression": "return text.charAt(-(-1 + 1) + 1);",
+        "number-global": "return text.charAt(-NaN / 1);",
+        "infinity-global": "return text.slice(-Infinity / 1);",
+        "leaf-escape": "const bound=-1; text.charAt(0 - bound); return bound;",
+        "leaf-comparison": "const bound=-1; return text.charAt(0 - bound) === text && bound === index;",
+        "result-escape": "const bound=-1 + 1; text.charAt(bound); return bound;",
+        "result-comparison": "const bound=-1 + 1; return text.charAt(bound) === text && bound === index;",
+        "outer-result-escape": "const bound=-(-1 + 1); text.charAt(bound); return bound;",
+        "unused-result": "const bound=-1 + 1; return text.charAt(0);",
+        "extra-argument": "return text.charAt(0, -1 + 1);",
+        "charat-authority": "return text.charAt(-1 + 1).toLowerCase();",
+        "slice-authority": "return text.slice(-1 * -1).toLowerCase();",
+        "replacement": "String.prototype.slice=0; return text.slice(-1 + 1);",
+        "detached": "const method=text.charAt; return method(-1 + 1);",
+        "dead-effect": "function unused() { unknown(); } return text.slice(-1 + 1);",
+        "description-unguarded": "return Symbol(text).description.charAt(-1 + 1);",
+        "mutable-capture": "let bound=-1 + 1; function part() { return text.charAt(bound); } bound=2; return part();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "signed-operand-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"signed-operand-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-signed-operand-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"signed-operand-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "signed-operand-index-stale.mlir"
+    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("signed operand index fingerprint control did not change its method")
+    if "fingerprint mismatch" not in refuse(changed, contract, "signed-operand-index-stale"):
+        raise RuntimeError("changed signed operand index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
