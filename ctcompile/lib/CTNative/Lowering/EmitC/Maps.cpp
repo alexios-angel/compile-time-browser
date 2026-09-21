@@ -83,6 +83,9 @@ bool lowering::replaceMap(mlir::Operation * o) {
             return value;
         };
         const auto convertAlternative = [&](mlir::Value value, mlir::Type type, bool key = false) {
+            if (nullableMapSpelling(type) == kNullableType) {
+                return convertScalar(b, where, value, carrierType(context, carrier::nullable));
+            }
             // Maps retain their proved raw String/binary64 key/payload storage.
             if (value.getType() == carrierType(context, carrier::string)) {
                 value =
@@ -132,8 +135,13 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 auto type = llvm::cast<ec::LValueType>(args[2].getType()).getValueType();
                 args[2] = ec::AddressOfOp::create(b, where, ec::PointerType::get(type), args[2]);
             } else {
-                args[2] = convertAlternative(extractProvedScalar(args[2], kNativeMapWriteType),
-                                             storedMap.getValueType());
+                const auto payload = storedMap.getValueType();
+                // Tagged scalar storage retains the complete value; no narrowing is needed.
+                args[2] =
+                    convertAlternative(nullableMapSpelling(payload) == kNullableType
+                                           ? args[2]
+                                           : extractProvedScalar(args[2], kNativeMapWriteType),
+                                       payload);
                 if (isObjectValueType(storedMap.getValueType())) {
                     args[2] = convertScalar(b, where, args[2],
                                             carrierType(context, carrier::objectValue));

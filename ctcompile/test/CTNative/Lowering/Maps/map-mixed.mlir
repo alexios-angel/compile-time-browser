@@ -971,3 +971,57 @@ function run(flag) {
     return map.get('key') === null ? 1 : 2;
 }
 var trace = run(true) * 10 + run(false);
+
+//--- scalar-payloads.js
+function scalarPayloads(flag) {
+    const map = new Map();
+    map.set(0, null);
+    map.set(1, void 0);
+    map.set(2, 0 / 0);
+    map.set(3, -0);
+    map.set(4, false);
+    map.set(5, true);
+    map.set(6, flag ? 41 : null);
+    const absent = map.get(0);
+    const undefinedValue = map.get(1);
+    const nan = map.get(2);
+    const zero = map.get(3);
+    const boolean = map.get(4);
+    const truth = map.get(5);
+    const optional = map.get(6);
+    const missing = map.get(7);
+    map.set(0, 2);
+    map.set(2, false);
+    map.set(3, 1);
+    map.delete(6);
+    map.clear();
+    map.set(0, absent);
+    map.set(1, undefinedValue);
+    map.set(2, nan);
+    map.set(3, zero);
+    map.set(4, boolean);
+    map.set(5, truth);
+    map.set(6, optional);
+    map.set(7, missing);
+    const copiedNan = map.get(2);
+    const copiedOptional = map.get(6);
+    return (absent === null && map.get(0) === null ? 1 : 0)
+        + (undefinedValue === void 0 && map.get(1) === void 0 && map.has(1) ? 2 : 0)
+        + (missing === void 0 && map.get(7) === void 0 && map.has(7) ? 4 : 0)
+        + (nan !== nan && copiedNan !== copiedNan ? 8 : 0)
+        + (1 / zero === -1 / 0 && 1 / map.get(3) === -1 / 0 ? 16 : 0)
+        + (boolean === false && map.get(4) === false ? 32 : 0)
+        + (truth === true && map.get(5) === true ? 64 : 0)
+        + (optional === (flag ? 41 : null) && copiedOptional === optional ? 128 : 0)
+        + (map.size === 8 ? 256 : 0);
+}
+var trace = scalarPayloads(true) * 10000 + scalarPayloads(false);
+
+//--- scalar-payload-snapshot-refused.js
+function run() {
+    const map = new Map();
+    map.set(0, null);
+    map.set(1, 42);
+    return Array.from(map.values()).length;
+}
+var trace = run();

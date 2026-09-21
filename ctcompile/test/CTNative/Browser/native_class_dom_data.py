@@ -158,6 +158,13 @@ int main() {
 
 def check_record_executable(args, name, native, expected=15927, class_value=None):
     client = RECORD_CLIENT.replace("15927", str(expected))
+    if expected in ("true", "false"):
+        client = re.sub(
+            r"ctnative::global_number\(((?:session|second)\.observe_trace(?:After|Other)\(\))\)"
+            r"\.value\(\) == " + expected,
+            rf"ctnative::global_boolean(\1) == ctnative::js_boolean_t{{{expected}}}",
+            client,
+        )
     if class_value is not None:
         client = client.replace(
             "return std::array{", "return std::array{session.observe_classResult(), "
@@ -664,7 +671,7 @@ def published_class_fields(args):
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
         published_provider(args, name, prepared, checked)
         for optimize in (False, True):
-            if label in ("distinct-record", "arithmetic"):
+            if label != "read-snapshot":
                 native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
                 executions += check_record_executable(
                     args, f"{name}-{optimize}", native, expected, class_value
@@ -802,37 +809,15 @@ def published_constructor_fields(args):
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
         published_provider(args, name, prepared, checked, adversarial=label == "constructor-only")
         for optimize in (False, True):
-            if label == "number-instance":
+            if label != "read-snapshot":
                 native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
                 executions += check_record_executable(
                     args, f"{name}-{optimize}", native, expected, class_value
                 )
                 continue
-            diagnostic = dom.lower(
+            dom.lower(
                 args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
             )
-            if label == "constructor-only":
-                constructor = re.search(r"ctjs.func @Item\$(\d+)\(", body)
-                calls = re.findall(
-                    rf'"ctjs.call_direct"\((%\w+), %\w+, (%\w+), %\w+\) '
-                    rf"<\{{callee = @Item\${constructor[1]}\}}> \{{ctnative.receiver\}}",
-                    diagnostic,
-                )
-                if (
-                    "native DOM Data requires complete family admission" not in diagnostic
-                    or "!ctnative.map<!ctnative.dom_element, !ctnative.opt<!ctnative.num<i32>>>"
-                    not in diagnostic
-                    or diagnostic.count('"ctjs.construct"') != 3
-                    or len(calls) != 2
-                ):
-                    raise RuntimeError(f"{name}: constructor lifting regressed\n{diagnostic}")
-                for receiver, callee in calls:
-                    if f'{receiver} = "ctjs.create_object"()' not in diagnostic or not re.search(
-                        rf'{callee} = "ctjs.create_closure"[^\n]+function = '
-                        rf"{constructor[1]} : i32",
-                        diagnostic,
-                    ):
-                        raise RuntimeError(f"{name}: initializer lost its source identity")
             refusals += 1
         if label == "constructor-only":
             for suffix, request, options in (

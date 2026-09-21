@@ -948,22 +948,18 @@ inline std::shared_ptr<string_to_number_map> make_string_to_number_map() {
 template <class Map, class K> js_boolean_t map_has(const Map & map, const K & key) {
     return js_boolean_t{map->find(key) != map->end()};
 }
-template <class K> nullable_scalar map_get(number_map<K> * map, const K & key) {
+template <class K, class V>
+requires(std::is_same_v<V, double> || std::is_same_v<V, js_boolean_t> ||
+         std::is_same_v<V, nullable_scalar>)
+nullable_scalar map_get(map_storage<K, V> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
 }
-template <class K> nullable_scalar map_get(map_storage<K, js_boolean_t> * map, const K & key) {
-    const auto found = map->find(key);
-    if (found != map->end()) { return found->second; }
-    return {};
-}
-template <class K>
-nullable_scalar map_get(const std::shared_ptr<number_map<K>> & map, const K & key) {
-    return map_get(map.get(), key);
-}
-template <class K>
-nullable_scalar map_get(const std::shared_ptr<map_storage<K, js_boolean_t>> & map, const K & key) {
+template <class K, class V>
+requires(std::is_same_v<V, double> || std::is_same_v<V, js_boolean_t> ||
+         std::is_same_v<V, nullable_scalar>)
+nullable_scalar map_get(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
     return map_get(map.get(), key);
 }
 template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
@@ -1054,13 +1050,24 @@ template <class T> T map_nullable_payload_as(const nullable_string & value) {
         std::terminate();
     }
 }
+template <class T> T map_nullable_payload_as(nullable_scalar value) {
+    if constexpr (std::is_same_v<T, nullable_scalar>) {
+        return value;
+    } else if constexpr (std::is_same_v<T, double>) {
+        return global_number(value).value();
+    } else if constexpr (std::is_same_v<T, js_boolean_t>) {
+        return global_boolean(value);
+    } else {
+        std::terminate();
+    }
+}
 // The compiler supplies T only from an independent present payload fact.
 // The storage schema itself never selects a narrower alternative.
 template <class T, class K, class V>
 T map_get_present_nullable_as(map_storage<K, V> * map, const K & key) {
     const auto found = map->find(key);
     if (found == map->end()) { std::terminate(); }
-    if constexpr (std::is_same_v<V, nullable_string>) {
+    if constexpr (std::is_same_v<V, nullable_string> || std::is_same_v<V, nullable_scalar>) {
         return map_nullable_payload_as<T>(found->second);
     } else {
         return std::visit(

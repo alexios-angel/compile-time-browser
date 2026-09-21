@@ -180,6 +180,7 @@ bool admission::op(mlir::Operation * o) {
                                              llvm::StringRef proofName) {
             const auto value = typeOf(operand);
             const auto c = carrierOf(value);
+            if (nullableMapSpelling(schema) == kNullableType) { return isScalarCarrier(c); }
             const auto absent = llvm::dyn_cast_or_null<OptType>(value);
             const auto element = llvm::cast<OptType>(schema).getElementType();
             const bool allowsBoolean = !mixedMapSpelling(element).empty();
@@ -197,7 +198,7 @@ bool admission::op(mlir::Operation * o) {
         };
         if (!nullableMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
             !nullableAlternative(map.getKeyType(), call.getArgs()[0], kNativeMapKeyType)) {
-            return refuse("nullable native Map key needs a proved String, absent or Boolean "
+            return refuse("nullable native Map key needs a proved scalar, String or absent "
                           "alternative with an owning carrier");
         }
         if (!mixedMapKeySpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
@@ -248,15 +249,16 @@ bool admission::op(mlir::Operation * o) {
         if (!nullableMapSpelling(map.getValueType()).empty()) {
             if (action == "set" &&
                 !nullableAlternative(map.getValueType(), call.getArgs()[1], kNativeMapWriteType)) {
-                return refuse("nullable native Map write needs a proved String, absent or "
-                              "Boolean alternative with an owning carrier");
+                return refuse("nullable native Map write needs a proved scalar, String or "
+                              "absent alternative with an owning carrier");
             }
             const auto element = llvm::cast<OptType>(map.getValueType()).getElementType();
             const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapReadType);
             const bool nullableRead =
                 proof && proof.getValue() == "nullable_string" &&
                 carrierOf(typeOf(call.getResult())) == carrier::nullableString;
-            if (action == "get" && !mixedMapSpelling(element).empty() &&
+            if (action == "get" && nullableMapSpelling(map.getValueType()) != kNullableType &&
+                !mixedMapSpelling(element).empty() &&
                 (!proof || !o->hasAttr(kNativeMapPresent) ||
                  (!nullableRead && !typedAlternative(element, call.getResult())))) {
                 return refuse(
@@ -264,6 +266,9 @@ bool admission::op(mlir::Operation * o) {
             }
         }
         if (action == "keys" || action == "values") {
+            if (action == "values" && nullableMapSpelling(map.getValueType()) == kNullableType) {
+                return refuse("nullable scalar Map value snapshot needs a tagged element carrier");
+            }
             return (isVectorSite(call.getResult()) &&
                     isVectorCarrier(carrierOf(typeOf(call.getResult())))) ||
                    refuse("native Map snapshot requires confined numeric or string elements");

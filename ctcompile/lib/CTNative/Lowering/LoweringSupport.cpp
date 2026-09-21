@@ -237,11 +237,12 @@ llvm::StringRef mixedMapKeySpelling(mlir::Type type) {
                             : llvm::StringRef{};
 }
 
-// Closed owning storage for nullable String, optionally composed with Bool.
+// Closed tagged storage for optional scalars and owning nullable Strings.
 // Map storage remains independent of scalar/signature and snapshot carriers.
 llvm::StringRef nullableMapSpelling(mlir::Type type) {
     auto optional = llvm::dyn_cast<OptType>(type);
     if (!optional) { return {}; }
+    if (carrierOf(type) == carrier::nullable) { return kNullableType; }
     if (carrierOf(optional.getElementType()) == carrier::string) { return kNullableStringType; }
     if (mixedMapSpelling(optional.getElementType()) == kBooleanStringMapType) {
         return "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>";

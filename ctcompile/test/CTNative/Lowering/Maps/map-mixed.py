@@ -91,6 +91,71 @@ def check_nullable_read_facts(args, source):
             assert run([args.opt, "--ctnative-binding-time-analysis", str(path)]).stdout == proved
 
 
+def compile_and_run(args, name, cpp, expected, compilers, nm):
+    out = args.work / f"{name}.cpp"
+    out.write_text(cpp)
+    for index, compiler in enumerate(compilers):
+        binary = args.work / f"{name}-{index}"
+        run(
+            [
+                compiler,
+                "-std=c++23",
+                RUNTIME_INCLUDE,
+                CORE_INCLUDE,
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wconversion",
+                "-pedantic",
+                "-ffp-contract=off",
+                str(out),
+                "-o",
+                str(binary),
+            ]
+        )
+        assert run([str(binary)]).stdout == expected, name
+        assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
+
+
+def check_scalar_payloads(args, node, reference, compilers, nm):
+    # Historical source names stay unchanged when their storage becomes native.
+    cases = {
+        "nullable-number-payload-refused": 2,
+        "nullable-boolean-payload-refused": 2,
+        "saved-missing-refused": 0,
+        "saved-join-missing-refused": 12,
+        "scalar-payloads": 5110511,
+    }
+    for fixture, value in cases.items():
+        source = (args.fixtures / f"{fixture}.js").read_text()
+        for ordered in (False, True):
+            name = fixture + ("-ordered" if ordered else "-associative")
+            js = args.work / f"{name}.js"
+            js.write_text(source + ((args.fixtures / "snapshot.js").read_text() if ordered else ""))
+            expected = f"trace={value}\n" + ("traceSnapshot=1\n" if ordered else "")
+            assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected, name
+            assert run([str(reference), str(js)]).stdout == expected, name
+            ir = args.work / f"{name}.mlir"
+            run(
+                [
+                    "cmake",
+                    f"-DTRANSLATE={args.translate}",
+                    f"-DOPT={args.opt}",
+                    f"-DSOURCE={js}",
+                    f"-DOUTPUT={ir}",
+                    "-DOPTIMIZE=OFF",
+                    "-P",
+                    str(Path(__file__).resolve().parents[3] / "CTNative/Checks/pipeline.cmake"),
+                ]
+            )
+            cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
+            assert ", ctnative::nullable_scalar>" in cpp, name
+            assert "ctbrowser::script" not in cpp, name
+            assert ("#define CTNATIVE_ORDERED_MAPS 1" in cpp) == ordered, name
+            compile_and_run(args, name, cpp, expected, compilers, nm)
+
+
 def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm):
     # Either nullable keys or nullable payloads must request their helpers alone.
     # Reuse existing functions without expanding the full layout/sanitizer matrix.
@@ -150,30 +215,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
         assert "ctbrowser::script" not in cpp
         if symbol == "mixedNullableRead":
             assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
-        out = args.work / f"{name}.cpp"
-        out.write_text(cpp)
-        for index, compiler in enumerate(compilers):
-            binary = args.work / f"{name}-{index}"
-            run(
-                [
-                    compiler,
-                    "-std=c++23",
-                    RUNTIME_INCLUDE,
-                    CORE_INCLUDE,
-                    "-O2",
-                    "-Wall",
-                    "-Wextra",
-                    "-Werror",
-                    "-Wconversion",
-                    "-pedantic",
-                    "-ffp-contract=off",
-                    str(out),
-                    "-o",
-                    str(binary),
-                ]
-            )
-            assert run([str(binary)]).stdout == expected
-            assert "ctbrowser::script::" not in run([nm, "-C", str(binary)]).stdout
+        compile_and_run(args, name, cpp, expected, compilers, nm)
 
 
 def main():
@@ -302,6 +344,7 @@ def main():
                 )
                 assert run([str(binary)], environment=environment).stdout == expected
     check_isolated_nullable_helpers(args, source, node, reference, compilers, nm)
+    check_scalar_payloads(args, node, reference, compilers, nm)
     for fixture in args.fixtures.glob("*-refused.js"):
         name = fixture.stem
         js, ir, count = boundary.prepare(args, name, fixture.read_text())
@@ -328,13 +371,24 @@ def main():
                     ]
                 )
                 result = output.read_text()
-                if name in {"nullable-number-key-refused", "nullable-boolean-key-refused"}:
+                scalar_key = name in {"nullable-number-key-refused", "nullable-boolean-key-refused"}
+                if scalar_key or name in {
+                    "nullable-number-payload-refused",
+                    "nullable-boolean-payload-refused",
+                    "saved-missing-refused",
+                    "saved-join-missing-refused",
+                }:
                     # These historical names predate optional scalar key support
                     # (7b456d79). Keep both source bodies and forged-fact controls.
                     assert not boundary.FUNCTION.search(result), name
                     assert len(boundary.NATIVE.findall(result)) == count, name
                     assert "ctnative.not_native" not in result, name
-                    assert "ctnative::make_number_map<ctnative::nullable_scalar>" in result, name
+                    storage = (
+                        "ctnative::make_number_map<ctnative::nullable_scalar>"
+                        if scalar_key
+                        else ", ctnative::nullable_scalar>"
+                    )
+                    assert storage in result, name
                     current = output
                     continue
                 assert not re.search(r"\bemitc.func @main\(", result), name
@@ -345,9 +399,6 @@ def main():
                 if name == "number-object-extra-alternative-refused":
                     assert "native Map needs supported keys" in result, name
                     assert "!ctnative.variant<" in result, name
-                elif name in {"saved-missing-refused", "saved-join-missing-refused"}:
-                    assert "native Map needs supported keys" in result, name
-                    assert "!ctnative.opt<!ctnative.variant<" in result, name
                 elif name in {
                     "saved-join-tags-refused",
                     "short-truthy-bool-refused",
@@ -356,12 +407,11 @@ def main():
                     assert (
                         "mixed native Map write needs one proved scalar alternative" in result
                     ), name
-                elif name in {
-                    "nullable-number-payload-refused",
-                    "nullable-boolean-payload-refused",
-                }:
-                    assert "native Map needs supported keys" in result, name
-                    assert "!ctnative.opt<" in result, name
+                elif name == "scalar-payload-snapshot-refused":
+                    assert (
+                        "nullable scalar Map value snapshot needs a tagged element carrier"
+                        in result
+                    )
                 elif name in {
                     "nullable-snapshot-refused",
                     "mixed-nullable-snapshot-refused",
@@ -381,8 +431,8 @@ def main():
                         "write" if name == "mixed-nullable-payload-temporary-refused" else "key"
                     )
                     assert (
-                        f"nullable native Map {boundary_kind} needs a proved String, absent or "
-                        "Boolean alternative with an owning carrier" in result
+                        f"nullable native Map {boundary_kind} needs a proved scalar, String or "
+                        "absent alternative with an owning carrier" in result
                     ), name
                 elif name == "mixed-nullable-branch-callee-refused":
                     assert (
@@ -405,7 +455,7 @@ def main():
         "Node/interpreter, GCC/Clang, plain/deduced and ASan/UBSan; "
         "isolated nullable-key, nullable-payload and mixed nullable-read helpers; "
         "fresh/stale finite nullable read proofs; "
-        "38 storage/read/write-proof refusals and two admitted scalar-key controls, "
+        "35 storage/read/write-proof refusals and six admitted scalar key/payload controls, "
         "with forged key/nullable facts and reruns"
     )
 
