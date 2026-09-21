@@ -54,6 +54,7 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> helpers;
     llvm::DenseSet<mlir::Operation *> helperCalls;
     llvm::DenseSet<mlir::Operation *> domEntryHelpers;
+    llvm::DenseSet<mlir::Operation *> domDataOperations;
     llvm::DenseSet<mlir::Operation *> getters;
     llvm::DenseSet<mlir::Operation *> throwingGetters;
     llvm::DenseSet<mlir::Operation *> errorOperations;
@@ -149,6 +150,7 @@ struct classInitialization {
     bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry);
 
     bool prove(const HostContract & contract, bool domEntry = false);
+    bool proveDOMDataFamily(const HostContract & contract);
 
     bool proveDOMMethods(const HostContract & contract);
 

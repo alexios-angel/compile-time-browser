@@ -169,7 +169,7 @@ def published_prepare(args, name, text):
     return ir, contract
 
 
-def published_observation(args, name, text, expected=15927, *, snapshot=False):
+def published_observation(args, name, text, expected=15927, *, snapshot=False, class_result=False):
     observed = args.work / f"{name}.oracle.js"
     observed.write_text(
         text
@@ -183,12 +183,126 @@ def published_observation(args, name, text, expected=15927, *, snapshot=False):
     )
     if snapshot:
         wanted = f"saved={expected}\n" + wanted
+    if class_result:
+        wanted = f"classResult={expected}\n" + wanted
     node = session.source.NODE.replace(
         "typeof value !== 'number'", "typeof value !== 'number' && typeof value !== 'undefined'"
-    ).replace("key.startsWith('trace')", "key.startsWith('trace') || key === 'saved'")
+    ).replace(
+        "key.startsWith('trace')",
+        "key.startsWith('trace') || key === 'saved' || key === 'classResult'",
+    )
     for command in ([args.node, "-e", node, str(observed)], [args.reference, str(observed)]):
         if run(command).stdout != wanted:
             raise RuntimeError(f"{name}: scalar publication/reset source observation changed")
+
+
+def published_families(args):
+    prepared_count = refusals = observed = 0
+    original = (
+        published_source()
+        .replace("host.slot.set(element, result)", "host.slot.set(element, 15927)")
+        .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
+    )
+    constructor = (
+        published_source(True)
+        .replace("host.slot.set(element, result)", "host.slot.set(element, 59112)")
+        .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
+    )
+    for label, text, expected in (
+        ("holder", original, 15927),
+        ("constructor", constructor, 59112),
+        (
+            "alias",
+            original.replace("  traceEntered = 1;", "  const alias = element; traceEntered = 1;")
+            .replace("host.slot.get(element)", "host.slot.get(alias)")
+            .replace("host.slot.remove(element)", "host.slot.remove(alias)"),
+            15927,
+        ),
+    ):
+        name = "class-family-" + label
+        published_observation(args, name, text, expected, class_result=True)
+        observed += 1
+        ir, contract = published_prepare(args, name, text)
+        contract["observations"] = ["classResult", *contract["observations"]]
+        prepared = classes.prepare(args, name, ir, contract, success=True)
+        prepared_count += 1
+        body = prepared.read_text()
+        if body.count("ctjs.construct") != 5 or len(dom.FUNCTION.findall(body)) != 8:
+            raise RuntimeError(f"{name}: preparation lost class, child Map or public family owners")
+        if 'name = "classResult"' not in body:
+            raise RuntimeError(f"{name}: original class computation lost its observation")
+        checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        for optimize in (False, True):
+            dom.lower(
+                args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
+            )
+            refusals += 1
+        if label == "holder":
+            for suffix, request, options in (
+                ("stale", dict(contract, module_sha256="0" * 64), ""),
+                ("no-root", dict(contract, roots=[]), ""),
+                ("no-input", dict(contract, element_parameters=[]), ""),
+                ("no-map", dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]), ""),
+                ("budget", contract, "max-steps=0"),
+                ("small-budget", contract, "max-steps=100"),
+            ):
+                classes.prepare(
+                    args, name + "-" + suffix, ir, request, success=False, options=options
+                )
+                refusals += 1
+    controls = {
+        "property": original.replace("  traceEntered = 1;", "  element.n; traceEntered = 1;"),
+        "coercion": original.replace("  traceEntered = 1;", "  element + ''; traceEntered = 1;"),
+        "capture": original.replace(
+            "  traceEntered = 1;", "  const unused = () => element; traceEntered = 1;"
+        ),
+        "wrapper-effect": original.replace(
+            "host.slot = factory();", "unknown(); host.slot = factory();"
+        ),
+        "factory-effect": original.replace(
+            "const state = new Map();", "unknown(); const state = new Map();"
+        ),
+        "uncalled-effect": original.replace(
+            "set(key, value) {", "bad() { unknown(); }, set(key, value) {"
+        ),
+        "method-effect": original.replace(
+            "return state.get(key);", "unknown(); return state.get(key);"
+        ),
+        "extracted": original.replace(
+            "  traceEntered = 1;", "  const extracted = host.slot.get; traceEntered = 1;"
+        ),
+        "root-reassigned": original.replace(
+            "  traceEntered = 1;", "  host = {}; traceEntered = 1;"
+        ),
+        "map-reassigned": original.replace(
+            "  traceEntered = 1;", "  Map = function() {}; traceEntered = 1;"
+        ),
+        "early-root": original.replace("  host = {};", "  if (false) { host.n; }\n  host = {};"),
+    }
+    for label, text in controls.items():
+        if text == original:
+            raise RuntimeError(f"{label}: family refusal did not change its source")
+        name = "class-family-refused-" + label
+        ir, contract = published_prepare(args, name, text)
+        contract["observations"] = ["classResult", *contract["observations"]]
+        classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
+        refusals += 1
+    # The actual class-result payload still needs constructor scalar evidence.
+    for constructor in (False, True):
+        name = "class-family-result-" + str(constructor)
+        text = published_source(constructor)
+        published_observation(args, name, text, 59112 if constructor else 15927)
+        observed += 1
+        ir, contract = published_prepare(args, name, text)
+        classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
+        refusals += 1
+        for optimize in (False, True):
+            dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
+            refusals += 1
+    print(
+        f"class public family: {observed} Node/VM observations, {prepared_count} preparations, "
+        f"{refusals} refusals; native class ownership remains refused"
+    )
 
 
 def published_records(args):
@@ -420,9 +534,13 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--nm", default=shutil.which("nm"))
     parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--class-families-only", action="store_true")
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
+    published_families(args)
+    if args.class_families_only:
+        return
     original = source()
     constructor = source(constructor=True)
     cases = {

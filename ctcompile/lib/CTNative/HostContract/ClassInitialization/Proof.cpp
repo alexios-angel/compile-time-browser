@@ -221,18 +221,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         }
     }
     if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
-        // Only the consumed outer-key operations may observe a host input.
-        // Any remaining property, coercion, capture or call needs a separate
-        // source/effect proof before class setup can be normalized.
-        for (mlir::BlockArgument input :
-             entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
-            for (mlir::OpOperand * use : sourceUses(input)) {
-                if (!step()) { return false; }
-                if (!llvm::isa<ctjs::RootOp>(use->getOwner())) {
-                    return refuse("class DOM input has an observer outside its proved Map keys");
-                }
-            }
-        }
+        if (!proveDOMDataFamily(contract)) { return false; }
     }
     if (!heritage.empty()) {
         HostContract binding = contract;
@@ -374,9 +363,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             (op == declaration || op->getParentOfType<ctjs::FuncOp>() == declaration)) {
             return mlir::WalkResult::advance();
         }
-        if (mapOperations.contains(op) || setup.contains(op) || retainedSetup.contains(op) ||
-            instanceOfResults.contains(op) || methodCalls.contains(op) ||
-            helperCalls.contains(op) || llvm::is_contained(calls, op) ||
+        if (domDataOperations.contains(op) || mapOperations.contains(op) || setup.contains(op) ||
+            retainedSetup.contains(op) || instanceOfResults.contains(op) ||
+            methodCalls.contains(op) || helperCalls.contains(op) || llvm::is_contained(calls, op) ||
             llvm::is_contained(constructorReads, op) || cellOperations.contains(op) ||
             llvm::is_contained(captureReads, op)) {
             return mlir::WalkResult::advance();
