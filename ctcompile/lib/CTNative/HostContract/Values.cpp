@@ -401,6 +401,21 @@ PrimitiveAlternatives analyzer::entryCategories(
         auto store = stores.front();
         return entryCategories(store.getValue(), results, store, depth + 1, dependencies);
     }
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(definition)) {
+        // A saved own-field read keeps its read-time category, even when a
+        // later write changes the field. This is no constant-value evidence.
+        // The caller family separately censuses every use of this local leaf.
+        auto made = read.getObject().getDefiningOp<ctjs::CreateObjectOp>();
+        auto write = made ? currentWrite(read, depth + 1) : ctjs::SetPropertyOp{};
+        if (!made || made->getParentOp() != entry || read->getParentOp() != entry || !write ||
+            write->getParentOp() != entry || write.getObject() != made.getResult() ||
+            !dominance.properlyDominates(made.getOperation(), write) ||
+            !dominance.properlyDominates(write.getOperation(), read)) {
+            return {};
+        }
+        if (dependencies) { dependencies->push_back(value); }
+        return entryCategories(write.getValue(), results, write, depth + 1, dependencies);
+    }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition)) {
         switch (binary.getKind()) {
         case ctjs::BinaryKind::Add:

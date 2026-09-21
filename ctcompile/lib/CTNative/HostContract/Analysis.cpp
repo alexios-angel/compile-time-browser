@@ -127,6 +127,108 @@ bool analyzer::capturedMapParameters(
     const llvm::DenseSet<mlir::Operation *> & familyCalls,
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
     HostMethodParameters & result, HostCapturedMap * capture) {
+    const auto checkLeaf = [&](mlir::Value actual, mlir::Operation * operation, bool scalarSource) {
+        auto made = actual.getDefiningOp<ctjs::CreateObjectOp>();
+        std::optional<HostObjectGlobalRead> global;
+        if (auto read = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
+            global = objectGlobalRead(read);
+            if (!global) { return false; }
+            made = global->object;
+        }
+        if (!made || made->getParentOp() != entry || operation->getParentOp() != entry ||
+            !dominance.properlyDominates(made.getOperation(), operation) ||
+            !dominance.dominates(actual, operation)) {
+            return false;
+        }
+        llvm::SmallVector<mlir::Value> aliases{made.getResult()};
+        llvm::DenseSet<mlir::Operation *> initializations;
+        if (global) {
+            const auto reads = objectGlobalReads(made);
+            if (!reads) { return false; }
+            for (const HostObjectGlobalRead & edge : *reads) {
+                if (!step()) { return false; }
+                auto read = edge.read;
+                aliases.push_back(read.getResult());
+                initializations.insert(edge.initialization);
+            }
+        }
+        // Caller leaves may hold only scalar own fields. Census every
+        // alias before accepting reads; the method bodies independently
+        // limit these formals to Map keys/payloads, never outgoing edges.
+        llvm::SmallVector<ctjs::SetPropertyOp> writes;
+        for (mlir::Value alias : aliases) {
+            for (mlir::OpOperand & use : alias.getUses()) {
+                if (!step()) { return false; }
+                auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                if (!write) { continue; }
+                const auto payload = entryCategories(write.getValue(), results, write);
+                if (use.getOperandNumber() != 0 || write->getParentOp() != entry ||
+                    !dominance.dominates(alias, write) ||
+                    !dominance.dominates(write.getKey(), write) ||
+                    !ctjs::ordinaryKey(ctjs::constantKey(write.getKey())) || !payload.tag()) {
+                    return false;
+                }
+                writes.push_back(write);
+            }
+        }
+        for (mlir::Value alias : aliases) {
+            for (mlir::OpOperand & use : alias.getUses()) {
+                if (!step() || !dominance.dominates(alias, use.getOwner())) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                    (initializations.contains(use.getOwner()) && use.getOperandNumber() == 0 &&
+                     llvm::cast<ctjs::StoreGlobalOp>(use.getOwner()).getValue() == alias)) {
+                    continue;
+                }
+                if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner())) {
+                    if (!llvm::is_contained(writes, write)) { return false; }
+                    if (capture && !llvm::is_contained(capture->leafWrites, write)) {
+                        capture->leafWrites.push_back(write);
+                    }
+                    continue;
+                }
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner())) {
+                    if (use.getOperandNumber() != 0 || read->getParentOp() != entry ||
+                        !dominance.dominates(read.getKey(), read) ||
+                        !ctjs::ordinaryKey(ctjs::constantKey(read.getKey()))) {
+                        return false;
+                    }
+                    bool initialized = false;
+                    for (ctjs::SetPropertyOp write : writes) {
+                        if (!step()) { return false; }
+                        if (ctjs::constantKey(write.getKey()) == ctjs::constantKey(read.getKey()) &&
+                            dominance.properlyDominates(write.getOperation(), read)) {
+                            initialized = true;
+                        }
+                    }
+                    if (!initialized) { return false; }
+                    if (capture && !llvm::is_contained(capture->leafReads, read)) {
+                        capture->leafReads.push_back(read);
+                    }
+                    continue;
+                }
+                if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(use.getOwner());
+                    compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
+                    compare->getParentOp() == entry) {
+                    if (!dominance.dominates(compare.getLhs(), compare) ||
+                        !dominance.dominates(compare.getRhs(), compare)) {
+                        return false;
+                    }
+                    continue;
+                }
+                auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                auto callUse = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                if ((!directUse && !callUse) ||
+                    use.getOperandNumber() < (directUse ? 3u : 2u) + (prepared ? 1u : 0u) ||
+                    !familyCalls.contains(use.getOwner())) {
+                    return false;
+                }
+            }
+        }
+        if (capture && scalarSource && !llvm::is_contained(capture->leafObjects, made)) {
+            capture->leafObjects.push_back(made);
+        }
+        return !exhausted;
+    };
     const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
     std::optional<std::vector<PrimitiveAlternatives>> found;
     std::vector<mlir::BlockArgument> objectKeys;
@@ -137,7 +239,12 @@ bool analyzer::capturedMapParameters(
         std::vector<PrimitiveAlternatives> tags;
         for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
             if (!step()) { return false; }
-            const auto categories = entryCategories(actual, results, operation);
+            std::vector<mlir::Value> dependencies;
+            const auto categories = entryCategories(actual, results, operation, 0, &dependencies);
+            for (mlir::Value dependency : dependencies) {
+                auto read = dependency.getDefiningOp<ctjs::GetPropertyOp>();
+                if (read && !checkLeaf(read.getObject(), operation, true)) { return false; }
+            }
             if (!categories.known || !(categories.truthy | categories.falsy)) {
                 if (elementInput(actual)) {
                     if (operation->getParentOp() != entry ||
@@ -154,107 +261,7 @@ bool analyzer::capturedMapParameters(
                     tags.push_back(categories);
                     continue;
                 }
-                auto made = actual.getDefiningOp<ctjs::CreateObjectOp>();
-                std::optional<HostObjectGlobalRead> global;
-                if (auto read = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
-                    global = objectGlobalRead(read);
-                    if (!global) { return false; }
-                    made = global->object;
-                }
-                if (!made || made->getParentOp() != entry || operation->getParentOp() != entry ||
-                    !dominance.properlyDominates(made.getOperation(), operation) ||
-                    !dominance.dominates(actual, operation)) {
-                    return false;
-                }
-                llvm::SmallVector<mlir::Value> aliases{made.getResult()};
-                llvm::DenseSet<mlir::Operation *> initializations;
-                if (global) {
-                    const auto reads = objectGlobalReads(made);
-                    if (!reads) { return false; }
-                    for (const HostObjectGlobalRead & edge : *reads) {
-                        if (!step()) { return false; }
-                        auto read = edge.read;
-                        aliases.push_back(read.getResult());
-                        initializations.insert(edge.initialization);
-                    }
-                }
-                // Caller leaves may hold only scalar own fields. Census every
-                // alias before accepting reads; the method bodies independently
-                // limit these formals to Map keys/payloads, never outgoing edges.
-                llvm::SmallVector<ctjs::SetPropertyOp> writes;
-                for (mlir::Value alias : aliases) {
-                    for (mlir::OpOperand & use : alias.getUses()) {
-                        if (!step()) { return false; }
-                        auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
-                        if (!write) { continue; }
-                        const auto payload = entryCategories(write.getValue(), results, write);
-                        if (use.getOperandNumber() != 0 || write->getParentOp() != entry ||
-                            !dominance.dominates(alias, write) ||
-                            !dominance.dominates(write.getKey(), write) ||
-                            !ctjs::ordinaryKey(ctjs::constantKey(write.getKey())) ||
-                            !payload.tag()) {
-                            return false;
-                        }
-                        writes.push_back(write);
-                    }
-                }
-                for (mlir::Value alias : aliases) {
-                    for (mlir::OpOperand & use : alias.getUses()) {
-                        if (!step() || !dominance.dominates(alias, use.getOwner())) {
-                            return false;
-                        }
-                        if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                            (initializations.contains(use.getOwner()) &&
-                             use.getOperandNumber() == 0 &&
-                             llvm::cast<ctjs::StoreGlobalOp>(use.getOwner()).getValue() == alias)) {
-                            continue;
-                        }
-                        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner())) {
-                            if (!llvm::is_contained(writes, write)) { return false; }
-                            if (capture && !llvm::is_contained(capture->leafWrites, write)) {
-                                capture->leafWrites.push_back(write);
-                            }
-                            continue;
-                        }
-                        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner())) {
-                            if (use.getOperandNumber() != 0 || read->getParentOp() != entry ||
-                                !dominance.dominates(read.getKey(), read) ||
-                                !ctjs::ordinaryKey(ctjs::constantKey(read.getKey()))) {
-                                return false;
-                            }
-                            bool initialized = false;
-                            for (ctjs::SetPropertyOp write : writes) {
-                                if (!step()) { return false; }
-                                if (ctjs::constantKey(write.getKey()) ==
-                                        ctjs::constantKey(read.getKey()) &&
-                                    dominance.properlyDominates(write.getOperation(), read)) {
-                                    initialized = true;
-                                }
-                            }
-                            if (!initialized) { return false; }
-                            if (capture && !llvm::is_contained(capture->leafReads, read)) {
-                                capture->leafReads.push_back(read);
-                            }
-                            continue;
-                        }
-                        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(use.getOwner());
-                            compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-                            compare->getParentOp() == entry) {
-                            if (!dominance.dominates(compare.getLhs(), compare) ||
-                                !dominance.dominates(compare.getRhs(), compare)) {
-                                return false;
-                            }
-                            continue;
-                        }
-                        auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                        auto callUse = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                        if ((!directUse && !callUse) ||
-                            use.getOperandNumber() < (directUse ? 3u : 2u) + (prepared ? 1u : 0u) ||
-                            !familyCalls.contains(use.getOwner())) {
-                            return false;
-                        }
-                    }
-                }
+                if (!checkLeaf(actual, operation, false)) { return false; }
                 const auto parameter = function.getBody().front().getArgument(
                     (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size()));
                 if (!llvm::is_contained(objectKeys, parameter)) { objectKeys.push_back(parameter); }

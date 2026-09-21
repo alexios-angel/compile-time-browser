@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Prove constructor key transport; retain the incomplete DOM session refusal."""
+"""Publish proved scalar record fields; retain the complete class/session boundary."""
 
 import argparse
 from pathlib import Path
 import re
+import shutil
 
 from CTNative.Browser import native_dom as dom
+from CTNative.Browser import native_dom_data_session as session
 from CTNative.Exports import boundary
-from CTNative.harness import run
+from CTNative.harness import find_compilers, run
 from CTNative.HostContract import contract as host
 from CTNative.Lowering.Objects import class_initialization_inputs as classes
+from Target.Cpp.harness import FLAGS
 
 
 def source(constructor=False):
@@ -47,6 +50,291 @@ def source(constructor=False):
     if data not in adapted:
         raise RuntimeError("DOM input adapter changed the vendor declaration")
     return adapted
+
+
+def published_source(constructor=False):
+    prefix = session.source.SOURCE.split("  traceEntered = 1;", 1)[0]
+    prefix = prefix.replace("dataEntry(element, other)", "probe(element)").replace(
+        "return state.has(key);", "return state.get(key);"
+    )
+    body = source(constructor).replace("function probe(element) {\n", prefix, 1)
+    body = body.replace("a = savedFirst.n", "const result = savedFirst.n", 1)
+    return body.rstrip().removesuffix("}") + """
+  traceEntered = 1;
+  traceBefore = host.slot.get(element);
+  host.slot.remove(element);
+  host.slot.set(element, result);
+  traceOther = host.slot.get(element);
+  traceAfter = host.slot.get(element);
+}
+"""
+
+
+def record_source():
+    return (
+        session.source.SOURCE.replace("dataEntry(element, other)", "probe(element)")
+        .replace("return state.has(key);", "return state.get(key);")
+        .replace("  traceEntered = 1;", "  const payload = {n: 15927};\n  traceEntered = 1;")
+        .replace(
+            "host.slot.set(element, 42);",
+            "host.slot.remove(element);\n  host.slot.set(element, payload.n);",
+        )
+        .replace("traceOther = host.slot.get(other);", "traceOther = host.slot.get(element);")
+        .replace("  host.slot.remove(other);\n", "")
+    )
+
+
+RECORD_CLIENT = r"""
+#include <array>
+#include <cassert>
+#include <iostream>
+#include <type_traits>
+
+int main() {
+    using namespace ctbrowser;
+    using session_type = @OWNER@;
+    static_assert(!std::is_copy_constructible_v<session_type>);
+    static_assert(!std::is_copy_assignable_v<session_type>);
+    static_assert(!std::is_move_constructible_v<session_type>);
+    static_assert(!std::is_move_assignable_v<session_type>);
+    for (int lifetime = 0; lifetime < 16; ++lifetime) {
+        session_type session, second;
+        auto & doc = session.document();
+        auto & other = second.document();
+        auto button = doc.create_element(doc.atoms().intern("button"));
+        auto child = doc.create_element(doc.atoms().intern("span"));
+        auto foreign_button = other.create_element(other.atoms().intern("button"));
+        assert(button == foreign_button);
+        assert(doc.append_child(doc.root(), button));
+        assert(doc.append_child(button, child));
+        const element_ref element{&doc, button}, alias = element;
+        const element_ref distinct{&doc, child}, foreign{&other, foreign_button};
+        auto snapshot = [&] {
+            return std::array{session.observe_traceAfter(), session.observe_traceBefore(),
+                              session.observe_traceEntered(), session.observe_traceOther()};
+        };
+        auto check = [&] {
+            assert(ctnative::global_number(session.observe_traceEntered()).value() == 1);
+            assert(session.observe_traceBefore().tag == ctnative::nullable_scalar::kind::undefined);
+            assert(ctnative::global_number(session.observe_traceOther()).value() == 15927);
+            assert(ctnative::global_number(session.observe_traceAfter()).value() == 15927);
+        };
+        const auto text = doc.create_text("text");
+        auto reject = [&] {
+            auto before = snapshot();
+            for (element_ref rejected : {foreign, element_ref{}, element_ref{&doc, {}},
+                     element_ref{&doc, text},
+                     element_ref{&doc, {button.slot, button.generation + 2}}}) {
+                bool caught = false;
+                try { (void)session.invoke(rejected); }
+                catch (const std::exception &) { caught = true; }
+                assert(caught);
+            }
+            auto after = snapshot();
+            for (unsigned i = 0; i < before.size(); ++i) {
+                assert(before[i].tag == after[i].tag && before[i].value == after[i].value);
+            }
+        };
+        assert(session.observe_traceEntered().tag == ctnative::nullable_scalar::kind::undefined);
+        reject(); // Validate the entire input domain before source effects.
+        for (element_ref input : {element, alias, distinct, element}) {
+            (void)session.invoke(input);
+            check(); // Fresh source Map, including the retained key on repeated input.
+        }
+        assert(second.observe_traceEntered().tag == ctnative::nullable_scalar::kind::undefined);
+        (void)second.invoke(foreign);
+        assert(ctnative::global_number(second.observe_traceAfter()).value() == 15927);
+        check();
+        reject();
+        assert(doc.remove_child(button));
+        assert(!doc.read().parent(button));
+        (void)session.invoke(alias);
+        check();
+    } // Private tables are destroyed before their document.
+    std::cout << "DOM record Data passed\n";
+}
+"""
+
+
+def published_prepare(args, name, text):
+    ir, contract = dom.prepare(args, name, text, 1, entry_name="probe")
+    contract.update(
+        roots=[{"binding": "host", "properties": ["slot"]}],
+        provider="ctbrowser-dom-data-session-v1",
+        observations=session.source.OBSERVATIONS,
+        absent_bindings=[],
+        undefined_bindings=[],
+        initial_intrinsics=["Map", "__ctbrowser_class_defined"],
+    )
+    return ir, contract
+
+
+def published_observation(args, name, text, expected=15927):
+    observed = args.work / f"{name}.oracle.js"
+    observed.write_text(
+        text
+        + "\nvar first = {}, second = {}; probe(first);\n"
+        + "var traceFirst = traceBefore === undefined; probe(first);\n"
+        + "var traceReset = traceBefore === undefined; probe(second);\n"
+    )
+    wanted = (
+        f"traceAfter={expected}\ntraceBefore=undefined\ntraceEntered=1\n"
+        f"traceFirst=true\ntraceOther={expected}\ntraceReset=true\n"
+    )
+    node = session.source.NODE.replace(
+        "typeof value !== 'number'", "typeof value !== 'number' && typeof value !== 'undefined'"
+    )
+    for command in ([args.node, "-e", node, str(observed)], [args.reference, str(observed)]):
+        if run(command).stdout != wanted:
+            raise RuntimeError(f"{name}: scalar publication/reset source observation changed")
+
+
+def published_records(args):
+    original = record_source()
+    sources = {
+        "field": original,
+        "alias": original.replace(
+            "const payload = {n: 15927};", "const payload = {n: 15927}; const alias = payload;"
+        ).replace("host.slot.set(element, payload.n)", "host.slot.set(element, alias.n)"),
+        "saved-alias": original.replace(
+            "const payload = {n: 15927};",
+            "const payload = {n: 15927}; const alias = payload;\n"
+            "  const saved = alias.n; alias.n = 7;",
+        ).replace("host.slot.set(element, payload.n)", "host.slot.set(element, saved)"),
+        "arithmetic": original.replace("{n: 15927}", "{n: 15920}").replace(
+            "host.slot.set(element, payload.n)", "host.slot.set(element, payload.n + 7)"
+        ),
+    }
+    compilers = find_compilers()
+    compilers[1] = args.clang
+    includes, libraries = dom.link_options(args)
+    executions = refusals = 0
+    for label, text in sources.items():
+        name = "published-record-" + label
+        published_observation(args, name, text)
+        ir, contract = published_prepare(args, name, text)
+        report, annotated, _ = host.analyze(args.opt, ir, contract, args.work / (name + "-proof"))
+        if (
+            not report["proved"]
+            or report["outer_key_inputs"] != 1
+            or report["outer_key_objects"] != 0
+            or report["observation_stores"] != len(session.source.OBSERVATIONS)
+            or len(report["slots"]) != 1
+            or report["slots"][0]["proved_edges"] != 5
+        ):
+            raise RuntimeError(f"{name}: missing complete input/factory proof: {report}")
+        if host.fingerprint(args.opt, annotated) != host.fingerprint(args.opt, ir):
+            raise RuntimeError(f"{name}: scalar publication proof changed the source")
+        for optimize in (False, True):
+            native = dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize)
+            if (
+                dom.FUNCTION.search(native.read_text())
+                or len(dom.NATIVE.findall(native.read_text())) != 6
+            ):
+                raise RuntimeError(f"{name}: incomplete source function family")
+            deduced = args.work / f"{name}-{optimize}.deduced.mlir"
+            run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
+            for mode, module in (("explicit", native), ("deduced", deduced)):
+                cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
+                owner = re.findall(r"class (\w+_session) \{", cpp)
+                if (
+                    len(owner) != 1
+                    or dom.VM.search(cpp)
+                    or re.search(
+                        r"shared_ptr<ctnative::method_|shared_ptr<ctn_|invoke_callable|invoke_session|\bmain\s*\(",
+                        cpp,
+                    )
+                ):
+                    raise RuntimeError(f"{name}: escaping runtime/table/callable")
+                if cpp.index("atom_table atoms_") > cpp.index("document document_"):
+                    raise RuntimeError(f"{name}: document outlives its atoms")
+                path = args.work / f"{name}-{optimize}.{mode}.cpp"
+                path.write_text(cpp + RECORD_CLIENT.replace("@OWNER@", owner[0]))
+                for index, compiler in enumerate(compilers):
+                    binary = path.with_suffix(f".{index}")
+                    result = run(
+                        [compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)]
+                    )
+                    if (
+                        result.stdout
+                        or result.stderr
+                        or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout)
+                    ):
+                        raise RuntimeError(f"{name}: native compilation/symbol gate failed")
+                    if run([str(binary)]).stdout != "DOM record Data passed\n":
+                        raise RuntimeError(f"{name}: real document observations incomplete")
+                    executions += 1
+        if label == "field":
+            for suffix, changed, budget in (
+                ("stale", dict(contract, module_sha256="0" * 64), None),
+                ("missing-root", dict(contract, roots=[]), None),
+                ("missing-input", dict(contract, element_parameters=[]), None),
+                ("no-map", dict(contract, initial_intrinsics=[]), None),
+                ("budget", contract, 0),
+                ("small-budget", contract, 100),
+            ):
+                for optimize in (False, True):
+                    dom.lower(
+                        args,
+                        ir,
+                        changed,
+                        f"{name}-{suffix}-{optimize}",
+                        optimize=optimize,
+                        success=False,
+                        max_steps=budget,
+                    )
+                    refusals += 1
+            forged = args.work / "published-record-forged.mlir"
+            forged_text, count = re.subn(
+                r"ctnative.host_outer_key_inputs = 1 : i64",
+                "ctnative.host_outer_key_inputs = 99 : i64",
+                annotated.read_text(),
+            )
+            if count != 1:
+                raise RuntimeError("record forged input control lost its report attribute")
+            forged.write_text(forged_text)
+            fresh = dict(contract, module_sha256=host.fingerprint(args.opt, forged))
+            rechecked, _, _ = host.analyze(
+                args.opt, forged, fresh, args.work / "record-forged-proof"
+            )
+            if rechecked != report:
+                raise RuntimeError("forged report changed the live record proof")
+            for optimize in (False, True):
+                dom.lower(args, forged, fresh, f"record-forged-{optimize}", optimize=optimize)
+    controls = {
+        "getter": original.replace("{n: 15927}", "{get n() { return 15927; }}"),
+        "dynamic-key": original.replace("payload.n", "payload[element]"),
+        "uninitialized": original.replace("{n: 15927}", "{}"),
+        "escape": original.replace("traceEntered = 1;", "escaped = payload; traceEntered = 1;"),
+        "capture": original.replace(
+            "traceEntered = 1;", "const unused = () => payload; traceEntered = 1;"
+        ),
+        "unknown-call": original.replace(
+            "traceEntered = 1;", "unknown(payload); traceEntered = 1;"
+        ),
+        "global-snapshot": original.replace(
+            "traceEntered = 1;", "saved = payload.n; traceEntered = 1;"
+        ).replace("host.slot.set(element, payload.n)", "host.slot.set(element, saved)"),
+    }
+    for label, text in controls.items():
+        name = "record-refused-" + label
+        ir, contract = published_prepare(args, name, text)
+        for optimize in (False, True):
+            dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
+            refusals += 1
+    for constructor in (False, True):
+        name = "published-class-" + ("constructor" if constructor else "holder")
+        text = published_source(constructor)
+        published_observation(args, name, text, 59112 if constructor else 15927)
+        ir, contract = published_prepare(args, name, text)
+        classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
+        refusals += 1
+        for optimize in (False, True):
+            dom.lower(args, ir, contract, f"{name}-{optimize}", optimize=optimize, success=False)
+            refusals += 1
+    print(
+        f"published DOM Data: 6 Node/VM observations, {executions} native record executions, {refusals} refusals; complete vendor class publication remains refused"
+    )
 
 
 def object_constructors(args, constructor):
@@ -103,8 +391,11 @@ def object_constructors(args, constructor):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
+    for name in ("translate", "opt", "node", "reference", "clang"):
         parser.add_argument("--" + name, required=True)
+    for name in ("build", "include"):
+        parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--nm", default=shutil.which("nm"))
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work = args.work.resolve()
@@ -243,8 +534,9 @@ def main():
     print(
         f"class DOM Data: {observed} Node/VM observations, {prepared_count} prepared entries, "
         f"{refusals} preparation refusals, {native_refusals} incomplete-session refusals; "
-        f"{executions} native object-key executions; no native DOM admission"
+        f"{executions} native object-key executions; no native class DOM admission"
     )
+    published_records(args)
 
 
 if __name__ == "__main__":
