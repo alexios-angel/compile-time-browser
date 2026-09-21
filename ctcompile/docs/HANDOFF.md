@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nullable Data getters and primitive String indices, 2026-09-21 UTC
+
+Continued clean **b2d1a4af** from its recorded nullable Data boundary.
+**cdbc468e** follows the original `has && get || null` getter,
+retaining selected-child identity, read-time absence and present record owners.
+Only consumed lookup truths require the complete child observer census; missing
+reads disappear only after every non-root observer is discharged. Three new
+admissions cover direct helpers, Data holders and constructor publication.
+**b64244a7** adds literal null and Boolean String indices through UTF-16; null ends
+select zero while undefined ends retain their default. The original Number-only
+first-unit/dataset-tail authority is unchanged.
+
+Captured helpers pass with **224 source observations, 440 main native executions,
+448 unprepared and 295 preparation refusals**, with new first-complete budget
+**6600**, followed by the strengthened raw-absence control's targeted replay.
+Terminal publication and DOM Strings pass. The final String selector passes
+**56 native executions, 638 proof refusals, 102 Node/VM agreements and ten known
+differences**; the final exact host-contract CTest passes 1/1. All eight final
+code/test hashes match the devbox; all 47 earlier class sources are unchanged.
+Scoped formatting passes; repository formatting retains 16 existing diagnostics
+in untouched files.
+No browser/runtime implementation changed. Full suites, broad corpus/matrices,
+full Bootstrap, WPT/test262, Windows and new sanitizers were skipped.
+
+**Next:** original Data's intact conflict-reporting observer arm, then actual DOM
+element-key ownership. Original B/Data+B remains a complete-source refusal.
+Dynamic/coercing String indices, NaN origins, broader methods, conditional callees,
+mutable cells, String ordering, document views and the application driver remain.
+No full-Bootstrap admission or coverage gain is claimed.
+
+[Exact checks, corrected failures and next proof seam](handoff/2026-09-21-nullable-data-primitive-indices.md).
+
 ## Child Map cleanup and explicit undefined String indices, 2026-09-21 UTC
 
 Continued clean **d8ec7a5a** from the recorded child cleanup boundary.
