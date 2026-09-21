@@ -37,9 +37,59 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
     {"add", {Kind::addClass, HostDOMMethod::addClass}},
     {"remove", {Kind::removeClass, HostDOMMethod::removeClass}},
 };
+
+std::optional<double> stringIndex(mlir::Value value, bool slice) {
+    bool negative = false;
+    if (auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+        slice && unary && unary.getKind() == ctjs::UnaryKind::Neg) {
+        negative = true;
+        value = unary.getOperand();
+    }
+    auto literal = value.getDefiningOp<ctjs::ConstantOp>();
+    auto number =
+        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    if (!number) { return std::nullopt; }
+    const double offset = negative ? -number.getDouble() : number.getDouble();
+    // ponytail: uint32 magnitudes fit size_t on every native target; broader
+    // inputs need their own ToIntegerOrInfinity and representability proof.
+    if (!std::isfinite(offset) || offset < (slice ? -4294967295.0 : 0.0) || offset > 4294967295.0 ||
+        std::floor(offset) != offset) {
+        return std::nullopt;
+    }
+    return offset;
+}
 } // namespace
 
 std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
+    if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+        unary && unary.getKind() == ctjs::UnaryKind::Neg) {
+        if (!spend()) { return false; }
+        if (!stringIndex(unary.getResult(), true)) {
+            refusal = "DOM String slice negation requires one bounded integer literal";
+            return false;
+        }
+        unsigned bounds = 0;
+        for (mlir::OpOperand & use : unary.getResult().getUses()) {
+            if (!spend()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                               : ctjs::GetPropertyOp{};
+            if (!method || method.getObject() != call.getReceiver() ||
+                ctjs::constantKey(method.getKey()) != "slice" || use.getOperandNumber() < 2 ||
+                use.getOperandNumber() > 3) {
+                refusal = "DOM String slice literal negation escapes its bounds";
+                return false;
+            }
+            ++bounds;
+        }
+        if (!bounds) {
+            refusal = "DOM String slice literal negation has no bound use";
+            return false;
+        }
+        values[unary.getResult()] = Kind::number;
+        return true;
+    }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
         // The DOM provider fixes this initial binding. The complete
         // source census admits no replacement or script reentry.
@@ -392,16 +442,10 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 refusal = "DOM String indexing requires one index and an optional slice end";
                 return false;
             }
-            // ponytail: literal uint32 indices fit size_t on every native target;
-            // broader inputs need ToIntegerOrInfinity and negative-slice proofs.
             for (mlir::Value argument : arguments) {
-                auto literal = argument.getDefiningOp<ctjs::ConstantOp>();
-                auto index = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
-                                     : ctjs::NumberAttr{};
-                const double offset = index ? index.getDouble() : -1;
-                if (!index || !std::isfinite(offset) || offset < 0 || offset > 4294967295.0 ||
-                    std::floor(offset) != offset) {
-                    refusal = "DOM String indexing requires nonnegative uint32 integer literals";
+                if (!spend()) { return false; }
+                if (!stringIndex(argument, !first)) {
+                    refusal = "DOM String indexing requires bounded integer literals";
                     return false;
                 }
             }
@@ -409,11 +453,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                                    first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
                                    invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
-            const double offset =
-                llvm::cast<ctjs::NumberAttr>(
-                    arguments.front().getDefiningOp<ctjs::ConstantOp>().getValue())
-                    .getDouble();
-            if (arguments.size() == 1 && offset == (first ? 0 : 1)) {
+            auto literal = arguments.front().getDefiningOp<ctjs::ConstantOp>();
+            if (arguments.size() == 1 && literal &&
+                *stringIndex(arguments.front(), !first) == (first ? 0 : 1)) {
                 if (!spend()) { return false; }
                 (first ? firstUnits : stringTails)[invoke.getResult()] = invoke.getReceiver();
             }

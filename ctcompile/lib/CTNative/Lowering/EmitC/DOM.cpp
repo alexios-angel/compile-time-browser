@@ -554,22 +554,38 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                                                 at.getStringAttr("ctbrowser::wtf8_to_utf16"),
                                                 mlir::ValueRange{rawText(call.getReceiver())});
         const auto indexType = ec::OpaqueType::get(context, "std::size_t");
-        auto index =
-            ec::CastOp::create(at, where, indexType,
-                               convertScalar(at, where, call.getArgs().front(), at.getF64Type()));
         auto length = ec::MemberCallOpaqueOp::create(
             at, where, mlir::TypeRange{indexType}, units.getResult(0), at.getStringAttr("size"),
             mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
-        auto inRange = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, index,
-                                         length.getResult(0));
-        llvm::SmallVector<mlir::Value> range{
-            ec::ConditionalOp::create(at, where, indexType, inRange, index, length.getResult(0))};
+        const auto offset = [&](mlir::Value argument) -> mlir::Value {
+            auto number = convertScalar(at, where, argument, at.getF64Type());
+            mlir::Value magnitude = number, negative;
+            if (edge.kind == HostDOMMethod::stringSlice) {
+                auto zero =
+                    ec::ConstantOp::create(at, where, at.getF64Type(), at.getF64FloatAttr(0.0));
+                negative = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt,
+                                             number, zero);
+                auto negated = ec::UnaryMinusOp::create(at, where, at.getF64Type(), number);
+                magnitude = ec::ConditionalOp::create(at, where, at.getF64Type(), negative, negated,
+                                                      number);
+            }
+            auto index = ec::CastOp::create(at, where, indexType, magnitude);
+            auto inRange = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, index,
+                                             length.getResult(0));
+            auto clamped = ec::ConditionalOp::create(at, where, indexType, inRange, index,
+                                                     length.getResult(0));
+            if (!negative) { return clamped; }
+            // Subtract only the clamped magnitude; neither the String length
+            // nor a negative source Number is converted to a signed index.
+            auto fromEnd = ec::SubOp::create(at, where, indexType, length.getResult(0), clamped);
+            return ec::ConditionalOp::create(at, where, indexType, negative, fromEnd, clamped);
+        };
+        llvm::SmallVector<mlir::Value> range{offset(call.getArgs().front())};
         if (edge.kind == HostDOMMethod::stringCharAt) {
             range.push_back(
                 ec::ConstantOp::create(at, where, indexType, ec::OpaqueAttr::get(context, "1")));
         } else if (call.getArgs().size() == 2) {
-            auto end = ec::CastOp::create(
-                at, where, indexType, convertScalar(at, where, call.getArgs()[1], at.getF64Type()));
+            auto end = offset(call.getArgs()[1]);
             auto reversed = ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, end,
                                               range.front());
             auto limit =

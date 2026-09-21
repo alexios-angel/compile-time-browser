@@ -387,6 +387,26 @@ STRING_SLICES = {
 }
 """,
 }
+SIGNED_SLICES = {
+    # Preserve both complete former negative-bound refusals as native witnesses.
+    "string-slice-negative": "function bad(text, index) { return text.slice(-1); }\n",
+    "string-slice-end-negative": "function bad(text, index) { return text.slice(0, -1); }\n",
+    "string-signed-slices": """function stringSignedSlices(text, last, head, middle) {
+  return text.slice(-1) === last && text.slice(0, -1) === head &&
+    text.slice(1, -1) === middle && text.slice(-4294967295) === text &&
+    text.slice(-4294967295, 4294967295) === text &&
+    text.slice(-4294967295, -4294967295) === '' && text.slice(4294967295, -1) === '' &&
+    text.slice(-1, -2) === '' && text.slice(-0) === text && text.slice(-0, -0) === '';
+}
+""",
+    "description-capture-signed-slice": """function descriptionCaptureSignedSlice(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function part() { return text !== undefined ? text.slice(-3, -1) : ':absent'; }
+  return part();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -418,6 +438,10 @@ PARAMETER_TYPES = {
     "string-slice-end": ["string", "number"],
     "string-slice-bounds": ["string", "string", "string", "string"],
     "description-capture-slice": ["symbol"],
+    "string-slice-negative": ["string", "number"],
+    "string-slice-end-negative": ["string", "number"],
+    "string-signed-slices": ["string", "string", "string", "string"],
+    "description-capture-signed-slice": ["symbol"],
 }
 CASES = {
     "state": (
@@ -870,6 +894,77 @@ CASES["description-capture-slice"] = (
 """,
     "true\n",
 )
+CASES["string-slice-negative"] = (
+    SIGNED_SLICES["string-slice-negative"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string, ctnative::js_num)>);
+    assert(@ENTRY@(js_string{""}, ctnative::js_num{0.0}).value().empty());
+    assert(@ENTRY@(js_string{"a"}, ctnative::js_num{1.0}).value() == "a");
+    assert(@ENTRY@(js_string{"abc"}, ctnative::js_num{2.0}).value() == "c");
+    assert(@ENTRY@(js_string{"a\0"}, ctnative::js_num{3.0}).value() == std::string("\0", 1));
+    assert(@ENTRY@(js_string{"\xc3\x89"}, ctnative::js_num{0.0}).value() == "\xc3\x89");
+    assert(@ENTRY@(js_string{"\xf0\x90\x90\x80"}, ctnative::js_num{0.0}).value() == "\xed\xb0\x80");
+    assert(@ENTRY@(js_string{"A\xed\xa0\x80"}, ctnative::js_num{0.0}).value() == "\xed\xa0\x80");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["string-slice-end-negative"] = (
+    SIGNED_SLICES["string-slice-end-negative"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string, ctnative::js_num)>);
+    assert(@ENTRY@(js_string{""}, ctnative::js_num{0.0}).value().empty());
+    assert(@ENTRY@(js_string{"a"}, ctnative::js_num{1.0}).value().empty());
+    assert(@ENTRY@(js_string{"abc"}, ctnative::js_num{2.0}).value() == "ab");
+    assert(@ENTRY@(js_string{"a\0b"}, ctnative::js_num{3.0}).value() == std::string("a\0", 2));
+    assert(@ENTRY@(js_string{"\xc3\x89x"}, ctnative::js_num{0.0}).value() == "\xc3\x89");
+    assert(@ENTRY@(js_string{"\xf0\x90\x90\x80"}, ctnative::js_num{0.0}).value() == "\xed\xa0\x81");
+    assert(@ENTRY@(js_string{"\xed\xa0\x80x"}, ctnative::js_num{0.0}).value() == "\xed\xa0\x80");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["string-signed-slices"] = (
+    SIGNED_SLICES["string-signed-slices"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@),
+        js_boolean_t (*)(js_string, js_string, js_string, js_string)>);
+    assert(@ENTRY@(js_string{""}, js_string{""}, js_string{""}, js_string{""}));
+    assert(@ENTRY@(js_string{"a"}, js_string{"a"}, js_string{""}, js_string{""}));
+    assert(@ENTRY@(js_string{"abcd"}, js_string{"d"}, js_string{"abc"}, js_string{"bc"}));
+    assert(@ENTRY@(js_string{"a\0b"}, js_string{"b"}, js_string{"a\0"}, js_string{"\0"}));
+    assert(@ENTRY@(js_string{"\xc3\x89xy"}, js_string{"y"}, js_string{"\xc3\x89x"}, js_string{"x"}));
+    assert(@ENTRY@(js_string{"\xf0\x90\x90\x80"}, js_string{"\xed\xb0\x80"}, js_string{"\xed\xa0\x81"}, js_string{""}));
+    assert(@ENTRY@(js_string{"A\xed\xa0\x80x"}, js_string{"x"}, js_string{"A\xed\xa0\x80"}, js_string{"\xed\xa0\x80"}));
+    assert(!@ENTRY@(js_string{"abc"}, js_string{"a"}, js_string{"ab"}, js_string{"b"}));
+    assert(!@ENTRY@(js_string{"abc"}, js_string{"c"}, js_string{"bc"}, js_string{"b"}));
+    assert(!@ENTRY@(js_string{"abc"}, js_string{"c"}, js_string{"ab"}, js_string{"bc"}));
+    std::cout << "true\n";
+""",
+    "true\n",
+)
+CASES["description-capture-signed-slice"] = (
+    SIGNED_SLICES["description-capture-signed-slice"],
+    r"""
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_symbol_t)>);
+    assert(@ENTRY@(Symbol()).value() == ":absent");
+    assert(@ENTRY@(Symbol(undefined_t{})).value() == ":absent");
+    assert(@ENTRY@(Symbol(js_string{""})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"a"})).value().empty());
+    assert(@ENTRY@(Symbol(js_string{"abcd"})).value() == "bc");
+    assert(@ENTRY@(Symbol(js_string{"a\0bc"})).value() == std::string("\0b", 2));
+    assert(@ENTRY@(Symbol(js_string{"\xc3\x89xyz"})).value() == "xy");
+    assert(@ENTRY@(Symbol(js_string{"\xf0\x90\x90\x80xy"})).value() == "\xed\xb0\x80x");
+    assert(@ENTRY@(Symbol(js_string{"A\xed\xa0\x80xy"})).value() == "\xed\xa0\x80x");
+    assert(@ENTRY@(Symbol.iterator).value() == "to");
+    std::cout << "true\n";
+""",
+    "true\n",
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -963,6 +1058,25 @@ def oracle(args):
         + "".join(STRING_METHODS.values())
         + "".join(STRING_INDICES.values())
         + "".join(body for name, body in STRING_SLICES.items() if name != "string-slice-end")
+        + "".join(
+            body
+            for name, body in SIGNED_SLICES.items()
+            if name not in ("string-slice-negative", "string-slice-end-negative")
+        )
+        + "function observeNegativeSlice() {\n"
+        + SIGNED_SLICES["string-slice-negative"]
+        + r"""
+  return bad('', 0) === '' && bad('a', 1) === 'a' && bad('abc', 2) === 'c' &&
+    bad('a\u0000', 3) === '\u0000';
+}
+"""
+        + "function observeNegativeSliceEnd() {\n"
+        + SIGNED_SLICES["string-slice-end-negative"]
+        + r"""
+  return bad('', 0) === '' && bad('a', 1) === '' && bad('abc', 2) === 'ab' &&
+    bad('a\u0000b', 3) === 'a\u0000';
+}
+"""
         + "function observeSliceEnd() {\n"
         + STRING_SLICES["string-slice-end"]
         + r"""
@@ -1143,6 +1257,25 @@ var symbol59StringUTF16SliceBounds = stringSliceBounds('\u00c9xy', '\u00c9', 'x'
   descriptionCaptureSlice(Symbol('\u00c9xyz')) === 'xy' &&
   descriptionCaptureSlice(Symbol('\ud801\udc00xy')) === '\udc00x' &&
   descriptionCaptureSlice(Symbol('A\ud800xy')) === '\ud800x';
+var symbol60StringSliceNegative = observeNegativeSlice();
+var symbol61StringSliceEndNegative = observeNegativeSliceEnd();
+var symbol62StringSignedSlices = stringSignedSlices('', '', '', '') &&
+  stringSignedSlices('a', 'a', '', '') && stringSignedSlices('abcd', 'd', 'abc', 'bc') &&
+  stringSignedSlices('a\u0000b', 'b', 'a\u0000', '\u0000') &&
+  !stringSignedSlices('abc', 'a', 'ab', 'b') && !stringSignedSlices('abc', 'c', 'bc', 'b') &&
+  !stringSignedSlices('abc', 'c', 'ab', 'bc');
+var symbol63DescriptionCaptureSignedSlice = descriptionCaptureSignedSlice(Symbol()) === ':absent' &&
+  descriptionCaptureSignedSlice(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureSignedSlice(Symbol('')) === '' && descriptionCaptureSignedSlice(Symbol('a')) === '' &&
+  descriptionCaptureSignedSlice(Symbol('abcd')) === 'bc' &&
+  descriptionCaptureSignedSlice(Symbol('a\u0000bc')) === '\u0000b' &&
+  descriptionCaptureSignedSlice(Symbol.iterator) === 'to';
+var symbol64StringUTF16SignedSlices = stringSignedSlices('\u00c9xy', 'y', '\u00c9x', 'x') &&
+  stringSignedSlices('\ud801\udc00', '\udc00', '\ud801', '') &&
+  stringSignedSlices('A\ud800x', 'x', 'A\ud800', '\ud800') &&
+  descriptionCaptureSignedSlice(Symbol('\u00c9xyz')) === 'xy' &&
+  descriptionCaptureSignedSlice(Symbol('\ud801\udc00xy')) === '\udc00x' &&
+  descriptionCaptureSignedSlice(Symbol('A\ud800xy')) === '\ud800x';
 """
     )
     vm = args.work / "oracle.js"
@@ -1202,6 +1335,11 @@ var symbol59StringUTF16SliceBounds = stringSliceBounds('\u00c9xy', '\u00c9', 'x'
         "StringSliceBounds",
         "DescriptionCaptureSlice",
         "StringUTF16SliceBounds",
+        "StringSliceNegative",
+        "StringSliceEndNegative",
+        "StringSignedSlices",
+        "DescriptionCaptureSignedSlice",
+        "StringUTF16SignedSlices",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1212,6 +1350,9 @@ var symbol59StringUTF16SliceBounds = stringSliceBounds('\u00c9xy', '\u00c9', 'x'
     vm_expected = vm_expected.replace(
         "symbol55StringUTF16Indices=true", "symbol55StringUTF16Indices=false"
     ).replace("symbol59StringUTF16SliceBounds=true", "symbol59StringUTF16SliceBounds=false")
+    vm_expected = vm_expected.replace(
+        "symbol64StringUTF16SignedSlices=true", "symbol64StringUTF16SignedSlices=false"
+    )
     actual = run([args.reference, str(vm)]).stdout
     if actual != vm_expected:
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
@@ -1338,7 +1479,10 @@ def main():
         ir, contract = prepare(
             args, name, source, entry_name=entry_name, parameter_types=PARAMETER_TYPES.get(name)
         )
-        if name in DESCRIPTION_GUARDS | STRING_METHODS | STRING_INDICES | STRING_SLICES:
+        if (
+            name
+            in DESCRIPTION_GUARDS | STRING_METHODS | STRING_INDICES | STRING_SLICES | SIGNED_SLICES
+        ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
         for optimize in (False, True):
@@ -1530,7 +1674,13 @@ def main():
         raise RuntimeError("captured entry control did not find the source helper")
     refuse(ir, dict(contract, entry=captures[0], parameter_types=[]), "captured-entry")
 
-    for name in (*DESCRIPTION_GUARDS, *STRING_METHODS, *STRING_INDICES, *STRING_SLICES):
+    for name in (
+        *DESCRIPTION_GUARDS,
+        *STRING_METHODS,
+        *STRING_INDICES,
+        *STRING_SLICES,
+        *SIGNED_SLICES,
+    ):
         ir, contract = accepted[name]
         for optimize in (False, True):
             refuse(
@@ -1605,7 +1755,6 @@ def main():
 
     for name, body in {
         "charat-negative": "return text.charAt(-1);",
-        "slice-negative": "return text.slice(-1);",
         "charat-fraction": "return text.charAt(1.5);",
         "slice-fraction": "return text.slice(1.5);",
         "charat-large": "return text.charAt(4294967296);",
@@ -1646,7 +1795,6 @@ def main():
         raise RuntimeError("changed String index accepted a stale fingerprint")
 
     for name, body in {
-        "end-negative": "return text.slice(0, -1);",
         "end-fraction": "return text.slice(0, 1.5);",
         "end-large": "return text.slice(0, 4294967296);",
         "end-infinity": "return text.slice(0, 1e999);",
@@ -1686,6 +1834,47 @@ def main():
         raise RuntimeError("String slice fingerprint control did not change its end")
     if "fingerprint mismatch" not in refuse(changed, contract, "string-slice-stale"):
         raise RuntimeError("changed String slice accepted a stale fingerprint")
+
+    for name, body in {
+        "start-fraction": "return text.slice(-1.5);",
+        "end-fraction": "return text.slice(0, -1.5);",
+        "start-large": "return text.slice(-4294967296);",
+        "end-large": "return text.slice(0, -4294967296);",
+        "start-infinity": "return text.slice(-1e999);",
+        "end-infinity": "return text.slice(0, -1e999);",
+        "start-dynamic": "return text.slice(-index);",
+        "end-dynamic": "return text.slice(0, -index);",
+        "start-coercion": "return text.slice(-'1');",
+        "end-object": "return text.slice(0, -{valueOf() { return 1; }});",
+        "nested-negation": "return text.slice(-(-1));",
+        "negation-escape": "const bound=-1; text.slice(bound); return bound;",
+        "replacement": "String.prototype.slice=0; return text.slice(-1);",
+        "first-unit-authority": "return text.slice(-1).toLowerCase();",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "signed-slice-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"signed-slice-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-signed-slice"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"signed-slice-budget-{budget}", max_steps=budget)
+    changed = args.work / "signed-slice-stale.mlir"
+    # Source -3 is an original literal 3 followed by its own Neg operation.
+    changed.write_text(
+        ir.read_text().replace(
+            "#ctjs.number<4613937818241073152>", "#ctjs.number<4611686018427387904>", 1
+        )
+    )
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("signed String slice fingerprint control did not change its start")
+    if "fingerprint mismatch" not in refuse(changed, contract, "signed-slice-stale"):
+        raise RuntimeError("changed signed String slice accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
