@@ -379,11 +379,6 @@ def published_class_fields(args):
                 )
                 refusals += 1
     controls = {
-        "constructor-only": original.replace("savedFirst.n = 5;", ""),
-        "wrong-record": original.replace("savedFirst.n = 5;", "second.n = 5;"),
-        "early-read": original.replace(
-            "savedFirst.n = 5;", "const early = savedFirst.n; savedFirst.n = 5;"
-        ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, early)"),
         "object-field": original.replace("savedFirst.n = 5;", "savedFirst.n = {};"),
         "unproved-field-source": original.replace(
             "savedFirst.n = 5;", "const outside = {n: 5}; savedFirst.n = outside.n;"
@@ -421,6 +416,129 @@ def published_class_fields(args):
         refusals += 1
     print(
         f"class scalar fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {refusals} refusals; native class ownership remains refused"
+    )
+
+
+def published_constructor_fields(args):
+    original = (
+        published_source()
+        .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
+        .replace("host.slot.set(element, result)", "host.slot.set(element, savedFirst.n)")
+    )
+    initialized = original.replace("savedFirst.n = 5;", "")
+    categories = (
+        original.replace("constructor(n)", "constructor(n, marker)")
+        .replace("this.n = n;", "this.n = n; this.marker = marker;")
+        .replace("new Item(2)", "new Item(2, true)")
+        .replace("new Item(7)", "new Item(7, 19)")
+    )
+    sources = {
+        # These exact sources previously refused in published_class_fields.
+        "constructor-only": (initialized, 2, 12927),
+        "wrong-record": (original.replace("savedFirst.n = 5;", "second.n = 5;"), 2, 12927),
+        "early-read": (
+            original.replace(
+                "savedFirst.n = 5;", "const early = savedFirst.n; savedFirst.n = 5;"
+            ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, early)"),
+            2,
+            15927,
+        ),
+        "literal": (initialized.replace("this.n = n;", "this.n = 11;"), 11, 21927),
+        "registered": (
+            published_source(True)
+            .replace("savedFirst.n = 5;", "")
+            .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
+            .replace("host.slot.set(element, result)", "host.slot.set(element, savedFirst.n)"),
+            2,
+            29112,
+        ),
+        "boolean-instance": (
+            categories.replace(
+                "host.slot.set(element, savedFirst.n)", "host.slot.set(element, savedFirst.marker)"
+            ),
+            "true",
+            15927,
+        ),
+        "number-instance": (
+            categories.replace(
+                "host.slot.set(element, savedFirst.n)", "host.slot.set(element, second.marker + 1)"
+            ),
+            20,
+            15927,
+        ),
+        "last-store": (initialized.replace("this.n = n;", "this.n = true; this.n = n;"), 2, 12927),
+        "read-snapshot": (
+            initialized.replace(
+                "  traceEntered = 1;",
+                "  const scalar = savedFirst.n; savedFirst.n = {};\n  traceEntered = 1;",
+            ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, scalar)"),
+            2,
+            12927,
+        ),
+    }
+    refusals = 0
+    for label, (text, expected, class_value) in sources.items():
+        name = "class-constructor-field-" + label
+        published_observation(
+            args, name, text, expected, class_result=True, class_value=class_value
+        )
+        ir, contract = published_prepare(args, name, text)
+        contract["observations"] = ["classResult", *contract["observations"]]
+        prepared = classes.prepare(args, name, ir, contract, success=True)
+        body = prepared.read_text()
+        if body.count("ctjs.construct") != 5 or len(dom.FUNCTION.findall(body)) != 8:
+            raise RuntimeError(f"{name}: preparation lost constructor, Map or function owners")
+        if 'name = "classResult"' not in body:
+            raise RuntimeError(f"{name}: original class computation lost its observation")
+        checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        for optimize in (False, True):
+            dom.lower(
+                args, prepared, checked, f"{name}-{optimize}", optimize=optimize, success=False
+            )
+            refusals += 1
+        if label == "constructor-only":
+            for suffix, request, options in (
+                ("stale", dict(contract, module_sha256="0" * 64), ""),
+                ("no-root", dict(contract, roots=[]), ""),
+                ("no-input", dict(contract, element_parameters=[]), ""),
+                ("no-map", dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]), ""),
+                ("budget", contract, "max-steps=0"),
+                ("small-budget", contract, "max-steps=100"),
+            ):
+                classes.prepare(
+                    args, name + "-" + suffix, ir, request, success=False, options=options
+                )
+                refusals += 1
+    controls = {
+        "object-argument": initialized.replace("new Item(2)", "new Item({n: 2})"),
+        "unknown-argument": initialized.replace("new Item(2)", "new Item(unknown())"),
+        "missing-argument": initialized.replace("new Item(2)", "new Item()"),
+        "constructor-expression": initialized.replace("this.n = n;", "this.n = n + 1;"),
+        "replacement": initialized.replace("this.n = n;", "this.n = n; return {};"),
+        "effect": initialized.replace("this.n = n;", "this.n = n; unknown();"),
+        "boolean-arithmetic": categories.replace(
+            "host.slot.set(element, savedFirst.n)", "host.slot.set(element, savedFirst.marker + 1)"
+        ),
+        "last-store-kind": categories.replace(
+            "this.marker = marker;", "this.marker = marker; this.marker = true;"
+        ).replace(
+            "host.slot.set(element, savedFirst.n)", "host.slot.set(element, second.marker + 1)"
+        ),
+        "read-time-kind": categories.replace(
+            "  traceEntered = 1;",
+            "  const early = savedFirst.marker; savedFirst.marker = 7; traceEntered = 1;",
+        ).replace("host.slot.set(element, savedFirst.n)", "host.slot.set(element, early + 1)"),
+    }
+    for label, text in controls.items():
+        if text == initialized:
+            raise RuntimeError(f"{label}: constructor-field refusal did not change the source")
+        name = "class-constructor-field-refused-" + label
+        ir, contract = published_prepare(args, name, text)
+        contract["observations"] = ["classResult", *contract["observations"]]
+        classes.prepare(args, name, ir, contract, success=False, diagnostic="class ")
+        refusals += 1
+    print(
+        f"class constructor fields: {len(sources)} Node/VM observations, {len(sources)} preparations, {refusals} refusals; native class ownership remains refused"
     )
 
 
@@ -659,6 +777,7 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     published_families(args)
     published_class_fields(args)
+    published_constructor_fields(args)
     if args.class_families_only:
         return
     original = source()

@@ -7,8 +7,9 @@ namespace ctcompile::ctnative::class_detail {
 bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) {
     auto entry = analysis.entry;
     llvm::DenseMap<mlir::Value, mlir::Value> origins;
-    // ponytail: only primitive constructor stores and explicit entry overwrites.
-    // Constructor evaluation and method effects need their own read-time proof.
+    llvm::DenseMap<mlir::Value, llvm::StringMap<PrimitiveAlternatives>> initialFields;
+    // ponytail: only literal/formal constructor stores and explicit entry overwrites.
+    // Constructor expressions and method effects need their own read-time proof.
     for (ctjs::ConstructOp made : entry.getBody().front().getOps<ctjs::ConstructOp>()) {
         if (!step()) { return false; }
         auto closure = sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>();
@@ -18,25 +19,32 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
             continue;
         }
         auto & body = constructor.getBody().front();
-        const auto primitive = [&](mlir::Value value) {
+        const auto primitive = [&](mlir::Value value) -> mlir::Attribute {
             if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
                 if (argument.getOwner() != &body ||
                     argument.getArgNumber() < ctjs::implicit_arguments) {
-                    return false;
+                    return {};
                 }
                 const unsigned index = argument.getArgNumber() - ctjs::implicit_arguments;
-                if (index >= made.getArgs().size()) { return false; }
+                if (index >= made.getArgs().size()) { return {}; }
                 value = made.getArgs()[index];
             }
             auto literal = sourceValue(value).getDefiningOp<ctjs::ConstantOp>();
-            return literal && ctjs::isPrimitiveAttr(literal.getValue());
+            return literal && ctjs::isPrimitiveAttr(literal.getValue()) ? literal.getValue()
+                                                                        : mlir::Attribute{};
         };
+        llvm::StringMap<PrimitiveAlternatives> initialized;
         bool safe = true, returned = false;
         for (mlir::Operation & op : body) {
             if (!step()) { return false; }
             if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+                auto value = primitive(write.getValue());
                 safe &= write.getObject() == body.getArgument(ctjs::arg_receiver) &&
-                        ctjs::ordinaryKey(write.getKey()) && primitive(write.getValue());
+                        ctjs::ordinaryKey(write.getKey()) && value;
+                if (value) {
+                    initialized[ctjs::constantKey(write.getKey())] =
+                        PrimitiveAlternatives::forTag(value.getTypeID());
+                }
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
                 returned = true;
                 // A returned formal could replace this allocation at another site.
@@ -75,6 +83,7 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
             }
         }
         if (!safe) { continue; }
+        initialFields[made.getResult()] = std::move(initialized);
         for (mlir::Value alias : aliases) {
             if (!step()) { return false; }
             origins[alias] = made.getResult();
@@ -84,7 +93,12 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> noResults;
     for (mlir::Operation & op : entry.getBody().front()) {
         if (!step()) { return false; }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
+            if (auto initial = initialFields.find(made.getResult());
+                initial != initialFields.end()) {
+                fields[made.getResult()] = std::move(initial->second);
+            }
+        } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
             auto owner = origins.lookup(sourceValue(write.getObject()));
             if (!owner) { continue; }
             analysis.remaining = remaining;
