@@ -43,13 +43,17 @@ on exact local class constructions now folds under the complete class/prototype
 proof, preserving nominal identity and constructor effects. Broader Symbol
 operations, custom hooks and nonconstant `instanceof` still require proofs.
 `Runtime/Browser.hpp` now supplies borrowed `js_document_t` and `js_element_t`
-views over public DOM/Style. Generated `matches` calls use the typed element
-receiver. An explicit `current_document_parameter` host field now binds source
+views over public DOM/Style. Generated `matches`, `closest` and `querySelector`
+calls use the typed element receiver; nullable results use optional typed views
+before checked extraction to existing element carriers. An explicit
+`current_document_parameter` host field now binds source
 `document` to an element input's owner. Generated entries scope the global
 `ctnative::document` object to that borrowed view, restoring any previous binding
 after nested calls and exceptions. Source document query-all retains a typed element
-snapshot and extracts checked members for existing operations. Default-root
-helpers, the application driver and remaining selector carrier migration still need work.
+snapshot and extracts checked members for existing operations. The original
+Bootstrap `R.find` omitted/undefined default receiver now works under a source
+document-root guard with length-only result observations. Its element-result
+consumers, the application driver and remaining snapshot carrier migration need work.
 Object/Array prototypes remain planned.
 This is the user's revised direction for the
 native C++ interface and supersedes conflicting raw-carrier prescriptions in
@@ -469,8 +473,21 @@ borrowed views and reuses the existing `.length`/bounded-index proof. Each index
 extraction preserves the anchor's live Style association; no whole-vector
 conversion is added. Saved membership survives attribute/class writes, and later
 queries see current membership. Snapshot escapes, joins, unproved indices and
-dataset-enabled mutation loops remain refused. The full Bootstrap default-root
-presence proof, complete helpers and application driver remain unfinished.
+dataset-enabled mutation loops remain refused. A source guard of the bound
+document root now proves repeated root reads present inside that arm; all admitted
+effects preserve the root, and the fact is restored on branch exit. This supports
+the original Bootstrap `R.find` omitted or explicit-undefined default and its
+existing length-only spread/concat proof. Unguarded defaults, complete helper
+result consumers and the application driver remain unfinished.
+The focused original-default fixture passes **32 native executions/92 refusals,
+86.49 s**; the existing explicit-receiver spread fixture passes **32/52, 84.42 s**.
+Exact host-contract CTest passes **1/1, 0.57 s total**, covering root-guard authority,
+helper initialization order, missing arguments and bounded live proofs.
+Element `closest`/`querySelector` emission also uses typed optional views before
+checked extraction; their selected query/prototype-query regressions pass **2/2,
+168.70 s**, respectively **16/14** and **64/100** executions/refusals. These checks
+do not claim complete Bootstrap admission or a full-suite result.
+
 The focused document query-all source test passes **32 native executions and
 84 refusals**, with both providers, compilers, printing layouts and optimization
 policies; the exact host-contract CTest passes **1/1** with live IR and bounded-proof

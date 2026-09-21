@@ -139,8 +139,12 @@ Both return `std::optional<js_element_t>` internally. The emitted
 `ctnative::element_or_null` bridge checks an engaged view and converts it to the
 existing nullable `element_ref` carrier; absence is canonical DOM null, never
 undefined. A truthiness or `!`/`!!` guard permits dereferencing that exact result
-only in the present arm. Unguarded use, borrowed returns/storage, branch/loop
-transport and explicit source null comparisons remain refused. Invalid selector
+only in the present arm. A guard of the bound `document.documentElement` also
+proves subsequent root reads present in that arm: the complete supported effect
+set cannot replace the root or reenter script. This fact is restored on branch
+exit and does not follow a guard of an unrelated selector result.
+Unguarded use, borrowed returns/storage, branch/loop transport and explicit
+source null comparisons remain refused. Invalid selector
 syntax keeps the existing C++ exception and preceding source effects.
 
 Source `document.querySelectorAll(String)` uses the same explicit binding and
@@ -156,8 +160,37 @@ membership, while later queries see the changes. Returns, storage, joins,
 callback retention and unproved indices remain refused; dataset-enabled mutation
 loops still require a separate backedge alias proof.
 
-This binding does not complete Bootstrap's default-root presence proof and full
-helpers, omitted element inputs, initialization or the application driver.
+The original Bootstrap `R.find` default now works under that source root guard,
+with either an omitted receiver or explicit `undefined`. Local callable slots
+may be read inside source `if` arms when initialized unconditionally beforehand;
+conditional/late writes, replacement and wrong receivers remain refused.
+Missing helper arguments become exact `undefined`, while excess arity remains
+unsupported. The existing initial `undefined` binding and live entry proof
+authorize selecting the original default arm. Spread/concat still requires its
+complete confined length-only proof; no default expression or source effect is
+replaced with a handwritten helper.
+
+This does not establish a root for an unguarded caller. Consuming `R.find` element
+members, general borrowed transport, initialization and the application driver
+remain unfinished.
+
+The focused `CTNative/Browser/native-dom-document-default.test` passes **32 native
+executions and 92 refusals, 86.49 s**, with the unchanged vendor-pinned `R.find`
+body, both providers, GCC/Clang, printing layouts and optimization policies.
+It covers omitted/explicit-undefined calls, both document anchor positions,
+empty/replaced roots, matching-root exclusion, detached anchors, live hover,
+selector exception order, rejected inputs and outer-document restoration.
+The existing spread-length regression passes **32 executions and 52 refusals,
+84.42 s**. Exact host-contract CTest passes **1/1, 0.57 s total**, including
+guard mutation, missing/excess arguments, callable initialization order and
+budget controls. These are focused public DOM/Style measurements.
+
+Admitted element `closest` and `querySelector` calls now use the same typed
+`js_element_t` receiver and optional-result bridge as document queries. Guarded
+chains retain their live Style association. The selected query/prototype-query
+regressions pass **2/2, 168.70 s**: respectively **16 native executions/14 refusals**
+and **64/100**. Source admission and browser behavior are unchanged by this
+carrier migration.
 
 The focused `CTNative/Browser/native-dom-document.test` passes **48 native
 executions and 82 refusals** across borrowed/owned providers, both compilers,

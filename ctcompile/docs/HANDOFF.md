@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded Bootstrap document defaults, 2026-09-21 UTC
+
+Continued **8b6ff9d7** and resumed the interrupted default-root/typed-selector
+draft recorded in the iteration 38 journal. **4500fada** admits the unchanged
+vendor-pinned Bootstrap `R.find` with an omitted or explicit-`undefined` receiver
+inside a source document-root guard. Missing helper arguments become exact
+`undefined`; the original default arm selects `document.documentElement`.
+Root presence is scoped to the proved guard, and immutable local callable slots
+can be read inside `if` arms after unconditional initialization. Complete live
+effect, receiver, escape and bounded-work proofs remain required.
+
+**e6279f23** separately emits admitted `closest`/`querySelector` calls through
+`js_element_t`, optional typed results and the existing checked nullable bridge.
+Guarded chains preserve their live Style association. Both changes reuse public
+ctbrowser DOM/Style and the existing scoped global document; no browser/shared
+implementation changed and native output has no Script dependency.
+
+Focused checks pass: exact host-contract CTest **1/1, 0.57 s total**; new
+document-default lit **32 native executions/92 refusals, 86.49 s**; existing
+spread-length lit **32/52, 84.42 s**; query/prototype-query lit **2/2, 168.70 s**,
+respectively **16/14** and **64/100**. All 13 code/test hashes match the devbox.
+Scoped checks pass; required formatting retains 16 untouched diagnostics.
+Full suites and broad replays were skipped; no new Node/VM result is claimed.
+
+**Next browser boundary:** `R.find` spread/concat results still permit only length
+observations. Prove indexed/iterated element consumers using existing snapshot
+ownership and bounds checks, preserving the original helper. An unguarded
+default still lacks a root guarantee. Remaining typed snapshot emission, the
+application driver, overlapping DOM Map keys, original B/Data+B, object-valued
+fields, tagged Map snapshots, broader Strings, conditional callees and mutable
+cells remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-21-guarded-bootstrap-root.md).
+
 ## Global native document, 2026-09-21 UTC
 
 Continued clean **21c65d1c** and implemented the user's global-document request.
