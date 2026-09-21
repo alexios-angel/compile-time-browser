@@ -240,7 +240,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (hasKind(read.getObject(), Kind::elementPrototype) && key.size() <= 16) {
             auto method = elementMethods.find(key);
             if (method != elementMethods.end() &&
-                (method->second.second == HostDOMMethod::querySelector ||
+                (method->second.second == HostDOMMethod::matches ||
+                 method->second.second == HostDOMMethod::closest ||
+                 method->second.second == HostDOMMethod::querySelector ||
                  method->second.second == HostDOMMethod::querySelectorAll)) {
                 values[read.getResult()] = Kind::prototypeSelector;
                 provedMethods.try_emplace(read, method->second.second);
@@ -511,6 +513,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[invoke.getResult()] = kind == HostDOMMethod::querySelectorAll
                                              ? Kind::elementVector
                                              : Kind::nullableElement;
+            if (kind == HostDOMMethod::matches) { values[invoke.getResult()] = Kind::boolean; }
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::charAt) || hasKind(invoke.getCallee(), Kind::slice)) {
