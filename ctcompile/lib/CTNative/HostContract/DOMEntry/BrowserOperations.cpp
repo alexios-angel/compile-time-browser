@@ -50,10 +50,9 @@ std::optional<double> stringIndex(mlir::Value value) {
         literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
     if (!number) { return std::nullopt; }
     const double offset = negative ? -number.getDouble() : number.getDouble();
-    // ponytail: uint32 magnitudes fit size_t on every native target; broader
+    // ponytail: bounded finite magnitudes fit size_t after truncation; broader
     // inputs need their own ToIntegerOrInfinity and representability proof.
-    if (!std::isfinite(offset) || offset < -4294967295.0 || offset > 4294967295.0 ||
-        std::floor(offset) != offset) {
+    if (!std::isfinite(offset) || offset < -4294967295.0 || offset > 4294967295.0) {
         return std::nullopt;
     }
     return offset;
@@ -65,7 +64,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         unary && unary.getKind() == ctjs::UnaryKind::Neg) {
         if (!spend()) { return false; }
         if (!stringIndex(unary.getResult())) {
-            refusal = "DOM String indexing negation requires one bounded integer literal";
+            refusal = "DOM String indexing negation requires one bounded Number literal";
             return false;
         }
         unsigned bounds = 0;
@@ -446,7 +445,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             for (mlir::Value argument : arguments) {
                 if (!spend()) { return false; }
                 if (!stringIndex(argument)) {
-                    refusal = "DOM String indexing requires bounded integer literals";
+                    refusal = "DOM String indexing requires bounded Number literals";
                     return false;
                 }
             }

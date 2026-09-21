@@ -423,6 +423,59 @@ SIGNED_CHARAT = {
 }
 """,
 }
+# Keep all seven former fractional refusal programs byte-identical.
+FRACTIONAL_WITNESSES = {
+    "string-index-charat-fraction": (
+        "function bad(text, index) { return text.charAt(1.5); }\n",
+        ("", "", "b"),
+    ),
+    "string-index-slice-fraction": (
+        "function bad(text, index) { return text.slice(1.5); }\n",
+        ("", "", "bc"),
+    ),
+    "string-slice-end-fraction": (
+        "function bad(text, index) { return text.slice(0, 1.5); }\n",
+        ("", "a", "a"),
+    ),
+    "string-slice-start-fraction": (
+        "function bad(text, index) { return text.slice(0.5, 2); }\n",
+        ("", "a", "ab"),
+    ),
+    "signed-slice-start-fraction": (
+        "function bad(text, index) { return text.slice(-1.5); }\n",
+        ("", "a", "c"),
+    ),
+    "signed-slice-end-fraction": (
+        "function bad(text, index) { return text.slice(0, -1.5); }\n",
+        ("", "", "ab"),
+    ),
+    "signed-charat-fraction": (
+        "function bad(text, index) { return text.charAt(-1.5); }\n",
+        ("", "", ""),
+    ),
+}
+FRACTIONAL_INDICES = {
+    **{name: source for name, (source, _) in FRACTIONAL_WITNESSES.items()},
+    "string-fractional-indices": """function stringFractionalIndices(text, first, middle, tail) {
+  return text.charAt(0.9) === first && text.charAt(-0.9) === first &&
+    text.charAt(1.9) === middle && text.charAt(-1.9) === '' &&
+    text.slice(0.9, 1.9) === first && text.slice(1.9, 2.9) === middle &&
+    text.slice(2.9) === tail && text.slice(-0.9) === text && text.slice(-0.9, -0.9) === '' &&
+    text.slice(2.9, 1.9) === '' && text.slice(-4294967294.9) === text &&
+    text.charAt(4294967294.9) === '' && text.charAt(-4294967294.9) === '' &&
+    text.slice(4294967294.9) === '' && text.slice(0, -4294967294.9) === '';
+}
+""",
+    "description-capture-fractional-index": """function descriptionCaptureFractionalIndex(key) {
+  const text = key.description;
+  key = Symbol('changed');
+  function restore() {
+    return text !== undefined ? text.charAt(-0.75) + text.slice(1.5) : ':absent';
+  }
+  return restore();
+}
+""",
+}
 PARAMETER_TYPES = {
     "parameter-state": ["symbol", "symbol", "string", "number", "boolean"],
     "parameter-description": ["symbol"],
@@ -461,6 +514,9 @@ PARAMETER_TYPES = {
     "string-charat-negative": ["string", "number"],
     "string-signed-charat": ["string", "string"],
     "description-capture-signed-charat": ["symbol"],
+    **{name: ["string", "number"] for name in FRACTIONAL_WITNESSES},
+    "string-fractional-indices": ["string", "string", "string", "string"],
+    "description-capture-fractional-index": ["symbol"],
 }
 CASES = {
     "state": (
@@ -1037,6 +1093,28 @@ CASES["description-capture-signed-charat"] = (
 """,
     "true\n",
 )
+for name, (source, expected) in FRACTIONAL_WITNESSES.items():
+    CASES[name] = (
+        source,
+        """
+    using namespace ctnative;
+    static_assert(std::is_same_v<decltype(&@ENTRY@), js_string (*)(js_string, ctnative::js_num)>);
+"""
+        + "".join(
+            f"    assert(@ENTRY@(js_string{{{json.dumps(text)}}}, ctnative::js_num{{0.0}}).value() == {json.dumps(value)});\n"
+            for text, value in zip(("", "a", "abc"), expected, strict=True)
+        )
+        + '    std::cout << "true\\n";\n',
+        "true\n",
+    )
+CASES["string-fractional-indices"] = (
+    FRACTIONAL_INDICES["string-fractional-indices"],
+    *CASES["string-slice-bounds"][1:],
+)
+CASES["description-capture-fractional-index"] = (
+    FRACTIONAL_INDICES["description-capture-fractional-index"],
+    *CASES["description-type-guard"][1:],
+)
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
@@ -1136,6 +1214,9 @@ def oracle(args):
             if name not in ("string-slice-negative", "string-slice-end-negative")
         )
         + "".join(body for name, body in SIGNED_CHARAT.items() if name != "string-charat-negative")
+        + "".join(
+            body for name, body in FRACTIONAL_INDICES.items() if name not in FRACTIONAL_WITNESSES
+        )
         + "function observeNegativeCharAt() {\n"
         + SIGNED_CHARAT["string-charat-negative"]
         + r"""
@@ -1373,7 +1454,31 @@ var symbol68StringUTF16SignedCharAt = stringSignedCharAt('\u00c9xy', '\u00c9') &
   descriptionCaptureSignedCharAt(Symbol('\u00c9xy')) === '\u00c9' &&
   descriptionCaptureSignedCharAt(Symbol('\ud801\udc00x')) === '\ud801' &&
   descriptionCaptureSignedCharAt(Symbol('\ud800xy')) === '\ud800';
+var symbol69StringFractionalIndices = stringFractionalIndices('', '', '', '') &&
+  stringFractionalIndices('a', 'a', '', '') && stringFractionalIndices('abcd', 'a', 'b', 'cd') &&
+  stringFractionalIndices('a\u0000b', 'a', '\u0000', 'b') &&
+  !stringFractionalIndices('abc', 'a', 'bc', 'c') && !stringFractionalIndices('abc', 'a', 'b', 'bc');
+var symbol70DescriptionCaptureFractionalIndex = descriptionCaptureFractionalIndex(Symbol()) === ':absent' &&
+  descriptionCaptureFractionalIndex(Symbol(undefined)) === ':absent' &&
+  descriptionCaptureFractionalIndex(Symbol('')) === '' &&
+  descriptionCaptureFractionalIndex(Symbol('Ab')) === 'Ab' &&
+  descriptionCaptureFractionalIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
+  descriptionCaptureFractionalIndex(Symbol('\ud800')) === '\ud800' &&
+  descriptionCaptureFractionalIndex(Symbol.iterator) === 'Symbol.iterator';
+var symbol71StringUTF16FractionalIndices = stringFractionalIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
+  stringFractionalIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
+  stringFractionalIndices('\ud800xy', '\ud800', 'x', 'y') &&
+  stringFractionalIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + "".join(
+            f"\nfunction observeFractional{i}() {{ {body}\nreturn "
+            + " && ".join(
+                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
+                for text, value in zip(("", "a", "abc"), expected, strict=True)
+            )
+            + f"; }}\nvar symbol{i}FractionalWitness{i} = observeFractional{i}();\n"
+            for i, (body, expected) in enumerate(FRACTIONAL_WITNESSES.values(), 72)
+        )
     )
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -1441,6 +1546,10 @@ var symbol68StringUTF16SignedCharAt = stringSignedCharAt('\u00c9xy', '\u00c9') &
         "StringSignedCharAt",
         "DescriptionCaptureSignedCharAt",
         "StringUTF16SignedCharAt",
+        "StringFractionalIndices",
+        "DescriptionCaptureFractionalIndex",
+        "StringUTF16FractionalIndices",
+        *(f"FractionalWitness{i}" for i in range(72, 79)),
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     # The VM uses ASCII casing and byte indexing (Script/builtins/text/string.cpp).
@@ -1454,6 +1563,9 @@ var symbol68StringUTF16SignedCharAt = stringSignedCharAt('\u00c9xy', '\u00c9') &
     vm_expected = vm_expected.replace(
         "symbol64StringUTF16SignedSlices=true", "symbol64StringUTF16SignedSlices=false"
     ).replace("symbol68StringUTF16SignedCharAt=true", "symbol68StringUTF16SignedCharAt=false")
+    vm_expected = vm_expected.replace(
+        "symbol71StringUTF16FractionalIndices=true", "symbol71StringUTF16FractionalIndices=false"
+    )
     actual = run([args.reference, str(vm)]).stdout
     if actual != vm_expected:
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
@@ -1588,6 +1700,7 @@ def main():
             | STRING_SLICES
             | SIGNED_SLICES
             | SIGNED_CHARAT
+            | FRACTIONAL_INDICES
         ):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
@@ -1787,6 +1900,7 @@ def main():
         *STRING_SLICES,
         *SIGNED_SLICES,
         *SIGNED_CHARAT,
+        *FRACTIONAL_INDICES,
     ):
         ir, contract = accepted[name]
         for optimize in (False, True):
@@ -1861,8 +1975,6 @@ def main():
         raise RuntimeError("changed String method accepted a stale fingerprint")
 
     for name, body in {
-        "charat-fraction": "return text.charAt(1.5);",
-        "slice-fraction": "return text.slice(1.5);",
         "charat-large": "return text.charAt(4294967296);",
         "slice-large": "return text.slice(4294967296);",
         "charat-infinity": "return text.charAt(1e999);",
@@ -1901,7 +2013,6 @@ def main():
         raise RuntimeError("changed String index accepted a stale fingerprint")
 
     for name, body in {
-        "end-fraction": "return text.slice(0, 1.5);",
         "end-large": "return text.slice(0, 4294967296);",
         "end-infinity": "return text.slice(0, 1e999);",
         "end-dynamic": "return text.slice(0, index);",
@@ -1910,7 +2021,6 @@ def main():
         "end-object": "return text.slice(0, {valueOf() { return 2; }});",
         "end-effect": "return text.slice(0, unknown());",
         "start-dynamic": "return text.slice(index, 2);",
-        "start-fraction": "return text.slice(0.5, 2);",
         "extra": "return text.slice(0, 2, 3);",
         "detached": "const method=text.slice; return method(0, 2);",
         "replacement": "String.prototype.slice=0; return text.slice(0, 2);",
@@ -1942,8 +2052,6 @@ def main():
         raise RuntimeError("changed String slice accepted a stale fingerprint")
 
     for name, body in {
-        "start-fraction": "return text.slice(-1.5);",
-        "end-fraction": "return text.slice(0, -1.5);",
         "start-large": "return text.slice(-4294967296);",
         "end-large": "return text.slice(0, -4294967296);",
         "start-infinity": "return text.slice(-1e999);",
@@ -1983,7 +2091,6 @@ def main():
         raise RuntimeError("changed signed String slice accepted a stale fingerprint")
 
     for name, body in {
-        "fraction": "return text.charAt(-1.5);",
         "large": "return text.charAt(-4294967296);",
         "infinity": "return text.charAt(-1e999);",
         "dynamic": "return text.charAt(-index);",
@@ -2022,6 +2129,47 @@ def main():
         raise RuntimeError("signed charAt fingerprint control did not change its index")
     if "fingerprint mismatch" not in refuse(changed, contract, "signed-charat-stale"):
         raise RuntimeError("changed signed charAt accepted a stale fingerprint")
+
+    for name, body in {
+        "charat-large": "return text.charAt(4294967295.5);",
+        "slice-large": "return text.slice(4294967295.5);",
+        "charat-negative-large": "return text.charAt(-4294967295.5);",
+        "slice-end-negative-large": "return text.slice(0, -4294967295.5);",
+        "charat-coercion": "return text.charAt('1.5');",
+        "slice-coercion": "return text.slice(-'1.5');",
+        "charat-dynamic": "return text.charAt(index + 0.5);",
+        "slice-dynamic": "return text.slice(0, index - 0.5);",
+        "negation-escape": "const bound=-0.5; text.charAt(bound); return bound;",
+        "extra-argument": "return text.charAt(0, -0.5);",
+        "detached": "const method=text.slice; return method(-0.5);",
+        "first-unit-authority": "return text.charAt(0.5).toLowerCase();",
+        "negative-zero-authority": "return text.charAt(-0.5).toLowerCase();",
+        "description-unguarded": "return Symbol(text).description.charAt(-0.5);",
+    }.items():
+        ir, contract = prepare(
+            args,
+            "fractional-index-" + name,
+            f"function bad(text, index) {{ {body} }}\n",
+            entry_name="bad",
+            parameter_types=["string", "number"],
+        )
+        contract["initial_intrinsics"] = ["Symbol", "String"]
+        for optimize in (False, True):
+            refuse(ir, contract, f"fractional-index-{name}-{optimize}", optimize=optimize)
+    ir, contract = accepted["description-capture-fractional-index"]
+    for budget in (0, 1, 100):
+        refuse(ir, contract, f"fractional-index-budget-{budget}", max_steps=budget)
+    changed = args.work / "fractional-index-stale.mlir"
+    # Change only the literal 0.75 to 1.5 under its original Neg operation.
+    changed.write_text(
+        ir.read_text().replace(
+            "#ctjs.number<4604930618986332160>", "#ctjs.number<4609434218613702656>", 1
+        )
+    )
+    if changed.read_text() == ir.read_text():
+        raise RuntimeError("fractional index fingerprint control did not change its magnitude")
+    if "fingerprint mismatch" not in refuse(changed, contract, "fractional-index-stale"):
+        raise RuntimeError("changed fractional index accepted a stale fingerprint")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")

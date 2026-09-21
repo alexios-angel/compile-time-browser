@@ -558,7 +558,13 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             at, where, mlir::TypeRange{indexType}, units.getResult(0), at.getStringAttr("size"),
             mlir::ArrayAttr{}, mlir::ArrayAttr{}, mlir::ValueRange{});
         const auto offset = [&](mlir::Value argument) -> mlir::Value {
-            auto number = convertScalar(at, where, argument, at.getF64Type());
+            // Truncate before testing the sign: -0.5 selects index zero, not
+            // the end of the String, for both charAt and slice.
+            auto number =
+                callWithConstValueOperands(
+                    at, where, mlir::TypeRange{at.getF64Type()}, at.getStringAttr("std::trunc"),
+                    mlir::ValueRange{convertScalar(at, where, argument, at.getF64Type())})
+                    .getResult(0);
             auto zero = ec::ConstantOp::create(at, where, at.getF64Type(), at.getF64FloatAttr(0.0));
             auto negative =
                 ec::CmpOp::create(at, where, at.getI1Type(), ec::CmpPredicate::lt, number, zero);
