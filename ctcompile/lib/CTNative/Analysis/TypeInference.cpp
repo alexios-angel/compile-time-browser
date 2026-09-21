@@ -414,6 +414,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     mlir::MLIRContext * c = op->getContext();
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && domEntry_ && domEntry_->isSymbolDescription(read)) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{
+                                           OptType::get(c, StrType::get(c, StrEncoding::UTF8))}));
+        return mlir::success();
+    }
+
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ && !domEntry_->wellKnownSymbol(read).empty()) {
         propagateIfChanged(results[0], results[0]->join(TypeValue{SymbolType::get(c)}));
         return mlir::success();

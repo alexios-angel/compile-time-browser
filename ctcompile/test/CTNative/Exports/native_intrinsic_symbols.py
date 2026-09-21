@@ -66,6 +66,40 @@ METHODS = r"""function methods() {
 METHOD_TRANSCRIPT = (
     "copy:fresh:loop:value:absent:text:undefined:empty:nul:unicode:known:distinct:truthy:type"
 )
+DESCRIPTIONS = r"""function descriptions() {
+  let key = Symbol('saved');
+  const saved = key.description;
+  key = Symbol('changed');
+  const absent = Symbol().description;
+  const explicit = Symbol(undefined).description;
+  const empty = Symbol('').description;
+  let state = absent;
+  for (let i = 0; i < 3; i++) state = Symbol('last').description;
+  const joined = absent ? 'wrong' : saved;
+  const missing = saved ? absent : 'wrong';
+  return (absent === undefined ? 'absent' : 'wrong') +
+    (explicit === undefined ? ':undefined' : ':wrong') +
+    (typeof absent === 'undefined' ? ':type' : ':wrong') +
+    (empty === '' ? ':empty' : ':wrong') +
+    (typeof empty === 'string' ? ':empty-type' : ':wrong') +
+    (empty ? ':wrong' : ':empty-false') +
+    (!absent ? ':false' : ':wrong') +
+    (saved === 'saved' ? ':snapshot' : ':wrong') +
+    (key.description === 'changed' ? ':changed' : ':wrong') +
+    (joined === saved ? ':join' : ':wrong') +
+    (missing === undefined ? ':missing-join' : ':wrong') +
+    (state === 'last' ? ':loop' : ':wrong') +
+    (Symbol.iterator.description === 'Symbol.iterator' ? ':known' : ':wrong') +
+    (Symbol('a\u0000b').description === 'a\u0000b' ? ':nul' : ':wrong') +
+    (Symbol('\ud800\u00e9').description === '\ud800\u00e9' ? ':unicode' : ':wrong') +
+    (absent == explicit ? ':loose' : ':wrong') +
+    (absent !== null ? ':not-null' : ':wrong');
+}
+"""
+DESCRIPTION_TRANSCRIPT = (
+    "absent:undefined:type:empty:empty-type:empty-false:false:snapshot:changed:join:"
+    "missing-join:loop:known:nul:unicode:loose:not-null"
+)
 CASES = {
     "state": (
         STATE,
@@ -113,6 +147,38 @@ CASES = {
 """,
         METHOD_TRANSCRIPT + "\n",
     ),
+    "descriptions": (
+        DESCRIPTIONS,
+        f"""
+    const auto saved = @ENTRY@();
+    assert(saved.value() == "{DESCRIPTION_TRANSCRIPT}");
+    assert(@ENTRY@() == saved);
+    std::cout << saved.value() << '\\n';
+""",
+        DESCRIPTION_TRANSCRIPT + "\n",
+    ),
+    "absent-description": (
+        "function absentDescription() { return Symbol().description; }\n",
+        """
+    static_assert(std::is_same_v<decltype(@ENTRY@()), ctnative::nullable_string>);
+    const auto saved = @ENTRY@();
+    assert(saved.tag == ctnative::nullable_string::kind::undefined);
+    std::cout << "true\\n";
+""",
+        "true\n",
+    ),
+    # The former refused source body is unchanged, including its direct return.
+    "description": (
+        "function bad() { return Symbol.iterator.description; }\n",
+        """
+    static_assert(std::is_same_v<decltype(@ENTRY@()), ctnative::nullable_string>);
+    const auto saved = @ENTRY@();
+    assert(saved.tag == ctnative::nullable_string::kind::string);
+    assert(saved.value == "Symbol.iterator");
+    std::cout << "true\\n";
+""",
+        "true\n",
+    ),
 }
 # The complete former refused programs now execute unchanged.
 for name, body, expected in (
@@ -133,7 +199,12 @@ REFUSALS = {
     "dynamic-key": "return Symbol[typeof Symbol.iterator];",
     "unknown-key": "return Symbol.unknown;",
     "registry": "return typeof Symbol.for('x');",
-    "description": "return Symbol.iterator.description;",
+    "description-mutation": "Symbol.prototype.description=0; return Symbol.iterator.description;",
+    "description-own-write": "const key=Symbol(); key.description='changed'; return key.description;",
+    "description-call": "return Symbol.iterator.description();",
+    "description-key": "const key='description'; return Symbol.iterator[typeof key];",
+    "description-mixed-join": "return Symbol.iterator ? Symbol().description : 1;",
+    "description-dom-null-join": "return Symbol.iterator ? Symbol().description : null;",
     "new-symbol": "return new Symbol('x');",
     "number-description": "return Symbol(1);",
     "null-description": "return Symbol(null);",
@@ -168,7 +239,7 @@ def prepare(args, name, source, *, entry_name=None):
 
 
 def oracle(args):
-    source = STATE + OBSERVE + CONSTRUCT + METHODS + f"""
+    source = STATE + OBSERVE + CONSTRUCT + METHODS + DESCRIPTIONS + f"""
 var symbol01State = state() === Symbol.hasInstance;
 var symbol02Repeat = state() === Symbol.hasInstance;
 var symbol03Observe = observe() === {json.dumps(TRANSCRIPT)};
@@ -177,6 +248,9 @@ var symbol05Snapshot = construct().toString() === 'Symbol(same)';
 var symbol06Methods = methods() === {json.dumps(METHOD_TRANSCRIPT)};
 var symbol07FreshType = typeof Symbol() === 'symbol';
 var symbol08KnownText = Symbol.iterator.toString() === 'Symbol(Symbol.iterator)';
+var symbol09Descriptions = descriptions() === {json.dumps(DESCRIPTION_TRANSCRIPT)};
+var symbol10AbsentDescription = Symbol().description === undefined;
+var symbol11KnownDescription = Symbol.iterator.description === 'Symbol.iterator';
 """
     vm = args.work / "oracle.js"
     vm.write_text(source)
@@ -189,6 +263,9 @@ var symbol08KnownText = Symbol.iterator.toString() === 'Symbol(Symbol.iterator)'
         "Methods",
         "FreshType",
         "KnownText",
+        "Descriptions",
+        "AbsentDescription",
+        "KnownDescription",
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
@@ -236,6 +313,31 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
                 raise RuntimeError(f"{name}/{mode}: intrinsic binary links DOM/Script/AOT")
             if run([str(binary)]).stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: native Symbol observations differ")
+            if name == "absent-description-False" and mode == "explicit" and index == 0:
+                mutant, count = re.subn(r"ctnative::undefined_t\{\}", "ctnative::js_null_t{}", cpp)
+                if not count:
+                    raise RuntimeError("description absence mutation did not replace undefined")
+                mutant_source = args.work / "null-description.cpp"
+                mutant_binary = args.work / "null-description"
+                mutant_source.write_text(mutant + client)
+                run(
+                    [
+                        compiler,
+                        *FLAGS,
+                        *includes,
+                        str(mutant_source),
+                        *libraries,
+                        "-o",
+                        str(mutant_binary),
+                    ]
+                )
+                if (
+                    "saved.tag == ctnative::nullable_string::kind::undefined"
+                    not in run([str(mutant_binary)], success=False).stderr
+                ):
+                    raise RuntimeError(
+                        "description absence mutation failed for an unrelated reason"
+                    )
             if name == "construct-False" and mode == "explicit" and index == 0:
                 mutant, count = re.subn(r"\bctnative::Symbol\(", "symbol_mutant(", cpp)
                 if count != 1:
@@ -352,7 +454,7 @@ def main():
     refuse(forged, manifest, "forged-refused")
     print(
         f"Symbol exports: typed branch/loop return and primitive transcript agree with Node/VM; "
-        f"{8 * len(CASES)} native executions, {refusals} refusals, 1 identity mutation; Core only, no DOM inputs"
+        f"{8 * len(CASES)} native executions, {refusals} refusals, 2 mutations; Core only, no DOM inputs"
     )
 
 

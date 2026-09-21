@@ -51,6 +51,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (llvm::isa<ctjs::NullAttr>(constant.getValue())) { domNulls.insert(constant); }
         });
         function.walk([&](ctjs::GetPropertyOp read) {
+            if (entry.isSymbolDescription(read)) { domSymbolDescriptions.insert(read); }
             if (auto name = entry.wellKnownSymbol(read); !name.empty()) {
                 domSymbols.try_emplace(read, name);
             }
@@ -195,6 +196,34 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             at, where, carrierType(context, carrier::symbol),
             ec::OpaqueAttr::get(context, ("ctnative::Symbol." + found->second).str()));
         read.getResult().replaceAllUsesWith(value.getResult());
+        read.erase();
+        return true;
+    }
+    if (domSymbolDescriptions.contains(operation)) {
+        auto read = llvm::cast<ctjs::GetPropertyOp>(operation);
+        const auto type = carrierType(context, carrier::nullableString);
+        auto description = ec::MemberCallOpaqueOp::create(
+            at, where,
+            mlir::TypeRange{ec::OpaqueType::get(context, "std::optional<ctnative::js_string>")},
+            read.getObject(), at.getStringAttr("description"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        auto present = ec::MemberCallOpaqueOp::create(
+            at, where, mlir::TypeRange{at.getI1Type()}, description.getResult(0),
+            at.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+            mlir::ValueRange{});
+        auto branch =
+            mlir::scf::IfOp::create(at, where, mlir::TypeRange{type}, present.getResult(0), true);
+        auto inside = mlir::OpBuilder::atBlockBegin(&branch.getThenRegion().front());
+        auto text = ec::MemberCallOpaqueOp::create(
+            inside, where, mlir::TypeRange{carrierType(context, carrier::string)},
+            description.getResult(0), inside.getStringAttr("value"), mlir::ArrayAttr{},
+            mlir::ArrayAttr{}, mlir::ValueRange{});
+        mlir::scf::YieldOp::create(inside, where,
+                                   convertScalar(inside, where, text.getResult(0), type));
+        inside.setInsertionPointToStart(&branch.getElseRegion().front());
+        mlir::scf::YieldOp::create(
+            inside, where, convertScalar(inside, where, absentConstant(inside, where), type));
+        read.getResult().replaceAllUsesWith(branch.getResult(0));
         read.erase();
         return true;
     }

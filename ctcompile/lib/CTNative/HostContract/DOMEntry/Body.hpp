@@ -30,6 +30,7 @@ enum class Kind {
     symbol,
     symbolToString,
     symbolValueOf,
+    undefinedString,
     elementPrototype,
     prototypeSelector,
     selectorCall,
@@ -131,6 +132,7 @@ struct Body {
     llvm::DenseSet<ctjs::LoadGlobalOp> & provedElementIntrinsics;
     llvm::DenseSet<ctjs::LoadGlobalOp> & provedSymbolIntrinsics;
     llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> & provedSymbols;
+    llvm::DenseSet<ctjs::GetPropertyOp> & provedSymbolDescriptions;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> & provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> & provedNumberIntrinsics;
     std::vector<ctjs::LoadGlobalOp> & provedURIIntrinsics;

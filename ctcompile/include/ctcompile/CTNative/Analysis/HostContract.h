@@ -247,6 +247,7 @@ public:
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] llvm::StringRef wellKnownSymbol(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] bool isSymbolDescription(ctjs::GetPropertyOp read) const;
     // One URI or JSON.parse call with owning String/json_value continuations;
     // the implicit error payload is proved unused. A parse invoke may nest in
     // the decode success continuation. This is fresh provider evidence.
@@ -289,6 +290,7 @@ private:
     llvm::DenseSet<ctjs::GetPropertyOp> elementPrototypes;
     llvm::DenseSet<ctjs::LoadGlobalOp> elementIntrinsics, symbolIntrinsics;
     llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> symbols;
+    llvm::DenseSet<ctjs::GetPropertyOp> symbolDescriptions;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> datasetValues;
     std::vector<ctjs::CallOp> stringPrefixRegExps;
     std::vector<mlir::BlockArgument> datasetElements;

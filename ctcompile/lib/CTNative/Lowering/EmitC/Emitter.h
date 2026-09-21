@@ -55,6 +55,7 @@ struct lowering {
     llvm::DenseMap<mlir::Operation *, HostDOMCall> domCalls;
     llvm::DenseSet<mlir::Operation *> domReads;
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> domSymbols;
+    llvm::DenseSet<mlir::Operation *> domSymbolDescriptions;
     llvm::DenseSet<mlir::Value> domDatasetParameters;
     llvm::DenseSet<mlir::Operation *> domInvocations;
     llvm::DenseSet<mlir::Value> domUnusedPayloads;

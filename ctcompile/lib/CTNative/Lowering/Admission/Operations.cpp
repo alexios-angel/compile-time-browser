@@ -25,10 +25,10 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read &&
-            (!domEntry->wellKnownSymbol(read).empty() || domEntry->isStringVectorLength(read) ||
-             domEntry->isStringVectorIndex(read) || domEntry->isElementVectorLength(read) ||
-             domEntry->isElementVectorIndex(read) || domEntry->datasetValueElement(read))) {
+            read && (!domEntry->wellKnownSymbol(read).empty() ||
+                     domEntry->isSymbolDescription(read) || domEntry->isStringVectorLength(read) ||
+                     domEntry->isStringVectorIndex(read) || domEntry->isElementVectorLength(read) ||
+                     domEntry->isElementVectorIndex(read) || domEntry->datasetValueElement(read))) {
             return true;
         }
         if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);

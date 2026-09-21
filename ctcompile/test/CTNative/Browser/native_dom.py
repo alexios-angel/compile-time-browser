@@ -582,7 +582,9 @@ def link_options(args, *, selectors=False, core_only=False):
     return includes, [*map(str, libraries), "-pthread", *rpaths]
 
 
-def standalone(args, native, name, checks, compilers, includes, libraries):
+def standalone(
+    args, native, name, checks, compilers, includes, libraries, *, allow_undefined=False
+):
     text = native.read_text()
     entries = NATIVE.findall(text)
     if (
@@ -601,7 +603,17 @@ def standalone(args, native, name, checks, compilers, includes, libraries):
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if VM.search(cpp) or "ctbrowser::element_ref" not in cpp or re.search(r"\bmain\s*\(", cpp):
             raise RuntimeError(f"{name}/{mode}: missing typed standalone DOM entry\n{cpp}")
-        if "nullable_scalar" in cpp:
+        scalar_uses = cpp
+        if allow_undefined:
+            # Optional String comparisons use the existing exact undefined
+            # constant; keep rejecting every other scalar-carrier declaration.
+            scalar_uses = re.sub(
+                r"ctnative::nullable_scalar const \w+ = "
+                r"ctnative::nullable_scalar\{ctnative::undefined_t\{\}\};",
+                "",
+                cpp,
+            )
+        if "nullable_scalar" in scalar_uses:
             raise RuntimeError(f"{name}/{mode}: Boolean DOM entry carries a scalar value model")
         # The runtime header's helpers are the shared browser API's callers
         # (toggle_class -> ctbrowser::toggle_token, and so on); the program

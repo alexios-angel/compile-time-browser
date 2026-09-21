@@ -90,6 +90,9 @@ REFUSALS = {
     "mixed-join": "return element.hasAttribute('x') ? Symbol.iterator : 0;",
     "absent-join": "let key; if(element.hasAttribute('x')) key=Symbol.iterator; return key;",
     "mixed-loop": "let key=Symbol.iterator; for(let i=0;i<2;i++) key=0; return key;",
+    "description-borrow-join": "return element.hasAttribute('x') ? Symbol().description : element;",
+    "description-dom-null-join": "return element.hasAttribute('x') ? Symbol().description : element.getAttribute('x');",
+    "description-property-write": "const key=Symbol(); key.description='changed'; return key.description;",
 }
 
 
@@ -132,6 +135,48 @@ STATE_CHECKS = r"""
         assert(@ENTRY@(element) == ctnative::Symbol.hasInstance);
         assert(first == ctnative::Symbol.hasInstance);
         assert(doc.take_writes().size() == 1);
+"""
+
+DESCRIPTIONS = """function descriptions(element) {
+  let key = element.hasAttribute('data-other') ? Symbol() : Symbol('saved');
+  const saved = key.description;
+  let current = saved;
+  for (let i = 0; i < 3; i++) {
+    key = Symbol('changed');
+    current = key.description;
+  }
+  const joined = element.hasAttribute('data-other') ? undefined : current;
+  element.setAttribute('data-type', typeof saved);
+  element.setAttribute('data-absent', saved === undefined);
+  element.setAttribute('data-null', saved === null);
+  element.setAttribute('data-current', current === 'changed');
+  element.setAttribute('data-joined', joined === undefined);
+  return saved;
+}
+"""
+DESCRIPTION_CHECKS = r"""
+        (void)pressed; (void)foreign;
+        static_assert(std::is_same_v<decltype(@ENTRY@(element)), ctnative::nullable_string>);
+        const auto saved = @ENTRY@(alias);
+        assert(saved.tag == ctnative::nullable_string::kind::string);
+        assert(saved.value == "saved");
+        assert(doc.read().attribute_value(button, atoms.intern("data-type")) == "string");
+        assert(doc.read().attribute_value(button, atoms.intern("data-absent")) == "false");
+        assert(doc.read().attribute_value(button, atoms.intern("data-null")) == "false");
+        assert(doc.read().attribute_value(button, atoms.intern("data-current")) == "true");
+        assert(doc.read().attribute_value(button, atoms.intern("data-joined")) == "false");
+        assert(doc.take_writes().size() == 5);
+        assert(doc.set_attribute(button, atoms.intern("data-other"), ""));
+        (void)doc.take_writes();
+        const auto absent = @ENTRY@(element);
+        assert(absent.tag == ctnative::nullable_string::kind::undefined);
+        assert(saved.tag == ctnative::nullable_string::kind::string && saved.value == "saved");
+        assert(doc.read().attribute_value(button, atoms.intern("data-type")) == "undefined");
+        assert(doc.read().attribute_value(button, atoms.intern("data-absent")) == "true");
+        assert(doc.read().attribute_value(button, atoms.intern("data-null")) == "false");
+        assert(doc.read().attribute_value(button, atoms.intern("data-current")) == "true");
+        assert(doc.read().attribute_value(button, atoms.intern("data-joined")) == "true");
+        assert(doc.take_writes().size() == 5);
 """
 
 
@@ -177,17 +222,33 @@ function observeState(other, empty) {
 var symbolTransportFirst = observeState(false, false);
 var symbolTransportSecond = observeState(true, false);
 var symbolTransportZero = observeState(true, true);
+function observeDescriptions(other) {
+  const saved = {};
+  let writes = 0;
+  const receiver = {
+    setAttribute: function(name, value) { saved[name] = '' + value; writes++; },
+    hasAttribute: function(name) { return other; }
+  };
+  const result = descriptions(receiver);
+  return result === (other ? undefined : 'saved') && writes === 5 &&
+    saved['data-type'] === (other ? 'undefined' : 'string') &&
+    saved['data-absent'] === (other ? 'true' : 'false') &&
+    saved['data-null'] === 'false' && saved['data-current'] === 'true' &&
+    saved['data-joined'] === (other ? 'true' : 'false');
+}
+var symbolDescriptionFirst = observeDescriptions(false);
+var symbolDescriptionSecond = observeDescriptions(true);
 """
-    vm.write_text(SOURCE + STATE + transport_source + helper + transport_oracle)
+    vm.write_text(SOURCE + STATE + DESCRIPTIONS + transport_source + helper + transport_oracle)
     if (
         run([args.reference, str(vm)]).stdout
-        != "symbolFirst=true\nsymbolSecond=true\nsymbolTransportFirst=true\nsymbolTransportSecond=true\nsymbolTransportZero=true\n"
+        != "symbolDescriptionFirst=true\nsymbolDescriptionSecond=true\nsymbolFirst=true\nsymbolSecond=true\nsymbolTransportFirst=true\nsymbolTransportSecond=true\nsymbolTransportZero=true\n"
     ):
         raise RuntimeError("VM Symbol identity/effect observations differ")
     node = args.work / "oracle.cjs"
     node.write_text(
         vm.read_text()
-        + "\nif (!symbolFirst || !symbolSecond || !symbolTransportFirst || !symbolTransportSecond || !symbolTransportZero) throw Error('Symbol oracle');\n"
+        + "\nif (!symbolFirst || !symbolSecond || !symbolTransportFirst || !symbolTransportSecond || !symbolTransportZero || !symbolDescriptionFirst || !symbolDescriptionSecond) throw Error('Symbol oracle');\n"
     )
     run([args.node, str(node)])
 
@@ -265,6 +326,23 @@ def main():
         contract["initial_intrinsics"] = ["Symbol"]
         for optimize in (False, True):
             dom.lower(args, bad, contract, name + str(optimize), optimize=optimize, success=False)
+    description_ir, description_contract = dom.prepare(args, "descriptions", DESCRIPTIONS, 1)
+    description_contract["initial_intrinsics"] = ["Symbol"]
+    for optimize in (False, True):
+        name = f"descriptions-{optimize}"
+        native = dom.lower(args, description_ir, description_contract, name, optimize=optimize)
+        if "ctnative::nullable_string" not in native.read_text():
+            raise RuntimeError("Symbol description lost its undefined/String carrier")
+        dom.standalone(
+            args,
+            native,
+            name,
+            DESCRIPTION_CHECKS,
+            compilers,
+            includes,
+            libraries,
+            allow_undefined=True,
+        )
     for budget in (0, 1):
         dom.lower(args, ir, manifest, f"budget-{budget}", max_steps=budget, success=False)
     stale_ir = args.work / "stale.mlir"
@@ -287,7 +365,7 @@ def main():
     dom.lower(args, forged, contract, "forged-refused", success=False)
     print(
         f"Symbol DOM: {len(OBSERVATIONS)} attributes and 2 returns agree with Node/VM; "
-        f"{16 + 4 * len(TRANSPORT)} native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"
+        f"{24 + 4 * len(TRANSPORT)} native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"
     )
 
 

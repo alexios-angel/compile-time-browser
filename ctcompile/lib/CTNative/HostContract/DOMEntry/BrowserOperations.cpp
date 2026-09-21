@@ -90,6 +90,11 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             provedSymbols.try_emplace(read, key);
             return true;
         }
+        if (suppliedSymbol && hasKind(read.getObject(), Kind::symbol) && key == "description") {
+            values[read.getResult()] = Kind::undefinedString;
+            provedSymbolDescriptions.insert(read);
+            return true;
+        }
         if (suppliedSymbol && hasKind(read.getObject(), Kind::symbol) &&
             (key == "toString" || key == "valueOf")) {
             const bool text = key == "toString";

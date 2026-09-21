@@ -166,6 +166,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     llvm::DenseSet<ctjs::GetPropertyOp> provedElementPrototypes;
     llvm::DenseSet<ctjs::LoadGlobalOp> provedElementIntrinsics, provedSymbolIntrinsics;
     llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> provedSymbols;
+    llvm::DenseSet<ctjs::GetPropertyOp> provedSymbolDescriptions;
     llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> provedDatasetValues;
     std::vector<ctjs::LoadGlobalOp> provedNumberIntrinsics, provedURIIntrinsics,
         provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
@@ -309,6 +310,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        provedElementIntrinsics,
                                        provedSymbolIntrinsics,
                                        provedSymbols,
+                                       provedSymbolDescriptions,
                                        provedDatasetValues,
                                        provedNumberIntrinsics,
                                        provedURIIntrinsics,
@@ -436,6 +438,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     elementIntrinsics = std::move(provedElementIntrinsics);
     symbolIntrinsics = std::move(provedSymbolIntrinsics);
     symbols = std::move(provedSymbols);
+    symbolDescriptions = std::move(provedSymbolDescriptions);
     datasetValues = std::move(provedDatasetValues);
     stringPrefixRegExps = std::move(provedPrefixRegExps);
     datasetElements = std::move(provedDatasetElements);
@@ -533,6 +536,10 @@ bool DOMEntryAnalysis::isInitialIntrinsic(ctjs::LoadGlobalOp load) const {
 
 llvm::StringRef DOMEntryAnalysis::wellKnownSymbol(ctjs::GetPropertyOp read) const {
     return symbols.lookup(read);
+}
+
+bool DOMEntryAnalysis::isSymbolDescription(ctjs::GetPropertyOp read) const {
+    return symbolDescriptions.contains(read);
 }
 
 bool DOMEntryAnalysis::invocation(ctjs::InvokeOp operation) const {
