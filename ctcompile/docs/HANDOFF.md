@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Object keys, DOM Data preparation and subtraction indices, 2026-09-21 UTC
+
+Continued clean **c455efb0**. **1add0418** proves fresh object outer-key identity
+through the complete vendor Data holder, retaining aliases, distinct objects,
+String-key separation and record/child owners. Three new witnesses and the
+unchanged prior nullable-object-key source execute natively. The same pass now
+prepares one exact DOM element input and its aliases, rejecting ambiguous inputs
+and residual observers. **DOM preparation still has no native session admission.**
+**30ce626e** adds one direct Number-literal subtraction as a UTF-16 String bound,
+using the existing NaN/default/clamping path and preserving literal-only authority.
+
+Focused checks pass: exact host-contract CTest 1/1; new DOM preparation lit;
+class selector **48 main native executions, 18 unprepared and 19 preparation
+refusals**; String selector **40 executions, 722 refusals, 109 Node/VM agreements
+and 12 known differences**. All 12 final hashes match the devbox. Scoped checks
+pass; repository formatting retains 16 existing diagnostics. Earlier complete
+source fixtures are preserved. Full suites, complete captured/export execution
+replays, DOM Strings replay, broad corpus/matrices, full Bootstrap, WPT/test262,
+Windows and new sanitizers were skipped. No browser/runtime implementation changed.
+
+**Next:** compose prepared class/local-Map ownership with the DOM Data provider.
+Its first measured refusal is `unsupported provider behavior through ctjs.construct`;
+the existing session proof also requires a published method-table owner. Multiple
+DOM input aliases and constructor transport of nonliteral keys remain unproved.
+Original B/Data+B, broader Strings, conditional callees, mutable cells, document
+views and the application driver remain unfinished. No full-Bootstrap admission
+or coverage gain is claimed.
+
+[Exact checks, corrected expectations and next boundary](handoff/2026-09-21-object-keys-dom-preparation.md).
+
 ## Complete vendor Data holders and division String indices, 2026-09-21 UTC
 
 Continued clean **29057f08**. **a96d7d2a** preserves the complete Data conflict
