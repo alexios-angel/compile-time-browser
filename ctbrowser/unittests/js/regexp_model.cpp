@@ -157,6 +157,37 @@ void test_symbol_methods() {
     expect_result("const re = /a/; re.exec = () => null; return re.test('a');", "false");
 }
 
+void test_substitution_limits() {
+    // Small inputs expand past the existing 2^28-byte string ceiling. Size
+    // preflight must reject them without allocating that result, and numbered
+    // captures are coerced once before expanding the template.
+    expect_result("let calls = 0; const text = 'x'.repeat(65536); const re = /x/;"
+                  "re.exec = () => ({0: 'x', 1: {toString() { ++calls; return text; }},"
+                  "length: 2, index: 0});"
+                  "try { 'x'.replace(re, '$1'.repeat(4097)); return 'no'; }"
+                  "catch (e) { return e.name + ',' + calls; }",
+                  "RangeError,1");
+    expect_result("const text = 'x'.repeat(65536);"
+                  "try { text.replace('', \"$'\".repeat(4097)); return 'no'; }"
+                  "catch (e) { return e.name; }",
+                  "RangeError");
+    // Named captures remain observable once per occurrence, in template order.
+    expect_result("let log = ''; let gets = 0; const re = /x/;"
+                  "const groups = {get n() { log += 'g'; const n = ++gets;"
+                  "return {toString() { log += 's'; return '' + n; }}; }};"
+                  "re.exec = () => ({0: 'x', 1: {toString() { log += 'c'; return 'v'; }},"
+                  "length: 2, index: 0, groups});"
+                  "const result = 'x'.replace(re, '$1$<n>$1$<n>');"
+                  "return result + '|' + log;",
+                  "v1v2|cgsgs");
+    expect_result("const text = 'x'.repeat(65536); const re = /x/;"
+                  "re.exec = () => ({0: 'x', 1: text, length: 2, index: 0,"
+                  "groups: {get n() { throw 17; }}});"
+                  "try { 'x'.replace(re, '$<n>' + '$1'.repeat(4097)); return 'no'; }"
+                  "catch (e) { return e; }",
+                  "17");
+}
+
 } // namespace
 
 int main() {
@@ -164,5 +195,6 @@ int main() {
     test_constructor();
     test_exec();
     test_symbol_methods();
+    test_substitution_limits();
     REPORT("regexp_model");
 }

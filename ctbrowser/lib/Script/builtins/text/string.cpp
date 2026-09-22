@@ -685,11 +685,21 @@ void install_string(context & cx) {
                                          replacement)) {
                 return value::undefined();
             }
-            out += self.substr(end_of_last, at - end_of_last);
+            const std::size_t prefix = at - end_of_last;
+            if (!check_string_growth(c, out.size(), prefix)) { return value::undefined(); }
+            out.append(self, end_of_last, prefix);
+            if (!check_string_growth(c, out.size(), replacement.size())) {
+                return value::undefined();
+            }
             out += replacement;
             end_of_last = at + search.size();
         }
-        if (end_of_last < self.size()) { out += self.substr(end_of_last); }
+        if (end_of_last < self.size()) {
+            if (!check_string_growth(c, out.size(), self.size() - end_of_last)) {
+                return value::undefined();
+            }
+            out.append(self, end_of_last);
+        }
         return c.string(out);
     };
 
