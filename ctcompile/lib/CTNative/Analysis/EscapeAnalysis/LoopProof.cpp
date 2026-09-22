@@ -384,11 +384,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
             std::uint32_t first = numberBits(range->first) & mask & fixed;
             std::uint32_t last = first | (mask & ~fixed);
-            if (bitOr && changingMask == 0) {
-                // Every output bit is set, independent of input conversion bands.
-                first = last = mask;
-            } else if (!bitAnd || mask > 2147483647U) {
-                if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
+            if (!bitAnd || mask > 2147483647U) {
                 const auto lower = numberBits(range->first);
                 const auto upper = numberBits(range->last);
                 // All bits above the highest differing bit are fixed throughout
@@ -396,10 +392,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // bitwise results alone miss interior extrema.
                 auto varying = static_cast<std::uint32_t>(
                     std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
-                if (varying > 2147483647U) {
-                    // ponytail: one converted sign half; crossing zero or the
-                    // sign bit needs a union of ranges before composition.
-                    return std::nullopt;
+                if (signedBand(range->first) != signedBand(range->last) || varying > 2147483647U) {
+                    // OR with the sign bit set keeps every output negative, so
+                    // all input bits may vary within one conservative interval.
+                    // Other sign crossings still need a union before composition.
+                    if (!bitOr || mask <= 2147483647U) { return std::nullopt; }
+                    varying = 4294967295U;
                 }
                 // An input lattice fixes its low bits. Every bitwise operation
                 // preserves their transformed residue, even when higher bits vary.

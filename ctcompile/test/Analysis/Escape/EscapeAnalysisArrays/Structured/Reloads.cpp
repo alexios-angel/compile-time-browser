@@ -519,6 +519,33 @@ void StructuredCases::reloads() {
         reject("structured all-one masks retain the complete later-store census",
                replace(crossing,
                        "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+        const auto signedCrossing = replace(
+            replace(replace(replace(replace(crossing, "4751297606873776128", "4751297606871678976"),
+                                    "[%y, %negativeMask]", "[%y, %y, %negativeMask, %zero]"),
+                            "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                    "%mask = ctjs.get_property %base[%one]",
+                    "%mask = ctjs.get_property %base[%two]"),
+            "add %negative, %one", "add %negative, %two");
+        rows.push_back(
+            {.what = "structured sign-setting OR masks bound crossing inputs with one interval",
+             .body = signedCrossing,
+             .arrays = "a:[zero,zero,mask,zero]",
+             .reads = std::string(input).starts_with("%minimum")
+                          ? "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                            "a[2]=mask; a[3]=zero"
+                          : "a[2]=mask; a[0]=y; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                            "a[2]=mask; a[3]=zero",
+             .exit = "a -> {a}"});
+        reject("structured XOR cannot borrow a fixed OR output sign across conversion bands",
+               replace(signedCrossing, "bitor", "bitxor"));
+        reject("structured sign-setting masks cannot reload from a crossing output range",
+               replace(replace(signedCrossing, "[%y, %y, %negativeMask, %zero]",
+                               "[%y, %negativeMask, %y, %zero]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%one]"));
+        reject("later structured writes invalidate sign-setting masks across conversion bands",
+               replace(signedCrossing,
+                       "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
     }
     reject("structured signed masks retain the complete later-store census",
            replace(signedReload,

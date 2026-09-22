@@ -739,6 +739,32 @@ void InductionCases::overwritesAndTransport() {
                replace(crossing, "13830554455654793216", "13835058055282163712"));
         reject("later stores invalidate an all-one mask even when its output is constant",
                replace(crossing, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+        const auto signedCrossing = replace(
+            replace(replace(replace(crossing, "13830554455654793216", "13835058055282163712"),
+                            "[%x, %negativeMask]", "[%x, %x, %negativeMask, %zero]"),
+                    "%mask = ctjs.get_property %base[%one]",
+                    "%mask = ctjs.get_property %base[%two]"),
+            "add %negative, %one", "add %negative, %two");
+        run({.what = "a sign-setting OR mask bounds crossing inputs without a range union",
+             .body = signedCrossing,
+             .arrays = "a:[zero,zero,mask,zero]",
+             .reads = std::string(input).starts_with("%minimum")
+                          ? "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                            "a[2]=mask; a[3]=zero"
+                          : "a[2]=mask; a[0]=x; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                            "a[2]=mask; a[3]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("XOR cannot borrow OR's fixed output sign across conversion boundaries",
+               replace(signedCrossing, "bitor", "bitxor"));
+        reject("a sign-setting mask cannot reload from its crossing output range",
+               replace(replace(signedCrossing, "[%x, %x, %negativeMask, %zero]",
+                               "[%x, %negativeMask, %x, %zero]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%one]"));
+        reject("later writes invalidate sign-setting masks across conversion boundaries",
+               replace(signedCrossing,
+                       "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
     }
     reject(
         "signed masks retain the complete later-store census",

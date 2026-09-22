@@ -60,6 +60,17 @@
 // CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function orWrites() {
@@ -382,3 +393,65 @@ function allOneLaterOverwrite() {
 }
 allOneCrossZero(); allOneUpperCrossing(); allOneLowerCrossing(); allOneUnsignedCommuted();
 allOneRemainingChild(); allOneSavedChild(); allOneOverlappingReload(); allOneLaterOverwrite();
+function signSettingCrossZero() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[2]) + 2] = 0;
+    return a;
+}
+function signSettingUpperCrossing() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) | a[2]) + 2] = 0;
+    return a;
+}
+function signSettingLowerCrossing() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) a[((-2147483648 - i) | a[2]) + 2] = 0;
+    return a;
+}
+function signSettingUnsignedCommuted() {
+    var child = {}, a = [child, child, 4294967294, 0];
+    for (var i = 0; i < a.length; i++) a[(a[2] | (i - 1)) + 2] = 0;
+    return a;
+}
+function signSettingMaskGap() {
+    var child = {}, a = [child, -3, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 3] = 0;
+    return a;
+}
+function signSettingInputGap() {
+    var child = {}, a = [0, child, -4, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) | a[2]) + 4] = 0;
+    return a;
+}
+function signSettingRemainingChild() {
+    var child = {}, a = [child, -3, child, child];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 3] = 0;
+    return a;
+}
+function signSettingSavedChild() {
+    var child = {}, a = [child, child, -2, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[2]) + 2] = 0;
+    return saved;
+}
+function signSettingOverlappingReload() {
+    var child = {}, a = [child, -2, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i - 1) | a[1]) + 2] = -1;
+    return a;
+}
+function signSettingLaterOverwrite() {
+    var child = {}, a = [child, child, -2, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[((i - 1) | a[2]) + 2] = 0;
+        a[2] = -1;
+    }
+    return a;
+}
+function signSettingInputOverlap() {
+    var child = {}, a = [0, -4, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) | a[1]) + 4] = 0;
+    return a;
+}
+signSettingCrossZero(); signSettingUpperCrossing(); signSettingLowerCrossing();
+signSettingUnsignedCommuted(); signSettingMaskGap(); signSettingInputGap();
+signSettingRemainingChild(); signSettingSavedChild(); signSettingOverlappingReload();
+signSettingLaterOverwrite(); signSettingInputOverlap();
