@@ -3390,6 +3390,7 @@ def main():
             | POWER_INDICES
             | NEGATED_INDICES
             | SIGNED_OPERAND_INDICES
+            | NESTED_INDICES
             | NEGATED_PRIMITIVE_INDICES
             | DOUBLE_NEGATED_INDICES
         ):
