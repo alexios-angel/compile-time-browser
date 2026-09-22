@@ -30,6 +30,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         unsigned selector = 0;
         llvm::SmallVector<unsigned> outputs;
         llvm::SmallVector<bool> consumed;
+        bool effectful = false;
     };
     struct Terminal {
         enum Kind {
@@ -151,19 +152,34 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                 selected = &dispatch.getCaseRegions()[index];
                             }
                         }
-                        // Read the entire selected tuple before replacing any
-                        // slots: one output may select another output's slot.
-                        llvm::SmallVector<mlir::Value> projected;
-                        for (mlir::Value operand :
-                             selected->front().getTerminator()->getOperands()) {
-                            if (!step()) { return {}; }
-                            auto source = llvm::cast<mlir::OpResult>(operand);
-                            projected.push_back(arguments[source.getResultNumber()]);
+                        if (terminal.exit.effectful) {
+                            arguments[terminal.exit.selector] = ctjs::ConstantOp::create(
+                                at, condition.getLoc(),
+                                ctjs::BooleanAttr::get(function.getContext(),
+                                                       selected != &dispatch.getDefaultRegion()));
+                            ++operationCount;
+                        } else {
+                            // Read the entire selected tuple before replacing any
+                            // slots: one output may select another output's slot.
+                            llvm::SmallVector<mlir::Value> projected;
+                            for (mlir::Value operand :
+                                 selected->front().getTerminator()->getOperands()) {
+                                if (!step()) { return {}; }
+                                auto source = llvm::cast<mlir::OpResult>(operand);
+                                projected.push_back(arguments[source.getResultNumber()]);
+                            }
+                            for (auto [output, value] :
+                                 llvm::zip(terminal.exit.outputs, projected)) {
+                                if (!step()) { return {}; }
+                                arguments[output] = value;
+                            }
                         }
-                        for (auto [output, value] : llvm::zip(terminal.exit.outputs, projected)) {
-                            if (!step()) { return {}; }
-                            arguments[output] = value;
-                        }
+                    } else if (terminal.exit.effectful) {
+                        // The after region cannot observe the exit selector.
+                        arguments[terminal.exit.selector] = ctjs::ConstantOp::create(
+                            at, condition.getLoc(),
+                            ctjs::BooleanAttr::get(function.getContext(), false));
+                        ++operationCount;
                     }
                 }
                 llvm::SmallVector<mlir::Value> result{predicate};
@@ -254,9 +270,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     }
                     before.inactiveAfter.push_back(inactive);
                 }
-                // A pure exit projection can join the live break/exhaustion
-                // values before they leave the loop. All other continuation
-                // effects, including IteratorClose, stay after the loop.
+                // Pure projections join live exit values inside the loop.
+                // Effectful two-arm dispatches instead carry a Boolean choice;
+                // their reads, IteratorClose and frame exits stay after the loop.
                 const auto exitProjection = [&]() -> ExitProjection {
                     ExitProjection exit;
                     auto * next = loop->getNextNode();
@@ -281,13 +297,24 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     exit.consumed[exit.selector] = true;
                     for (auto & region : exit.dispatch->getRegions()) {
                         if (!step()) { return {}; }
-                        if (!region.hasOneBlock() || !llvm::hasSingleElement(region.front())) {
+                        if (!region.hasOneBlock() || region.front().empty() ||
+                            region.front().getNumArguments()) {
                             return {};
                         }
-                        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().front());
+                        auto yield =
+                            llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
                         if (!yield || yield.getOperandTypes() != exit.dispatch.getResultTypes()) {
                             return {};
                         }
+                        exit.effectful |= !llvm::hasSingleElement(region.front());
+                    }
+                    // ponytail: a single case becomes an ordinary Boolean branch;
+                    // more exit arms need a separately proved discriminator.
+                    if (exit.effectful && exit.dispatch.getCases().size() != 1) { return {}; }
+                    for (auto & region : exit.dispatch->getRegions()) {
+                        if (!step()) { return {}; }
+                        if (exit.effectful) { continue; }
+                        auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().front());
                         for (mlir::Value operand : yield.getOperands()) {
                             if (!step()) { return {}; }
                             auto value = llvm::dyn_cast<mlir::OpResult>(operand);
@@ -316,6 +343,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             }
                         }
                     }
+                    if (exit.effectful) { return exit; }
                     // Reuse only slots whose complete use census belongs to
                     // this dispatch. Each output needs its own compatible slot.
                     for (mlir::Type type : exit.dispatch.getResultTypes()) {
@@ -337,8 +365,12 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 };
                 before.exit = exitProjection();
                 if (!remaining) { return {}; }
-                auto copied =
-                    mlir::scf::WhileOp::create(at, loop.getLoc(), loop.getResultTypes(), initial);
+                if (before.exit.effectful) {
+                    before.types[before.exit.selector + 1] =
+                        ctjs::ValueType::get(function.getContext());
+                }
+                auto copied = mlir::scf::WhileOp::create(
+                    at, loop.getLoc(), mlir::TypeRange(before.types).drop_front(), initial);
                 ++operationCount;
                 for (auto [source, target] : llvm::zip(loop->getRegions(), copied->getRegions())) {
                     for (const auto & item : values.getValueMap()) {
@@ -360,10 +392,11 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                      output.addArgument(argument.getType(), argument.getLoc()));
                         }
                     } else {
-                        for (mlir::BlockArgument argument : source.front().getArguments()) {
+                        for (auto [index, argument] :
+                             llvm::enumerate(source.front().getArguments())) {
                             if (!step()) { return {}; }
-                            path.map(argument,
-                                     output.addArgument(argument.getType(), argument.getLoc()));
+                            path.map(argument, output.addArgument(copied.getResult(index).getType(),
+                                                                  argument.getLoc()));
                         }
                     }
                     mlir::OpBuilder nested(&output, output.begin());
@@ -381,17 +414,54 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 values.map(loop.getResults(), copied.getResults());
                 if (before.exit.dispatch) {
                     auto dispatch = before.exit.dispatch;
-                    for (auto [result, output] :
-                         llvm::zip(dispatch.getResults(), before.exit.outputs)) {
-                        if (!step()) { return {}; }
-                        values.map(result, copied.getResult(output));
+                    if (before.exit.effectful) {
+                        auto choice = ctjs::TruthyOp::create(
+                            at, dispatch.getLoc(), copied.getResult(before.exit.selector));
+                        auto branch = mlir::scf::IfOp::create(
+                            at, dispatch.getLoc(), dispatch.getResultTypes(), choice.getResult());
+                        operationCount += 2;
+                        Terminal joined;
+                        joined.kind = Terminal::yielded;
+                        for (auto [index, type] : llvm::enumerate(dispatch.getResultTypes())) {
+                            if (!step()) { return {}; }
+                            joined.types.push_back(type);
+                            joined.carried.push_back(static_cast<unsigned>(index));
+                        }
+                        for (auto [source, target] :
+                             llvm::zip(llvm::ArrayRef<mlir::Region *>{&dispatch.getCaseRegions()[0],
+                                                                      &dispatch.getDefaultRegion()},
+                                       branch->getRegions())) {
+                            for (const auto & item : values.getValueMap()) {
+                                (void)item;
+                                if (!step()) { return {}; }
+                            }
+                            for (const auto & item : values.getOperationMap()) {
+                                (void)item;
+                                if (!step()) { return {}; }
+                            }
+                            mlir::IRMapping path(values);
+                            auto & output = target.emplaceBlock();
+                            mlir::OpBuilder nested(&output, output.begin());
+                            auto result = self(self, source->front(), source->front().begin(), path,
+                                               nested, nullptr, joined, depth + 1);
+                            if (!result) { return {}; }
+                            mlir::scf::YieldOp::create(nested, dispatch.getLoc(), *result);
+                            ++operationCount;
+                        }
+                        values.map(dispatch.getResults(), branch.getResults());
+                    } else {
+                        for (auto [result, output] :
+                             llvm::zip(dispatch.getResults(), before.exit.outputs)) {
+                            if (!step()) { return {}; }
+                            values.map(result, copied.getResult(output));
+                        }
+                        for (auto & region : dispatch->getRegions()) {
+                            if (!step()) { return {}; }
+                            visited.insert(region.front().getTerminator());
+                        }
                     }
                     if (before.exit.cast) { visited.insert(before.exit.cast); }
                     visited.insert(dispatch);
-                    for (auto & region : dispatch->getRegions()) {
-                        if (!step()) { return {}; }
-                        visited.insert(region.front().getTerminator());
-                    }
                     cursor = dispatch->getIterator();
                 }
                 continue;

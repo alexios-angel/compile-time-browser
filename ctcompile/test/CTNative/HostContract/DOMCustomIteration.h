@@ -1654,6 +1654,170 @@ module {
         check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
               "acyclic protocol refusal publishes no DOM evidence");
     }
+    // Unlike the pure projections above, both arms observe the DOM after the
+    // loop. Exhaustion closes before its read; return saves its read before close.
+    std::string effectfulSource = source;
+    effectfulSource.replace(returnLoopBegin, returnLoopEnd - returnLoopBegin, R"MLIR(
+    %tagPoison = ub.poison : i32
+    %normalTag = arith.constant 7 : i32
+    %breakTag = arith.constant 11 : i32
+    %hasName = ctjs.constant #ctjs.string<"hasAttribute">
+    %has = ctjs.get_property %element[%hasName]
+    %stopName = ctjs.constant #ctjs.string<"stop">
+    %closedName = ctjs.constant #ctjs.string<"data-closed">
+    %loop:2 = scf.while (%count = %zero, %tag = %tagPoison) : (!ctjs.value, i32) -> (!ctjs.value, i32) {
+      %item = ctjs.call %next(%undefined, %record)
+      %done = ctjs.get_property %record[%doneName]
+      %test = ctjs.truthy %done
+      %selected:3 = scf.if %test -> (i1, !ctjs.value, i32) {
+        %stop = arith.constant false
+        scf.yield %stop, %count, %normalTag : i1, !ctjs.value, i32
+      } else {
+        %attribute = ctjs.get_property %item[%attributeName]
+        %written = ctjs.call %attribute(%item, %visited, %yes)
+        %increment = ctjs.binary_static add %count, %one
+        %stopping = ctjs.call %has(%element, %stopName)
+        %breakTest = ctjs.truthy %stopping
+        %branch:3 = scf.if %breakTest -> (i1, !ctjs.value, i32) {
+          %stop = arith.constant false
+          scf.yield %stop, %increment, %breakTag : i1, !ctjs.value, i32
+        } else {
+          %again = arith.constant true
+          scf.yield %again, %increment, %normalTag : i1, !ctjs.value, i32
+        }
+        scf.yield %branch#0, %branch#1, %branch#2 : i1, !ctjs.value, i32
+      }
+      scf.condition(%selected#0) %selected#1, %selected#2 : !ctjs.value, i32
+    } do {
+    ^bb0(%count: !ctjs.value, %tag: i32):
+      scf.yield %count, %tag : !ctjs.value, i32
+    }
+    %selector = arith.index_castui %loop#1 : i32 to index
+    %answer = scf.index_switch %selector -> !ctjs.value
+    case 7 {
+      %normalClose = ctjs.call %close(%undefined, %record, %normal)
+      %normalRead = ctjs.call %has(%element, %visited)
+      scf.yield %normalRead : !ctjs.value
+    }
+    default {
+      %returnRead = ctjs.call %has(%element, %closedName)
+      %returnClose = ctjs.call %close(%undefined, %record, %normal)
+      scf.yield %returnRead : !ctjs.value
+    }
+    %countName = ctjs.constant #ctjs.string<"data-count">
+    %countSet = ctjs.get_property %element[%attributeName]
+    %hasCount = ctjs.compare gt %loop#0, %zero
+    %countWritten = ctjs.call %countSet(%element, %countName, %hasCount)
+)MLIR");
+    effectfulSource = replaced(effectfulSource, "ctjs.return %loop", "ctjs.return %answer");
+    auto effectful = mlir::parseSourceString<mlir::ModuleOp>(effectfulSource, &context);
+    check(static_cast<bool>(effectful), "effectful loop completion parses");
+    if (!effectful) { return; }
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto request = contract;
+        request.provider = provider;
+        request.moduleSha256 = hostContractFingerprint(*effectful);
+        mlir::OwningOpRef<mlir::ModuleOp> input(effectful->clone());
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(!failure, "effectful loop completion normalizes for both providers");
+        if (failure) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+            continue;
+        }
+        auto body = input->lookupSymbol<ctjs::FuncOp>(request.entry);
+        auto join = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back())
+                        .getValue()
+                        .getDefiningOp<mlir::scf::IfOp>();
+        ctjs::CallOp countWrite;
+        body.walk([&](ctjs::CallOp call) {
+            if (call.getArgs().size() == 2 &&
+                ctjs::constantKey(call.getArgs()[0]) == "data-count") {
+                countWrite = call;
+            }
+        });
+        auto countTest = countWrite ? countWrite.getArgs()[1].getDefiningOp<ctjs::CompareOp>()
+                                    : ctjs::CompareOp{};
+        auto count =
+            countTest ? llvm::dyn_cast<mlir::OpResult>(countTest.getLhs()) : mlir::OpResult{};
+        auto loop =
+            count ? llvm::dyn_cast<mlir::scf::WhileOp>(count.getOwner()) : mlir::scf::WhileOp{};
+        check(join && loop && countWrite && join->getBlock() == loop->getBlock() &&
+                  countWrite->getBlock() == join->getBlock() && loop->isBeforeInBlock(join) &&
+                  join->isBeforeInBlock(countWrite),
+              "effectful completion remains after the traversal and retains its count");
+        if (join && loop) {
+            for (auto [index, arm] : llvm::enumerate(join->getRegions())) {
+                llvm::SmallVector<llvm::StringRef> order;
+                arm.walk([&](ctjs::CallOp call) {
+                    auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    if (!method) { return; }
+                    if (ctjs::constantKey(method.getKey()) == "return") {
+                        order.push_back("close");
+                    } else if (call.getArgs().size() == 1) {
+                        order.push_back(ctjs::constantKey(call.getArgs().front()));
+                    }
+                });
+                check(order == (index == 0
+                                    ? llvm::SmallVector<llvm::StringRef>{"close", "data-visited"}
+                                    : llvm::SmallVector<llvm::StringRef>{"data-closed", "close"}),
+                      "normal and return arms keep their distinct read and close order");
+            }
+        }
+        failure = expandDOMHelpers(*input, request.entry, completeBudget);
+        check(!failure, "effectful loop completion expands to public DOM effects");
+        if (failure) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+            continue;
+        }
+        request.moduleSha256 = hostContractFingerprint(*input);
+        const DOMEntryAnalysis proof(*input, request);
+        check(proof.proved(), "effectful loop completion retains the complete DOM proof");
+        if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+    }
+    for (const auto & invalid : {
+             replaced(effectfulSource, "    %selector =",
+                      "    %observer = arith.index_castui %loop#1 : i32 to index\n"
+                      "    %selector ="),
+             replaced(effectfulSource, "      scf.yield %count, %tag",
+                      "      %observer = arith.index_castui %tag : i32 to index\n"
+                      "      scf.yield %count, %tag"),
+             replaced(effectfulSource, "%normalTag = arith.constant 7 : i32",
+                      "%unknown = ctjs.truthy %element\n"
+                      "    %normalTag = arith.extui %unknown : i1 to i32"),
+             replaced(replaced(effectfulSource, "    %tagPoison =",
+                               "    %payloadPoison = ub.poison : !ctjs.value\n    %tagPoison ="),
+                      "%stop, %count, %normalTag", "%stop, %payloadPoison, %normalTag"),
+             replaced(effectfulSource, "    default {",
+                      "    case 11 {\n      scf.yield %loop#0 : !ctjs.value\n    }\n"
+                      "    default {"),
+         }) {
+        check(!invalid.empty() && invalid != effectfulSource,
+              "hostile effectful completion changes the complete fixture");
+        if (invalid.empty()) { continue; }
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "hostile effectful completion parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure), "unproved effectful loop completion refuses");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            check(hostContractFingerprint(*fixture) == request.moduleSha256,
+                  "refused private effectful completion preserves the original source fixture");
+            if (invalid.find("case 11 {") != std::string::npos) {
+                check(hostContractFingerprint(*input) == request.moduleSha256,
+                      "extra-case refusal precedes private source rewriting");
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "refused private effectful completion publishes no DOM evidence");
+        }
+    }
     for (auto fixture : {*original,
                          *withoutReturn,
                          *counted,
@@ -3565,14 +3729,65 @@ module {
         }
     }
     for (const auto & source : {methodBreakCapturedSource, methodBreakReceiverSource}) {
+        const auto effectfulMethodSource =
+            replaced(source, "    scf.index_switch %methodSelector\n    case 7 {",
+                     "    scf.index_switch %methodSelector\n    case 7 {\n"
+                     "      %effectDispatch = ctjs.call "
+                     "%methodSet(%element, %methodExitName, %methodYes)");
+        auto effectfulMethod =
+            mlir::parseSourceString<mlir::ModuleOp>(effectfulMethodSource, &context);
+        check(static_cast<bool>(effectfulMethod), "historical effectful method completion parses");
+        if (effectfulMethod) {
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*effectfulMethod);
+                mlir::OwningOpRef<mlir::ModuleOp> input(effectfulMethod->clone());
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(!failure, "historical effectful method completion normalizes");
+                if (failure) {
+                    std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                    continue;
+                }
+                auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
+                mlir::scf::WhileOp loop;
+                llvm::SmallVector<ctjs::CallOp> exitEffects;
+                body.walk([&](mlir::scf::WhileOp found) { loop = found; });
+                body.walk([&](ctjs::CallOp call) {
+                    if (call.getArgs().size() == 2 &&
+                        ctjs::constantKey(call.getArgs()[0]) == "method-exit") {
+                        exitEffects.push_back(call);
+                    }
+                });
+                check(loop && exitEffects.size() == 2,
+                      "method completion retains both the conditional and common exit writes");
+                if (loop && exitEffects.size() == 2) {
+                    auto selected = llvm::dyn_cast<mlir::scf::IfOp>(exitEffects[0]->getParentOp());
+                    check(selected && selected->getBlock() == loop->getBlock() &&
+                              loop->isBeforeInBlock(selected) &&
+                              exitEffects[0]->getParentRegion() == &selected.getThenRegion() &&
+                              exitEffects[1]->getBlock() == selected->getBlock() &&
+                              selected->isBeforeInBlock(exitEffects[1]),
+                          "conditional method exit effect stays after the loop and before the "
+                          "common exit effect");
+                }
+                failure = expandDOMHelpers(*input, request.entry, completeBudget);
+                check(!failure, "historical effectful method completion expands");
+                if (failure) {
+                    std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                    continue;
+                }
+                request.moduleSha256 = hostContractFingerprint(*input);
+                const DOMEntryAnalysis proof(*input, request);
+                check(proof.proved(), "historical effectful method retains complete DOM proof");
+                if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+            }
+        }
         const auto poisoned =
             replaced(source, "    %methodPoison =",
                      "    %methodValuePoison = ub.poison : !ctjs.value\n    %methodPoison =");
         for (const auto & invalid : {
-                 replaced(source, "    scf.index_switch %methodSelector\n    case 7 {",
-                          "    scf.index_switch %methodSelector\n    case 7 {\n"
-                          "      %effectDispatch = ctjs.call "
-                          "%methodSet(%element, %methodExitName, %methodYes)"),
                  replaced(source, "    %exitEmitted =",
                           "    %observedTag = arith.index_castui %methodLoop#1 : i32 to index\n"
                           "    %exitEmitted ="),
@@ -3597,7 +3812,7 @@ module {
                 request.moduleSha256 = hostContractFingerprint(*input);
                 auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
                 check(static_cast<bool>(failure),
-                      "method dispatch effects, unknown or observed tags and live poison refuse");
+                      "unknown or observed method tags and live poison refuse");
                 if (failure) { llvm::consumeError(std::move(failure)); }
                 check(hostContractFingerprint(*input) == request.moduleSha256 &&
                           noEvidence(*input, DOMEntryAnalysis(*input, request)),
@@ -3817,6 +4032,7 @@ module {
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
     for (auto fixture : {*original,
+                         *effectful,
                          *counted,
                          *crossed,
                          *receiver,
