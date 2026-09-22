@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Formal return callees and partitioned shift gaps, 2026-09-22 UTC
+
+Continued clean **2bfd3fbd** and saved formal-callee source `ee851de6`.
+**a1d1c85f** proves return dependencies through formal and selected callees per
+invocation, including loop backedges. An immutable graph survives capture erasure;
+complete call, effect, recursion and observer checks remain. Saved source,
+zero-trip and state/argument snapshot witnesses execute unchanged. No runtime
+callable representation or increased proof budget is introduced.
+
+Parallel **ab9d43b1** proves mixed-shift gaps by bisecting aligned induction
+ranges through the existing Number transfer. Complete reload/store census and
+actual-write replay retain unwritten children and saved snapshots. A 120-visit
+budget regression passes. All 200 native and 113 shift historical sources remain
+unchanged.
+
+Focused checks pass: exact host **1/1, 2.12 s total**; four source programs plus
+all 136 refusal sources **64 native executions, 368 refusals, two nonexecuted
+admissions and 32 Node/VM observations**. Exact arrays pass **1/1, 2.05 s total**;
+right-shift lit **1/1, 0.13 s**. Complete formatting passes **1124 C++, 157 Python
+and 114 web files**. All seven final hashes match the devbox; 32 generated C++
+files contain no Script/VM symbols. New raw fixture construction, arity and write
+count mistakes were repaired; production and JS sources stayed unchanged.
+Full suites were skipped. No browser/runtime-oracle changes; idle timer active/enabled.
+
+**Next native boundary:** existing `body-return`, source `9bd2d5ba`, must close
+the iterator on early return. Node returns false and writes `data-closed=yes`
+when the body runs; exhausted iteration does not close. Both native policies
+refuse **DOM iterator close must follow its complete traversal**. Prove abrupt
+IteratorClose through source completion before admitting return/throw. Nested
+custom opens, unguarded Bootstrap defaults, the driver and full native Bootstrap
+remain unfinished; difficult shift subranges can still exhaust the shared budget.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-formal-callee-returns.md).
+
 ## Branch-dependent callable returns and composed shift gaps, 2026-09-22 UTC
 
 Continued clean **4e25be51** and saved branch-dependent return source `191c2e50`.
