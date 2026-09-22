@@ -2323,6 +2323,30 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero; a[2]=one",
          .exit = "a -> {a}"},
         "x");
+    const auto roundedShift = replace(
+        replace(
+            replace(rightShiftIndex, "[%x, %x, %one, %one]", "[%x, %three, %x, %one, %x, %one]"),
+            "  %a =", "  %nine = ctjs.constant #ctjs.number<4621256167635550208>\n  %a ="),
+        "%position = ctjs.binary_static shr %i, %one",
+        "%scaled = ctjs.binary mul %i, %nine\n"
+        "  %count = ctjs.get_property %base[%one]\n"
+        "  %position = ctjs.binary_static shr %scaled, %count");
+    for (const auto & kind : {"shr", "ushr"}) {
+        const auto body =
+            replace(roundedShift, "binary_static shr", std::string{"binary_static "} + kind);
+        run({.what = "equal rounded shift increments preserve sparse count reloads",
+             .body = body,
+             .arrays = "a:[zero,three,zero,one,zero,one]",
+             .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("rounded sparse shifts retain overlapping count guards",
+               replace(body, "%base[%one]", "%base[%two]"));
+        reject("rounded sparse shifts retain the complete later-store census",
+               replace(body, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
+        reject("mixed rounded increments cannot claim one sparse output stride",
+               replace(body, "4621256167635550208", "4621819117588971520"));
+    }
     const auto crossingShift = replace(crossingComplement, "ctjs.unary bitnot %part",
                                        "ctjs.binary_static shr %part, %zero");
     const auto lowerCrossingShift = replace(negativeCrossingComplement, "ctjs.unary bitnot %part",

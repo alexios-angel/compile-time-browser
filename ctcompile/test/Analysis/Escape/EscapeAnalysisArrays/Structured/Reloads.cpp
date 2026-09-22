@@ -1924,6 +1924,33 @@ void StructuredCases::reloads() {
              .reads = "a[0]=zero; a[1]=y; a[2]=one; a[3]=one",
              .exit = "a -> {a}"});
     }
+    const auto roundedShift = replace(
+        replace(
+            replace(rightShiftIndex, "[%y, %y, %one, %one]", "[%y, %three, %y, %one, %y, %one]"),
+            "  %a =",
+            "  %nine = ctjs.constant #ctjs.number<4621256167635550208>\n  %three = ctjs.constant "
+            "#ctjs.number<4613937818241073152> {storage_test_id = \"three\"}\n  %a ="),
+        "%position = ctjs.binary_static shr %i, %one",
+        "%scaled = ctjs.binary mul %i, %nine\n"
+        "    %count = ctjs.get_property %base[%one]\n"
+        "    %position = ctjs.binary_static shr %scaled, %count");
+    for (const auto & kind : {"shr", "ushr"}) {
+        const auto body =
+            replace(roundedShift, "binary_static shr", std::string{"binary_static "} + kind);
+        rows.push_back(
+            {.what = "equal rounded shift increments preserve sparse count reloads",
+             .body = body,
+             .arrays = "a:[zero,three,zero,one,zero,one]",
+             .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=zero",
+             .exit = "a -> {a}"});
+        reject("rounded sparse shifts retain overlapping count guards",
+               replace(body, "%base[%one]", "%base[%two]"));
+        reject(
+            "rounded sparse shifts retain the complete later-store census",
+            replace(body, "    %step =", "    ctjs.set_property %base[%one], %two\n    %step ="));
+        reject("mixed rounded increments cannot claim one sparse output stride",
+               replace(body, "4621256167635550208", "4621819117588971520"));
+    }
     const auto crossingShift = replace(replace(crossingComplement, "ctjs.unary bitnot %part",
                                                "ctjs.binary_static shr %part, %zero"),
                                        "ctjs.return %result", "ctjs.return %a");

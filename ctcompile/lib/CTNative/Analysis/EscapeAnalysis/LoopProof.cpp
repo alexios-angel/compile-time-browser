@@ -486,6 +486,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool twoPointShift =
             shift && endpointNumber(range->last) - endpointNumber(range->first) <=
                          static_cast<std::int64_t>(range->stride);
+        std::int64_t roundedIntervals = 0;
         bool descending = subtract && offsetOperand == 0;
         if (shift) {
             if (!spend()) {
@@ -530,8 +531,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 range->stride *= factor;
             } else if (!twoPointShift) {
                 // Within one conversion band, floor division is monotone.
-                // ponytail: enclose uneven strides densely; proving their sparse
-                // gaps would admit more disjoint reloads. Replay keeps exact visits.
+                const auto span = endpointNumber(range->last) - endpointNumber(range->first);
+                const auto stride = static_cast<std::int64_t>(range->stride);
+                if (range->stride % factor != 0 && span > 0 && span % stride == 0) {
+                    roundedIntervals = span / stride;
+                }
                 range->stride = range->stride % factor == 0 ? range->stride / factor : 1;
             }
         } else if (divide) {
@@ -595,6 +599,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // visits them backwards. The stride keeps its positive magnitude.
         if (twoPointShift) {
             boundEndpointPair(*range);
+        } else if (roundedIntervals) {
+            // Each rounded increment is q or q+1. An integral average must
+            // equal one endpoint, so every increment has that same size.
+            const auto span = endpointNumber(range->last) - endpointNumber(range->first);
+            if (span % roundedIntervals == 0) {
+                range->stride =
+                    static_cast<std::size_t>(std::max<std::int64_t>(1, span / roundedIntervals));
+            }
         } else if (descending) {
             std::swap(range->first, range->last);
         }
