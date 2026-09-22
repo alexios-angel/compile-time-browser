@@ -566,8 +566,10 @@ the entry rewrite then carries their scalar state through branches and loops.
 The ordinary result keeps its own observation point even when later writes
 change the shared state. Repeated calls see the latest values, including
 `return` updates on close. Complete DOM reproof checks every scalar producer.
-Retired helpers leave no closure or cell storage in native output. Escaping,
-recursive and method-local-break helpers remain refused. Unknown or coercing
+Retired helpers leave no closure or cell storage in native output. Helper-local
+breaks reuse the method completion proof before scalar body validation, retaining
+argument snapshots, ordered state writes and the ordinary return value. Escaping,
+recursive and nested-call helpers remain refused. Unknown or coercing
 arguments still require complete DOM proof; arity alone authorizes no value facts.
 Fully defined JavaScript branch results join their ordered scalar state before
 one common continuation, including a helper conditional after its local loop.

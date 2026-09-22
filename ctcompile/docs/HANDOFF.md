@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Sibling iterator helper breaks and two-value complements, 2026-09-22 UTC
+
+Continued clean **e26b8342** and its exact finite sibling-helper break boundary.
+**5b6c909a** reuses the existing completion proof before sibling scalar-body
+validation. Helper breaks preserve explicit argument snapshots, ordered shared
+state and ordinary results through the existing inliner and scalar rewrite.
+The saved finite source executes unchanged. The original zero-state source also
+admits but cannot progress at runtime; it remains byte-identical in a separate
+compile-only check. No browser or runtime-oracle semantics changed.
+
+Parallel **11c87d97** reuses exact two-value endpoint bounds for unary `~`
+across signed-conversion jumps. Larger ranges retain the existing same-band
+requirement, complete store/reload census and budget. Twelve source witnesses
+extend all twenty previous bitnot function bodies.
+
+Focused checks pass: exact host **1/1, 1.41 s total**; seven custom sources plus
+all 76 refusal programs **112 native executions, 320 refusals, two nonexecuted
+admissions and 56 Node/VM observations**; exact arrays **1/1, 1.83 s total**;
+bitnot/AND/OR-XOR lit **3/3, 0.19 s**. All seven final code/test hashes match
+local/devbox files. A new raw poison control was corrected to poison a live
+loop input; production stayed unchanged. Required formatting retains **16
+pre-existing diagnostics in four untouched files**; changed scopes pass.
+Full suites, the complete custom case and unchanged nested/dataset cases were
+skipped. The devbox idle timer is active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-nested-call-writer` moves an
+ordered state update into another helper called by the first. Node returns
+**2724 normally / 3598 on stop**, with `data-closed=false`; both native policies
+refuse the unsupported sibling call. Prove that confined call tree while
+retaining current state, argument snapshots and ordinary results. Nested custom
+opens, abrupt close, unguarded Bootstrap defaults and the application driver
+remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-sibling-breaks.md).
+
 ## Iterator argument snapshots and sparse bitwise bounds, 2026-09-22 UTC
 
 Continued clean **9ad10593** and its exact
