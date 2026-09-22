@@ -623,8 +623,10 @@ void install_collections(context & cx) {
         });
         // 24.2.3.10/11: `keys` and @@iterator are both the `values` function.
         if (value * values = proto->find("values")) {
-            proto->define("keys", *values, attr_builtin);
-            proto->define("@@iterator", *values, attr_builtin);
+            // Adding the first alias can reallocate the property vector.
+            const value values_fn = *values;
+            proto->define("keys", values_fn, attr_builtin);
+            proto->define("@@iterator", values_fn, attr_builtin);
         }
         // A Set's `entries` pairs each member WITH ITSELF, which looks odd and
         // is the spec: it exists so a Set and a Map can be walked by one code.
