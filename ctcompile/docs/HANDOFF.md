@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator argument snapshots and sparse bitwise bounds, 2026-09-22 UTC
+
+Continued clean **9ad10593** and its exact
+`entry-captured-sibling-argument-writer` boundary. **8b5a9ebc** binds each
+confined sibling helper's explicit arguments before its captured state cells,
+reusing the existing inliner and scalar rewrite. Exact arity, source evaluation
+order, snapshots, ordinary results and ordered writes survive branches, loops
+and close. Complete typed DOM reproof remains required. The saved source executes
+unchanged; new sources check a later argument writing the first argument's cell
+and argument-driven control flow. All 105 earlier complete sources remain.
+
+Parallel **2b3f6d24** evaluates exact AND/OR/XOR endpoint images when the
+existing interval and stride contain at most two possible values. It retains
+sparse output gaps across signed-conversion jumps without a new range domain.
+Thirty-one new source witnesses extend all 269 earlier bodies. Thirteen older
+raw refusals and four source claims now admit with unchanged source bodies and
+checked owner/read expectations. No browser or runtime-oracle semantics changed.
+
+Focused checks pass: exact host **1/1, 1.20 s total**; seven custom sources plus
+all 74 refusal programs **112 native executions, 316 refusals and 56 Node/VM
+observations**; exact arrays **1/1, 1.84 s total**; AND/OR-XOR lit **2/2, 0.15 s**.
+All eight final code/test hashes match local/devbox files. Required formatting
+retains **16 pre-existing diagnostics in four untouched files**; changed scopes
+pass. Full suites, the complete custom case and unchanged nested/dataset cases
+were skipped. The devbox idle timer is active/enabled.
+
+**Next native boundary:** sibling helper loop-break completion. Both the original
+`entry-captured-sibling-loop-break-writer` and the separately labeled
+`entry-captured-sibling-loop-break-finite-writer` refuse the scalar-leaf proof
+under both policies. The original zero-state source cannot progress after its
+break; preserve it as a refusal. Use the finite variant for execution work:
+Node returns **1258 normally / 1651 when stopping**, with `data-closed=false`
+on stop. Compose the existing completion proof before sibling leaf validation.
+Nested custom opens, abrupt close, unguarded Bootstrap defaults and the application
+driver remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-arguments.md).
+
 ## Iterator branch joins and fixed-bit rounding, 2026-09-22 UTC
 
 Continued clean **6f7ee572** and its saved

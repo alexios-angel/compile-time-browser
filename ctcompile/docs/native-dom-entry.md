@@ -551,19 +551,24 @@ follows cell identity across different capture orders, removes only those slots 
 reindexes remaining immutable captures. General helper capture admission still requires
 immutability.
 
-A unique local sibling closure may read and update those state cells through zero-argument
-ordinary or direct calls in the enclosing entry. Every capture must identify
+A unique local sibling closure may read and update those state cells through
+ordinary or direct calls in the enclosing entry. Explicit arguments must match
+the helper's verified parameter count. Every capture must identify
 proved iterator state; the complete body must be a scalar leaf without calls
 or nested closures. Exact closure, call and symbolic-use checks precede
 rewriting. An arrow's lexical receiver may be retained only when its body does
 not observe it. Capture slots become temporary cell parameters for the existing
-helper inliner. It inserts each call's reads and writes at their source positions;
+helper inliner, following that call's already-evaluated explicit arguments.
+Argument values keep their own snapshots even when a later argument or the
+helper writes the captured state. The inliner inserts reads and writes at their
+source positions;
 the entry rewrite then carries their scalar state through branches and loops.
 The ordinary result keeps its own observation point even when later writes
 change the shared state. Repeated calls see the latest values, including
 `return` updates on close. Complete DOM reproof checks every scalar producer.
 Retired helpers leave no closure or cell storage in native output. Escaping,
-recursive, argument-taking and method-local-break helpers remain refused.
+recursive and method-local-break helpers remain refused. Unknown or coercing
+arguments still require complete DOM proof; arity alone authorizes no value facts.
 Fully defined JavaScript branch results join their ordered scalar state before
 one common continuation, including a helper conditional after its local loop.
 The existing importer also normalizes early helper returns into this form.
