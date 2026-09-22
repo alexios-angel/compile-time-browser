@@ -609,6 +609,82 @@ module {
     check(methodBreakCaptured && methodBreakReceiver,
           "paired two-state method break witnesses with empty exit dispatch parse");
     if (!methodBreakCaptured || !methodBreakReceiver) { return; }
+    // Preserve the former external-access refusals as positive witnesses.
+    const auto reinitializedCaptureSource =
+        replaced(initializedCaptureSource, "ctjs.cell_set %emittedCell, %emittedInitial",
+                 "ctjs.cell_set %emittedCell, %emittedInitial\n"
+                 "    ctjs.cell_set %emittedCell, %emittedInitial");
+    const auto externalWriteSource =
+        replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                 "    ctjs.cell_set %emittedCell, %emittedInitial\n"
+                 "    %record = ctjs.call %open(%undefined, %holder)");
+    const auto externalReadSource =
+        replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                 "    %external = ctjs.cell_get %emittedCell\n"
+                 "    %record = ctjs.call %open(%undefined, %holder)");
+    auto reinitializedCapture =
+        mlir::parseSourceString<mlir::ModuleOp>(reinitializedCaptureSource, &context);
+    auto externalWrite = mlir::parseSourceString<mlir::ModuleOp>(externalWriteSource, &context);
+    auto externalRead = mlir::parseSourceString<mlir::ModuleOp>(externalReadSource, &context);
+    // The entry and both methods share two cells. Reads after close must see
+    // return's writes on break and the final next call's writes on exhaustion.
+    auto entryCapturedSource =
+        replaced(twoCapturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                 R"MLIR(    %entrySet = ctjs.get_property %element[%attributeName]
+    %entryBeforeName = ctjs.constant #ctjs.string<"entry-before">
+    %entryBodyName = ctjs.constant #ctjs.string<"entry-body">
+    %entryCloseName = ctjs.constant #ctjs.string<"entry-before-close">
+    %entryBefore = ctjs.cell_get %emittedCell
+    %entryStart = ctjs.binary_static add %entryBefore, %zero
+    ctjs.cell_set %emittedCell, %entryStart
+    %entryBeforeSeen = ctjs.compare strict_eq %entryBefore, %zero
+    %entryBeforeEffect = ctjs.call %entrySet(%element, %entryBeforeName, %entryBeforeSeen)
+    %record = ctjs.call %open(%undefined, %holder))MLIR");
+    entryCapturedSource =
+        replaced(entryCapturedSource, "        %increment = ctjs.binary_static add %count, %one",
+                 R"MLIR(        %bodyEmitted = ctjs.cell_get %emittedCell
+        %bodyExtra = ctjs.cell_get %extraCell
+        %bodyNext = ctjs.binary_static add %bodyExtra, %bodyEmitted
+        ctjs.cell_set %extraCell, %bodyNext
+        %bodyRead = ctjs.cell_get %extraCell
+        %bodySeen = ctjs.compare strict_eq %bodyRead, %bodyNext
+        %entryBodyEffect = ctjs.call %entrySet(%element, %entryBodyName, %bodySeen)
+        %increment = ctjs.binary_static add %count, %one)MLIR");
+    entryCapturedSource = replaced(entryCapturedSource,
+                                   "    %closed = ctjs.call %close(%undefined, %record, %normal)",
+                                   R"MLIR(    %preCloseCount = ctjs.cell_get %emittedCell
+    %preCloseExtra = ctjs.cell_get %extraCell
+    %preCloseSeen = ctjs.compare strict_eq %preCloseCount, %preCloseExtra
+    %entryCloseEffect = ctjs.call %entrySet(%element, %entryCloseName, %preCloseSeen)
+    %closed = ctjs.call %close(%undefined, %record, %normal)
+    %finalCount = ctjs.cell_get %emittedCell
+    %finalExtra = ctjs.cell_get %extraCell
+    %finalTotal = ctjs.binary_static add %finalCount, %finalExtra
+    %answerWithState = ctjs.binary_static add %answer, %finalTotal)MLIR");
+    entryCapturedSource =
+        replaced(entryCapturedSource, "ctjs.return %answer", "ctjs.return %answerWithState");
+    entryCapturedSource = replaced(
+        entryCapturedSource,
+        "    %extraWritten = ctjs.call %set(%element, %extraClosedName, %extraMatches)",
+        R"MLIR(    %extraWritten = ctjs.call %set(%element, %extraClosedName, %extraMatches)
+    %closeCount = ctjs.binary_static add %emitted, %one
+    ctjs.store_upvalue %callee[1], %closeCount
+    %closeRead = ctjs.load_upvalue %callee[1]
+    %closeExtra = ctjs.binary_static add %extra, %closeRead
+    ctjs.store_upvalue %callee[2], %closeExtra)MLIR");
+    const auto zeroEntryCapturedSource =
+        replaced(entryCapturedSource, "%emittedInitial = ctjs.constant #ctjs.number<0>",
+                 "%emittedInitial = ctjs.constant #ctjs.number<4607182418800017408>");
+    auto entryCaptured = mlir::parseSourceString<mlir::ModuleOp>(entryCapturedSource, &context);
+    auto zeroEntryCaptured =
+        mlir::parseSourceString<mlir::ModuleOp>(zeroEntryCapturedSource, &context);
+    check(reinitializedCapture && externalWrite && externalRead && entryCaptured &&
+              zeroEntryCaptured,
+          "external cell reads, ordered writes and zero-body traversal witnesses parse");
+    if (!reinitializedCapture || !externalWrite || !externalRead || !entryCaptured ||
+        !zeroEntryCaptured) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -647,7 +723,12 @@ module {
                          *loopReceiver,
                          *zeroTwoState,
                          *methodBreakCaptured,
-                         *methodBreakReceiver}) {
+                         *methodBreakReceiver,
+                         *reinitializedCapture,
+                         *externalWrite,
+                         *externalRead,
+                         *entryCaptured,
+                         *zeroEntryCaptured}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -911,6 +992,66 @@ module {
             check(proof.proved(),
                   "projected custom iterator reproves element lifetime and effects");
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+            if (fixture == *entryCaptured || fixture == *zeroEntryCaptured) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back());
+                auto close = returned.getValue().getDefiningOp<mlir::scf::IfOp>();
+                ctjs::CompareOp beforeClose, bodySeen;
+                llvm::SmallVector<llvm::StringRef> effects;
+                body.walk([&](ctjs::CallOp call) {
+                    if (call.getArgs().size() != 2) { return; }
+                    const auto name = ctjs::constantKey(call.getArgs()[0]);
+                    if (!name.starts_with("entry-")) { return; }
+                    effects.push_back(name);
+                    auto seen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    if (name == "entry-before-close") { beforeClose = seen; }
+                    if (name == "entry-body") { bodySeen = seen; }
+                });
+                // Completion normalization copies the final arithmetic into
+                // each close arm, then joins the complete return value.
+                check(close && close.getNumResults() == 1,
+                      "post-close observations retain a complete return on both close paths");
+                if (close && close.getNumResults() == 1) {
+                    auto exhausted = close.getThenRegion()
+                                         .front()
+                                         .back()
+                                         .getOperand(0)
+                                         .getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto closed = close.getElseRegion()
+                                      .front()
+                                      .back()
+                                      .getOperand(0)
+                                      .getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto exhaustedTotal =
+                        exhausted ? exhausted.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                  : ctjs::BinaryStaticOp{};
+                    auto closedTotal = closed
+                                           ? closed.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                           : ctjs::BinaryStaticOp{};
+                    auto closedCount =
+                        closedTotal ? closedTotal.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+                    auto closedExtra =
+                        closedTotal ? closedTotal.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+                    check(
+                        exhaustedTotal && closedTotal && beforeClose && closedCount &&
+                            closedExtra && exhausted.getLhs() == closed.getLhs() &&
+                            exhaustedTotal.getLhs() != exhaustedTotal.getRhs() &&
+                            beforeClose.getLhs() == exhaustedTotal.getLhs() &&
+                            beforeClose.getRhs() == exhaustedTotal.getRhs() &&
+                            closedCount.getLhs() == exhaustedTotal.getLhs() &&
+                            closedExtra.getLhs() == exhaustedTotal.getRhs() &&
+                            closedExtra.getRhs() == closedTotal.getLhs(),
+                        "exhaustion keeps final next state and break keeps ordered return writes");
+                }
+                check(bodySeen && bodySeen.getLhs() == bodySeen.getRhs() &&
+                          bodySeen.getLhs().getDefiningOp<ctjs::BinaryStaticOp>() &&
+                          effects == llvm::SmallVector<llvm::StringRef>{"entry-before",
+                                                                        "entry-body",
+                                                                        "entry-before-close"},
+                      "entry body reload sees its preceding write without moving observations");
+            }
             if (fixture == *receiver || fixture == *twoState || fixture == *captured ||
                 fixture == *twoCaptured || fixture == *initializedCapture ||
                 fixture == *reorderedCapture || fixture == *conditionalCaptured ||
@@ -918,12 +1059,16 @@ module {
                 fixture == *branchReceiver || fixture == *zeroCaptured ||
                 fixture == *zeroReceiver || fixture == *loopCaptured || fixture == *loopReceiver ||
                 fixture == *zeroTwoState || fixture == *methodBreakCaptured ||
-                fixture == *methodBreakReceiver) {
+                fixture == *methodBreakReceiver || fixture == *reinitializedCapture ||
+                fixture == *externalWrite || fixture == *externalRead ||
+                fixture == *entryCaptured || fixture == *zeroEntryCaptured) {
                 const bool two = fixture == *twoState || fixture == *twoCaptured ||
                                  fixture == *reorderedCapture || fixture == *branchCaptured ||
                                  fixture == *branchReceiver || fixture == *loopCaptured ||
                                  fixture == *loopReceiver || fixture == *zeroTwoState ||
-                                 fixture == *methodBreakCaptured || fixture == *methodBreakReceiver;
+                                 fixture == *methodBreakCaptured ||
+                                 fixture == *methodBreakReceiver || fixture == *entryCaptured ||
+                                 fixture == *zeroEntryCaptured;
                 bool objects = false, stateProperties = false, cells = false;
                 mlir::Value closedCount, closedExtra;
                 llvm::SmallVector<llvm::StringRef> closeOrder;
@@ -1014,15 +1159,33 @@ module {
                       "%emittedInitial = ctjs.constant #ctjs.boolean<false>"),
              replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial\n",
                       ""),
-             replaced(initializedCaptureSource, "ctjs.cell_set %emittedCell, %emittedInitial",
-                      "ctjs.cell_set %emittedCell, %emittedInitial\n"
+             replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial",
+                      "    %uninitialized = ctjs.cell_get %emittedCell\n"
                       "    ctjs.cell_set %emittedCell, %emittedInitial"),
-             replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+             replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial",
+                      "    %readFlag = arith.constant true\n"
+                      "    scf.if %readFlag {\n"
+                      "      %uninitialized = ctjs.cell_get %emittedCell\n"
+                      "      scf.yield\n"
+                      "    }\n"
+                      "    ctjs.cell_set %emittedCell, %emittedInitial"),
+             replaced(replaced(initializedCaptureSource,
+                               "    ctjs.cell_set %emittedCell, %emittedInitial\n", ""),
+                      "    %record = ctjs.call %open(%undefined, %holder)",
                       "    ctjs.cell_set %emittedCell, %emittedInitial\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
-             replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
-                      "    %external = ctjs.cell_get %emittedCell\n"
-                      "    %record = ctjs.call %open(%undefined, %holder)"),
+             replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial",
+                      "    %initializeFlag = arith.constant true\n"
+                      "    scf.if %initializeFlag {\n"
+                      "      ctjs.cell_set %emittedCell, %emittedInitial\n"
+                      "      scf.yield\n"
+                      "    }"),
+             replaced(entryCapturedSource, "%bodyRead = ctjs.cell_get %extraCell",
+                      "%bodyRead = ctjs.cell_get %extraCell\n"
+                      "        ctjs.store_global \"leaked\", %emittedCell"),
+             replaced(entryCapturedSource, "%bodyRead = ctjs.cell_get %extraCell",
+                      "%bodyRead = ctjs.cell_get %extraCell\n"
+                      "        %alias = ctjs.create_cell %emittedCell"),
              replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
                       "    ctjs.store_global \"leaked\", %emittedCell\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
@@ -1215,12 +1378,15 @@ module {
             }
         }
     }
-    for (auto fixture : {*loopCaptured, *methodBreakCaptured, *methodBreakReceiver}) {
+    for (auto fixture : {*loopCaptured, *methodBreakCaptured, *methodBreakReceiver, *entryCaptured,
+                         *zeroEntryCaptured}) {
         for (unsigned malformed = 0; malformed != 5; ++malformed) {
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
                                   HostContract::Provider::ctbrowserDOMSession}) {
                 mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
-                auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
+                auto body = input->lookupSymbol<ctjs::FuncOp>(
+                    fixture == *entryCaptured || fixture == *zeroEntryCaptured ? "custom$0"
+                                                                               : "next$2");
                 mlir::scf::WhileOp loop;
                 body.walk([&](mlir::scf::WhileOp found) { loop = found; });
                 auto condition =
@@ -1261,6 +1427,10 @@ module {
                       "ctjs.store_upvalue %callee[1], %element"),
              replaced(loopReceiverSource, "ctjs.set_property %this[%extraName], %nextExtra",
                       "ctjs.set_property %this[%extraName], %element"),
+             replaced(entryCapturedSource, "ctjs.cell_set %extraCell, %bodyNext",
+                      "ctjs.cell_set %extraCell, %element"),
+             replaced(entryCapturedSource, "ctjs.cell_set %emittedCell, %entryStart",
+                      "ctjs.cell_set %emittedCell, %yes"),
              replaced(loopCapturedSource, "      %effectAfter =",
                       "      %unknown = ctjs.load_global \"unknown\"\n"
                       "      %effect = ctjs.call %unknown(%element, %afterEmitted)\n"
@@ -1427,7 +1597,12 @@ module {
                          *loopReceiver,
                          *zeroTwoState,
                          *methodBreakCaptured,
-                         *methodBreakReceiver}) {
+                         *methodBreakReceiver,
+                         *reinitializedCapture,
+                         *externalWrite,
+                         *externalRead,
+                         *entryCaptured,
+                         *zeroEntryCaptured}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

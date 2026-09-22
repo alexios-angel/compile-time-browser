@@ -169,6 +169,28 @@ LOOP_BREAK_ORDERED_CAPTURE_SOURCE = (
     .replace("this.emitted", "emitted")
     .replace("this.closed", "closed")
 )
+ENTRY_CAPTURE_SOURCE = (
+    LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace(
+        "  let count = 0;",
+        """  let count = emitted + closed;
+  while (emitted < 1) emitted += closed;
+  closed += emitted;""",
+    )
+    .replace(
+        "    count++;",
+        """    count += emitted + closed;
+    if (anchor.hasAttribute('stop')) emitted += 3;
+    else emitted += 4;
+    closed += emitted;""",
+    )
+    .replace("closed === 6", "closed === 21")
+    .replace(
+        "  return count;",
+        """  closed += emitted;
+  emitted += closed;
+  return count + emitted + closed;""",
+    )
+)
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -329,6 +351,70 @@ POSITIVES = (
         True,
         "true",
     ),
+    (
+        "external-captured-read",
+        CAPTURE_SOURCE.replace("return count;", "return count + emitted;"),
+        True,
+        ("3", "2", "3"),
+        True,
+        "yes",
+    ),
+    (
+        "preloop-captured-read",
+        CAPTURE_SOURCE.replace(
+            "  for (const node of values) {",
+            "  anchor.setAttribute('data-extra', emitted === 0);\n  for (const node of values) {",
+        ),
+        True,
+        ("1", "1", "1"),
+        True,
+        "yes",
+    ),
+    (
+        "late-captured-store",
+        CAPTURE_SOURCE.replace("return count;", "emitted = 0;\n  return count;"),
+        True,
+        ("1", "1", "1"),
+        True,
+        "yes",
+    ),
+    (
+        "preloop-captured-store",
+        CAPTURE_SOURCE.replace(
+            "  for (const node of values) {", "  emitted = 0;\n  for (const node of values) {"
+        ),
+        True,
+        ("1", "1", "1"),
+        True,
+        "yes",
+    ),
+    (
+        "loop-external-captured-read",
+        LOOP_ORDERED_CAPTURE_SOURCE.replace("return count;", "return count + emitted;"),
+        True,
+        ("3", "5", "3"),
+        True,
+        "true",
+    ),
+    (
+        # The saved next boundary observes the state after the close-hook break.
+        "loop-break-external-captured-read",
+        LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace("return count;", "return count + emitted;"),
+        True,
+        ("3", "3", "3"),
+        True,
+        "true",
+    ),
+    (
+        # Entry loop/branch updates feed next and close, then both final cells
+        # feed ordered post-loop writes. Distinct sums expose stale or swapped state.
+        "entry-captured-ordered-state",
+        ENTRY_CAPTURE_SOURCE,
+        True,
+        ("57", "68", "57"),
+        True,
+        "true",
+    ),
 )
 
 
@@ -336,7 +422,7 @@ def oracles(args):
     # These receivers record the same source calls. The native clients below
     # separately check those calls against public DOM and document ownership.
     script, observations = "", []
-    for index, (_, text, breaking, results, resetting, closed) in enumerate(POSITIVES):
+    for index, (label, text, breaking, results, resetting, closed) in enumerate(POSITIVES):
         function = f"customElementsCase{index}"
         script += text.replace("function customElements(", f"function {function}(")
         normal, stopped, exhausted = results
@@ -378,6 +464,8 @@ var {name} = (function() {{
                     if breaking and state.startswith("stop")
                     else "data-next=true;data-yielded=yes;"
                 )
+            if label == "preloop-captured-read":
+                expected = expected.replace(":", ":data-extra=true;", 1)
             observations.append((name, expected))
     node = args.work / "custom-iteration-node.js"
     node.write_text(script + "".join(f"console.log({name});\n" for name, _ in observations))
@@ -582,16 +670,6 @@ def refusals():
             "extra-captured-closure": CAPTURE_SOURCE.replace(
                 loop, "  anchor.setAttribute('data-extra', (() => emitted)() === 0);\n" + loop
             ),
-            "external-captured-read": CAPTURE_SOURCE.replace(
-                "return count;", "return count + emitted;"
-            ),
-            "preloop-captured-read": CAPTURE_SOURCE.replace(
-                loop, "  anchor.setAttribute('data-extra', emitted === 0);\n" + loop
-            ),
-            "late-captured-store": CAPTURE_SOURCE.replace(
-                "return count;", "emitted = 0;\n  return count;"
-            ),
-            "preloop-captured-store": CAPTURE_SOURCE.replace(loop, "  emitted = 0;\n" + loop),
             "nonnumber-captured-initializer": CAPTURE_SOURCE.replace(
                 "let emitted = 0;", "let emitted = anchor;"
             ),
@@ -628,9 +706,6 @@ def refusals():
                 "        emitted++; const change = () => { emitted++; }; change();",
                 1,
             ),
-            "loop-external-captured-read": LOOP_ORDERED_CAPTURE_SOURCE.replace(
-                "return count;", "return count + emitted;"
-            ),
             "loop-break-nonnumber-captured-store": LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace(
                 "closed += emitted;", "closed = anchor;", 1
             ),
@@ -652,8 +727,19 @@ def refusals():
                 "if (anchor.hasAttribute('stop')) { const read = () => emitted; read(); break; }",
                 1,
             ),
-            "loop-break-external-captured-read": LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace(
-                "return count;", "return count + emitted;"
+            "entry-nonnumber-preloop-store": ENTRY_CAPTURE_SOURCE.replace(
+                "  while (emitted < 1)", "  closed = anchor;\n  while (emitted < 1)"
+            ),
+            "entry-nonnumber-body-store": ENTRY_CAPTURE_SOURCE.replace(
+                "emitted += 3;", "emitted = anchor;"
+            ),
+            "entry-nonnumber-postloop-store": ENTRY_CAPTURE_SOURCE.replace(
+                "  return count + emitted + closed;",
+                "  emitted = anchor;\n  return count + emitted + closed;",
+            ),
+            "entry-captured-sibling-reader": ENTRY_CAPTURE_SOURCE.replace(
+                "  return count + emitted + closed;",
+                "  const read = () => emitted;\n  return count + read() + closed;",
             ),
         }
     )
@@ -692,6 +778,22 @@ def main():
                 checks = checks.replace("@BREAKING@", "true" if breaking else "false")
                 checks = checks.replace("@RESETTING@", "true" if resetting else "false")
                 checks = checks.replace("@CLOSED@", closed)
+                if label == "preloop-captured-read":
+                    checks = checks.replace(
+                        'const auto stop = names.intern("stop")',
+                        'const auto extra = names.intern("data-extra");\n'
+                        '            const auto stop = names.intern("stop")',
+                    ).replace("check_writes({", "check_writes({extra, ")
+                    checks = checks.replace(
+                        "{next, yielded, visited, closed, stop, advance}",
+                        "{next, yielded, visited, closed, stop, advance, extra}",
+                    )
+                    checks = checks.replace(
+                        "assert(@SECOND_RESULT@);",
+                        'assert(target.read().attribute_value(id, extra) == "true");\n'
+                        "                assert(@SECOND_RESULT@);\n"
+                        '                assert(target.read().attribute_value(id, extra) == "true");',
+                    )
                 normal, stopped, exhausted = results
                 value = "static_cast<bool>(call())" if normal == "true" else "call().value()"
                 checks = checks.replace(
@@ -699,7 +801,11 @@ def main():
                     f"{value} == (stopping ? {stopped} : {normal})",
                 ).replace(
                     "@SECOND_RESULT@",
-                    f"{value} == {exhausted}",
+                    (
+                        f"{value} == (stopping ? {stopped} : {exhausted})"
+                        if resetting
+                        else f"{value} == {exhausted}"
+                    ),
                 )
                 dom.standalone(args, native, name, checks, compilers, includes, libraries)
                 executions += 2 * len(compilers)
