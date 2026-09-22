@@ -55,6 +55,9 @@ RECEIVER_SOURCE = (
     )
     .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;")
 )
+CAPTURE_SOURCE = RECEIVER_SOURCE.replace(
+    "  const values = {\n    emitted: 0,", "  let emitted = 0;\n  const values = {"
+).replace("this.emitted", "emitted")
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -122,6 +125,22 @@ POSITIVES = (
         .replace(
             "anchor.setAttribute('data-closed', 'yes');",
             "anchor.setAttribute('data-closed', this.closed === 2);\n      this.closed = 0;",
+        ),
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
+    ),
+    ("mutable-captured-counter", CAPTURE_SOURCE, True, ("1", "1", "1"), True, "yes"),
+    (
+        # Both closures share both cells; close observes next's ordered updates.
+        "mutable-captured-return-state",
+        CAPTURE_SOURCE.replace("let emitted = 0;", "let emitted = 0;\n  let closed = 1;")
+        .replace("emitted++;", "emitted++;\n      closed += emitted;")
+        .replace(
+            "anchor.setAttribute('data-closed', 'yes');",
+            "closed += emitted;\n      anchor.setAttribute('data-closed', closed === 3);\n"
+            "      emitted = 0;",
         ),
         True,
         ("1", "1", "1"),
@@ -325,9 +344,6 @@ def refusals():
         )
     variants.update(
         {
-            "mutable-captured-counter": RECEIVER_SOURCE.replace(
-                "  const values = {\n    emitted: 0,", "  let emitted = 0;\n  const values = {"
-            ).replace("this.emitted", "emitted"),
             "lexical-this-next": RECEIVER_SOURCE.replace("next() {", "next: () => {"),
             "lexical-this-return": RECEIVER_SOURCE.replace("return() {", "return: () => {").replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -363,6 +379,36 @@ def refusals():
                 "return count;", "values.emitted = 0;\n  return count;"
             ),
             "preloop-state-store": RECEIVER_SOURCE.replace(loop, "  values.emitted = 0;\n" + loop),
+        }
+    )
+    variants.update(
+        {
+            "escaping-captured-cell": CAPTURE_SOURCE.replace(
+                loop, "  external(() => emitted);\n" + loop
+            ),
+            "retained-captured-cell": CAPTURE_SOURCE.replace(
+                loop, "  anchor.saved = () => emitted;\n" + loop
+            ),
+            "extra-captured-closure": CAPTURE_SOURCE.replace(
+                loop, "  anchor.setAttribute('data-extra', (() => emitted)() === 0);\n" + loop
+            ),
+            "external-captured-read": CAPTURE_SOURCE.replace(
+                "return count;", "return count + emitted;"
+            ),
+            "preloop-captured-read": CAPTURE_SOURCE.replace(
+                loop, "  anchor.setAttribute('data-extra', emitted === 0);\n" + loop
+            ),
+            "late-captured-store": CAPTURE_SOURCE.replace(
+                "return count;", "emitted = 0;\n  return count;"
+            ),
+            "preloop-captured-store": CAPTURE_SOURCE.replace(loop, "  emitted = 0;\n" + loop),
+            "conditional-captured-store": CAPTURE_SOURCE.replace(
+                "emitted++;", "if (anchor.hasAttribute('advance')) emitted++;"
+            ),
+            "nonnumber-captured-initializer": CAPTURE_SOURCE.replace(
+                "let emitted = 0;", "let emitted = anchor;"
+            ),
+            "nonnumber-captured-store": CAPTURE_SOURCE.replace("emitted++;", "emitted = anchor;"),
         }
     )
     return variants

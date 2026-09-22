@@ -16,9 +16,10 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
         for (mlir::OpOperand & use : argument.getUses()) {
             if (!step()) { return false; }
             auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+            auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(use.getOwner());
             if (!llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use.getOwner()) &&
-                !(load && argument.getArgNumber() == ctjs::arg_callee &&
-                  use.getOperandNumber() == 0)) {
+                !((load || (beforeReplacement && store)) &&
+                  argument.getArgNumber() == ctjs::arg_callee && use.getOperandNumber() == 0)) {
                 return refuse("DOM helper observes an implicit argument");
             }
         }
@@ -171,9 +172,13 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     return refuse("DOM helper lacks an exact local closure identity");
                 }
             }
-            if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                if (entry || load.getClosure() != block.getArgument(ctjs::arg_callee) ||
-                    load.getIndex() < 0 || load.getIndex() >= function.getUpvalueCount()) {
+            auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation);
+            auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation);
+            if (load || store) {
+                auto closure = load ? load.getClosure() : store.getClosure();
+                auto index = load ? load.getIndex() : store.getIndex();
+                if (entry || closure != block.getArgument(ctjs::arg_callee) || index < 0 ||
+                    index >= function.getUpvalueCount() || (store && !beforeReplacement)) {
                     return refuse("DOM helper upvalue lacks an exact capture slot");
                 }
             }

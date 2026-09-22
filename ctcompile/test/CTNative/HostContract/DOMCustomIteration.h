@@ -293,6 +293,69 @@ module {
     auto twoState = mlir::parseSourceString<mlir::ModuleOp>(twoStateSource, &context);
     check(receiver && twoState, "one and two-field receiver iterator witnesses parse");
     if (!receiver || !twoState) { return; }
+    // The same recurrence through two closures must preserve cell identity,
+    // capture positions and sequential stores without retaining boxed storage.
+    const auto capturedState = [&](std::string text, bool two) {
+        text = replaced(text, "ctjs.set_property %holder[%emittedName], %emittedInitial",
+                        "%emittedCell = ctjs.create_cell %emittedInitial");
+        if (two) {
+            text = replaced(text, "ctjs.set_property %holder[%extraName], %extraInitial",
+                            "%extraCell = ctjs.create_cell %extraInitial");
+        }
+        for (auto method : {"step", "finish"}) {
+            const std::string closure = "%" + std::string(method) + " = ctjs.create_closure";
+            const auto begin = text.find(closure);
+            const auto end = text.find('\n', begin);
+            text.insert(end, two ? ", %emittedCell, %extraCell" : ", %emittedCell");
+        }
+        for (unsigned i = 0; i != 2; ++i) {
+            text = replaced(text, "attributes {upvalue_count = 1 : i32}",
+                            two ? "attributes {upvalue_count = 3 : i32}"
+                                : "attributes {upvalue_count = 2 : i32}");
+            text = replaced(text, "%emitted = ctjs.get_property %this[%emittedName]",
+                            "%emitted = ctjs.load_upvalue %callee[1]");
+            if (two) {
+                text = replaced(text, "%extra = ctjs.get_property %this[%extraName]",
+                                "%extra = ctjs.load_upvalue %callee[2]");
+            }
+        }
+        text = replaced(text, "ctjs.set_property %this[%emittedName], %advanced",
+                        "ctjs.store_upvalue %callee[1], %advanced");
+        if (two) {
+            text = replaced(text, "ctjs.set_property %this[%extraName], %extraAdvanced",
+                            "ctjs.store_upvalue %callee[2], %extraAdvanced");
+        }
+        return text;
+    };
+    const auto capturedSource = capturedState(receiverSource, false);
+    const auto twoCapturedSource = capturedState(twoStateSource, true);
+    const auto initializedCaptureSource =
+        replaced(capturedSource, "%emittedCell = ctjs.create_cell %emittedInitial",
+                 "%cellUndefined = ctjs.constant #ctjs.undefined\n"
+                 "    %emittedCell = ctjs.create_cell %cellUndefined\n"
+                 "    ctjs.cell_set %emittedCell, %emittedInitial");
+    auto reorderedCaptureSource =
+        replaced(twoCapturedSource,
+                 "%finish = ctjs.create_closure %callee[3] this %undefined captures %capture, "
+                 "%emittedCell, %extraCell",
+                 "%finish = ctjs.create_closure %callee[3] this %undefined captures %extraCell, "
+                 "%emittedCell, %capture");
+    const auto returnBegin = reorderedCaptureSource.find("  ctjs.func @return$3");
+    reorderedCaptureSource =
+        reorderedCaptureSource.substr(0, returnBegin) +
+        replaced(replaced(reorderedCaptureSource.substr(returnBegin),
+                          "%element = ctjs.load_upvalue %callee[0]",
+                          "%element = ctjs.load_upvalue %callee[2]"),
+                 "%extra = ctjs.load_upvalue %callee[2]", "%extra = ctjs.load_upvalue %callee[0]");
+    auto captured = mlir::parseSourceString<mlir::ModuleOp>(capturedSource, &context);
+    auto twoCaptured = mlir::parseSourceString<mlir::ModuleOp>(twoCapturedSource, &context);
+    auto initializedCapture =
+        mlir::parseSourceString<mlir::ModuleOp>(initializedCaptureSource, &context);
+    auto reorderedCapture =
+        mlir::parseSourceString<mlir::ModuleOp>(reorderedCaptureSource, &context);
+    check(captured && twoCaptured && initializedCapture && reorderedCapture,
+          "cell iterator witnesses with direct/deferred initialization and reordered slots parse");
+    if (!captured || !twoCaptured || !initializedCapture || !reorderedCapture) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -309,8 +372,9 @@ module {
         return empty;
     };
     constexpr unsigned completeBudget = 100000;
-    for (auto fixture : {*original, *withoutReturn, *counted, *retagged, *crossed, *duplicated,
-                         *receiver, *twoState}) {
+    for (auto fixture :
+         {*original, *withoutReturn, *counted, *retagged, *crossed, *duplicated, *receiver,
+          *twoState, *captured, *twoCaptured, *initializedCapture, *reorderedCapture}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -368,11 +432,18 @@ module {
             check(proof.proved(),
                   "projected custom iterator reproves element lifetime and effects");
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
-            if (fixture == *receiver || fixture == *twoState) {
-                bool objects = false, stateProperties = false;
+            if (fixture == *receiver || fixture == *twoState || fixture == *captured ||
+                fixture == *twoCaptured || fixture == *initializedCapture ||
+                fixture == *reorderedCapture) {
+                const bool two =
+                    fixture == *twoState || fixture == *twoCaptured || fixture == *reorderedCapture;
+                bool objects = false, stateProperties = false, cells = false;
                 mlir::Value closedCount, closedExtra;
+                llvm::SmallVector<llvm::StringRef> closeOrder;
                 input->walk([&](ctjs::CreateObjectOp) { objects = true; });
                 input->walk([&](mlir::Operation * operation) {
+                    cells |= llvm::isa<ctjs::CreateCellOp, ctjs::CellGetOp, ctjs::CellSetOp,
+                                       ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(operation);
                     mlir::Value key;
                     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                         key = get.getKey();
@@ -388,15 +459,24 @@ module {
                     const auto attribute = ctjs::constantKey(call.getArgs()[0]);
                     auto test = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
                     if (!test || test.getKind() != ctjs::CompareKind::StrictEq) { return; }
-                    if (attribute == "data-closed-count") { closedCount = test.getLhs(); }
-                    if (attribute == "data-closed-extra") { closedExtra = test.getLhs(); }
+                    if (attribute == "data-closed-count") {
+                        closeOrder.push_back(attribute);
+                        closedCount = test.getLhs();
+                    }
+                    if (attribute == "data-closed-extra") {
+                        closeOrder.push_back(attribute);
+                        closedExtra = test.getLhs();
+                    }
                 });
                 auto count = llvm::dyn_cast_if_present<mlir::OpResult>(closedCount);
                 auto extra = llvm::dyn_cast_if_present<mlir::OpResult>(closedExtra);
-                check(!objects && !stateProperties && count &&
+                check(!objects && !stateProperties && !cells && count &&
                           llvm::isa<mlir::scf::WhileOp>(count.getOwner()) &&
-                          (fixture != *twoState ||
-                           (extra && extra.getOwner() == count.getOwner() && extra != count)),
+                          closeOrder.size() == (two ? 2U : 1U) &&
+                          closeOrder.front() == "data-closed-count" &&
+                          (!two || (extra && extra.getOwner() == count.getOwner() &&
+                                    extra.getResultNumber() == count.getResultNumber() + 1 &&
+                                    closeOrder.back() == "data-closed-extra")),
                       "close reads distinct current scalar loop results without boxed state");
             } else if (fixture != *original && fixture != *withoutReturn) {
                 unsigned loops = 0, calls = 0, poison = 0, switches = 0;
@@ -410,6 +490,90 @@ module {
         }
     }
     contract.moduleSha256 = hostContractFingerprint(*original);
+
+    auto otherCaptureSource = replaced(
+        capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+        "    %observer = ctjs.create_closure %callee[4] this %undefined captures %emittedCell\n"
+        "    %record = ctjs.call %open(%undefined, %holder)");
+    otherCaptureSource = replaced(otherCaptureSource, "\n}\n", R"MLIR(
+  ctjs.func @observer$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %observed = ctjs.load_upvalue %callee[0]
+    ctjs.return %observed
+  }
+}
+)MLIR");
+    for (const auto & invalid : {
+             replaced(capturedSource,
+                      "ctjs.func @next$2(%this: !ctjs.value, %new: !ctjs.value, "
+                      "%callee: !ctjs.value)",
+                      "ctjs.func @next$2(%callee: !ctjs.value)"),
+             replaced(capturedSource, "%emitted = ctjs.load_upvalue %callee[1]",
+                      "%emitted = ctjs.load_upvalue %callee[2]"),
+             replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
+                      "ctjs.store_upvalue %callee[-1], %advanced"),
+             replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
+                      "ctjs.store_upvalue %callee[2], %advanced"),
+             replaced(capturedSource, "attributes {upvalue_count = 2 : i32}",
+                      "attributes {upvalue_count = 1 : i32}"),
+             replaced(capturedSource, "attributes {upvalue_count = 2 : i32}",
+                      "attributes {upvalue_count = 3 : i32}"),
+             replaced(capturedSource, "%emitted = ctjs.load_upvalue %callee[1]",
+                      "%emitted = ctjs.load_upvalue %this[1]"),
+             replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
+                      "ctjs.store_upvalue %this[1], %advanced"),
+             replaced(capturedSource, "%emittedCell = ctjs.create_cell %emittedInitial",
+                      "%emittedCell = ctjs.create_cell %element"),
+             replaced(capturedSource, "%emittedInitial = ctjs.constant #ctjs.number<0>",
+                      "%emittedInitial = ctjs.constant #ctjs.boolean<false>"),
+             replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial\n",
+                      ""),
+             replaced(initializedCaptureSource, "ctjs.cell_set %emittedCell, %emittedInitial",
+                      "ctjs.cell_set %emittedCell, %emittedInitial\n"
+                      "    ctjs.cell_set %emittedCell, %emittedInitial"),
+             replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                      "    ctjs.cell_set %emittedCell, %emittedInitial\n"
+                      "    %record = ctjs.call %open(%undefined, %holder)"),
+             replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                      "    %external = ctjs.cell_get %emittedCell\n"
+                      "    %record = ctjs.call %open(%undefined, %holder)"),
+             replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                      "    ctjs.store_global \"leaked\", %emittedCell\n"
+                      "    %record = ctjs.call %open(%undefined, %holder)"),
+             replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                      "    %sharedStep = ctjs.create_closure %callee[2] this %undefined "
+                      "captures %capture, %emittedCell\n"
+                      "    %record = ctjs.call %open(%undefined, %holder)"),
+             replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                      "    ctjs.store_global \"leaked\", %step\n"
+                      "    %record = ctjs.call %open(%undefined, %holder)"),
+             replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
+                      "ctjs.store_upvalue %callee[1], %callee"),
+             replaced(capturedSource, "    ctjs.store_upvalue %callee[1], %advanced",
+                      "    %nestedFlag = arith.constant true\n"
+                      "    scf.if %nestedFlag {\n"
+                      "      ctjs.store_upvalue %callee[1], %advanced\n"
+                      "      scf.yield\n"
+                      "    }"),
+             otherCaptureSource,
+         }) {
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "invalid captured-state witness parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure),
+                  "invalid capture identity, confinement and stores refuse before projection");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                      noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "refused capture proof preserves source and publishes no DOM evidence");
+        }
+    }
 
     for (const auto & invalid : {
              replaced(receiverSource, stateInitialization,
@@ -466,12 +630,15 @@ module {
                   "refused receiver-state proof preserves the source and publishes no evidence");
         }
     }
-    auto nonScalar = mlir::parseSourceString<mlir::ModuleOp>(
-        replaced(receiverSource, "ctjs.set_property %this[%emittedName], %advanced",
-                 "ctjs.set_property %this[%emittedName], %element"),
-        &context);
-    check(static_cast<bool>(nonScalar), "receiver-state category mutation parses");
-    if (nonScalar) {
+    for (const auto & invalid : {
+             replaced(receiverSource, "ctjs.set_property %this[%emittedName], %advanced",
+                      "ctjs.set_property %this[%emittedName], %element"),
+             replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
+                      "ctjs.store_upvalue %callee[1], %element"),
+         }) {
+        auto nonScalar = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(nonScalar), "iterator-state category mutation parses");
+        if (!nonScalar) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*nonScalar);
         if (auto failure = normalizeDOMCustomIteration(*nonScalar, request, completeBudget)) {
@@ -611,7 +778,8 @@ module {
     }
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
-    for (auto fixture : {*original, *counted, *crossed, *receiver, *twoState}) {
+    for (auto fixture : {*original, *counted, *crossed, *receiver, *twoState, *captured,
+                         *twoCaptured, *initializedCapture, *reorderedCapture}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

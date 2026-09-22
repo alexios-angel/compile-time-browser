@@ -187,6 +187,93 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator identity method escapes its own slot");
         }
     }
+    // Mutable captures join the existing receiver-state tuple only after a
+    // complete local-cell census. Generic helper captures remain immutable.
+    llvm::DenseMap<mlir::Value, unsigned> capturedState;
+    llvm::DenseSet<mlir::Operation *> stateStorage;
+    llvm::SmallVector<mlir::Value> stateInitials;
+    for (auto field : stateSlots) { stateInitials.push_back(field.getValue()); }
+    for (auto & [name, slot] : slots) {
+        (void)name;
+        auto closure = slot.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        auto body = targetOf(closure);
+        auto indices = closure.getEnclosingIndicesAttr();
+        if (!body || body->hasAttr("ctjs.skipped") || !body.getBody().hasOneBlock() ||
+            body.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
+            closure.getUpvalues().size() != body.getUpvalueCount() ||
+            closure.getEnclosingClosure() !=
+                entry.getBody().front().getArgument(ctjs::arg_callee) ||
+            (indices && (indices.size() != closure.getUpvalues().size() ||
+                         llvm::any_of(indices.asArrayRef(), [](int32_t i) { return i != -1; })))) {
+            return error("DOM iterator capture requires exact local slots");
+        }
+        const auto stores = body.walk([&](ctjs::StoreUpvalueOp store) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (store.getClosure() != body.getBody().front().getArgument(ctjs::arg_callee) ||
+                store.getIndex() < 0 || store.getIndex() >= body.getUpvalueCount() ||
+                store->getBlock() != &body.getBody().front()) {
+                return mlir::WalkResult::interrupt();
+            }
+            auto cell = closure.getUpvalues()[static_cast<unsigned>(store.getIndex())]
+                            .getDefiningOp<ctjs::CreateCellOp>();
+            if (!cell || cell->getBlock() != open->getBlock()) {
+                return mlir::WalkResult::interrupt();
+            }
+            capturedState.try_emplace(cell.getResult(), 0);
+            return mlir::WalkResult::advance();
+        });
+        if (stores.wasInterrupted()) {
+            return error("DOM iterator mutation requires direct local capture stores");
+        }
+    }
+    for (auto cell : entry.getBody().front().getOps<ctjs::CreateCellOp>()) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        auto found = capturedState.find(cell.getResult());
+        if (found == capturedState.end()) { continue; }
+        ctjs::CellSetOp initializer;
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto * user = use.getOwner();
+            if (user->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(user)) {
+                return error("DOM iterator capture cell escapes its local initialization");
+            }
+            if (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) { continue; }
+            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                write && use.getOperandNumber() == 0 && !initializer) {
+                initializer = write;
+                continue;
+            }
+            auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
+            bool method = false;
+            for (auto & [name, slot] : slots) {
+                (void)name;
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                method |= closure && slot.getValue() == closure.getResult();
+            }
+            if (!method || use.getOperandNumber() < 2) {
+                return error("DOM iterator capture cell has an external reader or writer");
+            }
+        }
+        auto initial = (initializer ? initializer.getValue() : cell.getInitial())
+                           .getDefiningOp<ctjs::ConstantOp>();
+        auto original = cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
+        if (!initial || !llvm::isa<ctjs::NumberAttr>(initial.getValue()) || !original ||
+            !llvm::isa<ctjs::NumberAttr, ctjs::UndefinedAttr>(original.getValue()) ||
+            (initializer && !initializer->isBeforeInBlock(open))) {
+            return error("DOM iterator capture requires one literal Number initialization");
+        }
+        for (auto * user : cell->getUsers()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (initializer && llvm::isa<ctjs::CreateClosureOp>(user) &&
+                !initializer->isBeforeInBlock(user)) {
+                return error("DOM iterator capture initialization must precede its methods");
+            }
+        }
+        found->second = static_cast<unsigned>(stateInitials.size());
+        stateInitials.push_back(initial.getResult());
+        stateStorage.insert(cell);
+        if (initializer) { stateStorage.insert(initializer); }
+    }
     // Projecting these records cannot invoke getters, consult a prototype or
     // lose evaluation of a field producer. Complete DOM proof checks values.
     for (auto & [name, store] : slots) {
@@ -234,7 +321,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (name == "next" && (!fields.contains("done") || !fields.contains("value"))) {
             return error("DOM next result requires own done and value fields");
         }
-        if (!stateSlots.empty()) {
+        if (!stateInitials.empty()) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             unsigned count = 0;
             const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
@@ -253,6 +340,26 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
             }
             if (!work.checkBody(body, false, true, true)) { return error(work.reason); }
+            if (!capturedState.empty()) {
+                const auto nested = body.walk([&](ctjs::CreateClosureOp) {
+                    spend();
+                    return mlir::WalkResult::interrupt();
+                });
+                if (nested.wasInterrupted()) {
+                    return error("DOM iterator mutable capture requires leaf methods");
+                }
+            }
+            const auto reads = body.walk([&](ctjs::LoadUpvalueOp read) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                auto cell = closure.getUpvalues()[static_cast<unsigned>(read.getIndex())];
+                if (capturedState.contains(cell) && read->getBlock() != &block) {
+                    return mlir::WalkResult::interrupt();
+                }
+                return mlir::WalkResult::advance();
+            });
+            if (reads.wasInterrupted()) {
+                return error("DOM iterator capture requires direct state reads");
+            }
         }
     }
 
@@ -326,7 +433,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!guarded) { return error("DOM iterator item requires its not-done continuation"); }
     }
 
-    if (!stateSlots.empty()) {
+    if (!stateInitials.empty()) {
         for (mlir::Operation * user : object->getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             if (user != open &&
@@ -336,19 +443,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
     }
-    // These bodies are private to their own method slots. Bind receiver fields
+    // These bodies are private to their own method slots. Bind fields and cells
     // as scalar arguments/results; ordinary helper expansion later removes the
     // fresh result records. All source value producers remain for DOM reproof.
     for (auto & [name, store] : slots) {
         (void)name;
-        if (stateSlots.empty()) { break; }
+        if (stateInitials.empty()) { break; }
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto body = targetOf(closure);
         auto & block = body.getBody().front();
         llvm::SmallVector<mlir::Value> current;
-        for (auto field : stateSlots) {
+        for (auto initial : stateInitials) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            current.push_back(block.addArgument(field.getValue().getType(), field.getLoc()));
+            current.push_back(block.addArgument(initial.getType(), initial.getLoc()));
         }
         body.setFunctionTypeAttr(mlir::TypeAttr::get(
             mlir::FunctionType::get(candidate.getContext(), block.getArgumentTypes(),
@@ -357,6 +464,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
             auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
+            auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation);
+            auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation);
             auto receiver = block.getArgument(ctjs::arg_receiver);
             if (get && get.getObject() == receiver) {
                 get.getResult().replaceAllUsesWith(
@@ -365,8 +474,35 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             } else if (set && set.getObject() == receiver) {
                 current[stateIndices.lookup(ctjs::constantKey(set.getKey()))] = set.getValue();
                 set.erase();
+            } else if (load || write) {
+                auto index = static_cast<unsigned>(load ? load.getIndex() : write.getIndex());
+                auto found = capturedState.find(closure.getUpvalues()[index]);
+                if (found == capturedState.end()) { continue; }
+                if (load) {
+                    load.getResult().replaceAllUsesWith(current[found->second]);
+                    load.erase();
+                } else {
+                    current[found->second] = write.getValue();
+                    write.erase();
+                }
             }
         }
+        llvm::SmallVector<mlir::Value> retained;
+        llvm::SmallVector<unsigned> indices;
+        for (auto cell : closure.getUpvalues()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            indices.push_back(static_cast<unsigned>(retained.size()));
+            if (!capturedState.contains(cell)) { retained.push_back(cell); }
+        }
+        const auto reindexed = body.walk([&](ctjs::LoadUpvalueOp read) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            read.setIndex(indices[static_cast<unsigned>(read.getIndex())]);
+            return mlir::WalkResult::advance();
+        });
+        if (reindexed.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+        closure.getUpvaluesMutable().assign(retained);
+        closure.removeEnclosingIndicesAttr();
+        body.setUpvalueCount(static_cast<uint32_t>(retained.size()));
         auto returned = llvm::cast<ctjs::ReturnOp>(block.back());
         mlir::OpBuilder at(returned);
         for (auto [index, value] : llvm::enumerate(current)) {
@@ -393,9 +529,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                                             ctjs::BooleanAttr::get(candidate.getContext(), false));
     auto marker = mlir::ub::PoisonOp::create(start, where, type);
     llvm::SmallVector<mlir::Value> state{initial};
-    for (auto field : stateSlots) {
+    for (auto value : stateInitials) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-        auto constant = field.getValue().getDefiningOp<ctjs::ConstantOp>();
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         state.push_back(ctjs::ConstantOp::create(start, where, constant.getValue()));
     }
     ctjs::CallOp emittedNext;
@@ -408,7 +544,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto method = ctjs::GetPropertyOp::create(at, where, type, holder, key);
         auto called = ctjs::CallOp::create(at, where, type, method, holder,
                                            mlir::ValueRange(state).drop_front());
-        for (unsigned index = 0; index < stateSlots.size(); ++index) {
+        for (unsigned index = 0; index < stateInitials.size(); ++index) {
             if (!spend()) { return ctjs::CallOp{}; }
             auto field = ctjs::ConstantOp::create(
                 at, where,
@@ -427,12 +563,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return false; }
             }
             if (&operation == iteratorSlot || &operation == identity ||
-                llvm::is_contained(stateSlots, &operation)) {
+                stateStorage.contains(&operation) || llvm::is_contained(stateSlots, &operation)) {
                 continue;
             }
             if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation);
                 root &&
-                (root.getValue() == identity.getResult() || root.getValue() == open.getResult())) {
+                (root.getValue() == identity.getResult() || root.getValue() == open.getResult() ||
+                 capturedState.contains(root.getValue()))) {
                 continue;
             }
             if (&operation == open) {
