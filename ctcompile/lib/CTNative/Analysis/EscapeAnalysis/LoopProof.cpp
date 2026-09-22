@@ -501,13 +501,27 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // band ToUint32 adds 2^32; crossing zero would break its order.
             const bool negativeBand = unsignedShift && range->first.negativeIntegerNumber &&
                                       range->last.negativeIntegerNumber;
-            if ((!positive && !negative) ||
-                (!twoPointShift && (signedShift || leftShift) &&
+            if (!positive && !negative) { return std::nullopt; }
+            const bool conversionJump =
+                ((signedShift || leftShift) &&
                  signedBand(range->first) != signedBand(range->last)) ||
-                (!twoPointShift && unsignedShift && !negativeBand &&
+                (unsignedShift && !negativeBand &&
                  (!range->first.integerNumber || !range->last.integerNumber ||
-                  *range->last.integerNumber > 4294967295ULL))) {
-                return std::nullopt;
+                  *range->last.integerNumber > 4294967295ULL));
+            if (!twoPointShift && conversionJump) {
+                if (leftShift) { return std::nullopt; }
+                // A conversion jump can hide interior extrema. Enclose every
+                // converted input before the monotone right shift; replay still
+                // records only actual writes.
+                // ponytail: dense interval; unions if precision needs them.
+                range->first = {operand, ContentsKind::NonBigInt, 0};
+                if (signedShift) {
+                    range->first.integerNumber.reset();
+                    range->first.negativeIntegerNumber = 2147483648ULL;
+                }
+                range->last = {operand, ContentsKind::NonBigInt,
+                               signedShift ? 2147483647ULL : 4294967295ULL};
+                range->stride = 1;
             }
             const auto count = positive ? static_cast<std::uint32_t>(*positive)
                                         : 0U - static_cast<std::uint32_t>(*negative);

@@ -2379,9 +2379,84 @@ void InductionCases::overwritesAndTransport() {
              .reads = "a[1]=two; a[0]=x; a[1]=two; a[2]=zero",
              .exit = "a -> {a}"},
             "x");
-        reject("shift endpoint images cannot omit an interior conversion or wrap",
-               replace(body, "[%x, %one, %x, %one]", "[%x, %one, %x, %one, %x, %one]"));
+        const auto larger = replace(body, "[%x, %one, %x, %one]", "[%x, %one, %x, %one, %x, %one]");
+        if (body.find("binary_static shl") != std::string::npos) {
+            reject("shift endpoint images cannot omit an interior conversion or wrap", larger);
+        } else {
+            run({.what = "larger right-shift enclosures preserve actual unwritten children",
+                 .body = larger,
+                 .arrays = "a:[zero,one,zero,one,x,one]",
+                 .reads = "a[0]=x; a[2]=zero; a[4]=x",
+                 .exit = "a -> {a,x}"});
+        }
     }
+    const auto jumpShift =
+        replace(replace(replace(crossingShift, "[%x, %one, %x, %one]",
+                                "[%x, %x, %wideCount, %one, %one, %one]"),
+                        "  %a =",
+                        "  %wideCount = ctjs.constant #ctjs.number<4629418941960159232> "
+                        "{storage_test_id = \"count\"}\n  %a ="),
+                "%negative = ctjs.binary_static shr %part, %zero\n  %position = ctjs.binary_static "
+                "bitand %negative, %two",
+                "%count = ctjs.get_property %base[%two]\n"
+                "  %negative = ctjs.binary_static shr %part, %count\n"
+                "  %position = ctjs.binary add %negative, %one");
+    const auto lowerJumpShift =
+        replace(replace(jumpShift, "4746794007244308480", "4746794007250599936"),
+                "add %maximum, %i", "sub %i, %maximum");
+    const auto unsignedJumpShift =
+        replace(replace(replace(jumpShift, "add %maximum, %i", "sub %i, %one"), "binary_static shr",
+                        "binary_static ushr"),
+                "ctjs.binary add %negative, %one", "ctjs.unary plus %negative");
+    for (const auto & body : {jumpShift, lowerJumpShift, unsignedJumpShift,
+                              replace(jumpShift, "4629418941960159232", "4634063279075885056"),
+                              replace(jumpShift, "4629418941960159232", "13830554455654793216")}) {
+        run({.what = "larger conversion jumps use count-specific full right-shift bounds",
+             .body = body,
+             .arrays = "a:[zero,zero,count,one,one,one]",
+             .reads = "a[2]=count; a[0]=x; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+             .exit = "a -> {a}"},
+            "x");
+        reject("conversion-jump right shifts retain the full later-store census",
+               replace(body, "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
+        reject("conversion-jump right shifts cannot reload an actual written position",
+               replace(replace(body, "[%x, %x, %wideCount, %one, %one, %one]",
+                               "[%wideCount, %x, %wideCount, %one, %one, %one]"),
+                       "%base[%two]", "%base[%zero]"));
+    }
+    const auto interiorSignedShift = replace(
+        replace(lowerJumpShift,
+                "  %a =", "  %scale = ctjs.constant #ctjs.number<4742290407612743680>\n  %a ="),
+        "%part = ctjs.binary sub %i, %maximum",
+        "%scaled = ctjs.binary mul %i, %scale\n  %part = ctjs.binary sub %scaled, %maximum");
+    const auto interiorUnsignedShift = replace(
+        replace(unsignedJumpShift,
+                "  %a =", "  %scale = ctjs.constant #ctjs.number<4742290407612743680>\n  %a ="),
+        "%part = ctjs.binary sub %i, %one",
+        "%scaled = ctjs.binary mul %i, %scale\n  %part = ctjs.binary sub %scaled, %one");
+    for (const auto & body : {interiorSignedShift, interiorUnsignedShift}) {
+        run({.what = "equal converted endpoints do not hide an interior right-shift extremum",
+             .body = body,
+             .arrays = "a:[zero,zero,count,one,one,one]",
+             .reads = "a[2]=count; a[0]=x; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "full shift enclosures never erase unvisited retained children",
+         .body = replace(jumpShift, "[%x, %x, %wideCount, %one, %one, %one]",
+                         "[%x, %x, %wideCount, %one, %x, %one]"),
+         .arrays = "a:[zero,zero,count,one,x,one]",
+         .reads = "a[2]=count; a[0]=x; a[2]=count; a[2]=count; a[2]=count; a[4]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "conversion-jump replay preserves an earlier child snapshot",
+         .body = replace(replace(jumpShift, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,count,one,one,one]",
+         .reads = "a[0]=x; a[2]=count; a[0]=x; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+         .exit = "x -> {x}"});
+    reject("full signed right-shift bounds still require nonnegative own positions",
+           replace(jumpShift, "ctjs.binary add %negative, %one", "ctjs.unary plus %negative"));
     const auto crossingShiftReload =
         replace(replace(crossingShift, "[%x, %one, %x, %one]", "[%x, %zero, %x, %one]"),
                 "%negative = ctjs.binary_static shr %part, %zero",
