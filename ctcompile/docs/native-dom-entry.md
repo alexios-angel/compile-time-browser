@@ -529,10 +529,10 @@ identities. The identity method must be closed, non-arrow and effect-free.
 `next` and `return` may use proved immutable captures and direct reads/writes of
 own Number state initialized by unique Number literals on the holder. Each state
 key is a constant ordinary String; accesses may occur in the method's root block
-or nested `if` arms.
+or nested `if` arms and `while` regions.
 The state methods must be ordinary functions with one confined closure identity;
-arrow functions retain lexical `this` and are refused. Unknown fields, receiver escapes,
-external holder observations and loop-local state accesses remain unproved.
+arrow functions retain lexical `this` and are refused. Unknown fields, receiver escapes
+and external holder observations remain unproved.
 `next` returns a fresh record with exactly own `done` and `value` fields; `return`,
 when present, returns an empty fresh object. Complete helper and DOM proofs still
 check every field producer, scalar recurrence, effect and borrowed element
@@ -543,9 +543,9 @@ cell has a literal Number initializer, either directly or through one assignment
 before every capturing method. Only the confined `next` and `return` closures
 may capture it; external reads, later assignments, other closures and forwarded
 captures refuse. Loads and stores may occur in each method's root block or nested
-`if` arms, and mutable capture methods must be leaves. The proof follows cell
-identity across different capture orders, removes only those slots and reindexes
-remaining immutable captures. General helper capture admission still requires
+`if` arms and `while` regions, and mutable capture methods must be leaves. The proof
+follows cell identity across different capture orders, removes only those slots and
+reindexes remaining immutable captures. General helper capture admission still requires
 immutability.
 
 Private normalization selects the custom protocol before source completion
@@ -554,8 +554,13 @@ and captured state. Reads become explicit scalar arguments, writes update the
 current scalar, and fresh private result fields carry the latest values back.
 Conditional arms retain their original results and effects, then yield the
 updated scalar tuple. An unwritten arm yields its incoming state; later reads
-use the selected tuple. Nested branches and conditional close mutations use
-the same proof. Existing helper expansion removes those result records. State
+use the selected tuple. Method loops append state to their initial values,
+both region argument lists and condition/yield edges, preserving original result
+positions. The final condition supplies exit state even when the body runs zero
+times. Nested branches and close-hook loops use the same transport; complete
+region, type, dominance and effect proofs precede publication. Method-local break
+dispatch still needs its own completion normalization/proof.
+Existing helper expansion removes those result records. State
 resets for every iterator allocation; a close hook receives the latest values
 after `next`, including on a break. Numeric comparisons require independent
 Number evidence.

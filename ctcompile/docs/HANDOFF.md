@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator method loops and fixed-bit AND bounds, 2026-09-22 UTC
+
+Continued clean **25a6edff** from its recorded `loop-captured-store` boundary.
+**cf0e4580** carries confined captured/receiver Number state through method
+`while` loops using the existing conditional scalar transport. Complete loop
+preflight precedes rewriting; initial values, both regions, condition/yield edges
+and exits retain ordered state and original result positions. The final condition
+provides exit state even with zero body trips. Close-hook loops use the same proof.
+
+The original loop source executes unchanged. Paired two-state sources and raw
+controls cover ordinary local counters, nested branches, ordered effects, latest
+close values and invocation reset. Generated C++ uses typed scalars and public
+DOM calls without boxed state or Script. Parallel escape **06814db5** preserves
+proved fixed upper input bits in low-bit AND bounds, retaining the previous safe
+fallback across sign/conversion boundaries. Twelve AND witnesses extend the
+unchanged original fifty-five. No browser/oracle semantics changed.
+
+Focused checks pass: exact host **1/1, 0.84 s total**; custom iteration lit
+**1/1, 488.40 s**, with **288 native executions, 544 refusals and 144 Node/VM
+observations**; exact arrays **1/1, 1.68 s total**; AND and OR/XOR lit **2/2,
+0.13 s**. All seven final code/test hashes match their gates; no fixes were needed
+after the initial build. Required formatting retains **16 pre-existing diagnostics
+in four untouched files**; changed files pass scoped checks. Full suites,
+unchanged nested/dataset lit, broad replays, Windows and sanitizers were skipped.
+The devbox idle timer is active/enabled.
+
+**Next native boundary:** committed `loop-captured-break` remains refused under
+both optimization policies. Its method-local break dispatch needs completion
+normalization/proof before scalar state transport; captured diagnostics say
+`DOM helper requires complete structured branches`. External cell observations,
+nested custom opens, body abrupt-close behavior, literal range-for printing,
+unguarded Bootstrap defaults and the application driver remain open.
+Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-loop-state.md).
+
 ## Conditional iterator state and XOR complements, 2026-09-22 UTC
 
 Continued clean **f1eb9201** from the recorded `conditional-captured-store`
