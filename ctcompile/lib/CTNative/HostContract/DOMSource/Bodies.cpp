@@ -25,8 +25,8 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
         }
     }
     mlir::DominanceInfo dominance(function);
-    const auto visit = [&](auto && self, mlir::Block & body, unsigned depth,
-                           mlir::Value & frame) -> bool {
+    const auto visit = [&](auto && self, mlir::Block & body, unsigned depth, mlir::Value & frame,
+                           bool & nonReturning) -> bool {
         if (depth == 64 || (depth && body.getNumArguments() &&
                             !llvm::isa<mlir::scf::WhileOp>(body.getParentOp()))) {
             return refuse(entry ? "DOM entry branch depth or arguments are unsupported"
@@ -43,8 +43,10 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
             // its regions, and the complete DOM entry proof reproves the
             // inlined result before anything is published.
             if ((operation.getNumRegions() &&
-                 !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::InvokeOp>(operation)) ||
-                operation.getNumSuccessors() || returned) {
+                 !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ExecuteRegionOp,
+                            ctjs::InvokeOp>(operation)) ||
+                operation.getNumSuccessors() || returned ||
+                (nonReturning && !llvm::isa<mlir::scf::YieldOp>(operation))) {
                 return refuse("DOM helper requires complete structured branches");
             }
             for (mlir::Value operand : operation.getOperands()) {
@@ -57,6 +59,26 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     return refuse("DOM helper observes its shadow frame");
                 }
             }
+            if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
+                auto & region = abrupt.getRegion();
+                auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
+                                  ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
+                                  : ctjs::ThrowOp{};
+                if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !abrupt.getNoInline() ||
+                    abrupt->getNumOperands() || abrupt.getNumResults() || !thrown ||
+                    region.front().getNumArguments()) {
+                    return refuse("DOM helper abrupt region requires one exact saved throw");
+                }
+                if (!step() || !step()) { return false; }
+                if (!values.contains(thrown.getValue()) || thrown.getValue() == frame ||
+                    !dominance.dominates(thrown.getValue(), thrown)) {
+                    return refuse("DOM helper throw has no preceding local value");
+                }
+                // This path unwinds. Only its structural yield may follow;
+                // its live frame does not reach the normal sibling's join.
+                nonReturning = true;
+                continue;
+            }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                 if (!branch.getCondition().getType().isInteger(1) ||
                     !branch.getThenRegion().hasOneBlock() ||
@@ -65,19 +87,24 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     return refuse("DOM helper branch lacks complete Boolean arms");
                 }
                 mlir::Value thenFrame = frame, elseFrame = frame;
+                bool thenThrows = false, elseThrows = false;
                 for (mlir::Region & region : branch->getRegions()) {
                     if (region.empty()) { continue; }
                     auto & armFrame = &region == &branch.getThenRegion() ? thenFrame : elseFrame;
-                    if (!self(self, region.front(), depth + 1, armFrame)) { return false; }
+                    auto & armThrows = &region == &branch.getThenRegion() ? thenThrows : elseThrows;
+                    if (!self(self, region.front(), depth + 1, armFrame, armThrows)) {
+                        return false;
+                    }
                     auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
                     if (!yield || yield.getOperandTypes() != branch.getResultTypes()) {
                         return refuse("DOM helper branch has incomplete result correspondence");
                     }
                 }
-                if (thenFrame != elseFrame) {
+                if (!thenThrows && !elseThrows && thenFrame != elseFrame) {
                     return refuse("DOM helper branch has inconsistent shadow frame exits");
                 }
-                frame = thenFrame;
+                nonReturning = thenThrows && elseThrows;
+                frame = thenThrows ? elseFrame : thenFrame;
                 values.insert(branch.getResults().begin(), branch.getResults().end());
                 continue;
             }
@@ -88,8 +115,9 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     return refuse("DOM helper loop lacks complete source regions");
                 }
                 mlir::Value beforeFrame = frame, afterFrame = frame;
-                if (!self(self, loop.getBefore().front(), depth + 1, beforeFrame) ||
-                    !self(self, loop.getAfter().front(), depth + 1, afterFrame)) {
+                bool beforeThrows = false, afterThrows = false;
+                if (!self(self, loop.getBefore().front(), depth + 1, beforeFrame, beforeThrows) ||
+                    !self(self, loop.getAfter().front(), depth + 1, afterFrame, afterThrows)) {
                     return false;
                 }
                 auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(
@@ -101,7 +129,7 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     yield.getOperandTypes() != loop.getInits().getTypes()) {
                     return refuse("DOM helper loop has incomplete result correspondence");
                 }
-                if (beforeFrame != frame || afterFrame != frame) {
+                if (beforeThrows || afterThrows || beforeFrame != frame || afterFrame != frame) {
                     return refuse("DOM helper loop changes its shadow frame");
                 }
                 values.insert(loop.getResults().begin(), loop.getResults().end());
@@ -187,7 +215,8 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
         return true;
     };
     mlir::Value frame;
-    return visit(visit, block, 0, frame);
+    bool nonReturning = false;
+    return visit(visit, block, 0, frame, nonReturning);
 }
 
 bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {

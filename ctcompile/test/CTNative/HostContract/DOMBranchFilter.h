@@ -228,6 +228,96 @@ module {
               "every incomplete nested ordering and cloning budget fails closed");
     }
     check(completed, "bounded nested helper expansion reaches completion");
+
+    const std::string throwingHelper = R"MLIR(
+module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %flag: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %saved = ctjs.constant #ctjs.string<"saved">
+    %helper = ctjs.create_closure %callee[1] this %u
+    %result = ctjs.call %helper(%u, %flag, %saved)
+    ctjs.return %result
+  }
+  ctjs.func private @throwing$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %flag: !ctjs.value, %payload: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 2
+    %condition = ctjs.truthy %flag
+    %inactive = ctjs.constant #ctjs.undefined
+    %result = scf.if %condition -> (!ctjs.value) {
+      scf.execute_region {
+        ctjs.throw %payload
+      } {no_inline}
+      scf.yield %inactive : !ctjs.value
+    } else {
+      ctjs.frame_exit %frame
+      scf.yield %payload : !ctjs.value
+    }
+    ctjs.return %result
+  }
+}
+)MLIR";
+    const std::string throwOnly = R"MLIR(      scf.execute_region {
+        ctjs.throw %payload
+      } {no_inline}
+)MLIR";
+    const auto throwOnElse = replaced(
+        replaced(throwingHelper, throwOnly + "      scf.yield %inactive : !ctjs.value",
+                 "      ctjs.frame_exit %frame\n      scf.yield %payload : !ctjs.value"),
+        "    } else {\n      ctjs.frame_exit %frame\n      scf.yield %payload : !ctjs.value",
+        "    } else {\n" + throwOnly + "      scf.yield %inactive : !ctjs.value");
+    const auto nestedThrow = replaced(throwingHelper, throwOnly,
+                                      "      scf.if %condition {\n" + throwOnly +
+                                          "        scf.yield\n"
+                                          "      } else {\n" +
+                                          throwOnly + "        scf.yield\n      }\n");
+    for (const auto & valid : {throwingHelper, throwOnElse, nestedThrow}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "saved helper throw fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "only the returning sibling supplies the helper shadow frame join");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+            continue;
+        }
+        unsigned throws = 0, frames = 0, calls = 0;
+        input->walk([&](ctjs::ThrowOp thrown) {
+            ++throws;
+            check(ctjs::constantKey(thrown.getValue()) == "saved",
+                  "inlined throw preserves its invocation's saved payload");
+        });
+        input->walk([&](ctjs::FrameEnterOp) { ++frames; });
+        input->walk([&](ctjs::CallOp) { ++calls; });
+        check(throws == (valid == nestedThrow ? 2U : 1U) && frames == 0 && calls == 0 &&
+                  !input->lookupSymbol<ctjs::FuncOp>("throwing$1") &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "helper expansion retains every throw and retires the proved call and frame");
+    }
+    for (const auto & invalid : {replaced(throwingHelper, " {no_inline}", ""),
+                                 replaced(throwingHelper, "        ctjs.throw %payload",
+                                          "        ctjs.store_global \"effect\", %payload\n"
+                                          "        ctjs.throw %payload"),
+                                 replaced(throwingHelper, "      scf.yield %inactive",
+                                          "      ctjs.store_global \"effect\", %payload\n"
+                                          "      scf.yield %inactive"),
+                                 replaced(throwingHelper, "      ctjs.frame_exit %frame\n", ""),
+                                 replaced(throwingHelper, throwOnly, ""),
+                                 replaced(nestedThrow, "      scf.yield %inactive",
+                                          "      ctjs.store_global \"effect\", %payload\n"
+                                          "      scf.yield %inactive")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved helper abrupt branch fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(error),
+              "unproved regions, dead effects and live or mismatched normal frames refuse");
+        if (error) { llvm::consumeError(std::move(error)); }
+    }
+    for (unsigned budget : {0U, 64U, 128U}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(throwingHelper, &context);
+        auto error = expandDOMHelpers(*input, "entry$0", budget);
+        check(llvm::toString(std::move(error)).find("budget") != std::string::npos,
+              "incomplete saved-throw helper proof cannot publish an expansion");
+    }
 }
 
 inline void checkDOMDataSource(mlir::MLIRContext & context) {
