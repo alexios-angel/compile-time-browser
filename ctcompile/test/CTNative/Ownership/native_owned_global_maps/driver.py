@@ -56,6 +56,7 @@ def main(group=None):
             "local_identity_repeated_keys",
             "local_numeric_nested_key",
             "local_numeric_branch_lifetime",
+            "local_numeric_bool",
         ),
     )
     check_leaf_object_forgeries(
