@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Effectful iterator exits and low-suffix mask gaps, 2026-09-22 UTC
+
+Resumed clean **27abbc26** and saved conditional-return source `dc6fd4c5`.
+**591db50c** keeps effectful two-arm completion dispatch after its loop,
+carrying the proved exit choice as an ordinary Boolean. Return reads stay before
+close, exhaustion reads stay after close, and live loop values retain their
+observers. Unknown tags, observed selectors and inactive payloads still refuse.
+The saved source and a close-read witness execute unchanged. Two historical
+method-effect refusals now pass with their original constructions.
+
+Parallel work identified the Part 25 gap landed as **2f8ad550**: low-suffix AND/OR
+rounding can reuse existing bounded range refinement. Complete reload/store
+checks, actual-write replay and budgets remain unchanged. Six source regressions
+retain all 128 historical source bodies; all 212 historical native bodies and
+75 metadata rows are preserved.
+
+Focused validation passes: exact host **1/1, 2.14 s total**; four native sources
+plus 136 refusal sources **64 executions, 368 refusals, two nonexecuted admissions
+and 32 Node/VM observations**. Exact arrays pass **1/1, 2.04 s total** and the
+right-shift lit case **1/1, 0.13 s**. Complete formatting passes **1124 C++, 157
+Python and 114 web files**. All five final hashes match the devbox; 32 generated
+C++ files contain no Script/VM protocol. Interrupted drafts and evidence were
+preserved. No browser implementation changed; full suites were skipped.
+
+**Next native boundary:** `body-return-branch-expression`, source `2b611964`,
+saves a comma-expression return value in a loop exit slot that is inactive on
+other exits. Both policies refuse **DOM helper completion observes an inactive
+value**. Eight Node/VM observations agree: true on normal completion, false on
+stop with one close, false when already exhausted without close. Prove the
+selected saved payload without moving its read across close. More completion
+arms, broader abrupt cleanup, nested custom iterators, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-effectful-exits.md).
+
 ## Iterator return close and converted shift gaps, 2026-09-22 UTC
 
 Resumed clean **9e7ba1f9** and the saved `body-return` source `9bd2d5ba`.
