@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Sibling iterator writers and low-bit rounding, 2026-09-22 UTC
+
+Continued clean **8c04990c** from the recorded
+`entry-captured-sibling-writer` boundary. **8848217e** admits confined sibling
+helpers that update iterator state. Complete family, capture, call and symbol
+checks precede inlining. The existing entry rewrite carries ordered writes and
+the ordinary return value through scalar state; repeated calls see the latest
+values, including iterator close. No new runtime storage or browser semantics.
+
+The exact saved writer source executes unchanged. Two new sources check ordered
+two-cell writes and loop-local branches; all 92 prior source bodies remain.
+Parallel **ec206acd** tightens same-band AND/OR index bounds when a mask clears
+or sets a contiguous low suffix, preserving the proved output period. Twenty-six
+new source witnesses extend the unchanged 225 earlier bodies.
+
+Focused validation passes: exact host **1/1, 1.25 s total**; eight relevant custom
+sources **128 native executions, 328 refusals and 64 Node/VM observations**;
+exact arrays **1/1, 1.93 s total**; AND/OR-XOR lit **2/2, 0.16 s**. The source
+subset includes all 68 refusal programs. All eight final code/test hashes match.
+The complete custom case and broad suites were not run. Required formatting
+retains **16 pre-existing diagnostics in four untouched files**; changed scopes
+pass. The devbox idle timer is active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-preloop-branch-writer` preserves
+the complete new helper whose conditional follows its local loop. Completion
+normalization duplicates the later custom iterator under that pre-traversal
+branch; both policies refuse `DOM custom iterator next call is ambiguous after
+completion`. Join that helper's ordinary result and state before the shared
+continuation, retaining every observation. Argument-taking helpers, sibling
+method breaks, nested custom opens, abrupt close, unguarded Bootstrap defaults
+and the application driver remain open. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-sibling-writers.md).
+
 ## Sibling iterator state readers and combined mask periods, 2026-09-22 UTC
 
 Continued clean **fca25a05** from the committed

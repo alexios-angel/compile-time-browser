@@ -541,7 +541,7 @@ lifetime.
 Mutable lexical Number cells may also supply iterator state. Each root-local
 cell has a literal Number initializer, either directly or through one assignment
 before every capturing method and read. Confined `next` and `return` methods
-may capture it, along with the local scalar readers described below. Forwarded
+may capture it, along with the local scalar helpers described below. Forwarded
 captures remain refused. The enclosing entry may read and update cells mutated by those methods before,
 during and after iteration. Entry verification and initialization dominance cover
 structured branches, loops and importer completion selections. Loads and stores
@@ -551,15 +551,22 @@ follows cell identity across different capture orders, removes only those slots 
 reindexes remaining immutable captures. General helper capture admission still requires
 immutability.
 
-A unique local sibling closure may read those state cells through zero-argument
+A unique local sibling closure may read and update those state cells through zero-argument
 ordinary or direct calls in the enclosing entry. Every capture must identify
-proved iterator state; the complete body must be a scalar leaf without writes,
-calls or nested closures. Exact closure, call and symbolic-use checks precede
+proved iterator state; the complete body must be a scalar leaf without calls
+or nested closures. Exact closure, call and symbolic-use checks precede
 rewriting. An arrow's lexical receiver may be retained only when its body does
-not observe it. Each invocation supplies the current scalar values to the
-existing helper inliner, preserving reads before, during and after iteration,
-including `return` updates on close. The retired reader leaves no closure or cell
-storage in native output. Escaping, recursive and mutating readers remain refused.
+not observe it. Capture slots become temporary cell parameters for the existing
+helper inliner. It inserts each call's reads and writes at their source positions;
+the entry rewrite then carries their scalar state through branches and loops.
+The ordinary result keeps its own observation point even when later writes
+change the shared state. Repeated calls see the latest values, including
+`return` updates on close. Complete DOM reproof checks every scalar producer.
+Retired helpers leave no closure or cell storage in native output. Escaping,
+recursive, argument-taking and method-local-break helpers remain refused. A
+pre-traversal helper branch that duplicates the later custom protocol during
+completion normalization also remains refused; loop-local branches join within
+their loop before its continuation.
 
 Private normalization selects the custom protocol before source completion
 expansion, substitutes ordinary method calls and carries scalar done, receiver
