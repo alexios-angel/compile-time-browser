@@ -710,17 +710,36 @@ void InductionCases::overwritesAndTransport() {
                   "a[2]=mask; a[3]=zero",
          .exit = "a -> {a}"},
         "x");
+    const auto allOneReload = replace(
+        replace(replace(replace(signedReload, "13970166044099084288", "13830554455654793216"),
+                        "[%negativeMask, %x, %zero, %zero]", "[%x, %negativeMask]"),
+                "%mask = ctjs.get_property %base[%zero]", "%mask = ctjs.get_property %base[%one]"),
+        "add %negative, %sign", "add %negative, %one");
     run({.what = "an all-one OR mask remains a singleton without a width-sized stride shift",
-         .body = replace(
-             replace(replace(replace(signedReload, "13970166044099084288", "13830554455654793216"),
-                             "[%negativeMask, %x, %zero, %zero]", "[%x, %negativeMask]"),
-                     "%mask = ctjs.get_property %base[%zero]",
-                     "%mask = ctjs.get_property %base[%one]"),
-             "add %negative, %sign", "add %negative, %one"),
+         .body = allOneReload,
          .arrays = "a:[zero,mask]",
          .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask",
          .exit = "a -> {a}"},
         "x");
+    for (const auto & input : {"%part = ctjs.binary sub %i, %one",
+                               "%maximum = ctjs.binary sub %sign, %one\n"
+                               "  %part = ctjs.binary add %maximum, %i",
+                               "%minimum = ctjs.binary sub %zero, %sign\n"
+                               "  %part = ctjs.binary sub %minimum, %i"}) {
+        const auto crossing =
+            replace(allOneReload, "%negative = ctjs.binary_static bitor %i, %mask",
+                    std::string(input) + "\n  %negative = ctjs.binary_static bitor %part, %mask");
+        run({.what = "an all-one OR mask is constant across zero and signed conversion bands",
+             .body = crossing,
+             .arrays = "a:[zero,mask]",
+             .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask",
+             .exit = "a -> {a}"},
+            "x");
+        reject("a near-all-one OR mask cannot borrow a constant output across conversion bands",
+               replace(crossing, "13830554455654793216", "13835058055282163712"));
+        reject("later stores invalidate an all-one mask even when its output is constant",
+               replace(crossing, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    }
     reject(
         "signed masks retain the complete later-store census",
         replace(signedReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));

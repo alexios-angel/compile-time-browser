@@ -495,6 +495,31 @@ void StructuredCases::reloads() {
          .reads = "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
                   "a[2]=mask; a[3]=zero",
          .exit = "a -> {a}"});
+    const auto allOneReload = replace(
+        replace(replace(replace(signedReload, "13970166044099084288", "4751297606873776128"),
+                        "[%negativeMask, %y, %zero, %zero]", "[%y, %negativeMask]"),
+                "%mask = ctjs.get_property %base[%zero]", "%mask = ctjs.get_property %base[%one]"),
+        "add %negative, %sign", "add %negative, %one");
+    for (const auto & input : {"%part = ctjs.binary sub %i, %one",
+                               "%maximum = ctjs.binary sub %sign, %one\n"
+                               "    %part = ctjs.binary add %maximum, %i",
+                               "%minimum = ctjs.binary sub %zero, %sign\n"
+                               "    %part = ctjs.binary sub %minimum, %i"}) {
+        const auto crossing =
+            replace(allOneReload, "%negative = ctjs.binary_static bitor %i, %mask",
+                    std::string(input) + "\n    %negative = ctjs.binary_static bitor %mask, %part");
+        rows.push_back(
+            {.what = "structured unsigned all-one masks are constant across conversion bands",
+             .body = crossing,
+             .arrays = "a:[zero,mask]",
+             .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask",
+             .exit = "a -> {a}"});
+        reject("structured near-all-one OR masks retain their conversion guards",
+               replace(crossing, "4751297606873776128", "13835058055282163712"));
+        reject("structured all-one masks retain the complete later-store census",
+               replace(crossing,
+                       "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    }
     reject("structured signed masks retain the complete later-store census",
            replace(signedReload,
                    "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));

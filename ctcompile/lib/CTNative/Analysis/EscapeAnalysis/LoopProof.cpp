@@ -384,7 +384,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
             std::uint32_t first = numberBits(range->first) & mask & fixed;
             std::uint32_t last = first | (mask & ~fixed);
-            if (!bitAnd || mask > 2147483647U) {
+            if (bitOr && changingMask == 0) {
+                // Every output bit is set, independent of input conversion bands.
+                first = last = mask;
+            } else if (!bitAnd || mask > 2147483647U) {
                 if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
                 const auto lower = numberBits(range->first);
                 const auto upper = numberBits(range->last);
