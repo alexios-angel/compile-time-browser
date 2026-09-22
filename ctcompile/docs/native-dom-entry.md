@@ -526,14 +526,24 @@ for (const element of values) {
 
 This path requires original `Object`, `Symbol` and the three importer helper
 identities. The identity method must be closed, non-arrow and effect-free.
-`next` and `return` may use proved immutable captures, but cannot observe their
-implicit receivers. `next` returns a fresh record with exactly own `done` and
-`value` fields; `return`, when present, returns an empty fresh object. Complete
-helper and DOM proofs still check every field producer, effect and borrowed
-element lifetime. Mutable lexical cells and extra holder fields are not admitted.
+`next` and `return` may use proved immutable captures and direct reads/writes of
+own Number state initialized by unique Number literals on the holder. Each state
+key is a constant ordinary String; accesses stay in the method's root block.
+The state methods must be ordinary functions with one confined closure identity;
+arrow functions retain lexical `this` and are refused. Unknown fields, receiver escapes,
+external holder observations and conditional writes remain unproved.
+`next` returns a fresh record with exactly own `done` and `value` fields; `return`,
+when present, returns an empty fresh object. Complete helper and DOM proofs still
+check every field producer, scalar recurrence, effect and borrowed element
+lifetime. Mutable lexical cells remain a separate boundary.
 
 Private normalization selects the custom protocol before source completion
-expansion, substitutes ordinary method calls and carries scalar done state.
+expansion, substitutes ordinary method calls and carries scalar done and receiver
+state. Field reads become explicit scalar arguments, writes update the current
+scalar, and fresh private result fields carry the latest values back. Existing
+helper expansion removes those result records. State resets for every iterator
+allocation; a close hook receives the latest values after `next`, including on a
+break. Numeric comparisons require independent Number evidence.
 The item must only be observed after a fresh false done test; done itself has
 truth-only observations. Exhaustion stops further next calls and skips return.
 A proved source `break` calls return once when it exists. Multiple live

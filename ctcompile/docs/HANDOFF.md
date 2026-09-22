@@ -22,6 +22,49 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Confined iterator receiver state and signed OR ranges, 2026-09-22 UTC
+
+Continued clean **0bbb961f** from the receiver-counter boundary recorded in
+HANDOFF, plan 00 and the iteration 47 journal. **dfb27eae** admits Number state on
+one confined custom iterator. Unique ordinary methods access initialized own
+fields directly; explicit scalar arguments and loop results preserve mutations,
+reset state per allocation and deliver the latest values to the close hook.
+Existing helper expansion removes private result records. Lexical-`this` arrows,
+unknown fields, escaped holders and conditional writes remain refused. Typed
+Number greater-than now passes the complete DOM proof.
+
+The saved receiver-counter source executes unchanged. A two-field source checks
+update order and the value seen by `return`; the saved captured-counter source
+is now a committed refusal. Generated C++ uses typed scalar loops and public DOM
+calls, with no VM iterator, boxed state or Script dependency.
+
+Parallel escape work landed **8649d10d**: a sign-setting OR mask bounds outputs
+across zero and signed conversion boundaries using one conservative negative
+interval. Existing same-band precision, low-bit gaps, budgets and complete
+reload/store checks remain. Eleven sources extend the unchanged original 58.
+No browser implementation or runtime-oracle semantics changed.
+
+Focused checks pass: exact arrays **1/1, 1.59 s total**; exact host **1/1,
+0.77 s total**; OR/XOR and AND lit **2/2, 0.12 s**; custom/nested/dataset lit
+**3/3, 246.53 s**. Custom iteration completed **144 native executions,
+290 refusals and 54 Node/VM observations**. Nested iteration completed
+**48 native/two previous-source checks/94 refusals**; dataset completed
+**112 Node/VM observations, eight binaries, lifetime sanitizer and 432 refusals**.
+Final native hashes match its gate; escape hashes match its earlier gate.
+Formatting retains **16 pre-existing diagnostics in four untouched files**;
+changed files pass scoped checks. Full suites and broad replays were skipped.
+The devbox idle timer is active/enabled.
+
+**Next native boundary:** the committed `mutable-captured-counter` source uses
+an initialized local cell and `load_upvalue`/`store_upvalue` in `next`; it still
+refuses under both optimization policies. Prove cell identity, mutation,
+confinement and complete capture uses before scalarizing it. Conditional receiver
+writes, body abrupt-close behavior, nested custom opens, literal range-for
+printing, unguarded Bootstrap defaults and the application driver remain open.
+Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-receiver-state.md).
+
 ## Multiple loop exit values and constant OR masks, 2026-09-22 UTC
 
 Continued clean **5f79f5fc** from its recorded two-projected-exit boundary.
