@@ -27,6 +27,11 @@
 // CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function unit() {
@@ -166,9 +171,36 @@ function zeroLaterOverlap() {
     }
     return a;
 }
+function singletonWideScale() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i += 2) a[i * 4294967295] = 0;
+    return a;
+}
+function singletonWideTranslated() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i += 2) a[(i + 1) * 2147483648 - 2147483648] = 0;
+    return a;
+}
+function singletonWideRetained() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i += 2) a[i * 4294967295] = 0;
+    return a;
+}
+function singletonWideIntermediate() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i += 2) a[(i + 2) * 2147483648 - 2147483648 - 2147483648] = 0;
+    return a;
+}
+function multipleWideScale() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i += 2) a[i * 4294967295] = 0;
+    return a;
+}
 unit(); commuted(); oneVisit(); nonzeroStart(); reloadedFactor(); nestedFactor();
 saved(); remaining(); cycle(); zeroTrip(); growth(); stringFactor();
 fractionalFactor(); negativeFactor(); zeroFactor(); changingFactor();
 overlappingFactor(); laterOverlap();
 zeroOwn(); zeroCommuted(); zeroTranslated(); zeroSaved(); zeroReload();
 zeroOverlap(); zeroLaterOverlap();
+singletonWideScale(); singletonWideTranslated(); singletonWideRetained();
+singletonWideIntermediate(); multipleWideScale();

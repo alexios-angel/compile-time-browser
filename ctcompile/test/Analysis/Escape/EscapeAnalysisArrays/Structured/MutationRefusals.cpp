@@ -57,6 +57,38 @@ void StructuredCases::mutationRefusals() {
                     .arrays = "a:[zero,one]",
                     .reads = "a[0]=zero",
                     .exit = "a -> {a}"});
+    const auto wideVisit = replace(
+        replace(scaledVisit,
+                "  %a =", "  %huge = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
+        "mul %i, %two", "mul %i, %huge");
+    rows.push_back({.what = "structured singleton products do not scale an unvisited stride",
+                    .body = wideVisit,
+                    .arrays = "a:[zero,one]",
+                    .reads = "a[0]=zero",
+                    .exit = "a -> {a}"});
+    const auto wideTranslated =
+        replace(replace(wideVisit, "4751297606873776128", "4746794007248502784"),
+                "%position = ctjs.binary mul %i, %huge",
+                "%part = ctjs.binary add %i, %one\n"
+                "    %product = ctjs.binary mul %part, %huge\n"
+                "    %position = ctjs.binary sub %product, %huge");
+    rows.push_back({.what = "structured nonzero singleton products keep exact intermediate Numbers",
+                    .body = wideTranslated,
+                    .arrays = "a:[zero,one]",
+                    .reads = "a[0]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured singleton products preserve unvisited children",
+                    .body = replace(wideVisit, "ctjs.append %one to %a", "ctjs.append %x to %a"),
+                    .arrays = "a:[zero,x]",
+                    .reads = "a[0]=zero",
+                    .exit = "a -> {a,x}"});
+    reject("structured singleton multiplication retains intermediate bounds",
+           replace(replace(wideTranslated, "add %i, %one", "add %i, %two"),
+                   "%position = ctjs.binary sub %product, %huge",
+                   "%half = ctjs.binary sub %product, %huge\n"
+                   "    %position = ctjs.binary sub %half, %huge"));
+    reject("structured non-singleton multiplication retains endpoint bounds",
+           replace(wideVisit, "create_array [%x]", "create_array [%x, %one]"));
     rows.push_back({.what = "structured unary negation preserves the signed-zero own key",
                     .body = replace(scaledVisit, "ctjs.binary mul %i, %two", "ctjs.unary neg %i"),
                     .arrays = "a:[zero,one]",

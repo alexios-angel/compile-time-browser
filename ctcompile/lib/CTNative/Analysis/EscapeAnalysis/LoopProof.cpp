@@ -618,19 +618,6 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 return std::nullopt;
             }
             range->stride = singleton ? 1 : range->stride / *divisor;
-        } else if (multiply) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
-            ContentsValue product;
-            boundedNumberProduct({index, ContentsKind::NonBigInt, range->stride}, *offset, product);
-            const auto magnitude =
-                product.integerNumber ? product.integerNumber : product.negativeIntegerNumber;
-            if (!magnitude) { return std::nullopt; }
-            // A zero factor collapses every visit to one key; the lattice stays positive.
-            range->stride = std::max<std::size_t>(1, *magnitude);
-            descending = product.negativeIntegerNumber.has_value();
         }
         // Preserve each source operation: reassociating (i + large) - large
         // could hide an inexact intermediate. Signed bounded intermediates are
@@ -658,6 +645,25 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             *endpoint = result;
+        }
+        if (multiply) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            if (endpointNumber(range->first) == endpointNumber(range->last)) {
+                // Proven singleton products have no adjacent visit to scale.
+                range->stride = 1;
+            } else {
+                ContentsValue product;
+                boundedNumberProduct({index, ContentsKind::NonBigInt, range->stride}, *offset,
+                                     product);
+                const auto magnitude =
+                    product.integerNumber ? product.integerNumber : product.negativeIntegerNumber;
+                if (!magnitude) { return std::nullopt; }
+                range->stride = *magnitude;
+                descending = product.negativeIntegerNumber.has_value();
+            }
         }
         // Keep the set of visited positions ordered even when the source
         // visits them backwards. The stride keeps its positive magnitude.

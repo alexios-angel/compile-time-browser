@@ -3340,6 +3340,40 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero",
          .exit = "a -> {a}"},
         "x");
+    const auto wideVisit = replace(
+        replace(scaledVisit,
+                "  %a =", "  %huge = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
+        "mul %i, %two", "mul %i, %huge");
+    run({.what = "a singleton product does not scale an unvisited stride",
+         .body = wideVisit,
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto wideTranslated =
+        replace(replace(wideVisit, "4751297606873776128", "4746794007248502784"),
+                "%position = ctjs.binary mul %i, %huge",
+                "%part = ctjs.binary add %i, %one\n"
+                "  %product = ctjs.binary mul %part, %huge\n"
+                "  %position = ctjs.binary sub %product, %huge");
+    run({.what = "a nonzero singleton product preserves bounded intermediate Numbers",
+         .body = wideTranslated,
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "singleton products preserve unvisited children",
+         .body = replace(wideVisit, "[%x, %one]", "[%x, %x]"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a,x}"});
+    reject("singleton multiplication cannot conceal an out-of-range intermediate",
+           replace(replace(wideTranslated, "add %i, %one", "add %i, %two"),
+                   "%position = ctjs.binary sub %product, %huge",
+                   "%half = ctjs.binary sub %product, %huge\n"
+                   "  %position = ctjs.binary sub %half, %huge"));
+    reject("non-singleton multiplication still requires bounded endpoint products",
+           replace(wideVisit, "[%x, %one]", "[%x, %one, %one]"));
     run({.what = "unary negation preserves a single signed-zero own key",
          .body = replace(scaledVisit, "ctjs.binary mul %i, %two", "ctjs.unary neg %i"),
          .arrays = "a:[zero,one]",
@@ -3449,9 +3483,6 @@ void InductionCases::overwritesAndTransport() {
           replace(
               replace(scaledVisit, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
               "mul %i, %two", "mul %i, %text"),
-          replace(replace(scaledVisit, "  %a =",
-                          "  %huge = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
-                  "mul %i, %two", "mul %i, %huge"),
           replace(replace(reloadedFactor, "[%x, %two]", "[%two, %x]"),
                   "%factor = ctjs.get_property %base[%one]",
                   "%factor = ctjs.get_property %base[%zero]"),
