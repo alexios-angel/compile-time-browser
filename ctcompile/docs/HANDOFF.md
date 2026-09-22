@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Callable loop return dependencies and unsigned residues, 2026-09-22 UTC
+
+Continued clean **f99f5aea** and its exact saved `keep(selected)` backedge source.
+**c2cb26fa** records explicit argument-return dependencies, then follows their
+actual values through the existing loop proof. Complete invocation, effect,
+observer and recursion checks still precede expansion. The saved source executes
+unchanged; zero-trip and observable state/argument snapshot witnesses also pass.
+Parallel **3e06bd9a** preserves unsigned right-shift residues across ToUint32
+conversion jumps using the existing lattice and complete reload/store checks.
+All 173 historical native and 93 right-shift source bodies remain unchanged.
+
+Focused checks pass: exact host **1/1, 1.98 s total**; four source programs plus
+all 118 refusals **64 native executions, 332 refusals, two nonexecuted admissions
+and 32 Node/VM observations**. Exact arrays pass **1/1, 2.19 s total**;
+right-shift lit **1/1, 0.14 s**. The complete formatter passes **1124 C++, 157
+Python and 114 web files**. All seven final code/test hashes match the devbox;
+32 generated C++ files contain no Script symbols. Full suites and broad matrices
+were skipped. No browser/runtime-oracle changes; the idle timer is active/enabled.
+Interrupted agents resumed their preserved drafts. New malformed raw controls
+were repaired; a new snapshot witness was reduced within the existing budget
+while retaining actual iterator execution. Production was unchanged after the
+initial admission proof.
+
+**Next native boundary:** `entry-captured-sibling-returned-loop-call-forwarded`
+changes `keep(writer)` to return `forward(writer)`. Node returns **2729 normally /
+3603 on stop**, `data-closed=false`; both native policies refuse an unproved arm.
+Prove nested return dependencies around the loop while retaining all effects,
+snapshots and observers. Nested custom opens, abrupt close, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain unfinished.
+Part 25 retains mixed sparse-gap precision as separate work.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-callable-loop-returns.md).
+
 ## Callable loop transport and interrupted crash recovery, 2026-09-22 UTC
 
 Resumed iteration 65's frozen replacement repair first: **b6f6f963** bounds
