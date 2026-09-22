@@ -57,6 +57,18 @@
 // CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function masked() {
@@ -362,3 +374,69 @@ inputLatticeReload(); commutedInputLatticeReload(); signedInputLatticeReload();
 highInputLatticeReload(); negativeInputLatticeReload(); crossingInputLatticeReload();
 unevenInputLatticeReload(); widerInputLatticeReload(); retainedInputLatticeGap();
 overlappingInputLatticeReload(); laterInputLatticeStore(); savedInputLatticeChild();
+function fixedZeroBits() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) a[i & 2] = 0;
+    return a;
+}
+function fixedUpperBits() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) & 15) - 8] = 0;
+    return a;
+}
+function commutedNegativeFixedBits() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(15 & (i - 8)) - 8] = 0;
+    return a;
+}
+function upperConvertedFixedBits() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((2147483656 + i) & 15) - 8] = 0;
+    return a;
+}
+function lowerConvertedFixedBits() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((-4294967288 + i) & 15) - 8] = 0;
+    return a;
+}
+function fixedBitReload() {
+    var child = {}, a = [15, 0, child, child];
+    for (var i = 2; i < a.length; i++) a[((i + 8) & a[0]) - 8] = 0;
+    return a;
+}
+function negativeFixedBitReload() {
+    var child = {}, a = [15, 0, child, child];
+    for (var i = 2; i < a.length; i++) a[((i - 8) & a[0]) - 8] = 0;
+    return a;
+}
+function retainedFixedBitGap() {
+    var child = {}, a = [15, child, child, child];
+    for (var i = 2; i < a.length; i++) a[((i + 8) & a[0]) - 8] = 0;
+    return a;
+}
+function overlappingFixedBitReload() {
+    var child = {}, a = [0, 0, 15, child];
+    for (var i = 2; i < a.length; i++) a[((i + 8) & a[2]) - 8] = 0;
+    return a;
+}
+function laterFixedBitStore() {
+    var child = {}, a = [15, 0, child, child];
+    for (var i = 2; i < a.length; i++) {
+        a[((i + 8) & a[0]) - 8] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function clearedFixedBit() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) & 7) - 8] = 0;
+    return a;
+}
+function fixedBitInteriorReload() {
+    var child = {}, a = [child, 0, 2, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 4) & a[2]] = 0;
+    return a;
+}
+fixedZeroBits(); fixedUpperBits(); commutedNegativeFixedBits(); upperConvertedFixedBits();
+lowerConvertedFixedBits(); fixedBitReload(); negativeFixedBitReload(); retainedFixedBitGap();
+overlappingFixedBitReload(); laterFixedBitStore(); clearedFixedBit(); fixedBitInteriorReload();

@@ -219,10 +219,69 @@ void StructuredCases::reloads() {
                     .exit = "a -> {a,y}"});
     reject("structured masks cannot borrow a varying operand",
            replace(masked, "bitand %i, %one", "bitand %i, %i"));
+    const auto fixedZeroAnd = replace(masked, "%position = ctjs.binary_static bitand %i, %one",
+                                      "%mask = ctjs.binary add %one, %one\n"
+                                      "    %position = ctjs.binary_static bitand %i, %mask");
+    rows.push_back({.what = "structured AND bounds preserve fixed zero bits above the input",
+                    .body = fixedZeroAnd,
+                    .arrays = "a:[zero,y]",
+                    .reads = "a[0]=zero; a[1]=y",
+                    .exit = "a -> {a,y}"});
     reject("structured masks must bound every possible own position",
-           replace(masked, "%position = ctjs.binary_static bitand %i, %one",
-                   "%mask = ctjs.binary add %one, %one\n"
-                   "    %position = ctjs.binary_static bitand %i, %mask"));
+           replace(fixedZeroAnd, "%position = ctjs.binary_static bitand %i, %mask",
+                   "%outside = ctjs.binary add %i, %mask\n"
+                   "    %position = ctjs.binary_static bitand %outside, %mask"));
+    const auto fixedAnd =
+        replace(replace(masked, "  %a =",
+                        "  %two = ctjs.binary add %one, %one\n"
+                        "  %eight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                        "  %fixedMask = ctjs.constant #ctjs.number<4624633867356078080> "
+                        "{storage_test_id = \"mask\"}\n  %a ="),
+                "%position = ctjs.binary_static bitand %i, %one",
+                "%biased = ctjs.binary sub %i, %eight\n"
+                "    %part = ctjs.binary_static bitand %biased, %fixedMask\n"
+                "    %position = ctjs.binary sub %part, %eight");
+    for (const auto & operands : {"%biased, %fixedMask", "%fixedMask, %biased"}) {
+        rows.push_back(
+            {.what = "structured AND fixed upper bits survive negative Number conversion",
+             .body =
+                 replace(fixedAnd, "bitand %biased, %fixedMask", "bitand " + std::string(operands)),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"});
+    }
+    rows.push_back({.what = "structured AND fixed upper bits bound positive translated indices",
+                    .body = replace(fixedAnd, "sub %i, %eight", "add %i, %eight"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    const auto fixedAndReload = replace(
+        replace(replace(replace(replace(fixedAnd, "[%x]", "[%fixedMask, %zero, %x, %y]"),
+                                "  ctjs.append %y to %a\n", ""),
+                        "%index = %zero", "%index = %two"),
+                "    %biased =", "    %mask = ctjs.get_property %base[%zero]\n    %biased ="),
+        "bitand %biased, %fixedMask", "bitand %biased, %mask");
+    rows.push_back({.what = "structured AND fixed upper bits exclude earlier reload slots",
+                    .body = fixedAndReload,
+                    .arrays = "a:[mask,zero,zero,zero]",
+                    .reads = "a[0]=mask; a[2]=zero; a[0]=mask; a[3]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "structured AND fixed-bit bounds retain unwritten children",
+         .body = replace(fixedAndReload, "[%fixedMask, %zero, %x, %y]", "[%fixedMask, %x, %x, %y]"),
+         .arrays = "a:[mask,x,zero,zero]",
+         .reads = "a[0]=mask; a[2]=zero; a[0]=mask; a[3]=zero",
+         .exit = "a -> {a,x}"});
+    reject("structured AND fixed-bit bounds reject a reload at a written index",
+           replace(replace(fixedAndReload, "[%fixedMask, %zero, %x, %y]",
+                           "[%zero, %zero, %fixedMask, %y]"),
+                   "%mask = ctjs.get_property %base[%zero]",
+                   "%mask = ctjs.get_property %base[%two]"));
+    reject("later structured stores invalidate fixed-bit AND reload evidence",
+           replace(fixedAndReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
+    reject("structured AND still requires the translated own bound after clearing a fixed bit",
+           replace(fixedAnd, "4624633867356078080", "4619567317775286272"));
     for (const std::string kind : {"bitor", "bitxor"}) {
         const bool isOr = kind == "bitor";
         const auto bitwise = replace(masked, "bitand", kind);

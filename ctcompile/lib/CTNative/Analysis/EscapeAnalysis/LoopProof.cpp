@@ -402,31 +402,29 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     ? std::max(inputStride, std::size_t{1} << std::countr_zero(changingMask))
                     : inputStride;
             const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
-            std::uint32_t first = numberBits(range->first) & mask & fixed;
-            std::uint32_t last = first | (mask & ~fixed);
-            if (!bitAnd || mask > 2147483647U) {
-                const auto lower = numberBits(range->first);
-                const auto upper = numberBits(range->last);
-                // All bits above the highest differing bit are fixed throughout
-                // this unsigned interval. Enclose the lower bits densely: endpoint
-                // bitwise results alone miss interior extrema.
-                auto varying = static_cast<std::uint32_t>(
-                    std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
-                if (signedBand(range->first) != signedBand(range->last) || varying > 2147483647U) {
-                    // OR with the sign bit set keeps every output negative, so
-                    // all input bits may vary within one conservative interval.
-                    // Other sign crossings still need a union before composition.
-                    if (!bitOr || mask <= 2147483647U) { return std::nullopt; }
-                    varying = 4294967295U;
+            const auto lower = numberBits(range->first);
+            const auto upper = numberBits(range->last);
+            // All bits above the highest differing bit are fixed throughout
+            // this unsigned interval. Enclose the lower bits densely: endpoint
+            // bitwise results alone miss interior extrema.
+            auto varying = static_cast<std::uint32_t>(
+                std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
+            if (signedBand(range->first) != signedBand(range->last) || varying > 2147483647U) {
+                // Clearing the sign bit with AND or setting it with OR keeps
+                // every output in one signed interval even if all input bits vary.
+                // Other sign crossings still need a union before composition.
+                if (!((bitAnd && mask <= 2147483647U) || (bitOr && mask > 2147483647U))) {
+                    return std::nullopt;
                 }
-                // An input lattice fixes its low bits. Every bitwise operation
-                // preserves their transformed residue, even when higher bits vary.
-                varying &= ~fixed;
-                first = bitAnd  ? (lower & ~varying) & mask
-                        : bitOr ? (lower & ~varying) | mask
-                                : (lower ^ mask) & ~varying;
-                last = first | (bitAnd ? varying & mask : varying);
+                varying = 4294967295U;
             }
+            // An input lattice fixes its low bits. Every bitwise operation
+            // preserves their transformed residue, even when higher bits vary.
+            varying &= ~fixed;
+            const auto first = bitAnd  ? (lower & ~varying) & mask
+                               : bitOr ? (lower & ~varying) | mask
+                                       : (lower ^ mask) & ~varying;
+            const auto last = first | (bitAnd ? varying & mask : varying);
             // Clearing the sign bit bounds every ToInt32 input, including
             // conversions across a signed boundary for a low-bit AND mask.
             // AND preserves the mask's low zero bits, including signed results.

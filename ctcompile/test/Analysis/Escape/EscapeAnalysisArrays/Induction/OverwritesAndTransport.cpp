@@ -350,8 +350,65 @@ void InductionCases::overwritesAndTransport() {
                    "%mask = ctjs.get_property %base[%zero]"));
     reject("a later store invalidates an earlier mask reload",
            replace(maskedReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    run({.what = "AND bounds preserve fixed zero bits above the input interval",
+         .body = replace(masked, "bitand %i, %one", "bitand %i, %two"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero; a[1]=x",
+         .exit = "a -> {a,x}"});
     reject("the mask bound must remain inside the guard allocation",
-           replace(masked, "bitand %i, %one", "bitand %i, %two"));
+           replace(masked, "%position = ctjs.binary_static bitand %i, %one",
+                   "%outside = ctjs.binary add %i, %two\n"
+                   "  %position = ctjs.binary_static bitand %outside, %two"));
+    const auto fixedAnd =
+        replace(replace(masked, "  %a =",
+                        "  %eight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                        "  %fixedMask = ctjs.constant #ctjs.number<4624633867356078080> "
+                        "{storage_test_id = \"mask\"}\n  %a ="),
+                "%position = ctjs.binary_static bitand %i, %one",
+                "%biased = ctjs.binary add %i, %eight\n"
+                "  %part = ctjs.binary_static bitand %biased, %fixedMask\n"
+                "  %position = ctjs.binary sub %part, %eight");
+    for (const auto & operands : {"%biased, %fixedMask", "%fixedMask, %biased"}) {
+        run({.what = "AND fixed upper bits bound translated indices in either operand order",
+             .body =
+                 replace(fixedAnd, "bitand %biased, %fixedMask", "bitand " + std::string(operands)),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "AND fixed upper bits survive negative Number conversion",
+         .body = replace(fixedAnd, "add %i, %eight", "sub %i, %eight"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto fixedAndReload =
+        replace(replace(replace(replace(fixedAnd, "[%one, %x]", "[%fixedMask, %zero, %x, %x]"),
+                                "^header(%a, %zero", "^header(%a, %two"),
+                        "  %biased =", "  %mask = ctjs.get_property %base[%zero]\n  %biased ="),
+                "bitand %biased, %fixedMask", "bitand %biased, %mask");
+    run({.what = "AND fixed upper bits exclude a reload below every written index",
+         .body = fixedAndReload,
+         .arrays = "a:[mask,zero,zero,zero]",
+         .reads = "a[0]=mask; a[2]=zero; a[0]=mask; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "AND fixed-bit bounds retain children outside the actual writes",
+         .body = replace(fixedAndReload, "[%fixedMask, %zero, %x, %x]", "[%fixedMask, %x, %x, %x]"),
+         .arrays = "a:[mask,x,zero,zero]",
+         .reads = "a[0]=mask; a[2]=zero; a[0]=mask; a[3]=zero",
+         .exit = "a -> {a,x}"});
+    reject("AND fixed-bit bounds reject a reload at a written index",
+           replace(replace(fixedAndReload, "[%fixedMask, %zero, %x, %x]",
+                           "[%zero, %zero, %fixedMask, %x]"),
+                   "%mask = ctjs.get_property %base[%zero]",
+                   "%mask = ctjs.get_property %base[%two]"));
+    reject(
+        "later stores invalidate fixed-bit AND reload evidence",
+        replace(fixedAndReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    reject("clearing the fixed upper AND bit cannot preserve the translated own bound",
+           replace(fixedAnd, "4624633867356078080", "4619567317775286272"));
     reject("two varying operands cannot supply an invariant mask",
            replace(masked, "bitand %i, %one", "bitand %i, %i"));
     for (const std::string value :
