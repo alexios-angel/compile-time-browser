@@ -47,15 +47,27 @@ def source(breaking):
     return text
 
 
-# Results for normal, stopping, and already-yielded receiver states.
+RECEIVER_SOURCE = (
+    SOURCE.replace("  const values = {", "  const values = {\n    emitted: 0,")
+    .replace(
+        "const done = anchor.hasAttribute('data-yielded');",
+        "const done = this.emitted > 0;\n      this.emitted++;",
+    )
+    .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;")
+)
+
+# Results for normal, stopping, and already-yielded DOM states, followed by
+# whether each invocation resets its iterator state and the close-hook value.
 POSITIVES = (
-    ("normal", source(False), False, ("1", "1", "0")),
-    ("effect-only-break", source(True), True, ("true", "true", "false")),
+    ("normal", source(False), False, ("1", "1", "0"), False, "yes"),
+    ("effect-only-break", source(True), True, ("true", "true", "false"), False, "yes"),
     (
         "counted-break-exit",
         SOURCE.replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;"),
         True,
         ("1", "1", "0"),
+        False,
+        "yes",
     ),
     (
         # The break must carry the incoming counter, not the continuation's update.
@@ -65,6 +77,8 @@ POSITIVES = (
         .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;\n    count += 3;"),
         True,
         ("10", "7", "7"),
+        False,
+        "yes",
     ),
     (
         "counted-two-live",
@@ -73,6 +87,8 @@ POSITIVES = (
         .replace("return count;", "return count + extra;"),
         True,
         ("11", "8", "7"),
+        False,
+        "yes",
     ),
     (
         "two-projected-break-exits",
@@ -82,6 +98,8 @@ POSITIVES = (
         .replace("return count;", "return count + extra;"),
         True,
         ("11", "11", "7"),
+        False,
+        "yes",
     ),
     (
         # Distinct updates and crossed result order expose reused or swapped exits.
@@ -92,6 +110,23 @@ POSITIVES = (
         .replace("return count;", "return third + count + count + extra + extra + extra;"),
         True,
         ("81", "81", "65"),
+        False,
+        "yes",
+    ),
+    ("mutable-receiver-counter", RECEIVER_SOURCE, True, ("1", "1", "1"), True, "yes"),
+    (
+        # The close hook sees both fields after next(), in source update order.
+        "mutable-receiver-return-state",
+        RECEIVER_SOURCE.replace("emitted: 0,", "emitted: 0,\n    closed: 1,")
+        .replace("this.emitted++;", "this.emitted++;\n      this.closed += this.emitted;")
+        .replace(
+            "anchor.setAttribute('data-closed', 'yes');",
+            "anchor.setAttribute('data-closed', this.closed === 2);\n      this.closed = 0;",
+        ),
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
     ),
 )
 
@@ -100,7 +135,7 @@ def oracles(args):
     # These receivers record the same source calls. The native clients below
     # separately check those calls against public DOM and document ownership.
     script, observations = "", []
-    for index, (_, text, breaking, results) in enumerate(POSITIVES):
+    for index, (_, text, breaking, results, resetting, closed) in enumerate(POSITIVES):
         function = f"customElementsCase{index}"
         script += text.replace("function customElements(", f"function {function}(")
         for state, result in zip(("normal", "stop", "already-yielded"), results):
@@ -127,10 +162,10 @@ var {name} = (function() {{
 }})();
 """
             expected = result + ":data-next=true;data-yielded=yes;"
-            if state != "already-yielded":
+            if state != "already-yielded" or resetting:
                 expected = result + ":data-next=false;data-yielded=yes;data-visited=yes;"
                 expected += (
-                    "data-closed=yes;"
+                    f"data-closed={closed};"
                     if breaking and state == "stop"
                     else "data-next=true;data-yielded=yes;"
                 )
@@ -183,7 +218,7 @@ CHECKS = r"""
                 if (@BREAKING@ && stopping) {
                     check_writes({next, yielded, visited, closed});
                     assert(target.read().attribute_value(id, next) == "false");
-                    assert(target.read().attribute_value(id, closed) == "yes");
+                    assert(target.read().attribute_value(id, closed) == "@CLOSED@");
                 } else {
                     check_writes({next, yielded, visited, next, yielded});
                     assert(target.read().attribute_value(id, next) == "true");
@@ -192,13 +227,26 @@ CHECKS = r"""
                 assert(target.remove_attribute(id, visited));
                 assert(target.remove_attribute(id, closed));
                 (void)target.take_writes();
-                // The iterator is already exhausted. It still calls next once,
-                // including that method's effects, and never enters or closes.
+                // DOM-backed state stays exhausted. Receiver fields belong to
+                // the new iterator and reset for every invocation.
                 assert(@SECOND_RESULT@);
-                check_writes({next, yielded});
-                assert(target.read().attribute_value(id, next) == "true");
-                assert(!target.read().has_attribute(id, visited));
-                assert(!target.read().has_attribute(id, closed));
+                if (@RESETTING@) {
+                    assert(target.read().attribute_value(id, visited) == "yes");
+                    if (@BREAKING@ && stopping) {
+                        check_writes({next, yielded, visited, closed});
+                        assert(target.read().attribute_value(id, next) == "false");
+                        assert(target.read().attribute_value(id, closed) == "@CLOSED@");
+                    } else {
+                        check_writes({next, yielded, visited, next, yielded});
+                        assert(target.read().attribute_value(id, next) == "true");
+                        assert(!target.read().has_attribute(id, closed));
+                    }
+                } else {
+                    check_writes({next, yielded});
+                    assert(target.read().attribute_value(id, next) == "true");
+                    assert(!target.read().has_attribute(id, visited));
+                    assert(!target.read().has_attribute(id, closed));
+                }
             }
             clear();
         };
@@ -275,6 +323,48 @@ def refusals():
         variants["replaced-" + helper] = text.replace(
             "  const values", f"  {helper}=anchor;\n  const values"
         )
+    variants.update(
+        {
+            "mutable-captured-counter": RECEIVER_SOURCE.replace(
+                "  const values = {\n    emitted: 0,", "  let emitted = 0;\n  const values = {"
+            ).replace("this.emitted", "emitted"),
+            "lexical-this-next": RECEIVER_SOURCE.replace("next() {", "next: () => {"),
+            "lexical-this-return": RECEIVER_SOURCE.replace("return() {", "return: () => {").replace(
+                "anchor.setAttribute('data-closed', 'yes');",
+                "anchor.setAttribute('data-closed', this.emitted === 1);",
+            ),
+            "receiver-alias-escape": RECEIVER_SOURCE.replace(
+                "      const done", "      const alias = this; external(alias);\n      const done"
+            ),
+            "retained-receiver": RECEIVER_SOURCE.replace(
+                "      const done", "      anchor.saved = this;\n      const done"
+            ),
+            "receiver-as-value": RECEIVER_SOURCE.replace("value: anchor", "value: this"),
+            "dynamic-state-read": RECEIVER_SOURCE.replace(
+                "this.emitted > 0", "this[anchor.getAttribute('data-key')] > 0"
+            ),
+            "dynamic-state-store": RECEIVER_SOURCE.replace(
+                "this.emitted++;", "this[anchor.getAttribute('data-key')]++;"
+            ),
+            "nonnumber-state-initializer": RECEIVER_SOURCE.replace("emitted: 0", "emitted: anchor"),
+            "nonnumber-state-store": RECEIVER_SOURCE.replace(
+                "this.emitted++;", "this.emitted = anchor;"
+            ),
+            "undeclared-state-store": RECEIVER_SOURCE.replace(
+                "this.emitted++;", "this.emitted++;\n      this.extra = 1;"
+            ),
+            "conditional-state-store": RECEIVER_SOURCE.replace(
+                "this.emitted++;", "if (anchor.hasAttribute('advance')) this.emitted++;"
+            ),
+            "external-state-read": RECEIVER_SOURCE.replace(
+                "return count;", "return count + values.emitted;"
+            ),
+            "late-state-store": RECEIVER_SOURCE.replace(
+                "return count;", "values.emitted = 0;\n  return count;"
+            ),
+            "preloop-state-store": RECEIVER_SOURCE.replace(loop, "  values.emitted = 0;\n" + loop),
+        }
+    )
     return variants
 
 
@@ -293,7 +383,7 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     executions = refused = 0
-    for label, text, breaking, results in POSITIVES:
+    for label, text, breaking, results, resetting, closed in POSITIVES:
         ir, contract = dom.prepare(args, f"custom-{label}", text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         for owned in (False, True):
@@ -308,6 +398,8 @@ def main():
                     raise RuntimeError(f"{name}: custom iteration retained the VM protocol")
                 checks = CHECKS + (OWNED_CHECKS if owned else "")
                 checks = checks.replace("@BREAKING@", "true" if breaking else "false")
+                checks = checks.replace("@RESETTING@", "true" if resetting else "false")
+                checks = checks.replace("@CLOSED@", closed)
                 normal, stopped, exhausted = results
                 value = "static_cast<bool>(call())" if normal == "true" else "call().value()"
                 checks = checks.replace(

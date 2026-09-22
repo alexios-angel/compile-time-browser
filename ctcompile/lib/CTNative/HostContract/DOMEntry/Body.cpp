@@ -255,7 +255,9 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             continue;
         }
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
-            compare && compare.getKind() == ctjs::CompareKind::Lt &&
+            compare &&
+            (compare.getKind() == ctjs::CompareKind::Lt ||
+             compare.getKind() == ctjs::CompareKind::Gt) &&
             hasKind(compare.getLhs(), Kind::number) && hasKind(compare.getRhs(), Kind::number)) {
             values[compare.getResult()] = Kind::boolean;
             continue;

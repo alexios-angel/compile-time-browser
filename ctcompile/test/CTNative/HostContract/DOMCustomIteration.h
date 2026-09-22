@@ -232,6 +232,67 @@ module {
     auto duplicated = mlir::parseSourceString<mlir::ModuleOp>(duplicatedSource, &context);
     check(crossed && duplicated, "crossed and repeated two-result exit projections parse");
     if (!crossed || !duplicated) { return; }
+    // Receiver state must survive next calls and reach the close hook only on
+    // break. Its reads cannot be replaced with the allocation's initial values.
+    const std::string stateInitialization =
+        "    %emittedName = ctjs.constant #ctjs.string<\"emitted\">\n"
+        "    %emittedInitial = ctjs.constant #ctjs.number<0>\n"
+        "    ctjs.set_property %holder[%emittedName], %emittedInitial\n";
+    auto receiverSource = replaced(countedSource, "    %holder = ctjs.create_object\n",
+                                   "    %holder = ctjs.create_object\n" + stateInitialization);
+    receiverSource = replaced(receiverSource, "    %done = ctjs.call %has(%element, %yielded)",
+                              R"MLIR(    %emittedName = ctjs.constant #ctjs.string<"emitted">
+    %emitted = ctjs.get_property %this[%emittedName]
+    %zero = ctjs.constant #ctjs.number<0>
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %done = ctjs.compare gt %emitted, %zero
+    %advanced = ctjs.binary_static add %emitted, %one
+    ctjs.set_property %this[%emittedName], %advanced)MLIR");
+    receiverSource =
+        replaced(receiverSource, "%finish = ctjs.create_closure %callee[3] this %undefined",
+                 "%finish = ctjs.create_closure %callee[3] this %undefined "
+                 "captures %capture");
+    receiverSource = replaced(
+        receiverSource,
+        R"MLIR(  ctjs.func @return$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %result = ctjs.create_object)MLIR",
+        R"MLIR(  ctjs.func @return$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %element = ctjs.load_upvalue %callee[0]
+    %emittedName = ctjs.constant #ctjs.string<"emitted">
+    %emitted = ctjs.get_property %this[%emittedName]
+    %setName = ctjs.constant #ctjs.string<"setAttribute">
+    %set = ctjs.get_property %element[%setName]
+    %closedName = ctjs.constant #ctjs.string<"data-closed-count">
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %countMatches = ctjs.compare strict_eq %emitted, %one
+    %written = ctjs.call %set(%element, %closedName, %countMatches)
+    %result = ctjs.create_object)MLIR");
+    auto twoStateSource = replaced(
+        receiverSource, stateInitialization,
+        stateInitialization + "    %extraName = ctjs.constant #ctjs.string<\"extra\">\n"
+                              "    %extraInitial = ctjs.constant "
+                              "#ctjs.number<4619567317775286272>\n"
+                              "    ctjs.set_property %holder[%extraName], %extraInitial\n");
+    twoStateSource =
+        replaced(twoStateSource, "    ctjs.set_property %this[%emittedName], %advanced",
+                 R"MLIR(    %extraName = ctjs.constant #ctjs.string<"extra">
+    %extra = ctjs.get_property %this[%extraName]
+    %extraAdvanced = ctjs.binary_static add %extra, %emitted
+    ctjs.set_property %this[%emittedName], %advanced
+    ctjs.set_property %this[%extraName], %extraAdvanced)MLIR");
+    twoStateSource = replaced(
+        twoStateSource, "    %written = ctjs.call %set(%element, %closedName, %countMatches)",
+        R"MLIR(    %written = ctjs.call %set(%element, %closedName, %countMatches)
+    %extraName = ctjs.constant #ctjs.string<"extra">
+    %extra = ctjs.get_property %this[%extraName]
+    %extraClosedName = ctjs.constant #ctjs.string<"data-closed-extra">
+    %seven = ctjs.constant #ctjs.number<4619567317775286272>
+    %extraMatches = ctjs.compare strict_eq %extra, %seven
+    %extraWritten = ctjs.call %set(%element, %extraClosedName, %extraMatches))MLIR");
+    auto receiver = mlir::parseSourceString<mlir::ModuleOp>(receiverSource, &context);
+    auto twoState = mlir::parseSourceString<mlir::ModuleOp>(twoStateSource, &context);
+    check(receiver && twoState, "one and two-field receiver iterator witnesses parse");
+    if (!receiver || !twoState) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -248,7 +309,8 @@ module {
         return empty;
     };
     constexpr unsigned completeBudget = 100000;
-    for (auto fixture : {*original, *withoutReturn, *counted, *retagged, *crossed, *duplicated}) {
+    for (auto fixture : {*original, *withoutReturn, *counted, *retagged, *crossed, *duplicated,
+                         *receiver, *twoState}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -306,7 +368,37 @@ module {
             check(proof.proved(),
                   "projected custom iterator reproves element lifetime and effects");
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
-            if (fixture != *original && fixture != *withoutReturn) {
+            if (fixture == *receiver || fixture == *twoState) {
+                bool objects = false, stateProperties = false;
+                mlir::Value closedCount, closedExtra;
+                input->walk([&](ctjs::CreateObjectOp) { objects = true; });
+                input->walk([&](mlir::Operation * operation) {
+                    mlir::Value key;
+                    if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                        key = get.getKey();
+                    } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                        key = set.getKey();
+                    }
+                    if (key) {
+                        const auto name = ctjs::constantKey(key);
+                        stateProperties |= name == "emitted" || name == "extra";
+                    }
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                    if (!call || call.getArgs().size() != 2) { return; }
+                    const auto attribute = ctjs::constantKey(call.getArgs()[0]);
+                    auto test = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    if (!test || test.getKind() != ctjs::CompareKind::StrictEq) { return; }
+                    if (attribute == "data-closed-count") { closedCount = test.getLhs(); }
+                    if (attribute == "data-closed-extra") { closedExtra = test.getLhs(); }
+                });
+                auto count = llvm::dyn_cast_if_present<mlir::OpResult>(closedCount);
+                auto extra = llvm::dyn_cast_if_present<mlir::OpResult>(closedExtra);
+                check(!objects && !stateProperties && count &&
+                          llvm::isa<mlir::scf::WhileOp>(count.getOwner()) &&
+                          (fixture != *twoState ||
+                           (extra && extra.getOwner() == count.getOwner() && extra != count)),
+                      "close reads distinct current scalar loop results without boxed state");
+            } else if (fixture != *original && fixture != *withoutReturn) {
                 unsigned loops = 0, calls = 0, poison = 0, switches = 0;
                 input->walk([&](mlir::scf::WhileOp) { ++loops; });
                 input->walk([&](ctjs::CallOp) { ++calls; });
@@ -318,6 +410,79 @@ module {
         }
     }
     contract.moduleSha256 = hostContractFingerprint(*original);
+
+    for (const auto & invalid : {
+             replaced(receiverSource, stateInitialization,
+                      stateInitialization +
+                          "    ctjs.set_property %holder[%emittedName], %emittedInitial\n"),
+             replaced(receiverSource, "%emittedInitial = ctjs.constant #ctjs.number<0>",
+                      "%emittedInitial = ctjs.constant #ctjs.boolean<false>"),
+             replaced(receiverSource, "%emittedName = ctjs.constant #ctjs.string<\"emitted\">",
+                      "%emittedName = ctjs.constant #ctjs.string<\"__proto__\">"),
+             replaced(replaced(receiverSource, stateInitialization, ""),
+                      "    %record = ctjs.call %open(%undefined, %holder)\n",
+                      "    %record = ctjs.call %open(%undefined, %holder)\n" + stateInitialization),
+             replaced(receiverSource, "%emitted = ctjs.get_property %this[%emittedName]",
+                      "%emitted = ctjs.get_property %this[%element]"),
+             replaced(receiverSource, "%emitted = ctjs.get_property %this[%emittedName]",
+                      "%missingName = ctjs.constant #ctjs.string<\"missing\">\n"
+                      "    %emitted = ctjs.get_property %this[%missingName]"),
+             replaced(receiverSource, "    %advanced = ctjs.binary_static add %emitted, %one",
+                      "    ctjs.store_global \"leaked\", %this\n"
+                      "    %advanced = ctjs.binary_static add %emitted, %one"),
+             replaced(receiverSource, "    ctjs.set_property %this[%emittedName], %advanced",
+                      "    %nestedFlag = arith.constant true\n"
+                      "    scf.if %nestedFlag {\n"
+                      "      ctjs.set_property %this[%emittedName], %advanced\n"
+                      "      scf.yield\n"
+                      "    }"),
+             replaced(receiverSource, "    %record = ctjs.call %open(%undefined, %holder)",
+                      "    ctjs.store_global \"leaked\", %holder\n"
+                      "    %record = ctjs.call %open(%undefined, %holder)"),
+             replaced(receiverSource, "    %nextName = ctjs.constant #ctjs.string<\"next\">",
+                      "    %sharedStep = ctjs.create_closure %callee[2] this %undefined "
+                      "captures %capture\n"
+                      "    %nextName = ctjs.constant #ctjs.string<\"next\">"),
+             replaced(receiverSource, "%step = ctjs.create_closure %callee[2] this %undefined",
+                      "%step = ctjs.create_closure %callee[2] this %this"),
+             replaced(receiverSource, "%finish = ctjs.create_closure %callee[3] this %undefined",
+                      "%finish = ctjs.create_closure %callee[3] this %this"),
+         }) {
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "invalid receiver-state witness parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure),
+                  "unsupported or escaping receiver state refuses before projection");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                      noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "refused receiver-state proof preserves the source and publishes no evidence");
+        }
+    }
+    auto nonScalar = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(receiverSource, "ctjs.set_property %this[%emittedName], %advanced",
+                 "ctjs.set_property %this[%emittedName], %element"),
+        &context);
+    check(static_cast<bool>(nonScalar), "receiver-state category mutation parses");
+    if (nonScalar) {
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*nonScalar);
+        if (auto failure = normalizeDOMCustomIteration(*nonScalar, request, completeBudget)) {
+            llvm::consumeError(std::move(failure));
+        } else if (auto failure = expandDOMHelpers(*nonScalar, request.entry, completeBudget)) {
+            llvm::consumeError(std::move(failure));
+        }
+        request.moduleSha256 = hostContractFingerprint(*nonScalar);
+        check(noEvidence(*nonScalar, DOMEntryAnalysis(*nonScalar, request)),
+              "initial Number state never authorizes an element-valued recurrence");
+    }
 
     for (const auto & invalid : {
              replaced(countedSource, "scf.yield %loop#1 : !ctjs.value",
@@ -446,7 +611,7 @@ module {
     }
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
-    for (auto fixture : {*original, *counted, *crossed}) {
+    for (auto fixture : {*original, *counted, *crossed, *receiver, *twoState}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

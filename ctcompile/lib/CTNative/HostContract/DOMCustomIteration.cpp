@@ -84,6 +84,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
     llvm::StringMap<ctjs::SetPropertyOp> slots;
+    llvm::SmallVector<ctjs::SetPropertyOp> stateSlots;
+    llvm::StringMap<unsigned> stateIndices;
     ctjs::SetPropertyOp iteratorSlot;
     for (mlir::Operation * user : object->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
@@ -91,9 +93,21 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!store) { continue; }
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         if (store.getObject() != object.getResult() || store->getBlock() != object->getBlock() ||
-            !object->isBeforeInBlock(store) || !store->isBeforeInBlock(open) || !closure ||
-            closure->getBlock() != object->getBlock() || !closure->isBeforeInBlock(store)) {
+            !object->isBeforeInBlock(store) || !store->isBeforeInBlock(open)) {
             return error("DOM custom iterator slots must be unique unconditional callables");
+        }
+        if (!closure) {
+            auto constant = store.getValue().getDefiningOp<ctjs::ConstantOp>();
+            auto name = ctjs::constantKey(store.getKey());
+            if (!constant || !llvm::isa<ctjs::NumberAttr>(constant.getValue()) ||
+                !ctjs::ordinaryKey(name) || name == "next" || name == "return" ||
+                !stateIndices.try_emplace(name, 0).second) {
+                return error("DOM custom iterator state requires unique own Number initializers");
+            }
+            continue;
+        }
+        if (closure->getBlock() != object->getBlock() || !closure->isBeforeInBlock(store)) {
+            return error("DOM custom iterator callable lacks source order");
         }
         if (auto name = ctjs::constantKey(store.getKey()); !name.empty()) {
             if ((name != "next" && name != "return") || !slots.try_emplace(name, store).second) {
@@ -109,6 +123,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             iteratorSlot = store;
         }
+    }
+    // State positions follow source order, independent of SSA use-list ordering.
+    for (auto store : object->getBlock()->getOps<ctjs::SetPropertyOp>()) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        if (store.getObject() != object.getResult()) { continue; }
+        auto found = stateIndices.find(ctjs::constantKey(store.getKey()));
+        if (found == stateIndices.end()) { continue; }
+        found->second = static_cast<unsigned>(stateSlots.size());
+        stateSlots.push_back(store);
     }
     if (!iteratorSlot || !slots.contains("next")) {
         return error("DOM custom iterator lacks its own iterator and next methods");
@@ -175,8 +198,18 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto & block = body.getBody().front();
         for (auto argument : block.getArguments().take_front(ctjs::arg_callee)) {
             for (mlir::Operation * user : argument.getUsers()) {
-                if (!spend() || !llvm::isa<ctjs::RootOp>(user)) {
-                    return error("DOM iterator methods cannot observe implicit receivers");
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                auto key = get   ? ctjs::constantKey(get.getKey())
+                           : set ? ctjs::constantKey(set.getKey())
+                                 : llvm::StringRef{};
+                if (argument.getArgNumber() != ctjs::arg_receiver || user->getBlock() != &block ||
+                    !stateIndices.contains(key) ||
+                    (get ? get.getObject() != argument
+                         : !set || set.getObject() != argument || set.getValue() == argument)) {
+                    return error("DOM iterator receiver requires direct own state access");
                 }
             }
         }
@@ -200,6 +233,26 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         if (name == "next" && (!fields.contains("done") || !fields.contains("value"))) {
             return error("DOM next result requires own done and value fields");
+        }
+        if (!stateSlots.empty()) {
+            auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+            unsigned count = 0;
+            const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                count += other.getFunction() == closure.getFunction();
+                return mlir::WalkResult::advance();
+            });
+            if (unique.wasInterrupted() || count != 1 || !undefined(closure.getEnclosingThis()) ||
+                !mlir::SymbolTable::symbolKnownUseEmpty(body, candidate.getOperation()) ||
+                !mlir::SymbolTable::symbolKnownUseEmpty(body, &candidate.getBodyRegion())) {
+                return error("DOM iterator state method is shared or symbolically observed");
+            }
+            for (mlir::Operation * user : closure->getUsers()) {
+                if (!spend() || (user != store && !llvm::isa<ctjs::RootOp>(user))) {
+                    return error("DOM iterator state method escapes its own slot");
+                }
+            }
+            if (!work.checkBody(body, false, true, true)) { return error(work.reason); }
         }
     }
 
@@ -273,6 +326,59 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!guarded) { return error("DOM iterator item requires its not-done continuation"); }
     }
 
+    if (!stateSlots.empty()) {
+        for (mlir::Operation * user : object->getUsers()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (user != open &&
+                !llvm::isa<ctjs::RootOp, ctjs::SetPropertyOp, ctjs::IterableOp, mlir::scf::YieldOp>(
+                    user)) {
+                return error("DOM iterator state holder escapes its protocol");
+            }
+        }
+    }
+    // These bodies are private to their own method slots. Bind receiver fields
+    // as scalar arguments/results; ordinary helper expansion later removes the
+    // fresh result records. All source value producers remain for DOM reproof.
+    for (auto & [name, store] : slots) {
+        (void)name;
+        if (stateSlots.empty()) { break; }
+        auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        auto body = targetOf(closure);
+        auto & block = body.getBody().front();
+        llvm::SmallVector<mlir::Value> current;
+        for (auto field : stateSlots) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            current.push_back(block.addArgument(field.getValue().getType(), field.getLoc()));
+        }
+        body.setFunctionTypeAttr(mlir::TypeAttr::get(
+            mlir::FunctionType::get(candidate.getContext(), block.getArgumentTypes(),
+                                    body.getFunctionType().getResults())));
+        for (mlir::Operation & operation : llvm::make_early_inc_range(block)) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+            auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
+            auto receiver = block.getArgument(ctjs::arg_receiver);
+            if (get && get.getObject() == receiver) {
+                get.getResult().replaceAllUsesWith(
+                    current[stateIndices.lookup(ctjs::constantKey(get.getKey()))]);
+                get.erase();
+            } else if (set && set.getObject() == receiver) {
+                current[stateIndices.lookup(ctjs::constantKey(set.getKey()))] = set.getValue();
+                set.erase();
+            }
+        }
+        auto returned = llvm::cast<ctjs::ReturnOp>(block.back());
+        mlir::OpBuilder at(returned);
+        for (auto [index, value] : llvm::enumerate(current)) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto key = ctjs::ConstantOp::create(
+                at, returned.getLoc(),
+                ctjs::StringAttr::get(candidate.getContext(),
+                                      "__ctcompile_state_" + std::to_string(index)));
+            ctjs::SetPropertyOp::create(at, returned.getLoc(), returned.getValue(), key, value);
+        }
+    }
+
     mlir::Region rewritten;
     auto & destination = rewritten.emplaceBlock();
     mlir::IRMapping mapping;
@@ -286,26 +392,44 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     auto initial = ctjs::ConstantOp::create(start, where,
                                             ctjs::BooleanAttr::get(candidate.getContext(), false));
     auto marker = mlir::ub::PoisonOp::create(start, where, type);
-    mlir::Value state = initial;
+    llvm::SmallVector<mlir::Value> state{initial};
+    for (auto field : stateSlots) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        auto constant = field.getValue().getDefiningOp<ctjs::ConstantOp>();
+        state.push_back(ctjs::ConstantOp::create(start, where, constant.getValue()));
+    }
     ctjs::CallOp emittedNext;
     mlir::Value emittedDone;
     const auto methodCall = [&](mlir::OpBuilder & at, llvm::StringRef name,
-                                mlir::IRMapping & values) {
+                                mlir::IRMapping & values, llvm::SmallVector<mlir::Value> & state) {
         auto key = ctjs::ConstantOp::create(at, where,
                                             ctjs::StringAttr::get(candidate.getContext(), name));
         auto holder = values.lookup(object.getResult());
         auto method = ctjs::GetPropertyOp::create(at, where, type, holder, key);
-        return ctjs::CallOp::create(at, where, type, method, holder, mlir::ValueRange{});
+        auto called = ctjs::CallOp::create(at, where, type, method, holder,
+                                           mlir::ValueRange(state).drop_front());
+        for (unsigned index = 0; index < stateSlots.size(); ++index) {
+            if (!spend()) { return ctjs::CallOp{}; }
+            auto field = ctjs::ConstantOp::create(
+                at, where,
+                ctjs::StringAttr::get(candidate.getContext(),
+                                      "__ctcompile_state_" + std::to_string(index)));
+            state[index + 1] = ctjs::GetPropertyOp::create(at, where, type, called, field);
+        }
+        return called;
     };
     const auto clone = [&](auto && self, mlir::Block & source, mlir::OpBuilder & at,
-                           mlir::IRMapping & values, mlir::Value & done, unsigned depth,
-                           bool appendState) -> bool {
+                           mlir::IRMapping & values, llvm::SmallVector<mlir::Value> & state,
+                           unsigned depth, bool appendState) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : source) {
-            for (unsigned i = 0; i <= operation.getNumOperands(); ++i) {
+            for (unsigned i = 0; i <= operation.getNumOperands() + state.size(); ++i) {
                 if (!spend()) { return false; }
             }
-            if (&operation == iteratorSlot || &operation == identity) { continue; }
+            if (&operation == iteratorSlot || &operation == identity ||
+                llvm::is_contained(stateSlots, &operation)) {
+                continue;
+            }
             if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation);
                 root &&
                 (root.getValue() == identity.getResult() || root.getValue() == open.getResult())) {
@@ -313,15 +437,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             if (&operation == open) {
                 values.map(open.getResult(), marker.getResult());
-                done = initial;
+                state.front() = initial;
                 continue;
             }
             if (&operation == next) {
-                emittedNext = methodCall(at, "next", values);
+                emittedNext = methodCall(at, "next", values, state);
+                if (!emittedNext) { return false; }
                 auto key = ctjs::ConstantOp::create(
                     at, where, ctjs::StringAttr::get(candidate.getContext(), "done"));
-                done = ctjs::GetPropertyOp::create(at, where, type, emittedNext, key);
-                emittedDone = done;
+                state.front() = ctjs::GetPropertyOp::create(at, where, type, emittedNext, key);
+                emittedDone = state.front();
                 key = ctjs::ConstantOp::create(
                     at, where, ctjs::StringAttr::get(candidate.getContext(), "value"));
                 auto item = ctjs::GetPropertyOp::create(at, where, type, emittedNext, key);
@@ -329,8 +454,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 continue;
             }
             if (&operation == close) {
-                auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), done);
-                done = ctjs::ConstantOp::create(
+                auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), state.front());
+                state.front() = ctjs::ConstantOp::create(
                     at, where, ctjs::BooleanAttr::get(candidate.getContext(), true));
                 if (slots.contains("return")) {
                     auto branch = mlir::scf::IfOp::create(at, where, mlir::TypeRange{}, test, true);
@@ -338,7 +463,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         auto & block = region.front();
                         mlir::OpBuilder inside(&block, block.begin());
                         if (&region == &branch.getElseRegion()) {
-                            (void)methodCall(inside, "return", values);
+                            for (auto value : state) {
+                                (void)value;
+                                if (!spend()) { return false; }
+                            }
+                            auto closingState = state;
+                            if (!methodCall(inside, "return", values, closingState)) {
+                                return false;
+                            }
                         }
                     }
                 }
@@ -349,7 +481,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                 get && get.getObject() == open.getResult()) {
-                values.map(get.getResult(), done);
+                values.map(get.getResult(), state.front());
                 continue;
             }
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
@@ -379,7 +511,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (bit && bit.getType().isInteger(1)) {
                     auto & region = bit.getInt() ? branch.getThenRegion() : branch.getElseRegion();
                     if (!region.hasOneBlock() ||
-                        !self(self, region.front(), at, values, done, depth + 1, false)) {
+                        !self(self, region.front(), at, values, state, depth + 1, false)) {
                         return false;
                     }
                     auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back());
@@ -426,9 +558,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 for (auto operand : operation.getOperands()) {
                     built.addOperands(values.lookup(operand));
                 }
-                if (loop) { built.addOperands(done); }
+                if (loop) { built.addOperands(state); }
                 built.addTypes(operation.getResultTypes());
-                built.addTypes(type);
+                for (auto value : state) {
+                    if (!spend()) { return false; }
+                    built.addTypes(value.getType());
+                }
                 built.addAttributes(operation.getAttrs());
                 for (unsigned i = 0; i < operation.getNumRegions(); ++i) { built.addRegion(); }
                 auto * copied = at.create(built);
@@ -437,7 +572,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         if (loop) { return false; }
                         auto & block = to.emplaceBlock();
                         mlir::OpBuilder inside(&block, block.end());
-                        mlir::scf::YieldOp::create(inside, where, done);
+                        mlir::scf::YieldOp::create(inside, where, state);
                         continue;
                     }
                     if (!from.hasOneBlock()) { return false; }
@@ -451,14 +586,21 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         nested.map(argument,
                                    block.addArgument(argument.getType(), argument.getLoc()));
                     }
-                    mlir::Value innerDone = loop ? block.addArgument(type, where) : done;
+                    for (auto value : state) {
+                        (void)value;
+                        if (!spend()) { return false; }
+                    }
+                    auto innerState = state;
+                    if (loop) {
+                        for (auto & value : innerState) { value = block.addArgument(type, where); }
+                    }
                     mlir::OpBuilder inside(&block, block.end());
-                    if (!self(self, from.front(), inside, nested, innerDone, depth + 1, true)) {
+                    if (!self(self, from.front(), inside, nested, innerState, depth + 1, true)) {
                         return false;
                     }
                 }
-                values.map(operation.getResults(), copied->getResults().drop_back());
-                done = copied->getResults().back();
+                values.map(operation.getResults(), copied->getResults().drop_back(state.size()));
+                llvm::copy(copied->getResults().take_back(state.size()), state.begin());
                 continue;
             }
             if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
@@ -467,7 +609,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     for (auto value : yield.getOperands()) {
                         results.push_back(values.lookup(value));
                     }
-                    results.push_back(done);
+                    llvm::append_range(results, state);
                     mlir::scf::YieldOp::create(at, where, results);
                 }
                 continue;
@@ -475,7 +617,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(operation)) {
                 llvm::SmallVector<mlir::Value> results;
                 for (auto value : condition.getArgs()) { results.push_back(values.lookup(value)); }
-                results.push_back(done);
+                llvm::append_range(results, state);
                 mlir::scf::ConditionOp::create(at, where, values.lookup(condition.getCondition()),
                                                results);
                 continue;
