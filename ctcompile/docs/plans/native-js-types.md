@@ -501,8 +501,10 @@ One confined root-local self-iterator now permits an exact ordinary identity
 hook, next results with own done/value fields and an optional empty-object
 return result. Immutable captured elements retain their owner; every producer
 and effect receives complete helper/DOM proof. Exhaustion skips return and a
-proved effect-only source break closes once. Returning a changed counter across
-the importer's break-exit dispatch still needs completion proof. This reuses
+proved source break closes once. A pure exit selection now transports one live
+counter across break or exhaustion, retaining updates before or after the break
+condition alongside ordinarily carried counters. Multiple independently selected
+exit values remain unproved. This reuses
 scalar C++ loop lowering without adding a runtime iterator or boxed record.
 Literal C++ range-for emission, mutable
 iterator state, factories, body return/throw close behavior, unguarded defaults,

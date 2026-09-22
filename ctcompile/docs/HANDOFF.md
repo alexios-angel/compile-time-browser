@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Counted break exits and OR-mask proofs, 2026-09-22 UTC
+
+Continued clean **51425445** from the recorded counted-break boundary; the
+completed compiler-repair drivers were not repeated. **45029d8e** now transports
+one live scalar through a pure break/exhaustion exit selection, preserving
+updates before or after the break condition and other ordinary carried counters.
+Exact tags, complete use checks and inactive-slot proofs retain the existing
+helper/DOM authority. Iterator close stays after the loop. Output remains typed
+C++ scalar loops and public DOM calls, without a VM iterator or Script dependency.
+
+Parallel escape work landed **cc0fc749**: OR-mask trailing-one bits preserve
+array-index gaps, combined with the input lattice by the larger power-of-two
+period. CFG/SCF and ten new source witnesses retain overlap and signed controls.
+No browser implementation or runtime-oracle semantics changed.
+
+Focused checks pass: exact host **1/1, 0.69 s total**; arrays **1/1, 1.66 s total**;
+OR/XOR and AND lit **2/2, 0.13 s**; final custom lit **1/1, 127.06 s**, with
+**80 native executions, 166 refusals and 30 Node/VM observations**. The earlier
+three-case run passed nested iteration (**48 native/two previous-source
+checks/94 refusals**) and dataset (**112 Node/VM observations, eight binaries,
+lifetime sanitizer, 432 refusals**), while custom failed a corrected fixture
+ordering check. Production did not change afterward; those passes were retained.
+All eight changed code/test hashes match the devbox. Required formatting retains
+**16 pre-existing diagnostics in four untouched files**; changed files pass scoped
+checks. Full suites and broad replays were skipped.
+
+**Next native boundary:** the retained `two-projected-break-exits` source needs
+two independently selected loop-exit values. Its two-result imported switch is
+measured refused. A second ordinarily carried counter already executes and is
+a positive test. Broader iterator state, body abrupt-close behavior, literal
+range-for printing, unguarded Bootstrap defaults and the application driver
+remain unfinished. Full Bootstrap is not admitted. The earlier conformance
+crashes and WPT event regressions remain separate work.
+
+[Exact checks and next boundary](handoff/2026-09-22-counted-break-exits.md).
+
 ## Compiler failure repairs, 2026-09-22 UTC
 
 Continued the failures recorded by the full run of **a1d6680d**, then resumed
