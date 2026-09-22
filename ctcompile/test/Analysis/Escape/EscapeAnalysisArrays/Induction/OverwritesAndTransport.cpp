@@ -2554,10 +2554,50 @@ void InductionCases::overwritesAndTransport() {
          .arrays = "a:[count,zero,zero,zero,zero,zero]",
          .reads = "a[1]=x; a[0]=count; a[0]=count; a[0]=count; a[2]=zero; a[0]=count; a[4]=zero",
          .exit = "x -> {x}"});
-    reject("unsigned conversion-jump right shifts still use their dense enclosure",
-           replace(replace(sparseJumpShift, "ctjs.binary add %maximum, %scaled",
-                           "ctjs.binary sub %scaled, %two"),
-                   "binary_static shr", "binary_static ushr"));
+    const auto sparseUnsignedJumpShift =
+        replace(replace(sparseJumpShift, "ctjs.binary add %maximum, %scaled",
+                        "ctjs.binary sub %scaled, %two"),
+                "binary_static shr", "binary_static ushr");
+    for (const auto & body :
+         {sparseUnsignedJumpShift,
+          replace(sparseUnsignedJumpShift, "sub %scaled, %two", "sub %two, %scaled"),
+          replace(sparseUnsignedJumpShift,
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
+                  "#ctjs.number<4629841154425225216> {storage_test_id = \"count\"}"),
+          replace(sparseUnsignedJumpShift,
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
+                  "#ctjs.number<13852790978814935040> {storage_test_id = \"count\"}")}) {
+        run({.what = "unsigned conversion-jump right shifts preserve nonzero residue reload gaps",
+             .body = body,
+             .arrays = "a:[count,zero,zero,zero,zero,zero]",
+             .reads = "a[0]=count; a[0]=count; a[0]=count; a[2]=zero; a[0]=count; a[4]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("unsigned right-shift residues retain every later count store",
+               replace(body, "  %step =", "  ctjs.set_property %base[%zero], %three\n  %step ="));
+        reject("unsigned right-shift residues cannot reload an actual written position",
+               replace(replace(body, "[%wideCount, %x, %zero, %x, %zero, %zero]",
+                               "[%wideCount, %wideCount, %zero, %x, %zero, %zero]"),
+                       "%count = ctjs.get_property %base[%zero]",
+                       "%count = ctjs.get_property %base[%one]"));
+    }
+    run({.what = "unsigned right-shift residue bounds retain an unwritten child",
+         .body = replace(sparseUnsignedJumpShift, "[%wideCount, %x, %zero, %x, %zero, %zero]",
+                         "[%wideCount, %x, %x, %x, %zero, %zero]"),
+         .arrays = "a:[count,zero,x,zero,zero,zero]",
+         .reads = "a[0]=count; a[0]=count; a[0]=count; a[2]=x; a[0]=count; a[4]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "unsigned right-shift residue replay preserves a pre-loop child snapshot",
+         .body = replace(replace(sparseUnsignedJumpShift, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[count,zero,zero,zero,zero,zero]",
+         .reads = "a[1]=x; a[0]=count; a[0]=count; a[0]=count; a[2]=zero; a[0]=count; a[4]=zero",
+         .exit = "x -> {x}"});
+    reject("unsigned right shifts cannot retain low-bit gaps erased by their count",
+           replace(sparseUnsignedJumpShift,
+                   "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
+                   "#ctjs.number<4611686018427387904> {storage_test_id = \"count\"}"));
     const auto leftJumpShift = replace(
         replace(replace(jumpShift, "  %a =",
                         "  %divisor = ctjs.constant #ctjs.number<4746794007248502784>\n  %a ="),

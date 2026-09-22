@@ -232,15 +232,17 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                    ? static_cast<std::uint32_t>(*endpoint.integerNumber)
                    : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
     };
-    const auto signedLattice = [&](mlir::Value operand, std::size_t period,
-                                   std::size_t residue) -> std::optional<IndexRange> {
-        // Intersect the full signed output interval with a proved residue.
+    const auto convertedLattice = [&](mlir::Value operand, std::size_t period, std::size_t residue,
+                                      bool unsignedOutput = false) -> std::optional<IndexRange> {
+        // Intersect the full converted output interval with a proved residue.
         // ponytail: one enclosing lattice; unions if precision needs them.
         IndexRange range{
             {operand, ContentsKind::NonBigInt}, {operand, ContentsKind::NonBigInt}, period};
-        const auto first =
-            -2147483648LL + static_cast<std::int64_t>((residue + 2147483648ULL) % period);
-        const auto last = first + (2147483647LL - first) / static_cast<std::int64_t>(period) *
+        const auto lower = unsignedOutput ? 0LL : -2147483648LL;
+        const auto upper = unsignedOutput ? 4294967295LL : 2147483647LL;
+        const auto first = lower + static_cast<std::int64_t>(
+                                       (residue + static_cast<std::size_t>(-lower)) % period);
+        const auto last = first + (upper - first) / static_cast<std::int64_t>(period) *
                                       static_cast<std::int64_t>(period);
         for (auto [endpoint, value] :
              {std::pair{&range.first, first}, std::pair{&range.last, last}}) {
@@ -286,7 +288,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // Complement negates each step modulo 2^32. Both the steps
                 // and every conversion wrap preserve this output residue.
                 const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
-                return signedLattice(operand, period, ~numberBits(range->first) % period);
+                return convertedLattice(operand, period, ~numberBits(range->first) % period);
             }
             // The recursive range already proves exact bounded Numbers. Negation
             // changes their sign and order; both signed zeros remain own key zero.
@@ -539,16 +541,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // A conversion jump can hide interior extrema. Enclose every
                 // converted input before the monotone right shift; replay still
                 // records only actual writes.
-                if (signedShift) {
-                    const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
-                    range = signedLattice(operand, period, numberBits(range->first) % period);
-                    if (!range) { return std::nullopt; }
-                } else {
-                    // ponytail: dense unsigned interval; residue bounds if needed.
-                    range->first = {operand, ContentsKind::NonBigInt, 0};
-                    range->last = {operand, ContentsKind::NonBigInt, 4294967295ULL};
-                    range->stride = 1;
-                }
+                const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
+                range = convertedLattice(operand, period, numberBits(range->first) % period,
+                                         unsignedShift);
+                if (!range) { return std::nullopt; }
             }
             const auto count = positive ? static_cast<std::uint32_t>(*positive)
                                         : 0U - static_cast<std::uint32_t>(*negative);
@@ -574,7 +570,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     const auto residue =
                         static_cast<std::size_t>(numberBits(range->first) << (count & 31U)) %
                         period;
-                    return signedLattice(operand, period, residue);
+                    return convertedLattice(operand, period, residue);
                 }
                 range->stride *= factor;
             } else if (!twoPointShift) {
