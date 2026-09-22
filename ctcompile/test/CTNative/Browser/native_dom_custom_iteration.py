@@ -425,6 +425,46 @@ SIBLING_RETURNED_BRANCH_JOIN_SOURCE = SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.
     "  };",
     1,
 )
+SIBLING_RETURNED_BRANCH_SNAPSHOTS_SOURCE = SIBLING_RETURNED_DIFFERENT_SNAPSHOTS_SOURCE.replace(
+    "  const identity = (writer) => { closed += emitted; return writer; };",
+    "  const identity = (writer) => {\n"
+    "    let selected = writer;\n"
+    "    if (emitted > 0) selected = other;\n"
+    "    closed += emitted;\n"
+    "    return selected;\n"
+    "  };",
+    1,
+).replace(
+    "      if (emitted === 0) observed += relay(closed, advance, closed += emitted);\n"
+    "      else observed += relay(closed, other, closed += emitted);",
+    "      observed += relay(closed, advance, closed += emitted);",
+    1,
+)
+SIBLING_RETURNED_BRANCH_FORWARDED_SOURCE = (
+    SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+        "emitted += closed; return before + 1;",
+        "emitted += closed; closed += emitted; return before + 1;",
+        1,
+    )
+    .replace(
+        "  const relay = (writer) => identity(writer)();",
+        "  const forward = (writer) => identity(writer);\n"
+        "  const relay = (writer) => forward(writer)();",
+        1,
+    )
+    .replace(
+        "const alternate = () => identity(other)();", "const alternate = () => relay(advance);"
+    )
+)
+SIBLING_RETURNED_LOOP_JOIN_SOURCE = SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+    "    if (emitted > 0) selected = other;",
+    "    let rounds = 0;\n"
+    "    while (rounds < 2) {\n"
+    "      if (emitted > 0) selected = other;\n"
+    "      rounds++;\n"
+    "    }",
+    1,
+)
 
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
@@ -902,6 +942,30 @@ POSITIVES = (
         SIBLING_RETURNED_DIFFERENT_FORWARDED_SOURCE,
         True,
         ("2734", "3608", "2734"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-callable-branch-join",
+        SIBLING_RETURNED_BRANCH_JOIN_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-branch-snapshots",
+        SIBLING_RETURNED_BRANCH_SNAPSHOTS_SOURCE,
+        True,
+        ("166142", "192687", "166142"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-branch-forwarded",
+        SIBLING_RETURNED_BRANCH_FORWARDED_SOURCE,
+        True,
+        ("6305", "7671", "6305"),
         True,
         "false",
     ),
@@ -1386,7 +1450,31 @@ def refusals():
                 "const identity = (writer) => writer;",
                 "const identity = (writer) => identity(writer);",
             ),
-            "entry-captured-sibling-returned-callable-branch-join": SIBLING_RETURNED_BRANCH_JOIN_SOURCE,
+            "entry-captured-sibling-returned-branch-escaping": SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+                "    return selected;", "    anchor.saved = selected;\n    return selected;", 1
+            ),
+            "entry-captured-sibling-returned-branch-observed": SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+                "    return selected;",
+                "    closed += selected === other;\n    return selected;",
+                1,
+            ),
+            "entry-captured-sibling-returned-branch-unknown": SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+                "selected = other;", "selected = unknownWriter;", 1
+            ),
+            "entry-captured-sibling-returned-branch-object": SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+                "selected = other;", "selected = anchor;", 1
+            ),
+            "entry-captured-sibling-returned-branch-recursive": SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+                "selected = other;", "selected = identity(writer);", 1
+            ),
+            "entry-captured-sibling-returned-branch-mutation": SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
+                "const other =", "let other =", 1
+            ).replace(
+                "  count += read();\n  closed += emitted;",
+                "  other = advance;\n  count += read();\n  closed += emitted;",
+                1,
+            ),
+            "entry-captured-sibling-returned-callable-loop-join": SIBLING_RETURNED_LOOP_JOIN_SOURCE,
         }
     )
     return variants

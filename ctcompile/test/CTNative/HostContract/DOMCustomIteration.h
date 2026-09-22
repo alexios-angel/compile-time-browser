@@ -1230,6 +1230,56 @@ module {
         !directDifferentReturnedWriter) {
         return;
     }
+    // A captured-state branch returns either writer. The invocation must keep
+    // its evaluated arguments and perform only the selected arm's state writes.
+    auto joinedWriterSource = replaced(
+        returnedWriterSource, "    %readCount = ctjs.create_closure %callee[4] this %undefined",
+        "    %otherWriter = ctjs.create_closure %callee[7] this %undefined captures %emittedCell, "
+        "%extraCell\n"
+        "    %readCount = ctjs.create_closure %callee[4] this %undefined captures %emittedCell");
+    joinedWriterSource = replaced(joinedWriterSource, "\n}\n", "\n" + otherWriterBody + "}\n");
+    joinedWriterSource = replaced(
+        joinedWriterSource,
+        "%nestedWriter: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32}",
+        "%nestedWriter: !ctjs.value, %alternateWriter: !ctjs.value) -> !ctjs.value attributes "
+        "{upvalue_count = 1 : i32}");
+    joinedWriterSource = replaced(joinedWriterSource, "    ctjs.return %nestedWriter",
+                                  R"MLIR(    %selectedState = ctjs.load_upvalue %callee[0]
+    %selectZero = ctjs.constant #ctjs.number<0>
+    %selectPositive = ctjs.compare gt %selectedState, %selectZero
+    %selectCondition = ctjs.truthy %selectPositive
+    %selectedWriter = scf.if %selectCondition -> (!ctjs.value) {
+      scf.yield %nestedWriter : !ctjs.value
+    } else {
+      scf.yield %alternateWriter : !ctjs.value
+    }
+    ctjs.return %selectedWriter)MLIR");
+    for (const auto * suffix : {"before", "body", "close", "final"}) {
+        const auto result = std::string("%returnedWriter_") + suffix;
+        joinedWriterSource =
+            replaced(joinedWriterSource,
+                     result + " = ctjs.call %readCount(%undefined, %writeState)\n    ", "");
+        const auto current = std::string("%argumentCurrent_") + suffix;
+        joinedWriterSource = replaced(
+            joinedWriterSource, current + " = ",
+            result + " = ctjs.call %readCount(%undefined, %writeState, %otherWriter)\n    " +
+                current + " = ");
+    }
+    auto directJoinedWriterSource = joinedWriterSource;
+    for (unsigned i = 0; i != 4; ++i) {
+        directJoinedWriterSource =
+            replaced(directJoinedWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+    }
+    directJoinedWriterSource =
+        replaced(directJoinedWriterSource, "ctjs.call %writeState(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %writeState, ");
+    auto joinedWriter = mlir::parseSourceString<mlir::ModuleOp>(joinedWriterSource, &context);
+    auto directJoinedWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directJoinedWriterSource, &context);
+    check(joinedWriter && directJoinedWriter,
+          "ordinary/direct branch-selected returned writers and scalar snapshots parse");
+    if (!joinedWriter || !directJoinedWriter) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1299,7 +1349,9 @@ module {
                          *differentCallableWriter,
                          *directDifferentCallableWriter,
                          *differentReturnedWriter,
-                         *directDifferentReturnedWriter}) {
+                         *directDifferentReturnedWriter,
+                         *joinedWriter,
+                         *directJoinedWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1314,9 +1366,11 @@ module {
         const bool differentWrites =
             fixture == *differentCallableWriter || fixture == *directDifferentCallableWriter ||
             fixture == *differentReturnedWriter || fixture == *directDifferentReturnedWriter;
+        const bool joinedWrites = fixture == *joinedWriter || fixture == *directJoinedWriter;
         const bool callableWrites =
             fixture == *callableWriter || fixture == *directCallableWriter ||
-            fixture == *returnedWriter || fixture == *directReturnedWriter || differentWrites;
+            fixture == *returnedWriter || fixture == *directReturnedWriter || differentWrites ||
+            joinedWrites;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -1738,6 +1792,92 @@ module {
                     if (!name.starts_with("writer-")) { return; }
                     effects.push_back(name);
                     auto seen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    if (joinedWrites && name != "writer-again") {
+                        auto extra =
+                            seen ? llvm::dyn_cast<mlir::OpResult>(seen.getRhs()) : mlir::OpResult{};
+                        auto join = extra ? llvm::dyn_cast<mlir::scf::IfOp>(extra.getOwner())
+                                          : mlir::scf::IfOp{};
+                        if (!join || join.getElseRegion().empty()) {
+                            ordered = false;
+                            return;
+                        }
+                        auto returned = llvm::dyn_cast<mlir::OpResult>(seen.getLhs());
+                        auto truth = join.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        auto dispatch = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                              : ctjs::CompareOp{};
+                        auto selected = dispatch ? llvm::dyn_cast<mlir::OpResult>(dispatch.getLhs())
+                                                 : mlir::OpResult{};
+                        auto selector = selected
+                                            ? llvm::dyn_cast<mlir::scf::IfOp>(selected.getOwner())
+                                            : mlir::scf::IfOp{};
+                        auto predicate =
+                            selector ? selector.getCondition().getDefiningOp<ctjs::TruthyOp>()
+                                     : ctjs::TruthyOp{};
+                        auto choice = predicate
+                                          ? predicate.getValue().getDefiningOp<ctjs::CompareOp>()
+                                          : ctjs::CompareOp{};
+                        llvm::SmallVector<mlir::Value> counts, snapshots;
+                        unsigned doubled = 0;
+                        for (auto & region : join->getRegions()) {
+                            const auto values = region.front().back().getOperands();
+                            auto updatedExtra = values[extra.getResultNumber()]
+                                                    .getDefiningOp<ctjs::BinaryStaticOp>();
+                            auto count =
+                                updatedExtra
+                                    ? updatedExtra.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+                            auto current =
+                                count ? count.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                      : ctjs::BinaryStaticOp{};
+                            auto step = count ? count.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                              : ctjs::BinaryStaticOp{};
+                            if (step && step.getLhs() == step.getRhs()) {
+                                ++doubled;
+                                ordered &= step.getKind() == ctjs::BinaryKind::Add;
+                                step = step.getLhs().getDefiningOp<ctjs::BinaryStaticOp>();
+                            }
+                            const auto snapshot = returned && returned.getOwner() == join
+                                                      ? values[returned.getResultNumber()]
+                                                      : seen.getLhs();
+                            auto carried =
+                                updatedExtra ? llvm::dyn_cast<mlir::OpResult>(updatedExtra.getLhs())
+                                             : mlir::OpResult{};
+                            const bool preserved =
+                                carried && selector && carried.getOwner() == selector && step &&
+                                llvm::all_of(selector->getRegions(), [&](mlir::Region & arm) {
+                                    return arm.front().back().getOperand(
+                                               carried.getResultNumber()) == step.getLhs();
+                                });
+                            const bool mapped =
+                                updatedExtra && count && current && step &&
+                                updatedExtra.getKind() == ctjs::BinaryKind::Add &&
+                                count.getKind() == ctjs::BinaryKind::Add &&
+                                current.getKind() == ctjs::BinaryKind::Add &&
+                                step.getKind() == ctjs::BinaryKind::Add &&
+                                current.getLhs() == snapshot && current.getResult() != snapshot &&
+                                preserved && choice && choice.getKind() == ctjs::CompareKind::Gt &&
+                                choice.getLhs() == snapshot && selector->isBeforeInBlock(current);
+                            ordered &= mapped;
+                            if (!mapped) { return; }
+                            counts.push_back(count);
+                            snapshots.push_back(snapshot);
+                        }
+                        ordered &= doubled == 1 && snapshots[0] == snapshots[1];
+                        if (name == "writer-final") {
+                            finalSnapshot = seen.getLhs();
+                            finalExtra = extra;
+                            const auto then = join.getThenRegion().front().back().getOperands();
+                            const auto otherwise =
+                                join.getElseRegion().front().back().getOperands();
+                            for (unsigned i = 0; i != join.getNumResults(); ++i) {
+                                if (then[i] == counts[0] && otherwise[i] == counts[1]) {
+                                    finalCount = join.getResult(i);
+                                }
+                            }
+                            ordered &= static_cast<bool>(finalCount);
+                        }
+                        return;
+                    }
                     if (breakWrites) {
                         auto extra =
                             seen ? llvm::dyn_cast<mlir::OpResult>(seen.getRhs()) : mlir::OpResult{};
@@ -1846,7 +1986,7 @@ module {
                           !input->lookupSymbol<ctjs::FuncOp>("readExtra$5") &&
                           (!(nestedWrites || callableWrites) ||
                            !input->lookupSymbol<ctjs::FuncOp>("writeState$6")) &&
-                          (!differentWrites ||
+                          (!(differentWrites || joinedWrites) ||
                            (!input->lookupSymbol<ctjs::FuncOp>("otherWriter$7") &&
                             !input->lookupSymbol<ctjs::FuncOp>("forwardWriter$8"))),
                       "argument-taking helpers retire without closures or boxed state");
@@ -2084,6 +2224,32 @@ module {
              replaced(differentReturnedWriterSource,
                       "%forwardResult = ctjs.call %returner(%forwardUndefined, %writer)",
                       "%forwardResult = ctjs.call %callee(%forwardUndefined, %writer)"),
+             replaced(
+                 joinedWriterSource,
+                 "%returnedWriter_final = ctjs.call %readCount(%undefined, %writeState, "
+                 "%otherWriter)",
+                 "%returnedWriter_final = ctjs.call %readCount(%undefined, %writeState, %element)"),
+             replaced(joinedWriterSource, "scf.yield %alternateWriter : !ctjs.value",
+                      "scf.yield %nestedUndefined : !ctjs.value"),
+             replaced(replaced(joinedWriterSource, "    %entrySet =",
+                               "    %mutableWriter = ctjs.create_cell %otherWriter\n"
+                               "    ctjs.cell_set %mutableWriter, %writeState\n"
+                               "    %changedWriter = ctjs.cell_get %mutableWriter\n"
+                               "    %entrySet ="),
+                      "%returnedWriter_final = ctjs.call %readCount(%undefined, %writeState, "
+                      "%otherWriter)",
+                      "%returnedWriter_final = ctjs.call %readCount(%undefined, %writeState, "
+                      "%changedWriter)"),
+             replaced(joinedWriterSource, "    %finalCount =",
+                      "    ctjs.store_global \"leaked\", %returnedWriter_final\n"
+                      "    %finalCount ="),
+             replaced(directJoinedWriterSource, "    %finalCount =",
+                      "    %observedReturned = ctjs.binary_static add %returnedWriter_final, "
+                      "%argumentStep_final\n"
+                      "    %finalCount ="),
+             replaced(
+                 directJoinedWriterSource, "ctjs.call %returnedWriter_final(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %returnedWriter_final, "),
          }) {
         auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(fixture), "hostile nested helper witness parses");
@@ -2904,7 +3070,9 @@ module {
                          *differentCallableWriter,
                          *directDifferentCallableWriter,
                          *differentReturnedWriter,
-                         *directDifferentReturnedWriter}) {
+                         *directDifferentReturnedWriter,
+                         *joinedWriter,
+                         *directJoinedWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

@@ -454,11 +454,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     }
     auto fixedCallables = helperIndices;
     llvm::SmallVector<mlir::Operation *> familyCalls;
+    llvm::SmallVector<mlir::Operation *> familyFlow;
     const auto collectCalls = [&](ctjs::FuncOp body) {
         return body.walk([&](mlir::Operation * operation) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
             if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation)) {
                 familyCalls.push_back(operation);
+            }
+            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, mlir::scf::IfOp>(operation)) {
+                familyFlow.push_back(operation);
             }
             return mlir::WalkResult::advance();
         });
@@ -487,18 +491,51 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     }
     // Bind each invocation separately before changing any body. The aggregate
     // identities below only enumerate observers; they never select a callee.
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<unsigned, 2>> callableValues;
+    using Targets = llvm::SmallVector<unsigned, 2>;
+    using CallableValues = llvm::DenseMap<mlir::Value, Targets>;
+    CallableValues callableValues, initialCallables;
+    for (auto [value, index] : fixedCallables) { initialCallables[value] = {index}; }
+    const auto mergeTargets = [&](Targets & into, llvm::ArrayRef<unsigned> from) {
+        for (auto index : from) {
+            if (!spend()) { return false; }
+            if (!llvm::is_contained(into, index)) { into.push_back(index); }
+        }
+        return true;
+    };
     llvm::DenseSet<mlir::Value> unknownArguments;
-    const auto proveCalls = [&](auto && self, ctjs::FuncOp caller,
-                                llvm::DenseMap<mlir::Value, unsigned> values, unsigned depth,
-                                std::optional<unsigned> & result) -> bool {
+    const auto proveCalls = [&](auto && self, ctjs::FuncOp caller, CallableValues values,
+                                unsigned depth, Targets & result) -> bool {
         if (!spend()) { return false; }
         if (depth == 64 || !work.active.insert(caller).second) {
             return work.refuse("DOM iterator sibling call tree is recursive or too deep");
         }
-        for (auto * operation : familyCalls) {
+        // Postorder visits both arms before joining their callable results.
+        // Loop-carried callables still require a separate fixed-point proof.
+        for (auto * operation : familyFlow) {
             if (!spend()) { return false; }
             if (operation->getParentOfType<ctjs::FuncOp>() != caller) { continue; }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                for (auto [index, value] : llvm::enumerate(branch.getResults())) {
+                    Targets targets;
+                    bool unknown = false;
+                    for (auto & region : branch->getRegions()) {
+                        if (!spend()) { return false; }
+                        auto yielded = region.front().getTerminator()->getOperand(index);
+                        auto found = values.find(yielded);
+                        unknown |= found == values.end();
+                        if (found != values.end() && !mergeTargets(targets, found->second)) {
+                            return false;
+                        }
+                    }
+                    if (!targets.empty()) {
+                        if (unknown) {
+                            return work.refuse("DOM iterator callable branch has an unproved arm");
+                        }
+                        values[value] = std::move(targets);
+                    }
+                }
+                continue;
+            }
             auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
             auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
             auto callee = call ? call.getCallee() : direct.getCalleeValue();
@@ -518,50 +555,62 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 continue;
             }
-            auto & target = helpers[found->second];
-            auto & body = target.body.getBody().front();
-            auto args = call ? call.getArgs() : direct.getArgs();
-            if (args.size() + ctjs::implicit_arguments != body.getNumArguments()) {
-                return work.refuse("DOM iterator sibling helper requires exact argument arity");
-            }
-            if (!undefined(call ? call.getReceiver() : direct.getReceiver()) ||
-                (direct &&
-                 (direct.getTarget() != target.body || !undefined(direct.getNewTarget())))) {
-                return work.refuse("DOM iterator sibling helper has an unsupported call target");
-            }
-            auto arguments = fixedCallables;
-            for (auto [index, actual] : llvm::enumerate(args)) {
+            Targets results;
+            bool unknownResult = false;
+            for (auto index : found->second) {
                 if (!spend()) { return false; }
-                auto formal =
-                    body.getArgument(ctjs::implicit_arguments + static_cast<unsigned>(index));
-                if (auto bound = values.find(actual); bound != values.end()) {
-                    arguments[formal] = bound->second;
-                } else {
-                    unknownArguments.insert(formal);
+                auto & target = helpers[index];
+                auto & body = target.body.getBody().front();
+                auto args = call ? call.getArgs() : direct.getArgs();
+                if (args.size() + ctjs::implicit_arguments != body.getNumArguments()) {
+                    return work.refuse("DOM iterator sibling helper requires exact argument arity");
                 }
+                if (!undefined(call ? call.getReceiver() : direct.getReceiver()) ||
+                    (direct &&
+                     (direct.getTarget() != target.body || !undefined(direct.getNewTarget())))) {
+                    return work.refuse(
+                        "DOM iterator sibling helper has an unsupported call target");
+                }
+                auto arguments = initialCallables;
+                for (auto [index, actual] : llvm::enumerate(args)) {
+                    if (!spend()) { return false; }
+                    auto formal =
+                        body.getArgument(ctjs::implicit_arguments + static_cast<unsigned>(index));
+                    if (auto bound = values.find(actual); bound != values.end()) {
+                        arguments[formal] = bound->second;
+                    } else {
+                        unknownArguments.insert(formal);
+                    }
+                }
+                Targets returned;
+                if (!self(self, target.body, std::move(arguments), depth + 1, returned)) {
+                    return false;
+                }
+                unknownResult |= returned.empty();
+                if (!mergeTargets(results, returned)) { return false; }
             }
-            std::optional<unsigned> returned;
-            if (!self(self, target.body, std::move(arguments), depth + 1, returned)) {
-                return false;
+            if (!results.empty()) {
+                if (unknownResult) {
+                    return work.refuse("DOM iterator callable return has an unproved target");
+                }
+                values[operation->getResult(0)] = std::move(results);
             }
-            if (returned) { values[operation->getResult(0)] = *returned; }
         }
-        // checkBody proved one root return. Branch/loop callable joins remain
-        // unproved; the inliner must recover this same concrete identity.
+        // checkBody proved one root return; every possible identity is confined.
         auto returned = llvm::cast<ctjs::ReturnOp>(caller.getBody().front().getTerminator());
         if (auto bound = values.find(returned.getValue()); bound != values.end()) {
             result = bound->second;
         }
-        for (auto [value, index] : values) {
+        for (auto & [value, indices] : values) {
             if (!spend()) { return false; }
             auto & targets = callableValues[value];
-            if (!llvm::is_contained(targets, index)) { targets.push_back(index); }
+            if (!mergeTargets(targets, indices)) { return false; }
         }
         work.active.erase(caller);
         return true;
     };
-    std::optional<unsigned> entryResult;
-    if (!proveCalls(proveCalls, entry, fixedCallables, 0, entryResult)) {
+    Targets entryResult;
+    if (!proveCalls(proveCalls, entry, initialCallables, 0, entryResult)) {
         return error(work.reason);
     }
     for (auto formal : unknownArguments) {
@@ -589,6 +638,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (llvm::isa<ctjs::ReturnOp>(user) && caller != entry &&
                 user == caller.getBody().front().getTerminator()) {
                 continue; // Every result observer is checked through callableValues.
+            }
+            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user)) {
+                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+                if (branch && callableValues.contains(branch.getResult(use.getOperandNumber()))) {
+                    continue; // Both arms and every joined observer were proved above.
+                }
             }
             auto ordinary = llvm::dyn_cast<ctjs::CallOp>(user);
             auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
@@ -701,16 +756,50 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             pending.push_back(operation);
         }
     }
+    // All observers are confined calls or transport edges. A closed scalar
+    // discriminator preserves branch selection until its ordinary calls expand;
+    // no callable object, lookup table or runtime dispatch survives.
+    llvm::SmallVector<mlir::Value> tags;
+    for (auto [index, helper] : llvm::enumerate(helpers)) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        mlir::OpBuilder at(helper.closure);
+        auto tag = ctjs::ConstantOp::create(
+            at, helper.closure.getLoc(),
+            ctjs::NumberAttr::get(candidate.getContext(), static_cast<double>(index)));
+        helper.closure.getResult().replaceAllUsesWith(tag);
+        helperIndices[tag] = static_cast<unsigned>(index);
+        tags.push_back(tag);
+    }
+    const auto selectedTargets = [&](auto && self, mlir::Value value, Targets & targets,
+                                     unsigned depth) -> bool {
+        if (!spend() || depth == 64) { return false; }
+        if (auto found = helperIndices.find(value); found != helperIndices.end()) {
+            return mergeTargets(targets, {found->second});
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!self(self, region.front().getTerminator()->getOperand(result.getResultNumber()),
+                      targets, depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    };
     while (!pending.empty()) {
         // ponytail: bounded linear scan; use a dependency worklist if large
         // helper families exhaust the shared budget. A returned callable must
         // have its producer expanded before its invocation can bind the target.
+        Targets targets;
         auto ready = llvm::find_if(pending, [&](mlir::Operation * operation) {
             if (!spend()) { return false; }
+            targets.clear();
             auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
             auto callee = ordinary ? ordinary.getCallee()
                                    : llvm::cast<ctjs::CallDirectOp>(operation).getCalleeValue();
-            return helperIndices.contains(callee);
+            return selectedTargets(selectedTargets, callee, targets, 0);
         });
         if (ready == pending.end() || !work.remaining) {
             return error("DOM iterator sibling call has no proved target");
@@ -720,17 +809,66 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto ordinary = llvm::dyn_cast<ctjs::CallOp>(call);
         auto callee =
             ordinary ? ordinary.getCallee() : llvm::cast<ctjs::CallDirectOp>(call).getCalleeValue();
-        auto & helper = helpers[helperIndices.lookup(callee)];
         auto receiver =
             ordinary ? ordinary.getReceiver() : llvm::cast<ctjs::CallDirectOp>(call).getReceiver();
         // Keep each already-evaluated argument's snapshot before appending
         // the cell identities. Later state writes cannot change that value.
         llvm::SmallVector<mlir::Value> actuals(
             ordinary ? ordinary.getArgs() : llvm::cast<ctjs::CallDirectOp>(call).getArgs());
+        if (targets.size() > 1) {
+            // Evaluate the original producer and arguments once, then select
+            // exactly one body. Inlining inside these arms preserves state order.
+            const auto dispatch = [&](auto && self, mlir::OpBuilder & at,
+                                      unsigned position) -> mlir::Value {
+                if (position == 64) {
+                    work.refuse("DOM iterator callable selection is too deep");
+                    return {};
+                }
+                for (unsigned operation = 0; operation < 6; ++operation) {
+                    if (!spend()) { return {}; }
+                }
+                auto tag = tags[targets[position]];
+                if (position + 1 == targets.size()) {
+                    auto selected = ctjs::CallOp::create(
+                        at, call->getLoc(), call->getResult(0).getType(), tag, receiver, actuals);
+                    pending.push_back(selected);
+                    return selected.getResult();
+                }
+                auto equal = ctjs::CompareOp::create(at, call->getLoc(), callee.getType(),
+                                                     ctjs::CompareKind::StrictEq, callee, tag);
+                auto condition = ctjs::TruthyOp::create(at, call->getLoc(), at.getI1Type(), equal);
+                auto branch = mlir::scf::IfOp::create(at, call->getLoc(), call->getResultTypes(),
+                                                      condition.getResult());
+                for (auto [index, region] : llvm::enumerate(branch->getRegions())) {
+                    auto & arm = region.emplaceBlock();
+                    mlir::OpBuilder nested(&arm, arm.begin());
+                    mlir::Value value;
+                    if (index == 0) {
+                        auto selected = ctjs::CallOp::create(
+                            nested, call->getLoc(), callee.getType(), tag, receiver, actuals);
+                        pending.push_back(selected);
+                        value = selected;
+                    } else {
+                        value = self(self, nested, position + 1);
+                    }
+                    if (!value) { return {}; }
+                    mlir::scf::YieldOp::create(nested, call->getLoc(), value);
+                }
+                return branch.getResult(0);
+            };
+            mlir::OpBuilder at(call);
+            auto result = dispatch(dispatch, at, 0);
+            if (!result) { return error(work.reason); }
+            call->getResult(0).replaceAllUsesWith(result);
+            work.callDepth.erase(call);
+            call->erase();
+            continue;
+        }
+        auto & helper = helpers[targets.front()];
         for (auto cell : helper.closure.getUpvalues()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             auto callable = callableCells.lookup(cell);
-            actuals.push_back(callable ? callable.getResult() : cell);
+            actuals.push_back(callable ? tags[helperIndices.lookup(callable)] : cell);
         }
         auto * previous = call->getPrevNode();
         if (!work.inlineCall(entry, helper.body, call, actuals, receiver,
