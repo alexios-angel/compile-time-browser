@@ -480,6 +480,19 @@ SIBLING_RETURNED_LOOP_SNAPSHOTS_SOURCE = SIBLING_RETURNED_BRANCH_SNAPSHOTS_SOURC
     "    }",
     1,
 )
+SIBLING_RETURNED_LOOP_CALL_SOURCE = SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+    "  const identity =", "  const keep = (writer) => writer;\n  const identity =", 1
+).replace("      rounds++;", "      selected = keep(selected);\n      rounds++;", 1)
+SIBLING_RETURNED_LOOP_CALL_SNAPSHOTS_SOURCE = SIBLING_RETURNED_LOOP_SNAPSHOTS_SOURCE.replace(
+    "  const identity =",
+    "  const keep = (writer, prior) => { closed += prior; return writer; };\n" "  const identity =",
+    1,
+).replace("      rounds++;", "      selected = keep(selected, emitted);\n      rounds++;", 1)
+SIBLING_RETURNED_LOOP_CALL_ZERO_SOURCE = SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+    "const keep = (writer) => writer;",
+    "const keep = (writer) => { closed += emitted; return writer; };",
+    1,
+).replace("while (rounds < 2)", "while (rounds < 0)", 1)
 
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
@@ -1010,6 +1023,31 @@ POSITIVES = (
         True,
         "false",
     ),
+    (
+        "entry-captured-sibling-returned-loop-call-result",
+        SIBLING_RETURNED_LOOP_CALL_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-loop-call-snapshots",
+        SIBLING_RETURNED_LOOP_CALL_SNAPSHOTS_SOURCE,
+        True,
+        ("886698", "980596", "886698"),
+        True,
+        "false",
+    ),
+    (
+        # No backedge call runs; the initial identity and prior state survive.
+        "entry-captured-sibling-returned-loop-call-zero",
+        SIBLING_RETURNED_LOOP_CALL_ZERO_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
 )
 
 
@@ -1530,10 +1568,42 @@ def refusals():
             "entry-captured-sibling-returned-loop-observed": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
                 "      rounds++;", "      closed += selected === other;\n      rounds++;", 1
             ),
-            "entry-captured-sibling-returned-loop-call-result": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
-                "  const identity =", "  const keep = (writer) => writer;\n  const identity =", 1
-            ).replace(
-                "      rounds++;", "      selected = keep(selected);\n      rounds++;", 1
+            "entry-captured-sibling-returned-loop-call-unknown": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "const keep = (writer) => writer;",
+                "const keep = (writer) => unknownWriter;",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-call-mixed": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "const keep = (writer) => writer;",
+                "const keep = (writer) => { if (emitted > 0) return writer; return 0; };",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-call-escaping": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "const keep = (writer) => writer;",
+                "const keep = (writer) => { anchor.saved = writer; return writer; };",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-call-observed": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "const keep = (writer) => writer;",
+                "const keep = (writer) => { closed += writer === other; return writer; };",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-call-missing": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "selected = keep(selected);", "selected = keep();", 1
+            ),
+            "entry-captured-sibling-returned-loop-call-scalar-actual": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "selected = keep(selected);", "selected = keep(closed);", 1
+            ),
+            "entry-captured-sibling-returned-loop-call-recursive-effect": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "const keep = (writer) => writer;",
+                "const keep = (writer) => { closed += keep(writer)(); return writer; };",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-call-forwarded": SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
+                "const keep = (writer) => writer;",
+                "const forward = (writer) => writer;\n"
+                "  const keep = (writer) => forward(writer);",
+                1,
             ),
         }
     )

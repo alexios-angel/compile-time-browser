@@ -1335,6 +1335,63 @@ module {
         !zeroDirectLoopJoinedWriter) {
         return;
     }
+    // Returning the selected writer through another helper preserves the same
+    // loop dependency and all five caller snapshots, including zero trips.
+    auto loopCallWriterSource = replaced(
+        loopJoinedWriterSource,
+        "    %readCount = ctjs.create_closure %callee[4] this %undefined captures %emittedCell",
+        "    %keepWriter = ctjs.create_closure %callee[8] this %undefined\n"
+        "    %keepCell = ctjs.create_cell %keepWriter\n"
+        "    %readCount = ctjs.create_closure %callee[4] this %undefined captures %emittedCell, "
+        "%keepCell");
+    loopCallWriterSource = replaced(
+        loopCallWriterSource,
+        "%alternateWriter: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32}",
+        "%alternateWriter: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 2 : i32}");
+    loopCallWriterSource = replaced(loopCallWriterSource, "    %selectZero =",
+                                    "    %keepWriter = ctjs.load_upvalue %callee[1]\n"
+                                    "    %selectZero =");
+    loopCallWriterSource =
+        replaced(loopCallWriterSource, "      scf.yield %selectedWriter, %nextTrip",
+                 "      %keptWriter = ctjs.call %keepWriter(%nestedUndefined, %selectedWriter)\n"
+                 "      scf.yield %keptWriter, %nextTrip");
+    loopCallWriterSource = replaced(loopCallWriterSource, "\n}\n", R"MLIR(
+  ctjs.func @keepWriter$8(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %keptWriter: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    ctjs.return %keptWriter
+  }
+}
+)MLIR");
+    auto directLoopCallWriterSource = loopCallWriterSource;
+    for (unsigned i = 0; i != 4; ++i) {
+        directLoopCallWriterSource =
+            replaced(directLoopCallWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+    }
+    directLoopCallWriterSource =
+        replaced(directLoopCallWriterSource, "ctjs.call %writeState(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %writeState, ");
+    directLoopCallWriterSource = replaced(
+        directLoopCallWriterSource, "ctjs.call %keepWriter(%nestedUndefined, ",
+        "ctjs.call_direct @keepWriter$8(%nestedUndefined, %nestedUndefined, %keepWriter, ");
+    auto loopCallWriter = mlir::parseSourceString<mlir::ModuleOp>(loopCallWriterSource, &context);
+    auto directLoopCallWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directLoopCallWriterSource, &context);
+    auto zeroLoopCallWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(loopCallWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    auto zeroDirectLoopCallWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(directLoopCallWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    check(loopCallWriter && directLoopCallWriter && zeroLoopCallWriter && zeroDirectLoopCallWriter,
+          "ordinary/direct loop return dependencies and zero-trip snapshots parse");
+    if (!loopCallWriter || !directLoopCallWriter || !zeroLoopCallWriter ||
+        !zeroDirectLoopCallWriter) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1410,7 +1467,11 @@ module {
                          *loopJoinedWriter,
                          *directLoopJoinedWriter,
                          *zeroLoopJoinedWriter,
-                         *zeroDirectLoopJoinedWriter}) {
+                         *zeroDirectLoopJoinedWriter,
+                         *loopCallWriter,
+                         *directLoopCallWriter,
+                         *zeroLoopCallWriter,
+                         *zeroDirectLoopCallWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1426,9 +1487,11 @@ module {
             fixture == *differentCallableWriter || fixture == *directDifferentCallableWriter ||
             fixture == *differentReturnedWriter || fixture == *directDifferentReturnedWriter;
         const bool zeroLoopWrites =
-            fixture == *zeroLoopJoinedWriter || fixture == *zeroDirectLoopJoinedWriter;
-        const bool loopWrites =
-            fixture == *loopJoinedWriter || fixture == *directLoopJoinedWriter || zeroLoopWrites;
+            fixture == *zeroLoopJoinedWriter || fixture == *zeroDirectLoopJoinedWriter ||
+            fixture == *zeroLoopCallWriter || fixture == *zeroDirectLoopCallWriter;
+        const bool loopWrites = fixture == *loopJoinedWriter ||
+                                fixture == *directLoopJoinedWriter || fixture == *loopCallWriter ||
+                                fixture == *directLoopCallWriter || zeroLoopWrites;
         const bool joinedWrites =
             fixture == *joinedWriter || fixture == *directJoinedWriter || loopWrites;
         const bool callableWrites =
@@ -2141,7 +2204,8 @@ module {
                            !input->lookupSymbol<ctjs::FuncOp>("writeState$6")) &&
                           (!(differentWrites || joinedWrites) ||
                            (!input->lookupSymbol<ctjs::FuncOp>("otherWriter$7") &&
-                            !input->lookupSymbol<ctjs::FuncOp>("forwardWriter$8"))),
+                            !input->lookupSymbol<ctjs::FuncOp>("forwardWriter$8"))) &&
+                          !input->lookupSymbol<ctjs::FuncOp>("keepWriter$8"),
                       "argument-taking helpers retire without closures or boxed state");
             }
             if (siblingWrites) {
@@ -2470,6 +2534,78 @@ module {
                 check(hostContractFingerprint(*input) == request.moduleSha256 &&
                           noEvidence(*input, DOMEntryAnalysis(*input, request)),
                       "refused loop helper preserves source and publishes no evidence");
+            }
+        }
+    }
+    for (const auto & source : {loopCallWriterSource, directLoopCallWriterSource}) {
+        for (const auto & invalid : {
+                 replaced(source, "    ctjs.return %keptWriter",
+                          "    %unknownWriter = ctjs.load_global \"unknownWriter\"\n"
+                          "    ctjs.return %unknownWriter"),
+                 replaced(source, "    ctjs.return %keptWriter",
+                          R"MLIR(    %unknownCondition = ctjs.truthy %keptWriter
+    %notCallable = ctjs.constant #ctjs.number<0>
+    %mixedWriter = scf.if %unknownCondition -> (!ctjs.value) {
+      scf.yield %keptWriter : !ctjs.value
+    } else {
+      scf.yield %notCallable : !ctjs.value
+    }
+    ctjs.return %mixedWriter)MLIR"),
+                 replaced(source, "    ctjs.return %keptWriter",
+                          "    ctjs.store_global \"leaked\", %keptWriter\n"
+                          "    ctjs.return %keptWriter"),
+                 replaced(source, "    ctjs.return %keptWriter",
+                          "    %observedWriter = ctjs.compare eq %keptWriter, %keptWriter\n"
+                          "    ctjs.return %keptWriter"),
+                 replaced(source, "    ctjs.return %keptWriter",
+                          "    %undefined = ctjs.constant #ctjs.undefined\n"
+                          "    %recursiveEffect = ctjs.call %callee(%undefined, %keptWriter)\n"
+                          "    ctjs.return %keptWriter"),
+                 // A resolved direct call carries the resolver's undefined padding.
+                 source == loopCallWriterSource
+                     ? replaced(source, ", %selectedWriter)\n      scf.yield %keptWriter",
+                                ")\n      scf.yield %keptWriter")
+                     : replaced(source, "%selectedWriter)\n      scf.yield %keptWriter",
+                                "%nestedUndefined)\n      scf.yield %keptWriter"),
+                 replaced(source, "%selectedWriter)\n      scf.yield %keptWriter",
+                          "%selectZero)\n      scf.yield %keptWriter"),
+                 replaced(replaced(source, "    %selectZero =",
+                                   "    %unknownWriter = ctjs.load_global \"unknownWriter\"\n"
+                                   "    %selectZero ="),
+                          "%selectedWriter)\n      scf.yield %keptWriter",
+                          "%unknownWriter)\n      scf.yield %keptWriter"),
+                 replaced(source, "      scf.yield %keptWriter, %nextTrip",
+                          "      ctjs.store_global \"leaked\", %keptWriter\n"
+                          "      scf.yield %keptWriter, %nextTrip"),
+                 replaced(source, "    %finalCount =",
+                          "    ctjs.store_global \"leaked\", %returnedWriter_final\n"
+                          "    %finalCount ="),
+                 source == loopCallWriterSource
+                     ? replaced(source, "ctjs.call %keepWriter(%nestedUndefined, ",
+                                "ctjs.call_direct @custom$0(%nestedUndefined, %nestedUndefined, "
+                                "%keepWriter, ")
+                     : replaced(source, "ctjs.call_direct @keepWriter$8(",
+                                "ctjs.call_direct @custom$0("),
+             }) {
+            check(!invalid.empty() && invalid != source,
+                  "loop call-result control changes its source");
+            if (invalid.empty() || invalid == source) { continue; }
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "hostile loop call-result dependency parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "every loop return dependency, actual and observer must be proved");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "refused loop return dependency preserves source and publishes no evidence");
             }
         }
     }
@@ -3280,7 +3416,11 @@ module {
                          *loopJoinedWriter,
                          *directLoopJoinedWriter,
                          *zeroLoopJoinedWriter,
-                         *zeroDirectLoopJoinedWriter}) {
+                         *zeroDirectLoopJoinedWriter,
+                         *loopCallWriter,
+                         *directLoopCallWriter,
+                         *zeroLoopCallWriter,
+                         *zeroDirectLoopCallWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

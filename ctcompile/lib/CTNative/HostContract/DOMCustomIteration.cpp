@@ -398,6 +398,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         ctjs::CreateClosureOp closure;
         ctjs::FuncOp body;
         llvm::SmallVector<mlir::Operation *> calls;
+        std::optional<unsigned> returnedArgument;
     };
     llvm::SmallVector<Helper> helpers;
     for (auto closure : entry.getBody().front().getOps<ctjs::CreateClosureOp>()) {
@@ -447,7 +448,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator sibling helper must be a scalar leaf");
         }
         if (!work.checkBody(body, false, false, true)) { return error(work.reason); }
-        helpers.push_back({closure, body, {}});
+        auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().getTerminator());
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(returned.getValue());
+        std::optional<unsigned> returnedArgument;
+        if (argument && argument.getOwner() == &body.getBody().front() &&
+            argument.getArgNumber() >= ctjs::implicit_arguments) {
+            returnedArgument = argument.getArgNumber() - ctjs::implicit_arguments;
+        }
+        helpers.push_back({closure, body, {}, returnedArgument});
     }
     llvm::DenseMap<mlir::Value, unsigned> helperIndices;
     for (auto [index, helper] : llvm::enumerate(helpers)) {
@@ -553,7 +561,32 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (auto found = known.find(current); found != known.end()) {
                 if (!mergeTargets(targets, found->second)) { return false; }
             } else if (!transportInputs(current, pending)) {
-                complete = false;
+                auto call = current.getDefiningOp<ctjs::CallOp>();
+                auto direct = current.getDefiningOp<ctjs::CallDirectOp>();
+                if (!call && !direct) {
+                    complete = false;
+                    continue;
+                }
+                auto callee = call ? call.getCallee() : direct.getCalleeValue();
+                auto found = known.find(callee);
+                if (found == known.end()) {
+                    complete = false;
+                    continue;
+                }
+                // An explicit argument is an immutable snapshot even when the
+                // helper has effects. Follow that return dependency around the
+                // loop; the full call/observer proof below still checks every
+                // invocation before any helper is expanded.
+                auto args = call ? call.getArgs() : direct.getArgs();
+                for (auto index : found->second) {
+                    if (!spend()) { return false; }
+                    auto argument = helpers[index].returnedArgument;
+                    if (argument && *argument < args.size()) {
+                        pending.push_back(args[*argument]);
+                    } else {
+                        complete = false;
+                    }
+                }
             }
         }
         return complete && !targets.empty();
@@ -858,8 +891,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     }
     while (!pending.empty()) {
         // ponytail: bounded linear scan; use a dependency worklist if large
-        // helper families exhaust the shared budget. A returned callable must
-        // have its producer expanded before its invocation can bind the target.
+        // helper families exhaust the shared budget. Expand a returned callable's
+        // producer first unless its formal-return dependency proves the target.
         Targets targets;
         auto ready = llvm::find_if(pending, [&](mlir::Operation * operation) {
             if (!spend()) { return false; }
