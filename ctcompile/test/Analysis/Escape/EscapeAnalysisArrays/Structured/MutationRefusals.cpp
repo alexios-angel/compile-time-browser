@@ -272,6 +272,67 @@ void StructuredCases::mutationRefusals() {
                     .arrays = "a:[one,zero,zero,one]",
                     .reads = "a[0]=one; a[2]=zero",
                     .exit = "a -> {a}"});
+    const auto stringQuotient = replace(
+        replace(composedIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
+        "div %i, %two", "div %i, %text");
+    rows.push_back({.what = "structured String division preserves exact translated positions",
+                    .body = stringQuotient,
+                    .arrays = "a:[one,zero,zero,one]",
+                    .reads = "a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured primitive quotient replay retains unvisited children",
+                    .body = replace(stringQuotient, "create_array [%one, %x, %y]",
+                                    "create_array [%x, %x, %y]"),
+                    .arrays = "a:[x,zero,zero,one]",
+                    .reads = "a[0]=x; a[2]=zero",
+                    .exit = "a -> {a,x}"});
+    rows.push_back(
+        {.what = "structured primitive division preserves previously saved children",
+         .body = replace(replace(stringQuotient, "  %finalIndex,",
+                                 "  %savedChild = ctjs.get_property %a[%one]\n  %finalIndex,"),
+                         "ctjs.return %a", "ctjs.return %savedChild"),
+         .arrays = "a:[one,zero,zero,one]",
+         .reads = "a[1]=x; a[0]=one; a[2]=zero",
+         .exit = "x -> {x}"});
+    rows.push_back({.what = "structured Boolean true divides each own index exactly",
+                    .body = replace(replace(scaledIndex, "  %a =",
+                                            "  %true = ctjs.constant #ctjs.boolean<true>\n  %a ="),
+                                    "mul %i, %one", "div %i, %true"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    const auto stringQuotientReload =
+        replace(replace(replace(stringQuotient, "ctjs.constant #ctjs.string<\"2\">",
+                                "ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}"),
+                        "ctjs.append %one to %a", "ctjs.append %text to %a"),
+                "%part = ctjs.binary div %i, %text",
+                "%three = ctjs.binary add %two, %one\n"
+                "    %divisor = ctjs.get_property %base[%three]\n"
+                "    %part = ctjs.binary div %i, %divisor");
+    rows.push_back({.what = "structured String divisor reloads preserve primitive identity",
+                    .body = stringQuotientReload,
+                    .arrays = "a:[one,zero,zero,text]",
+                    .reads = "a[3]=text; a[0]=one; a[3]=text; a[2]=zero",
+                    .exit = "a -> {a}"});
+    for (const auto & body : {replace(stringQuotient, "add %i, %two", "add %i, %one"),
+                              replace(stringQuotient, "%index = %zero", "%index = %one"),
+                              replace(stringQuotient, "div %i, %text", "div %text, %i"),
+                              replace(stringQuotient, "div %i, %text", "div %i, %x"),
+                              replace(replace(stringQuotientReload, "create_array [%one, %x, %y]",
+                                              "create_array [%one, %text, %y]"),
+                                      "%divisor = ctjs.get_property %base[%three]",
+                                      "%divisor = ctjs.get_property %base[%one]"),
+                              replace(stringQuotientReload, "    %step =",
+                                      "    ctjs.set_property %base[%three], %two\n    %step =")}) {
+        reject("structured primitive division retains exact visits and the complete reload census",
+               body);
+    }
+    for (const std::string literal :
+         {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
+          "#ctjs.string<\"02\">", "#ctjs.bigint<\"2\">"}) {
+        reject("structured primitive divisors require bounded nonzero conversion",
+               replace(stringQuotient, "#ctjs.string<\"2\">", literal));
+    }
     rows.push_back({.what = "structured compositions keep signed intermediate Numbers exact",
                     .body = replace(composedIndex,
                                     "%part = ctjs.binary div %i, %two\n"
@@ -296,6 +357,12 @@ void StructuredCases::mutationRefusals() {
         "add %part, %one", "add %part, %two");
     rows.push_back({.what = "structured negative quotients retain descending own positions",
                     .body = negativeQuotient,
+                    .arrays = "a:[one,zero,zero,one]",
+                    .reads = "a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured negative String divisors preserve descending own positions",
+                    .body = replace(negativeQuotient, "ctjs.unary neg %two",
+                                    "ctjs.constant #ctjs.string<\"-2\">"),
                     .arrays = "a:[one,zero,zero,one]",
                     .reads = "a[0]=one; a[2]=zero",
                     .exit = "a -> {a}"});

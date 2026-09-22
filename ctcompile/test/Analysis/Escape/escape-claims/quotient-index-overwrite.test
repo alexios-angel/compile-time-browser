@@ -12,13 +12,21 @@
 // CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function prefix() {
@@ -116,3 +124,49 @@ prefix(); nonzeroStart(); reloadedDivisor(); gap(); nestedReload(); zeroTrip();
 fractionalStart(); fractionalStep(); zeroDivisor(); negativeDivisor();
 stringDivisor(); overlappingDivisor(); saved(); remaining(); changingDivisor();
 strideOverlap(); cycle();
+
+function stringDivisorGap() {
+    var child = {}, a = [child, "2", child, 0, 0];
+    for (var i = 0; i < a.length; i += 4) a[i / a[1]] = 0;
+    return a;
+}
+function negativeStringDivisor() {
+    var child = {}, a = [0, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[2 + i / "-2"] = 0;
+    return a;
+}
+function trueDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i / true] = 0;
+    return a;
+}
+function primitiveSaved() {
+    var child = {}, a = [child, child, 0, 0], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[i / "2"] = 0;
+    return saved;
+}
+function primitiveRemaining() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i / "2"] = 0;
+    return a;
+}
+function nullDivisor() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i += 2) a[i / null] = 0;
+    return a;
+}
+function fractionalStringDivisor() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i / "2"] = 0;
+    return a;
+}
+function laterStringDivisorWrite() {
+    var child = {}, a = [child, "2", child, 0, 0];
+    for (var i = 0; i < a.length; i += 4) {
+        a[i / a[1]] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+stringDivisorGap(); negativeStringDivisor(); trueDivisor(); primitiveSaved();
+primitiveRemaining(); nullDivisor(); fractionalStringDivisor(); laterStringDivisorWrite();

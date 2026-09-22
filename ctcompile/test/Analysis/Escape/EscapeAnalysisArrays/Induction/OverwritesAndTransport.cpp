@@ -3245,18 +3245,70 @@ void InductionCases::overwritesAndTransport() {
           replace(quotientIndex, "div %i, %two", "div %two, %i"),
           replace(replace(quotientIndex, "  %a =", "  %negative = ctjs.unary neg %two\n  %a ="),
                   "div %i, %two", "div %i, %negative"),
-          replace(replace(quotientIndex,
-                          "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
-                  "div %i, %two", "div %i, %text"),
           replace(replace(reloadedDivisor, "[%x, %x, %one, %two]", "[%x, %two, %one, %two]"),
                   "%divisor = ctjs.get_property %base[%three]",
                   "%divisor = ctjs.get_property %base[%one]"),
           replace(reloadedDivisor,
                   "  %step =", "  ctjs.set_property %base[%three], %one\n  %step ="),
           replace(quotientIndex, "div %i, %two", "div %i, %s")}) {
-        run({.what = "quotient stores require exact division and immutable Number divisors",
+        run({.what = "quotient stores require exact division and immutable bounded divisors",
              .body = body,
              .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    }
+    const auto stringQuotient = replace(
+        replace(quotientIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
+        "div %i, %two", "div %i, %text");
+    run({.what = "canonical String division preserves the historical exact quotient construction",
+         .body = stringQuotient,
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[0]=zero; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "primitive quotient replay retains unvisited children",
+         .body = replace(stringQuotient, "[%x, %x, %one, %one]", "[%x, %x, %x, %one]"),
+         .arrays = "a:[zero,zero,x,one]",
+         .reads = "a[0]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "primitive quotient overwrites preserve earlier snapshots",
+         .body = replace(replace(stringQuotient, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[1]=x; a[0]=zero; a[2]=one",
+         .exit = "x -> {x}"});
+    run({.what = "Boolean true divides every own index exactly",
+         .body = replace(replace(stringQuotient, "#ctjs.string<\"2\">", "#ctjs.boolean<true>"),
+                         "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+         .arrays = "a:[zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto stringDivisorGap = replace(
+        replace(quotientGap, "  %a =",
+                "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n  %a ="),
+        "[%x, %two, %x, %one, %one]", "[%x, %text, %x, %one, %one]");
+    run({.what = "String divisor reloads preserve primitive identity in quotient gaps",
+         .body = stringDivisorGap,
+         .arrays = "a:[zero,text,zero,one,one]",
+         .reads = "a[1]=text; a[0]=zero; a[1]=text; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    for (const auto & body :
+         {replace(stringQuotient, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+          replace(stringQuotient, "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+          replace(stringQuotient, "div %i, %text", "div %text, %i"),
+          replace(stringQuotient, "div %i, %text", "div %i, %x"),
+          replace(stringDivisorGap, "add %i, %four\n  cf.br", "add %i, %two\n  cf.br"),
+          replace(stringDivisorGap,
+                  "  %step =", "  ctjs.set_property %base[%one], %two\n  %step =")}) {
+        reject("primitive quotient proofs retain exact visits and the complete reload census",
+               body);
+    }
+    for (const std::string literal :
+         {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
+          "#ctjs.string<\"02\">", "#ctjs.bigint<\"2\">"}) {
+        reject("primitive divisors require bounded nonzero side-effect-free conversion",
+               replace(stringQuotient, "#ctjs.string<\"2\">", literal));
     }
     const auto negativeQuotient = replace(
         replace(replace(quotientIndex, "[%x, %x, %one, %one]", "[%one, %x, %x, %one]"), "  %a =",
@@ -3266,6 +3318,13 @@ void InductionCases::overwritesAndTransport() {
         "  %position = ctjs.binary add %part, %two");
     run({.what = "negative divisors reverse exact quotient positions with a positive stride",
          .body = negativeQuotient,
+         .arrays = "a:[one,zero,zero,one]",
+         .reads = "a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative String divisors preserve descending quotient positions",
+         .body =
+             replace(negativeQuotient, "ctjs.unary neg %two", "ctjs.constant #ctjs.string<\"-2\">"),
          .arrays = "a:[one,zero,zero,one]",
          .reads = "a[0]=one; a[2]=zero",
          .exit = "a -> {a}"},
