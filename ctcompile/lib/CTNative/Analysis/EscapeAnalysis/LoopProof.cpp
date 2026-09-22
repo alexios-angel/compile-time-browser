@@ -261,7 +261,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         return range;
     };
-    std::optional<std::size_t> exactIndex;
+    std::pair<std::size_t, std::size_t> indexBounds{*start, last};
     const auto indexRange = [&](auto && self, mlir::Value operand,
                                 unsigned depth) -> std::optional<IndexRange> {
         if (!spend()) {
@@ -269,8 +269,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return std::nullopt;
         }
         if (fromHeader(operand) == index) {
-            return IndexRange{{index, ContentsKind::NonBigInt, exactIndex.value_or(*start)},
-                              {index, ContentsKind::NonBigInt, exactIndex.value_or(last)},
+            return IndexRange{{index, ContentsKind::NonBigInt, indexBounds.first},
+                              {index, ContentsKind::NonBigInt, indexBounds.second},
                               *stride};
         }
         if (depth == 64) { return std::nullopt; }
@@ -717,22 +717,33 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 (position - first) % writeStride == 0) {
                 if (!mixedShiftKey) { return unsupported; }
                 // Mixed rounded increments lose gaps in one enclosing lattice.
-                // Refine only that overlap through the same Number transfers.
-                // ponytail: enumerate visits under the shared budget; an inverse
-                // shift transfer can replace this if large loops need the precision.
+                // Reuse the same Number transfers on aligned subranges and skip
+                // any lattice excluding the reload. Splitting at a visit keeps
+                // both halves nonempty; bounded uint32 indices limit depth to 32.
                 const auto reloadCount = guardReloads.size();
-                for (std::size_t visit = *start;; visit += *stride) {
-                    exactIndex = visit;
-                    const auto actual = indexRange(indexRange, mixedShiftKey, 0);
-                    if (!actual) { return invariantFailure; }
-                    if (guardReloads.size() != reloadCount || !actual->first.integerNumber ||
-                        actual->first.integerNumber != actual->last.integerNumber ||
-                        *actual->first.integerNumber == position) {
-                        return unsupported;
+                const auto excludesReload = [&](auto && self, std::size_t begin,
+                                                std::size_t end) -> bool {
+                    if (!spend()) {
+                        invariantFailure = ArrayContentsFailure::WorkLimit;
+                        return false;
                     }
-                    if (visit == last) { break; }
-                }
-                exactIndex.reset();
+                    indexBounds = {begin, end};
+                    const auto actual = indexRange(indexRange, mixedShiftKey, 0);
+                    if (!actual || guardReloads.size() != reloadCount ||
+                        !actual->first.integerNumber || !actual->last.integerNumber) {
+                        return false;
+                    }
+                    if (position < *actual->first.integerNumber ||
+                        position > *actual->last.integerNumber ||
+                        (position - *actual->first.integerNumber) % actual->stride != 0) {
+                        return true;
+                    }
+                    if (begin == end) { return false; }
+                    const auto middle = begin + (end - begin) / *stride / 2 * *stride;
+                    return self(self, begin, middle) && self(self, middle + *stride, end);
+                };
+                if (!excludesReload(excludesReload, *start, last)) { return invariantFailure; }
+                indexBounds = {*start, last};
             }
         }
     }

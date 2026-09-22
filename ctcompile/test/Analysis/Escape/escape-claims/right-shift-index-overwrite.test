@@ -124,6 +124,14 @@
 // CHECK: escape {{[0-9a-f]+}} 112 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 113 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 114 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 115 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 116 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 117 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 118 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 119 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 120 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function signedShift() {
     var child = {}, a = [child, child, 0, 0];
@@ -753,3 +761,44 @@ function mixedComposedLaterStore() {
 }
 mixedComposedMod(); mixedComposedMask(); mixedComposedUnsignedMod(); mixedComposedUnsignedMask();
 mixedComposedRetained(); mixedComposedSaved(); mixedComposedOverlap(); mixedComposedLaterStore();
+
+function partitionedMixedShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedUnsignedShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >>> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedNonzeroShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 3; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedRetainedShift() {
+    var child = {}, a = [child, 2, child, 0, child, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return a;
+}
+function partitionedSavedShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[1]) & 11] = 0;
+    return saved;
+}
+function partitionedOverlapShift() {
+    var child = {}, a = [child, 2, 2, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i * 3) >> a[2]) & 11] = 0;
+    return a;
+}
+function partitionedLaterShift() {
+    var child = {}, a = [child, 2, child, 0, 0, 0, 0, 0, 0, child, 0, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[((i * 3) >> a[1]) & 11] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+partitionedMixedShift(); partitionedUnsignedShift(); partitionedNonzeroShift();
+partitionedRetainedShift(); partitionedSavedShift(); partitionedOverlapShift(); partitionedLaterShift();

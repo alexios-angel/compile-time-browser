@@ -2470,6 +2470,93 @@ void InductionCases::overwritesAndTransport() {
         reject("composed mixed shifts retain the complete later-store census",
                replace(cleared, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
     }
+    const auto partitionedShift =
+        replace(replace(replace(replace(roundedShift, "[%x, %three, %x, %one, %x, %one]",
+                                        "[%x, %two, %x, %one, %one, %one, %one, %one, %one, %x, "
+                                        "%one, %x, %one, %one, %one, %one, %one, %one]"),
+                                "mul %i, %nine", "mul %i, %three"),
+                        "add %i, %two", "add %i, %three"),
+                "%position = ctjs.binary_static shr %scaled, %count",
+                "%rounded = ctjs.binary_static shr %scaled, %count\n"
+                "  %mask = ctjs.constant #ctjs.number<4622382067542392832>\n"
+                "  %position = ctjs.binary_static bitand %rounded, %mask");
+    for (const auto & kind : {"shr", "ushr"}) {
+        const auto body =
+            replace(partitionedShift, "binary_static shr", std::string{"binary_static "} + kind);
+        run({.what = "partitioned mixed-shift enclosures preserve disjoint reload gaps",
+             .body = body,
+             .arrays =
+                 "a:[zero,two,zero,one,one,one,one,one,one,zero,one,zero,one,one,one,one,one,one]",
+             .reads = "a[1]=two; a[0]=zero; a[1]=two; a[3]=one; a[1]=two; a[6]=one; a[1]=two; "
+                      "a[9]=x; a[1]=two; a[12]=one; a[1]=two; a[15]=one",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "partitioned mixed-shift bounds stay aligned to a nonzero start",
+             .body = replace(body, "^header(%a, %zero, %zero", "^header(%a, %three, %zero"),
+             .arrays =
+                 "a:[zero,two,zero,one,one,one,one,one,one,zero,one,zero,one,one,one,one,one,one]",
+             .reads = "a[1]=two; a[3]=one; a[1]=two; a[6]=one; a[1]=two; a[9]=x; a[1]=two; "
+                      "a[12]=one; a[1]=two; a[15]=one",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "partitioned mixed-shift replay retains an unwritten child",
+             .body = replace(body, "%two, %x, %one, %one", "%two, %x, %one, %x"),
+             .arrays =
+                 "a:[zero,two,zero,one,x,one,one,one,one,zero,one,zero,one,one,one,one,one,one]",
+             .reads = "a[1]=two; a[0]=zero; a[1]=two; a[3]=one; a[1]=two; a[6]=one; a[1]=two; "
+                      "a[9]=x; a[1]=two; a[12]=one; a[1]=two; a[15]=one",
+             .exit = "a -> {a,x}"});
+        run({.what = "partitioned mixed-shift replay retains a pre-loop snapshot",
+             .body =
+                 replace(replace(body, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+             .arrays =
+                 "a:[zero,two,zero,one,one,one,one,one,one,zero,one,zero,one,one,one,one,one,one]",
+             .reads = "a[0]=x; a[1]=two; a[0]=zero; a[1]=two; a[3]=one; a[1]=two; a[6]=one; "
+                      "a[1]=two; a[9]=x; a[1]=two; a[12]=one; a[1]=two; a[15]=one",
+             .exit = "x -> {x}"});
+        reject("partitioned mixed shifts reject an interior count overwrite",
+               replace(replace(body, "[%x, %two, %x,", "[%x, %two, %two,"), "%base[%one]",
+                       "%base[%two]"));
+        reject("partitioned mixed shifts retain the complete later-store census",
+               replace(body, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
+    }
+    std::string manyShiftElements = "[%x, %two";
+    for (unsigned i = 2; i < 360; ++i) { manyShiftElements += i == 2 ? ", %x" : ", %one"; }
+    manyShiftElements += "]";
+    const auto manyShifts = replace(replace(partitionedShift,
+                                            "[%x, %two, %x, %one, %one, %one, %one, %one, %one, "
+                                            "%x, %one, %x, %one, %one, %one, %one, %one, %one]",
+                                            manyShiftElements),
+                                    "4622382067542392832", "4643176031446892544");
+    std::size_t constantShiftWork = 0;
+    for (const bool reload : {false, true}) {
+        const auto source = reload ? manyShifts
+                                   : replace(manyShifts, "%count = ctjs.get_property %base[%one]",
+                                             "%count = ctjs.unary plus %two");
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + source + "}\n", &context);
+        if (!module) {
+            fail(row{.what = "partitioned shift proof budget", .body = source, .expected = ""},
+                 "the long mixed-shift fixture did not parse");
+            continue;
+        }
+        const auto function = *module->getOps<ctjs::FuncOp>().begin();
+        const auto complete =
+            computeArrayContents(function, reload ? constantShiftWork + 1024 : 100000);
+        if (!reload) { constantShiftWork = complete.work; }
+        const auto partial = computeArrayContents(function, 128);
+        // Record all 360 initializer writes as well as the 120 loop stores.
+        if (!complete.complete || complete.writes.size() != 480 ||
+            complete.reads.size() != (reload ? 240U : 120U) || partial.complete ||
+            partial.failure != ArrayContentsFailure::WorkLimit || partial.work != 128 ||
+            !partial.arrays.empty() || !partial.reads.empty() || !partial.writes.empty() ||
+            !partial.exits.empty()) {
+            fail(row{.what = "partitioned shift proof budget", .body = source, .expected = ""},
+                 "a disjoint reload enumerated every visit or leaked incomplete replay");
+        }
+    }
     const auto crossingShift = replace(crossingComplement, "ctjs.unary bitnot %part",
                                        "ctjs.binary_static shr %part, %zero");
     const auto lowerCrossingShift = replace(negativeCrossingComplement, "ctjs.unary bitnot %part",
