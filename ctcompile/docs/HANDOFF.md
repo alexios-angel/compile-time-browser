@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Callable targets per invocation and wrapped left shifts, 2026-09-22 UTC
+
+Continued clean **f6496ace** and the saved differing-target source.
+**cd6d9ab7** proves callable identities separately at each helper invocation,
+including forwarded arguments and single root returns. Direct-target and complete
+observer checks precede expansion; scalar snapshots, current shared state and
+ordinary results survive. The saved source executes unchanged. No browser or
+runtime-oracle semantics changed.
+
+Parallel **9f01bba4** encloses larger left shifts across conversion/output wraps
+with a proved residue and stride. Exact two-point and affine paths remain;
+actual-write replay retains unwritten children and earlier snapshots. Thirteen
+new source functions extend all 62 historical left-shift bodies unchanged.
+
+Focused checks pass: exact host **1/1, 1.46 s total**; seven custom sources plus
+all 100 refusal programs **112 native executions, 368 refusals, two nonexecuted
+admissions and 56 Node/VM observations**; exact arrays **1/1, 1.98 s total**;
+left/right-shift lit **2/2, 0.13 s**. Two earlier host failures came from unsupported
+operations in the new distinct-writer fixture; doubled-step addition preserves
+its purpose and passes. Production was unchanged. All seven final code/test hashes
+match the devbox. Required formatting retains **16 existing diagnostics in four
+untouched files**; changed scopes pass. Full suites, the complete custom case and
+unchanged nested/dataset cases were skipped. The idle timer is active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-returned-callable-branch-join`
+selects a writer according to captured state before returning it. Node returns
+**2729 normally / 3603 on stop**, with `data-closed=false`; both native policies
+refuse an unproved callable. Carry exact identities through branch/loop joins
+while retaining effects, snapshots and complete observers. Nested custom opens,
+abrupt close, unguarded Bootstrap defaults and the application driver remain
+unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-callable-targets.md).
+
 ## Returned iterator callables and conversion-jump shifts, 2026-09-22 UTC
 
 Continued clean **5631b2d7** and its saved returned-callable source.
