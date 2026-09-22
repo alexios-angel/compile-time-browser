@@ -93,6 +93,20 @@
 // CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 91 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 92 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 93 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 94 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 95 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 96 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 97 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 98 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 99 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function masked() {
     var child = {}, a = [child, child, 0, 0];
@@ -589,3 +603,84 @@ combinedAndOverlappingReload();
 combinedAndLaterOverwrite();
 combinedAndUnitStride();
 combinedAndNearMask();
+function roundedAnd() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[i & a[5]] = 0;
+    return a;
+}
+function roundedAndCommuted() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[a[5] & i] = 0;
+    return a;
+}
+function roundedAndCrossZero() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[((i - 2) & a[5]) + 2] = 0;
+    return a;
+}
+function roundedAndHighBand() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[((2147483648 + i) & a[5]) + 2147483648] = 0;
+    return a;
+}
+function roundedAndLowBand() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[((-4294967294 + i) & a[5]) - 2] = 0;
+    return a;
+}
+function roundedAndRemainingChild() {
+    var child = {}, a = [child, child, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[i & a[5]] = 0;
+    return a;
+}
+function roundedAndSavedChild() {
+    var child = {}, a = [child, 0, child, 0, child, -2], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i & a[5]] = 0;
+    return saved;
+}
+function roundedAndOverlappingReload() {
+    var child = {}, a = [child, 0, -2, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & a[2]] = 0;
+    return a;
+}
+function roundedAndLaterOverwrite() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) {
+        a[i & a[5]] = 0;
+        a[5] = 0;
+    }
+    return a;
+}
+function roundedAndOddStride() {
+    var child = {}, a = [child, 0, -2, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i & a[2]] = 0;
+    return a;
+}
+function roundedAndNearMask() {
+    var child = {}, a = [-3, child, 0, 0, child];
+    for (var i = 1; i < a.length; i++) a[i & a[0]] = 0;
+    return a;
+}
+function roundedAndHighCrossing() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) & a[5]) & 1] = 0;
+    return a;
+}
+function roundedAndLowCrossing() {
+    var child = {}, a = [child, 0, child, 0, child, -2];
+    for (var i = 0; i < a.length; i++) a[((i - 2147483649) & a[5]) & 1] = 0;
+    return a;
+}
+roundedAnd();
+roundedAndCommuted();
+roundedAndCrossZero();
+roundedAndHighBand();
+roundedAndLowBand();
+roundedAndRemainingChild();
+roundedAndSavedChild();
+roundedAndOverlappingReload();
+roundedAndLaterOverwrite();
+roundedAndOddStride();
+roundedAndNearMask();
+roundedAndHighCrossing();
+roundedAndLowCrossing();

@@ -381,11 +381,20 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             auto varying = static_cast<std::uint32_t>(
                 std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
             const bool complement = bitXor && (~mask & varying & ~fixed) == 0;
-            if (signedBand(range->first) == signedBand(range->last) &&
-                (complement || ((bitAnd ? ~mask : mask) & varying & ~fixed) == 0)) {
+            const bool affine = complement || ((bitAnd ? ~mask : mask) & varying & ~fixed) == 0;
+            const auto roundedBits = bitAnd ? ~mask : mask;
+            const bool rounding =
+                !bitXor && std::has_single_bit(static_cast<std::uint64_t>(roundedBits) + 1);
+            if (signedBand(range->first) == signedBand(range->last) && (affine || rounding)) {
                 // Changing only fixed input bits is a translation; flipping all
                 // varying bits reverses it. Both preserve the full stride within
                 // one ToInt32 band, including signed zero crossings.
+                // Clearing/setting a low suffix instead rounds monotonically;
+                // its endpoints stay exact, but only fixed low bits survive.
+                if (!affine) {
+                    range->stride =
+                        std::max(inputStride, static_cast<std::size_t>(roundedBits) + 1);
+                }
                 for (ContentsValue * endpoint : {&range->first, &range->last}) {
                     if (!spend()) {
                         invariantFailure = ArrayContentsFailure::WorkLimit;

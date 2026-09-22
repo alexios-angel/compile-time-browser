@@ -708,6 +708,147 @@ void InductionCases::overwritesAndTransport() {
                        "#ctjs.number<" + std::string(isAnd ? "4619567317775286272" : "0") +
                            "> {storage_test_id = \"mask\"}"));
     }
+    for (const std::string kind : {"bitand", "bitor"}) {
+        const bool isAnd = kind == "bitand";
+        const std::string contents = isAnd ? "[%x, %zero, %x, %zero, %x, %roundMask]"
+                                           : "[%roundMask, %x, %zero, %x, %zero, %x]";
+        const std::string guard = isAnd ? "%roundFive" : "%zero";
+        const char * values =
+            isAnd ? "a:[zero,zero,zero,zero,zero,mask]" : "a:[mask,zero,zero,zero,zero,zero]";
+        const char * reads =
+            isAnd ? "a[5]=mask; a[0]=zero; a[5]=mask; a[1]=zero; a[5]=mask; a[2]=zero; "
+                    "a[5]=mask; a[3]=zero; a[5]=mask; a[4]=zero; a[5]=mask; a[5]=mask"
+                  : "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
+                    "a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=zero";
+        const auto rounded = replace(
+            replace(replace(masked, "[%one, %x]", contents), "  %a =",
+                    "  %roundTwo = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                    "  %roundThree = ctjs.constant #ctjs.number<4613937818241073152>\n"
+                    "  %roundFive = ctjs.constant #ctjs.number<4617315517961601024>\n"
+                    "  %roundSign = ctjs.constant #ctjs.number<4746794007248502784>\n"
+                    "  %roundMaximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                    "  %roundLow = ctjs.constant #ctjs.number<13974669643726454784>\n"
+                    "  %roundMask = ctjs.constant #ctjs.number<" +
+                        std::string(isAnd ? "13835058055282163712" : "4607182418800017408") +
+                        "> {storage_test_id = \"mask\"}\n  %a ="),
+            "%position = ctjs.binary_static bitand %i, %one",
+            "%mask = ctjs.get_property %base[" + guard +
+                "]\n"
+                "  %bits = ctjs.binary_static " +
+                kind +
+                " %i, %mask\n"
+                "  %position = ctjs.unary plus %bits");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            run({.what = "low-bit rounding bounds stop at the last actual write",
+                 .body = replace(rounded, kind + " %i, %mask", kind + " " + operands),
+                 .arrays = values,
+                 .reads = reads,
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        for (const auto & expression : {"%part = ctjs.binary sub %i, %roundTwo\n"
+                                        "  %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "  %position = ctjs.binary add %bits, %roundTwo",
+                                        "%part = ctjs.binary add %roundSign, %i\n"
+                                        "  %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "  %position = ctjs.binary add %bits, %roundSign",
+                                        "%part = ctjs.binary add %roundLow, %i\n"
+                                        "  %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "  %position = ctjs.binary sub %bits, %roundTwo"}) {
+            run({.what = "low-bit rounding stays monotone within each signed conversion band",
+                 .body = replace(rounded,
+                                 "%bits = ctjs.binary_static " + kind +
+                                     " %i, %mask\n"
+                                     "  %position = ctjs.unary plus %bits",
+                                 expression),
+                 .arrays = values,
+                 .reads = reads,
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "low-bit rounding retains children outside the actual writes",
+             .body = replace(rounded, contents,
+                             isAnd ? "[%x, %x, %x, %zero, %x, %roundMask]"
+                                   : "[%roundMask, %x, %x, %x, %zero, %x]"),
+             .arrays = isAnd ? "a:[zero,x,zero,zero,zero,mask]" : "a:[mask,zero,x,zero,zero,zero]",
+             .reads = isAnd ? "a[5]=mask; a[0]=zero; a[5]=mask; a[1]=x; a[5]=mask; a[2]=zero; "
+                              "a[5]=mask; a[3]=zero; a[5]=mask; a[4]=zero; a[5]=mask; a[5]=mask"
+                            : "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=x; "
+                              "a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=zero",
+             .exit = "a -> {a,x}"});
+        const auto saved =
+            replace(replace(rounded, "  cf.br ^header(%a,",
+                            "  %roundSaved = ctjs.get_property %a[" +
+                                std::string(isAnd ? "%zero" : "%one") + "]\n  cf.br ^header(%a,"),
+                    "ctjs.return %a", "ctjs.return %roundSaved");
+        run({.what = "low-bit rounding preserves snapshots read before overwrite",
+             .body = saved,
+             .arrays = values,
+             .reads =
+                 isAnd
+                     ? "a[0]=x; a[5]=mask; a[0]=zero; a[5]=mask; a[1]=zero; a[5]=mask; "
+                       "a[2]=zero; a[5]=mask; a[3]=zero; a[5]=mask; a[4]=zero; a[5]=mask; a[5]=mask"
+                     : "a[1]=x; a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; "
+                       "a[2]=zero; a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; "
+                       "a[5]=zero",
+             .exit = "x -> {x}"});
+        reject("low-bit rounding cannot borrow an overwritten mask",
+               replace(replace(rounded, contents,
+                               isAnd ? "[%x, %zero, %roundMask, %zero, %x, %zero]"
+                                     : "[%zero, %x, %zero, %roundMask, %zero, %x]"),
+                       "%base[" + guard + "]", isAnd ? "%base[%roundTwo]" : "%base[%roundThree]"));
+        reject("low-bit rounding retains the complete later-store census",
+               replace(rounded,
+                       "  %step =", "  ctjs.set_property %base[" + guard + "], %zero\n  %step ="));
+        reject(
+            "low-bit rounding cannot preserve an odd input stride",
+            replace(
+                replace(replace(rounded, contents,
+                                isAnd ? "[%x, %zero, %roundMask, %zero, %zero, %zero, %x]"
+                                      : "[%zero, %x, %zero, %roundMask, %zero, %zero, %zero, %x]"),
+                        "%base[" + guard + "]", isAnd ? "%base[%roundTwo]" : "%base[%roundThree]"),
+                "add %i, %one", "add %i, %roundThree"));
+        auto interior = replace(
+            replace(replace(rounded, contents, "[%roundMask, %x, %zero, %zero, %x]"),
+                    "^header(%a, %zero", "^header(%a, %one"),
+            "#ctjs.number<" + std::string(isAnd ? "13835058055282163712" : "4607182418800017408") +
+                "> {storage_test_id = \"mask\"}",
+            "#ctjs.number<" + std::string(isAnd ? "13837309855095848960" : "4611686018427387904") +
+                "> {storage_test_id = \"mask\"}");
+        if (isAnd) {
+            interior = replace(interior, "%base[%roundFive]", "%base[%zero]");
+        } else {
+            interior =
+                replace(interior, "ctjs.unary plus %bits", "ctjs.binary sub %bits, %roundTwo");
+        }
+        reject("noncontiguous masks cannot hide an interior write below both endpoints", interior);
+        for (const auto & input :
+             {"ctjs.binary add %roundMaximum, %i", "ctjs.binary sub %i, %roundSign"}) {
+            auto crossing = replace(rounded, "%bits = ctjs.binary_static " + kind + " %i, %mask",
+                                    "%part = " + std::string(input) +
+                                        "\n"
+                                        "  %bits = ctjs.binary_static " +
+                                        kind + " %part, %mask");
+            // The second input starts in the signed band; move it one below
+            // INT32_MIN so the original source crosses the lower discontinuity.
+            if (std::string(input) == "ctjs.binary sub %i, %roundSign") {
+                crossing = replace(crossing, "ctjs.binary sub %i, %roundSign",
+                                   "ctjs.binary sub %i, %roundBeyond");
+                crossing =
+                    replace(crossing, "  %roundLow =",
+                            "  %roundBeyond = ctjs.binary add %roundSign, %one\n  %roundLow =");
+            }
+            reject("low-bit rounding retains signed conversion guards through composition",
+                   replace(crossing, "ctjs.unary plus %bits",
+                           "ctjs.binary_static bitand %bits, %one"));
+        }
+    }
     const auto signedBits = replace(masked, "  %a =",
                                     "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
                                     "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"

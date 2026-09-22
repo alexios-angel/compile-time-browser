@@ -144,6 +144,20 @@
 // CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 138 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 139 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 142 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 143 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 144 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 145 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 146 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 147 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 148 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 149 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function orWrites() {
     var child = {}, a = [0, child, 0, child];
@@ -913,3 +927,84 @@ combinedOrUnitStride();
 combinedOrNearMask();
 combinedOrCrossUpper();
 combinedOrCrossLower();
+function roundedOr() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return a;
+}
+function roundedOrCommuted() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[a[0] | i] = 0;
+    return a;
+}
+function roundedOrCrossZero() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2) | a[0]) + 2] = 0;
+    return a;
+}
+function roundedOrHighBand() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((2147483648 + i) | a[0]) + 2147483648] = 0;
+    return a;
+}
+function roundedOrLowBand() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((-4294967294 + i) | a[0]) - 2] = 0;
+    return a;
+}
+function roundedOrRemainingChild() {
+    var child = {}, a = [1, child, child, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return a;
+}
+function roundedOrSavedChild() {
+    var child = {}, a = [1, child, 0, child, 0, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return saved;
+}
+function roundedOrOverlappingReload() {
+    var child = {}, a = [0, child, 0, 1, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[3]] = 0;
+    return a;
+}
+function roundedOrLaterOverwrite() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i | a[0]] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function roundedOrOddStride() {
+    var child = {}, a = [0, child, 0, 1, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[3]] = 0;
+    return a;
+}
+function roundedOrNearMask() {
+    var child = {}, a = [2, child, 0, 0, child];
+    for (var i = 1; i < a.length; i++) a[(i | a[0]) - 2] = 0;
+    return a;
+}
+function roundedOrHighCrossing() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((2147483647 + i) | a[0]) & 1] = 0;
+    return a;
+}
+function roundedOrLowCrossing() {
+    var child = {}, a = [1, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i - 2147483649) | a[0]) & 1] = 0;
+    return a;
+}
+roundedOr();
+roundedOrCommuted();
+roundedOrCrossZero();
+roundedOrHighBand();
+roundedOrLowBand();
+roundedOrRemainingChild();
+roundedOrSavedChild();
+roundedOrOverlappingReload();
+roundedOrLaterOverwrite();
+roundedOrOddStride();
+roundedOrNearMask();
+roundedOrHighCrossing();
+roundedOrLowCrossing();
