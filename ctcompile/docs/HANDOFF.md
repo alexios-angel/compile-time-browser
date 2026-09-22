@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Helper throw joins and primitive remainder divisors, 2026-09-22 UTC
+
+Resumed clean **444fc1bd** and unchanged `body-throw`, `f1b3f6b8`.
+**843f3a4f** proves the exact non-returning helper region: one saved throw,
+no results or region arguments, and only a structural yield afterward. Only a
+reachable sibling supplies the shadow-frame join. Nested throw-only branches,
+local definitions and dominance remain checked; normal frame mismatches and
+unproved effects still refuse. Helper expansion preserves the saved actual
+payload. Invocation and typed C++ throw verifiers are unchanged.
+
+Parallel **b1186fc5** admits bounded primitive remainder divisors through the
+existing conversion and remainder proof. Nonzero bounds, signed endpoints,
+complete reload/store checks, actual-write replay and budgets remain. Two
+historical source expectations and String/Boolean raw expectations now admit
+with their original constructions; all 68 previous source bodies survive.
+
+Focused host and arrays CTests and the remainder-index lit case pass. Three
+selected native sources pass **48 executions, 82 refusals and 24 Node/VM
+observations**, with no nonexecuted admissions. Another **20 throw observations
+agree per engine**. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+Seven final hashes match the devbox; 24 generated C++ files contain no Script/VM
+protocol. All 233 existing iterator source bodies and 86 positive metadata rows
+are unchanged. Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** original `f1b3f6b8` now passes helper branch/frame
+proof, but both policies refuse **DOM helper object has nonlocal or unordered
+uses**. Prove the immutable callable holder's use inside the protected close,
+then expand or retain its exact return-method call without breaking the
+invocation's required call-plus-exit shape. Complete typed DOM effects, saved
+primitive throw emission and prefix/global/reentry proof remain required.
+Native execution of this throw source is not yet admitted. Mutable exceptional
+state, multiple protected regions, implicit cleanup, nested custom iterators,
+unguarded Bootstrap defaults, the application driver and full native Bootstrap
+remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-helper-throw.md).
+
 ## Protected iterator completion and primitive divisors, 2026-09-22 UTC
 
 Resumed clean **81999dbb** and unchanged `body-throw`, `f1b3f6b8`.
