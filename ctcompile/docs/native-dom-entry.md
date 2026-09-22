@@ -559,7 +559,10 @@ both region argument lists and condition/yield edges, preserving original result
 positions. The final condition supplies exit state even when the body runs zero
 times. Nested branches and close-hook loops use the same transport; complete
 region, type, dominance and effect proofs precede publication. Method-local break
-dispatch still needs its own completion normalization/proof.
+dispatch uses the existing complete continuation proof before state access checks.
+Pure exit selections may have no result values; exact tags and the full observer
+census still apply. The same tuple cleanup removes unused method completion tags
+without erasing their producers or changing ordered effects and live state.
 Existing helper expansion removes those result records. State
 resets for every iterator allocation; a close hook receives the latest values
 after `next`, including on a break. Numeric comparisons require independent

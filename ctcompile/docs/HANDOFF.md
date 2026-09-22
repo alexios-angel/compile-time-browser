@@ -22,6 +22,46 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator method breaks and fixed-bit mask strides, 2026-09-22 UTC
+
+Continued **ccbdf5d6** and resumed iteration 52's interrupted edits.
+**dba0df1c** normalizes method-local `break` completion before iterator
+state analysis, using the existing complete continuation proof. Pure exit
+selections may have no results. Existing tuple cleanup removes unused method
+completion tags while preserving ordered effects, live counters and latest
+captured/receiver state. Method identities are cached before entry replacement;
+a method aliasing the entry is refused before normalization.
+
+The original `loop-captured-break` source executes unchanged. Paired two-state
+sources check before-break updates, skipped suffixes, exhaustion, close-hook
+state and invocation reset. Generated output uses typed scalars and public DOM
+calls without boxed state or Script. Parallel escape **4e3acdc9** preserves full
+strides when AND/OR/XOR masks change only proved fixed input bits within one
+signed conversion band. All 163 previous escape sources are unchanged; 21 were
+added. No browser/oracle semantics changed.
+
+Focused validation: exact arrays **1/1, 1.85 s total**; AND and OR/XOR lit
+**2/2, 0.15 s**; custom iteration lit **1/1, 528.43 s**, with
+**336 native executions, 626 refusals and 168 Node/VM observations**. After the
+final entry-alias guard, exact host **1/1, 0.88 s total** and the three
+new source cases pass with **48 native executions, 84 refusals and 24 Node/VM
+observations**. The full custom case used the pre-guard implementation; the final
+subset and host test use the final nine code/test hashes. Required formatting
+retains **16 pre-existing diagnostics in four untouched files**; changed files
+pass scoped checks. Full suites, unchanged nested/dataset lit, broad replays,
+Windows and sanitizers were skipped. The devbox idle timer is active/enabled.
+
+**Next native boundary:** committed `loop-break-external-captured-read` retains
+an observation of the captured cell after iteration (`return count + emitted`).
+Both optimization policies refuse with
+`DOM iterator capture cell has an external reader or writer`. Scalar state must
+remain observable outside the confined iterator before this source can pass.
+Nested custom opens, body abrupt-close behavior, literal range-for printing,
+unguarded Bootstrap defaults and the application driver remain open.
+Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-method-break.md).
+
 ## Iterator method loops and fixed-bit AND bounds, 2026-09-22 UTC
 
 Continued clean **25a6edff** from its recorded `loop-captured-store` boundary.
