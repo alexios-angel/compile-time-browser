@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Callable loop transport and interrupted crash recovery, 2026-09-22 UTC
+
+Resumed iteration 65's frozen replacement repair first: **b6f6f963** bounds
+replacement expansion and accumulation using the existing string ceiling.
+Parser safety **4dafb9c4** was already committed. Focused normal/sanitizer checks
+pass; the replacement test262 crash now passes, while two parser conformance
+failures remain ordinary failures without sanitizer crashes. Claude was confirmed
+stopped before browser landing. See the crash-recovery handoff for exact evidence.
+
+**e24bf692** proves callable identities through loop initializers, backedges,
+condition arguments and results, retaining every incoming edge and observer.
+The saved loop source executes unchanged; zero-trip and state/argument snapshot
+witnesses also pass. **9a036e1a** preserves signed right-shift residues across
+conversion jumps using the existing lattice and complete reload/store checks.
+All 165 historical native and 84 right-shift source bodies remain unchanged.
+
+Focused native checks pass: exact host **1/1, 1.65 s total**; four source programs
+plus all 111 refusals **64 native executions, 318 refusals, two nonexecuted
+admissions and 32 Node/VM observations**. Exact arrays pass **1/1, 1.93 s total**;
+right-shift lit **1/1, 0.13 s**. The complete formatter passes **1124 C++, 157
+Python and 114 web files**. All seven final code/test hashes match the devbox;
+32 generated C++ files contain no Script symbols. Full suites and broad matrices
+were skipped. The idle timer is active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-returned-loop-call-result`
+feeds `keep(selected)` back into the loop. Node returns **2729 normally / 3603
+on stop**, `data-closed=false`; both native policies refuse an unproved arm.
+Prove callable return dependencies around the loop without losing effects,
+snapshots or complete observers. Nested custom opens, abrupt close, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain
+unfinished. Part 25 still conservatively encloses unsigned conversion jumps.
+
+[Exact native checks and next boundary](handoff/2026-09-22-iterator-callable-loops.md); [crash recovery](handoff/2026-09-22-crash-recovery.md).
+
 ## Test failure repairs, 2026-09-22 UTC
 
 The user redirected this iteration to test failures. **8207bc70** and **25e68e9d**
