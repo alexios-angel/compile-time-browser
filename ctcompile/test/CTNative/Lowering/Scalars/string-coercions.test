@@ -24,7 +24,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-number.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=OPTIONAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-add.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=ADD --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=EQUALITY --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ordering.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
 
 # RUNTIME-DAG: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::js_string">, () -> !emitc.opaque<"ctnative::js_num">
@@ -34,6 +34,7 @@
 # CPP: .to_number()
 # MUTATION: global 'banana' differs
 # ADD: call_opaque "ctnative::add"
+# EQUALITY: call_opaque "ctnative::primitive_equal"
 # REFUSED: ctjs.func private @convert$1
 # REFUSED-SAME: ctnative.not_native =
 
