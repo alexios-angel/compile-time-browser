@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator close regions and singleton products, 2026-09-22 UTC
+
+Resumed clean **6d04e448** and unchanged `body-throw`, `f1b3f6b8`.
+**f568bb86** represents its close-only suppression handler with the existing
+zero-result invocation region. Both close outcomes resume the original saved
+throw; exact predecessor, observer, intrinsic and budget checks remain.
+Complete prefix/global/reentry and DOM reproof is still required. This is
+structural progress; native abrupt completion is not yet admitted.
+
+Parallel **9c727b92** proves bounded singleton products without scaling an
+unvisited stride. Intermediate Number bounds, complete reload/store census,
+actual-write replay and budgets remain. One unchanged historical CFG witness
+now admits; all 25 historical escape source bodies and CHECKs remain intact.
+
+Focused host and arrays CTests plus the scaled-index lit case pass. The initial
+selected-source run completed **48 native executions, 66 refusals and 24 Node/VM
+observations** before a newly added catch sample failed complete import. Its
+source is retained as a boundary artifact; only its new fixture row was removed.
+The final follow-up passes **10 refusals**, **12 throw Node/VM observations** and
+an existing JSON/URI source's **four native executions and two observations**.
+Full formatting passes **1126 C++, 157 Python, 114 web files**. All 12 final
+hashes match the devbox; 28 generated C++ files have no Script/VM protocol.
+Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** `f1b3f6b8` now passes handler recognition but both
+policies refuse **DOM custom iterator requires one complete entry**. Prove its
+remaining mixed throw/return terminal dispatch and consume the close invocation
+under the custom-protocol proof. Preserve the saved value, suppression and close
+effects; do not invent a return or relax typed C++ throw verification. Multiple
+protected regions, implicit cleanup, nested custom iterators, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-close-regions.md).
+
 ## Explicit iterator throws and zero-factor indices, 2026-09-22 UTC
 
 Resumed clean **45cb1fc1** and unchanged `body-throw` source `f1b3f6b8`.
