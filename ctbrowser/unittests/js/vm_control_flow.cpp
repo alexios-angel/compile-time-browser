@@ -45,6 +45,107 @@ void test_variables_and_control_flow() {
     expect_result("return 1 < 2 ? 'yes' : 'no';", "yes");
 }
 
+void test_for_of_return_close() {
+    const std::string prelude = R"JS(
+let trace = '';
+function make(name, done) {
+    return {
+        [Symbol.iterator]() { return this; },
+        next() { return {done: !!done, value: 1}; },
+        return() { trace += name; return {}; }
+    };
+}
+)JS";
+    for (
+        const auto & [body, expected] : {
+            std::pair{
+                R"JS(function run() { for (const x of make('a')) return (trace += 'v', trace); }
+const value = run(); return value + ':' + trace;)JS",
+                "v:va"},
+            std::pair{
+                R"JS(function run() { for (const x of make('a', true)) return 'body'; return 'empty'; }
+return run() + ':' + trace;)JS",
+                "empty:"},
+            std::pair{R"JS(function run() { for (const x of make('a')) return; }
+return run() + ':' + trace;)JS",
+                      "undefined:a"},
+            std::pair{R"JS(let count = 0;
+function run() { for (const x of make('a')) { try { return trace; } finally { trace += 'f'; if (count++ === 0) continue; } } }
+return run() + ':' + trace;)JS",
+                      "f:ffa"},
+            std::pair{
+                R"JS(function run() { for (const x of make('a')) { try { return (trace += 'v', 'ok'); } finally { trace += 'f'; } } }
+return run() + ':' + trace;)JS",
+                "ok:vfa"},
+            std::pair{
+                R"JS(function run() { try { for (const x of make('a')) return (trace += 'v', 'ok'); } finally { trace += 'f'; } }
+return run() + ':' + trace;)JS",
+                "ok:vaf"},
+            std::pair{
+                R"JS(function run() { for (const x of make('a')) for (const y of make('b')) return (trace += 'v', trace); }
+return run() + ':' + trace;)JS",
+                "v:vba"},
+            std::pair{
+                R"JS(const a = make('a'); a.return = function() { trace += 'x'; throw 'close'; };
+function run() { try { for (const x of a) return 1; } catch (e) { trace += 'c'; return e; } }
+return run() + ':' + trace;)JS",
+                "close:xc"},
+            std::pair{
+                R"JS(const a = make('a'); a.return = function() { trace += 'x'; throw 'close'; };
+function run() { for (const x of a) { try { return 1; } catch (e) { trace += 'bad'; } } }
+try { run(); } catch (e) { return e + ':' + trace; })JS",
+                "close:x"},
+            std::pair{
+                R"JS(const b = make('b'); b.return = function() { trace += 'b'; throw 'inner'; };
+function run() { for (const x of make('a')) for (const y of b) return 1; }
+try { run(); } catch (e) { return e + ':' + trace; })JS",
+                "inner:ba"},
+            std::pair{R"JS(const a = make('a'), b = make('b');
+Object.defineProperty(a, 'return', {get() { trace += 'a'; throw 'outer'; }});
+b.return = function() { trace += 'b'; throw 'inner'; };
+function run() { for (const x of a) for (const y of b) return 1; }
+try { run(); } catch (e) { return e + ':' + trace; })JS",
+                      "inner:ba"},
+            std::pair{
+                R"JS(const b = make('b'); b.return = function() { trace += 'b'; throw 'inner'; };
+function run() { for (const x of make('a')) { try { for (const y of b) return 1; } catch (e) { trace += 'c'; break; } } return 'ok'; }
+return run() + ':' + trace;)JS",
+                "ok:bca"},
+            std::pair{
+                R"JS(class B {} class D extends B { constructor() { for (const x of make('a')) return {}; } }
+const result = new D(); return trace + ':' + (result instanceof D);)JS",
+                "a:false"},
+            std::pair{
+                R"JS(class B {} class D extends B { constructor() { for (const x of make('a')) return 1; } }
+try { new D(); } catch (e) { return e.name + ':' + trace; })JS",
+                "TypeError:a"},
+            std::pair{
+                R"JS(class B {} class D extends B { constructor() { try { for (const x of make('a')) return {}; } finally { trace += 'f'; } } }
+const result = new D(); return trace + ':' + (result instanceof D);)JS",
+                "af:false"},
+            std::pair{
+                R"JS(for (const x of make('a')) { function inner() { return 7; } trace += inner(); break; }
+return trace;)JS",
+                "7a"},
+            std::pair{
+                R"JS(function run() { try { for (const x of make('a')) return 1; } finally { trace += 'f'; throw 'final'; } }
+try { run(); } catch (e) { return e + ':' + trace; })JS",
+                "final:af"},
+        }) {
+        expect_result(prelude + body, expected);
+    }
+    for (const auto exit : {"break", "continue"}) {
+        expect_result(
+            prelude +
+                "const a = make('a'); a.return = function() { trace += 'c'; throw 'close'; };"
+                "function run() { for (const x of a) { try { " +
+                exit +
+                "; } finally { trace += 'f'; return 1; } } }"
+                "try { run(); } catch (e) { return trace + ':' + e; }",
+            "fc:close");
+    }
+}
+
 void test_increment_semantics() {
     expect_result("let i = 5; let a = i++; return a;", "5"); // postfix yields the old value
     expect_result("let i = 5; let a = i++; return i;", "6");
@@ -554,6 +655,7 @@ int main() {
     test_with();
     test_errors();
     test_variables_and_control_flow();
+    test_for_of_return_close();
     test_increment_semantics();
     test_gc_traces_captured_cells();
     test_native_bindings();

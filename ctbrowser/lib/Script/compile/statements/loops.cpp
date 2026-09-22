@@ -330,9 +330,9 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     // see for_of_open_name, which answers undefined for those. The choice is
     // one register tested at the top of every iteration, so the two paths
     // share one body and one set of locals, and `for (x in ...)` never has a
-    // record at all. Not closed on a `return` or a throw out of the body:
-    // that needs a handler round the body, and a protected region is what
-    // ctcompile's importer refuses a function for.
+    // record at all. Explicit returns close exited records through the same
+    // completion routing as finally. Throws out of the body still need a
+    // protected region around the body.
     const std::uint16_t record = of ? alloc_reg() : 0;
     std::size_t lazy = 0;
     if (of) {
@@ -374,6 +374,7 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const std::size_t top = proto().code.size();
     loops_.push_back(loop_context{label, {}, {}, handler_depth_});
     const std::size_t step = of ? proto().emit(instruction{op::jump_if_defined, record}) : 0;
+    if (of) { loops_.back().iterator_record = record; }
     const std::uint16_t test = alloc_reg();
     proto().emit(instruction{op::less, test, index, length});
     const std::size_t exit = proto().emit(instruction{op::jump_if_false, test});
