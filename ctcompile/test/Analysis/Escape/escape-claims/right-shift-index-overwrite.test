@@ -167,6 +167,16 @@
 
 // CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj escapes:stored
 
+
+// CHECK: escape {{[0-9a-f]+}} 151 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 152 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 153 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 154 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function signedShift() {
     var child = {}, a = [child, child, 0, 0];
@@ -1012,3 +1022,49 @@ function directConvertedFractional() {
     return a;
 }
 directConvertedFractional();
+
+function crossingMaskXor() {
+    var child = {}, a = [child, 29, 0, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskOr() {
+    var child = {}, a = [0, 29, 0, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) | 536870912) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskAnd() {
+    var child = {}, a = [0, 29, child, 0, child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) & -536870913) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskNegative() {
+    var child = {}, a = [child, 29, 0, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((((i - 3) * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskRetained() {
+    var child = {}, a = [child, 29, child, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskSaved() {
+    var child = {}, a = [child, 29, 0, child, 0, 0, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+    return saved;
+}
+function crossingMaskOverlap() {
+    var child = {}, a = [2147483648, 29, 0, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i * 536870912) ^ a[0]) >> a[1]) + 4] = 0;
+    return a;
+}
+function crossingMaskLaterStore() {
+    var child = {}, a = [child, 29, 0, child, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[(((i * 536870912) ^ 2147483648) >> a[1]) + 4] = 0;
+        a[1] = 30;
+    }
+    return a;
+}
+crossingMaskXor(); crossingMaskOr(); crossingMaskAnd(); crossingMaskNegative();
+crossingMaskRetained(); crossingMaskSaved(); crossingMaskOverlap(); crossingMaskLaterStore();

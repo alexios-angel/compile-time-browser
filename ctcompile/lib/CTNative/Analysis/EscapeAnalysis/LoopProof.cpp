@@ -485,9 +485,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (signedBand(range->first) != signedBand(range->last) || varying > 2147483647U) {
                 // Clearing the sign bit with AND or setting it with OR keeps
                 // every output in one signed interval even if all input bits vary.
-                // Other sign crossings still need a union before composition.
+                // Other sign crossings preserve the transformed low input bits;
+                // use the existing signed enclosure and refine gaps as needed.
                 if (!((bitAnd && mask <= 2147483647U) || (bitOr && mask > 2147483647U))) {
-                    return std::nullopt;
+                    const auto residue = (bitAnd  ? lower & mask
+                                          : bitOr ? lower | mask
+                                                  : lower ^ mask) %
+                                         inputStride;
+                    return convertedLattice(operand, inputStride, residue);
                 }
                 varying = 4294967295U;
             }

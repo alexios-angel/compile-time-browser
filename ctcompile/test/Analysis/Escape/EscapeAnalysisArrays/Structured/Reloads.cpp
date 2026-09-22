@@ -631,9 +631,17 @@ void StructuredCases::reloads() {
                     replace(crossing, "  %roundLow =",
                             "  %roundBeyond = ctjs.binary add %roundSign, %one\n  %roundLow =");
             }
-            reject("low-bit rounding retains signed conversion guards through composition",
-                   replace(crossing, "ctjs.unary plus %bits",
-                           "ctjs.binary_static bitand %bits, %one"));
+            rows.push_back(
+                {.what = "crossing low-bit masks retain children outside their actual writes",
+                 .body = replace(crossing, "ctjs.unary plus %bits",
+                                 "ctjs.binary_static bitand %bits, %one"),
+                 .arrays = isAnd ? "a:[zero,zero,x,zero,x,mask]" : "a:[mask,zero,zero,x,zero,x]",
+                 .reads = isAnd
+                              ? "a[5]=mask; a[0]=zero; a[5]=mask; a[1]=zero; a[5]=mask; a[2]=x; "
+                                "a[5]=mask; a[3]=zero; a[5]=mask; a[4]=x; a[5]=mask; a[5]=mask"
+                              : "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
+                                "a[0]=mask; a[3]=x; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=x",
+                 .exit = "a -> {a,x}"});
         }
 
         const auto fixedRounding = replace(
@@ -3266,6 +3274,74 @@ void StructuredCases::reloads() {
                    "%count = ctjs.get_property %base[%two]"));
     reject("direct conversion gap refinement retains the complete later-store census",
            replace(directConverted,
+                   "    %step =", "    ctjs.set_property %base[%one], %thirty\n    %step ="));
+    const auto crossingMask = replace(
+        replace(replace(directConverted, "[%one, %shiftCount, %y, %one, %y, %one, %one, %y]",
+                        "[%y, %shiftCount, %one, %y, %one, %one, %y, %one]"),
+                "  %a =",
+                "  %sign = ctjs.binary mul %big, %four\n"
+                "  %negativeMask = ctjs.unary bitnot %big\n  %a ="),
+        "%part = ctjs.binary_static shr %scaled, %count",
+        "%masked = ctjs.binary_static bitxor %scaled, %sign\n"
+        "    %part = ctjs.binary_static shr %masked, %count");
+    rows.push_back(
+        {.what = "crossing XOR masks retain bounded reload gaps",
+         .body = crossingMask,
+         .arrays = "a:[zero,shiftCount,one,zero,one,one,zero,one]",
+         .reads =
+             "a[1]=shiftCount; a[0]=zero; a[1]=shiftCount; a[3]=zero; a[1]=shiftCount; a[6]=zero",
+         .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "crossing OR masks retain bounded reload gaps",
+         .body = replace(replace(crossingMask, "[%y, %shiftCount, %one, %y, %one, %one, %y, %one]",
+                                 "[%one, %shiftCount, %one, %y, %one, %y, %one, %y]"),
+                         "bitxor %scaled, %sign", "bitor %scaled, %big"),
+         .arrays = "a:[one,shiftCount,one,zero,one,zero,one,zero]",
+         .reads = "a[1]=shiftCount; a[0]=one; a[1]=shiftCount; a[3]=y; a[1]=shiftCount; a[6]=one",
+         .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "crossing AND masks retain bounded reload gaps",
+         .body = replace(replace(crossingMask, "[%y, %shiftCount, %one, %y, %one, %one, %y, %one]",
+                                 "[%one, %shiftCount, %y, %one, %y, %one, %y, %one]"),
+                         "bitxor %scaled, %sign", "bitand %scaled, %negativeMask"),
+         .arrays = "a:[one,shiftCount,zero,one,zero,one,zero,one]",
+         .reads =
+             "a[1]=shiftCount; a[0]=one; a[1]=shiftCount; a[3]=one; a[1]=shiftCount; a[6]=zero",
+         .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "crossing masks also retain gaps across signed zero",
+         .body = replace(
+             replace(crossingMask, "[%y, %shiftCount, %one, %y, %one, %one, %y, %one]",
+                     "[%y, %shiftCount, %one, %y, %one, %y, %one, %one]"),
+             "%scaled = ctjs.binary mul %i, %big",
+             "%offset = ctjs.binary sub %i, %three\n    %scaled = ctjs.binary mul %offset, %big"),
+         .arrays = "a:[zero,shiftCount,one,zero,one,zero,one,one]",
+         .reads = "a[1]=shiftCount; a[0]=y; a[1]=shiftCount; a[3]=y; a[1]=shiftCount; a[6]=one",
+         .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "crossing mask replay retains an unwritten child",
+         .body = replace(crossingMask, "%shiftCount, %one, %y,", "%shiftCount, %y, %y,"),
+         .arrays = "a:[zero,shiftCount,y,zero,one,one,zero,one]",
+         .reads =
+             "a[1]=shiftCount; a[0]=zero; a[1]=shiftCount; a[3]=zero; a[1]=shiftCount; a[6]=zero",
+         .exit = "a -> {a,y}"});
+    rows.push_back(
+        {.what = "crossing mask replay preserves a saved child",
+         .body = replace(replace(crossingMask, "  %finalIndex,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  %finalIndex,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,shiftCount,one,zero,one,one,zero,one]",
+         .reads = "a[0]=y; a[1]=shiftCount; a[0]=zero; a[1]=shiftCount; a[3]=zero; "
+                  "a[1]=shiftCount; a[6]=zero",
+         .exit = "y -> {y}"});
+    reject(
+        "crossing masks reject an actual reloaded mask overwrite",
+        replace(replace(replace(crossingMask, "[%y, %shiftCount, %one, %y, %one, %one, %y, %one]",
+                                "[%sign, %shiftCount, %one, %y, %one, %one, %y, %one]"),
+                        "%masked =", "%mask = ctjs.get_property %base[%zero]\n    %masked ="),
+                "bitxor %scaled, %sign", "bitxor %scaled, %mask"));
+    reject("crossing mask refinement retains the complete later-store census",
+           replace(crossingMask,
                    "    %step =", "    ctjs.set_property %base[%one], %thirty\n    %step ="));
 }
 
