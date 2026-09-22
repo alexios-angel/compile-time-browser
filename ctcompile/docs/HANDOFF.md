@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator Style associations and direct conversion gaps, 2026-09-22 UTC
+
+Resumed clean **5e921715** and exact saved selector source `7ea457e6`.
+**71a8654b** proves one original document/Style input through complete
+branch and loop transport, including initialization, backedges, selector results,
+indexed snapshots and document roots. Generated calls retain the selected element
+and use that input's Style engine. Mixed roots, escaping handles, invalidation
+and reentry still refuse. The original source, a read-before-close witness and
+an explicit prototype call execute under both providers and policies.
+
+Parallel **10a53c8b** enables existing bounded gap refinement for direct
+integer conversions and fixes exact singleton division within refinement.
+Endpoint integrality, complete reload/store checks, actual-write replay and
+budgets remain. Historical sources and raw constructions are preserved.
+
+Focused checks pass: host **1/1, 2.30 s total**, arrays **1/1, 2.17 s total**,
+right-shift and quotient lit **2/2, 0.14 s**, existing query-all **1/1, 46.65 s**.
+Selected custom sources pass **64 native executions, 374 refusals and 32 Node/VM
+observations**, with no nonexecuted admissions. Complete formatting passes
+**1124 C++, 157 Python and 114 web files**. Full suites were skipped;
+no browser/runtime implementation changed.
+
+**Next native boundary:** mixed-input selector `987dfd90` refuses under both
+policies: **DOM selector requires one original Style association**. Eight Node/VM
+observations agree. Supporting it requires carrying the selected element's Style
+association with its control flow; raw input documents cannot share an engine
+by assumption. Broader abrupt cleanup, nested custom iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-style-associations.md).
+
 ## Saved element payloads and direct remainder gaps, 2026-09-22 UTC
 
 Resumed clean **4c132a5b** and unchanged saved source `2b611964`.
