@@ -66,6 +66,20 @@
 // CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function quotientShift() {
     var child = {}, a = [child, 0, child, 0];
@@ -406,3 +420,74 @@ function pairCollapsed() {
 }
 
 pairUpper(); pairLower(); pairOutputUpper(); pairOutputLower(); pairCountReload(); pairOutputReload(); pairFourVisits(); pairRetained(); pairSaved(); pairCollapsed();
+
+function jumpUpper() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i / 2) << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpLower() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 2147483649) << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpOutputInterior() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2) << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpModuloCount() {
+    var child = {}, a = [child, child, 63, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i / 2) << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpNegativeCount() {
+    var child = {}, a = [child, child, -1, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i / 2) << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpFixedLowBits() {
+    var child = {}, a = [child, child, 30, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpEvenConstant() {
+    var child = {}, a = [0, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpOddConstant() {
+    var child = {}, a = [child, 0, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 1) << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpZeroCount() {
+    var child = {}, a = [child, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i) << 32) & 2] = 0;
+    return a;
+}
+function jumpRemaining() {
+    var child = {}, a = [child, child, 31, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i / 2) << a[2]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpSaved() {
+    var child = {}, a = [child, child, 31, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i / 2) << a[2]) / 2147483648 + 1] = 0;
+    return saved;
+}
+function jumpOverlap() {
+    var child = {}, a = [31, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483647 + i / 2) << a[0]) / 2147483648 + 1] = 0;
+    return a;
+}
+function jumpLaterStore() {
+    var child = {}, a = [child, child, 31, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((2147483647 + i / 2) << a[2]) / 2147483648 + 1] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+
+jumpUpper(); jumpLower(); jumpOutputInterior(); jumpModuloCount(); jumpNegativeCount(); jumpFixedLowBits(); jumpEvenConstant(); jumpOddConstant(); jumpZeroCount(); jumpRemaining(); jumpSaved(); jumpOverlap(); jumpLaterStore();

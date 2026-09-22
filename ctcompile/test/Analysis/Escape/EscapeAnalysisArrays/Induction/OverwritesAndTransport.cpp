@@ -2272,9 +2272,14 @@ void InductionCases::overwritesAndTransport() {
                    "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
     reject("wrapped left-shift output still requires bounded own indices",
            replace(positiveOutputBand, "add %shifted, %maximum", "add %shifted, %half"));
-    reject("equal left-shift endpoints cannot hide an intervening output wrap",
-           replace(replace(wideOutputBand, "ctjs.binary add %part, %start", "ctjs.unary plus %i"),
-                   "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"));
+    run({.what = "full left-shift lattice includes an interior extremum with equal endpoints",
+         .body =
+             replace(replace(wideOutputBand, "ctjs.binary add %part, %start", "ctjs.unary plus %i"),
+                     "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=one; a[3]=one",
+         .exit = "a -> {a}"},
+        "x");
     const auto rightShiftIndex =
         replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
     for (const auto & kind : {"shr", "ushr"}) {
@@ -2380,15 +2385,11 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
         const auto larger = replace(body, "[%x, %one, %x, %one]", "[%x, %one, %x, %one, %x, %one]");
-        if (body.find("binary_static shl") != std::string::npos) {
-            reject("shift endpoint images cannot omit an interior conversion or wrap", larger);
-        } else {
-            run({.what = "larger right-shift enclosures preserve actual unwritten children",
-                 .body = larger,
-                 .arrays = "a:[zero,one,zero,one,x,one]",
-                 .reads = "a[0]=x; a[2]=zero; a[4]=x",
-                 .exit = "a -> {a,x}"});
-        }
+        run({.what = "larger shift enclosures preserve actual unwritten children",
+             .body = larger,
+             .arrays = "a:[zero,one,zero,one,x,one]",
+             .reads = "a[0]=x; a[2]=zero; a[4]=x",
+             .exit = "a -> {a,x}"});
     }
     const auto jumpShift =
         replace(replace(replace(crossingShift, "[%x, %one, %x, %one]",
@@ -2457,6 +2458,85 @@ void InductionCases::overwritesAndTransport() {
          .exit = "x -> {x}"});
     reject("full signed right-shift bounds still require nonnegative own positions",
            replace(jumpShift, "ctjs.binary add %negative, %one", "ctjs.unary plus %negative"));
+    const auto leftJumpShift = replace(
+        replace(replace(jumpShift, "  %a =",
+                        "  %divisor = ctjs.constant #ctjs.number<4746794007248502784>\n  %a ="),
+                "%part = ctjs.binary add %maximum, %i",
+                "%halfIndex = ctjs.binary div %i, %two\n  %part = ctjs.binary add %maximum, "
+                "%halfIndex"),
+        "%negative = ctjs.binary_static shr %part, %count\n  %position = ctjs.binary add "
+        "%negative, %one",
+        "%negative = ctjs.binary_static shl %part, %count\n"
+        "  %quotient = ctjs.binary div %negative, %divisor\n"
+        "  %position = ctjs.binary add %quotient, %one");
+    const auto lowerLeftJumpShift =
+        replace(replace(leftJumpShift, "4746794007244308480", "4746794007250599936"),
+                "add %maximum, %halfIndex", "sub %halfIndex, %maximum");
+    for (const auto & body :
+         {leftJumpShift, lowerLeftJumpShift,
+          replace(leftJumpShift, "4629418941960159232", "4634063279075885056"),
+          replace(leftJumpShift, "4629418941960159232", "13830554455654793216")}) {
+        run({.what =
+                 "left-shift conversion jumps retain scaled residues and disjoint count reloads",
+             .body = body,
+             .arrays = "a:[zero,zero,count,one,one,one]",
+             .reads = "a[2]=count; a[0]=zero; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+             .exit = "a -> {a}"},
+            "x");
+        reject("left-shift jump lattices retain every later count store",
+               replace(body, "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
+        reject("left-shift jump lattices cannot reload an actual written position",
+               replace(replace(body, "[%x, %x, %wideCount, %one, %one, %one]",
+                               "[%wideCount, %x, %wideCount, %one, %one, %one]"),
+                       "%base[%two]", "%base[%zero]"));
+    }
+    const auto outputJumpShift = replace(leftJumpShift, "ctjs.binary add %maximum, %halfIndex",
+                                         "ctjs.unary plus %halfIndex");
+    run({.what = "larger left-shift output wraps retain interior visits with equal endpoint images",
+         .body = outputJumpShift,
+         .arrays = "a:[zero,zero,count,one,one,one]",
+         .reads = "a[2]=count; a[0]=x; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "left-shift output periods retain fixed low input bits",
+         .body =
+             replace(replace(outputJumpShift, "ctjs.unary plus %halfIndex", "ctjs.unary plus %i"),
+                     "4629418941960159232", "4629137466983448576"),
+         .arrays = "a:[zero,zero,count,one,one,one]",
+         .reads = "a[2]=count; a[0]=x; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "an even input residue collapses every wide left-shift output to zero",
+         .body = replace(
+             replace(outputJumpShift, "ctjs.unary plus %halfIndex", "ctjs.unary plus %i"),
+             "[%x, %x, %wideCount, %one, %one, %one]", "[%zero, %x, %wideCount, %one, %one, %one]"),
+         .arrays = "a:[zero,zero,count,one,one,one]",
+         .reads = "a[2]=count; a[0]=zero; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "an odd input residue collapses every wide left-shift output to INT32_MIN",
+         .body = replace(
+             replace(outputJumpShift, "ctjs.unary plus %halfIndex", "ctjs.binary add %i, %one"),
+             "[%x, %x, %wideCount, %one, %one, %one]", "[%x, %one, %wideCount, %one, %one, %one]"),
+         .arrays = "a:[zero,one,count,one,one,one]",
+         .reads = "a[2]=count; a[0]=zero; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "left-shift enclosures retain a child outside every actual write",
+         .body = replace(leftJumpShift, "[%x, %x, %wideCount, %one, %one, %one]",
+                         "[%x, %x, %wideCount, %one, %x, %one]"),
+         .arrays = "a:[zero,zero,count,one,x,one]",
+         .reads = "a[2]=count; a[0]=zero; a[2]=count; a[2]=count; a[2]=count; a[4]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "left-shift jump replay preserves an earlier child snapshot",
+         .body = replace(replace(leftJumpShift, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,count,one,one,one]",
+         .reads = "a[0]=x; a[2]=count; a[0]=zero; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
+         .exit = "x -> {x}"});
+    reject("full left-shift bounds still require nonnegative own indices",
+           replace(leftJumpShift, "ctjs.binary add %quotient, %one", "ctjs.unary plus %quotient"));
     const auto crossingShiftReload =
         replace(replace(crossingShift, "[%x, %one, %x, %one]", "[%x, %zero, %x, %one]"),
                 "%negative = ctjs.binary_static shr %part, %zero",

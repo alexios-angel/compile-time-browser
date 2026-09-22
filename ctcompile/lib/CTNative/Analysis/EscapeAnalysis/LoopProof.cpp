@@ -508,8 +508,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 (unsignedShift && !negativeBand &&
                  (!range->first.integerNumber || !range->last.integerNumber ||
                   *range->last.integerNumber > 4294967295ULL));
-            if (!twoPointShift && conversionJump) {
-                if (leftShift) { return std::nullopt; }
+            if (!twoPointShift && conversionJump && !leftShift) {
                 // A conversion jump can hide interior extrema. Enclose every
                 // converted input before the monotone right shift; replay still
                 // records only actual writes.
@@ -538,9 +537,37 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     // Floor division also handles negative products below INT32_MIN.
                     return biased / 4294967296LL - (biased < 0 && biased % 4294967296LL != 0);
                 };
-                if (outputBand(range->first) != outputBand(range->last) ||
+                if (conversionJump || outputBand(range->first) != outputBand(range->last) ||
                     range->stride > 4294967295ULL / factor) {
-                    return std::nullopt;
+                    // Each input step and every 2^32 wrap preserve this residue.
+                    // Intersect the full signed output interval with that lattice;
+                    // endpoint images alone can miss intermediate wraps.
+                    // ponytail: one enclosing lattice; unions if precision needs them.
+                    const auto period =
+                        std::gcd(range->stride, std::size_t{4294967296ULL} / factor) * factor;
+                    const auto residue =
+                        static_cast<std::size_t>(numberBits(range->first) << (count & 31U)) %
+                        period;
+                    const auto first = -2147483648LL + static_cast<std::int64_t>(
+                                                           (residue + 2147483648ULL) % period);
+                    const auto last = first + (2147483647LL - first) /
+                                                  static_cast<std::int64_t>(period) *
+                                                  static_cast<std::int64_t>(period);
+                    for (auto [endpoint, value] :
+                         {std::pair{&range->first, first}, std::pair{&range->last, last}}) {
+                        if (!spend()) {
+                            invariantFailure = ArrayContentsFailure::WorkLimit;
+                            return std::nullopt;
+                        }
+                        *endpoint = {operand, ContentsKind::NonBigInt};
+                        if (value < 0) {
+                            endpoint->negativeIntegerNumber = static_cast<std::size_t>(-value);
+                        } else {
+                            endpoint->integerNumber = static_cast<std::size_t>(value);
+                        }
+                    }
+                    range->stride = period;
+                    return range;
                 }
                 range->stride *= factor;
             } else if (!twoPointShift) {
