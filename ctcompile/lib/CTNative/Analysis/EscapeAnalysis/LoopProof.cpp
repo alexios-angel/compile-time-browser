@@ -372,11 +372,20 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!positive && !negative) { return std::nullopt; }
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
+            const auto inputStride = std::size_t{1} << std::countr_zero(range->stride);
+            const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
+            const auto lower = numberBits(range->first);
+            const auto upper = numberBits(range->last);
+            // All bits above the highest differing bit are fixed throughout
+            // this unsigned interval. The input lattice also fixes its low bits.
+            auto varying = static_cast<std::uint32_t>(
+                std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
             const bool complement = bitXor && mask == 4294967295U;
-            if ((bitAnd && mask == 4294967295U) || (!bitAnd && mask == 0) || complement) {
-                // Identity and complement masks are affine within one ToInt32
-                // band, preserving odd strides and signed zero crossings.
-                if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
+            if (signedBand(range->first) == signedBand(range->last) &&
+                (complement || ((bitAnd ? ~mask : mask) & varying & ~fixed) == 0)) {
+                // Changing only fixed input bits is a translation. Like identity
+                // and complement, it preserves the full stride within one
+                // ToInt32 band, including signed zero crossings.
                 for (ContentsValue * endpoint : {&range->first, &range->last}) {
                     if (!spend()) {
                         invariantFailure = ArrayContentsFailure::WorkLimit;
@@ -392,7 +401,6 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 if (complement) { std::swap(range->first, range->last); }
                 return range;
             }
-            const auto inputStride = std::size_t{1} << std::countr_zero(range->stride);
             const auto changingMask = bitOr ? ~mask : mask;
             // AND fixes trailing zeros; OR fixes trailing ones. Both combine
             // with the input's power-of-two lattice by taking its larger period.
@@ -401,14 +409,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 (bitAnd || bitOr) && changingMask != 0
                     ? std::max(inputStride, std::size_t{1} << std::countr_zero(changingMask))
                     : inputStride;
-            const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
-            const auto lower = numberBits(range->first);
-            const auto upper = numberBits(range->last);
-            // All bits above the highest differing bit are fixed throughout
-            // this unsigned interval. Enclose the lower bits densely: endpoint
-            // bitwise results alone miss interior extrema.
-            auto varying = static_cast<std::uint32_t>(
-                std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
+            // Enclose the varying bits densely: endpoint bitwise results alone
+            // miss interior extrema when the mask modifies a varying bit.
             if (signedBand(range->first) != signedBand(range->last) || varying > 2147483647U) {
                 // Clearing the sign bit with AND or setting it with OR keeps
                 // every output in one signed interval even if all input bits vary.

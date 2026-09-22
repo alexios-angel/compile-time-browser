@@ -70,6 +70,16 @@
 // CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function masked() {
     var child = {}, a = [child, child, 0, 0];
@@ -440,3 +450,54 @@ function fixedBitInteriorReload() {
 fixedZeroBits(); fixedUpperBits(); commutedNegativeFixedBits(); upperConvertedFixedBits();
 lowerConvertedFixedBits(); fixedBitReload(); negativeFixedBitReload(); retainedFixedBitGap();
 overlappingFixedBitReload(); laterFixedBitStore(); clearedFixedBit(); fixedBitInteriorReload();
+function fixedAndStride() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i + 8) & a[1]] = 0;
+    return a;
+}
+function fixedAndCommuted() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[a[1] & (i + 8)] = 0;
+    return a;
+}
+function fixedAndNegative() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i - 8) & a[1]] = 0;
+    return a;
+}
+function fixedAndHighBand() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(2147483656 + i) & a[1]] = 0;
+    return a;
+}
+function fixedAndLowBand() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(-4294967288 + i) & a[1]] = 0;
+    return a;
+}
+function fixedAndRemainingChild() {
+    var child = {}, a = [child, 7, child, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i + 8) & a[1]] = 0;
+    return a;
+}
+function fixedAndOverlappingReload() {
+    var child = {}, a = [child, 0, 0, 7, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i + 8) & a[3]] = 0;
+    return a;
+}
+function fixedAndLaterOverwrite() {
+    var child = {}, a = [child, 7, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[(i + 8) & a[1]] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function fixedAndNearMask() {
+    var child = {}, a = [child, 5, 0, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i + 8) & a[1]] = 0;
+    return a;
+}
+fixedAndStride(); fixedAndCommuted(); fixedAndNegative();
+fixedAndHighBand(); fixedAndLowBand(); fixedAndRemainingChild();
+fixedAndOverlappingReload(); fixedAndLaterOverwrite(); fixedAndNearMask();

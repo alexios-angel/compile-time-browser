@@ -661,6 +661,67 @@ void InductionCases::overwritesAndTransport() {
                                " %part, %mask\n"
                                "  %position = ctjs.binary_static bitand %bits, %one"));
         }
+
+        const auto fixedBits = replace(
+            replace(
+                replace(replace(identity, "[%x, %identity, %zero, %x]",
+                                "[%x, %identity, %zero, %x, %zero, %zero, %x]"),
+                        "#ctjs.number<" + std::string(literal) + "> {storage_test_id = \"mask\"}",
+                        "#ctjs.number<" +
+                            std::string(kind == "bitand" ? "4619567317775286272"
+                                                         : "4620693217682128896") +
+                            "> {storage_test_id = \"mask\"}"),
+                "  %a =",
+                "  %eight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                "  %sixteen = ctjs.constant #ctjs.number<4625196817309499392>\n  %a ="),
+            "%position = ctjs.binary_static " + kind + " %i, %mask",
+            "%part = ctjs.binary add %i, " + std::string(kind == "bitand" ? "%eight" : "%zero") +
+                "\n  %bits = ctjs.binary_static " + kind +
+                " %part, %mask\n"
+                "  %position = ctjs.binary sub %bits, " +
+                std::string(kind == "bitand" ? "%zero" : "%eight"));
+        for (const auto & operands : {"%part, %mask", "%mask, %part"}) {
+            run({.what = "fixed-bit masks retain full odd strides in either operand order",
+                 .body = replace(fixedBits, kind + " %part, %mask", kind + " " + operands),
+                 .arrays = "a:[zero,mask,zero,zero,zero,zero,zero]",
+                 .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero; a[1]=mask; a[6]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "fixed-bit translations preserve odd strides for negative input Numbers",
+             .body = replace(
+                 replace(fixedBits, "add %i, " + std::string(kind == "bitand" ? "%eight" : "%zero"),
+                         "sub %i, " + std::string(kind == "bitand" ? "%eight" : "%sixteen")),
+                 "sub %bits, " + std::string(kind == "bitand" ? "%zero" : "%eight"),
+                 "add %bits, " + std::string(kind == "bitand" ? "%zero" : "%eight")),
+             .arrays = "a:[zero,mask,zero,zero,zero,zero,zero]",
+             .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero; a[1]=mask; a[6]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "fixed-bit stride gaps preserve retained children",
+             .body = replace(fixedBits, "[%x, %identity, %zero, %x, %zero, %zero, %x]",
+                             "[%x, %identity, %x, %x, %zero, %zero, %x]"),
+             .arrays = "a:[zero,mask,x,zero,zero,zero,zero]",
+             .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero; a[1]=mask; a[6]=zero",
+             .exit = "a -> {a,x}"});
+        reject("fixed-bit translations reject mask reloads at actual writes",
+               replace(replace(fixedBits, "[%x, %identity, %zero, %x, %zero, %zero, %x]",
+                               "[%x, %zero, %zero, %identity, %zero, %zero, %x]"),
+                       "%mask = ctjs.get_property %base[%one]",
+                       "%mask = ctjs.get_property %base[%three]"));
+        reject(
+            "fixed-bit translations retain the complete later-store census",
+            replace(fixedBits, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+        reject(
+            "a mask changing a varying bit cannot borrow the full input stride",
+            replace(
+                fixedBits,
+                "#ctjs.number<" +
+                    std::string(kind == "bitand" ? "4619567317775286272" : "4620693217682128896") +
+                    "> {storage_test_id = \"mask\"}",
+                "#ctjs.number<" +
+                    std::string(kind == "bitand" ? "4617315517961601024" : "4621256167635550208") +
+                    "> {storage_test_id = \"mask\"}"));
     }
     const auto complementBits = replace(signedBits, "%negativeOne = ctjs.unary neg %one",
                                         "%negativeOne = ctjs.unary neg %one "
