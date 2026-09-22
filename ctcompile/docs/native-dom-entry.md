@@ -558,8 +558,10 @@ identify proved iterator state or single-initialized local cells holding other
 helpers. The complete callable-cell and call census discovers the whole family,
 including helpers that capture only another callable or receive one explicitly.
 Callable arguments propagate through forwarding parameters only when every actual
-proves the same immutable helper identity. Every callable observer and invocation
-is checked, including alternate callers with unknown actuals. Exact closure, call,
+proves the same immutable helper identity. A helper's single root return can carry
+that identity through further helper results and invocations. Every callable
+observer and invocation is checked, including alternate callers with unknown
+actuals and entry calls through unproved helper results. Exact closure, call,
 symbolic-use and acyclic call-tree checks precede rewriting. Helper bodies allow
 scalar operations and proved sibling calls; nested closure creation stays refused. An arrow's lexical receiver may be retained only when its body does
 not observe it. Capture slots become temporary cell parameters for the existing
@@ -574,8 +576,10 @@ change the shared state. Repeated calls see the latest values, including
 Retired helpers leave no closure or cell storage in native output. Helper-local
 breaks reuse the method completion proof before scalar body validation, retaining
 argument snapshots, ordered state writes and the ordinary return value. Escaping,
-recursive, mutable-callable, differing-target and returned-callable calls remain
-refused. A shared callee is expanded at each invocation with that call's current cells and already
+recursive, mutable-callable, differing-target and branch/loop-joined callable
+results remain refused. Returned-callable producers expand before their consumers;
+source-order scheduling keeps charged work independent of SSA hash order.
+A shared callee is expanded at each invocation with that call's current cells and already
 evaluated scalar arguments. Unknown or coercing arguments still require complete
 DOM proof; arity alone authorizes no value facts.
 Fully defined JavaScript branch results join their ordered scalar state before
