@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Full monorepo validation, 2026-09-21–22 UTC
+
+The user explicitly requested full validation of clean **a1d6680d**. The devbox
+build completed **776 actions**; all seven test stages finished in **2h46m26s**
+including the build. **321/324 CTests passed** in **2811.14s**: browser **217/217**,
+compiler **104/107**. Compiler lit finished in **2561.62s**, with **328 passed,
+27 failed and 51 unresolved** among 406 discovered cases. The unresolved cases
+are class-initialization input fixtures without RUN lines. The other failing
+CTests are `ctcompile_owned_global_shared_map` and
+`ctcompile_host_contract_seeded_maps`; the report enumerates all failures.
+
+Both harness self-tests pass (test262 **11/11**, WPT **5/5**). The test262 gate
+fails only for **166 newly passing expectations**, with zero regressions. WPT's
+gate reports **22 unexpected failure signatures across two event tests**.
+Full cached test262: **41983 PASS, 7386 FAIL, five TIMEOUT, three CRASH, 4203 SKIP**
+(53580 files, **85.0%** of executed files pass). Full cached WPT selection:
+**2950 PASS, 2679 FAIL, 529 TIMEOUT, four CRASH, 254 HARNESS_ERROR, 2479 SKIP**
+(8895 plans). These are conformance measurements, not passing gates; the WPT
+selection covers the nine cached sparse roots, not all upstream WPT.
+
+The devbox did not reboot or shut down. Its idle timer was stopped for testing
+and verified **active/enabled afterward**; six paused stale lit processes were
+resumed. All logs, JSON/TSV rows and JUnit results are saved in
+`../test-results/2026-09-21-full-monorepo-a1d6680d/` beside the monorepo, and in
+`/home/ubuntu/ct-test-results/2026-09-21-full-monorepo-a1d6680d/` on the devbox.
+Required formatting still reports **16 diagnostics in four untouched files**.
+No implementation, expectation or golden changed.
+
+**Next work:** triage the compiler proof/admission failures and old C++ carrier
+assumptions, repair lit input discovery, and investigate the seven conformance
+crashes and two WPT event regressions. Revalidate semantics before accepting
+changed refusals. The native feature boundary remains `counted-break-exit`:
+transport the live counter across the conditional break exit. Broader iterator
+state, Bootstrap defaults and the application driver remain unfinished.
+Future implementation work returns to the standing focused-test policy.
+
+[Full findings and exact commands](handoff/2026-09-21-full-monorepo-tests.md).
+
 ## Confined custom DOM iteration, 2026-09-21 UTC
 
 Continued clean **6e8cb697** and its recorded custom-iterator boundary.
