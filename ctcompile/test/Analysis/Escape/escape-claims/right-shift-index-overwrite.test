@@ -91,6 +91,16 @@
 // CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 91 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 92 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 93 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function signedShift() {
     var child = {}, a = [child, child, 0, 0];
@@ -553,3 +563,55 @@ function jumpNegativePosition() {
 jumpUpper(); jumpLower(); jumpUnsignedZero(); jumpMaskedCount(); jumpNegativeCount();
 jumpSignedInterior(); jumpUnsignedInterior(); jumpRetained(); jumpSaved(); jumpOverlap();
 jumpLaterStore(); jumpNegativePosition();
+
+function residueJumpUpper() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpLower() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2147483650) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpMaskedCount() {
+    var child = {}, a = [33, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpNegativeCount() {
+    var child = {}, a = [-31, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpRetained() {
+    var child = {}, a = [1, child, 0, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return a;
+}
+function residueJumpSaved() {
+    var child = {}, a = [1, child, 0, child, 0, 0], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+    return saved;
+}
+function residueJumpOverlap() {
+    var child = {}, a = [1, 1, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((2147483646 + i * 2) >> a[1]) & 3] = 0;
+    return a;
+}
+function residueJumpLaterStore() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((2147483646 + i * 2) >> a[0]) & 3] = 0;
+        a[0] = 1;
+    }
+    return a;
+}
+function residueJumpUnsignedDeferred() {
+    var child = {}, a = [1, child, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i * 2 - 2) >>> a[0]) & 3] = 0;
+    return a;
+}
+residueJumpUpper(); residueJumpLower(); residueJumpMaskedCount(); residueJumpNegativeCount();
+residueJumpRetained(); residueJumpSaved(); residueJumpOverlap(); residueJumpLaterStore();
+residueJumpUnsignedDeferred();

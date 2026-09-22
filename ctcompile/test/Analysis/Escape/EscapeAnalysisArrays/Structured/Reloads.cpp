@@ -2121,6 +2121,66 @@ void StructuredCases::reloads() {
          .exit = "y -> {y}"});
     reject("full signed right-shift bounds still require nonnegative own positions",
            replace(jumpShift, "ctjs.binary add %negative, %one", "ctjs.unary plus %negative"));
+    auto sparseJumpShift = replace(
+        replace(replace(jumpShift, "4746794007244308480", "4746794007240114176"),
+                "4629418941960159232", "4607182418800017408"),
+        "[%y, %y, %wideCount, %one, %one, %one]", "[%wideCount, %y, %zero, %y, %zero, %zero]");
+    sparseJumpShift = replace(
+        replace(replace(sparseJumpShift, "  %a =",
+                        "  %three = ctjs.constant #ctjs.number<4613937818241073152>\n  %a ="),
+                "%part = ctjs.binary add %maximum, %i",
+                "%scaled = ctjs.binary mul %i, %two\n"
+                "    %part = ctjs.binary add %maximum, %scaled"),
+        "%count = ctjs.get_property %base[%two]\n"
+        "    %negative = ctjs.binary_static shr %part, %count\n"
+        "    %position = ctjs.binary add %negative, %one",
+        "%count = ctjs.get_property %base[%zero]\n"
+        "    %negative = ctjs.binary_static shr %part, %count\n"
+        "    %position = ctjs.binary_static bitand %negative, %three");
+    const auto lowerSparseJumpShift =
+        replace(replace(sparseJumpShift, "4746794007240114176", "4746794007252697088"),
+                "add %maximum, %scaled", "sub %scaled, %maximum");
+    for (const auto & body :
+         {sparseJumpShift, lowerSparseJumpShift,
+          replace(sparseJumpShift,
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
+                  "#ctjs.number<4629841154425225216> {storage_test_id = \"count\"}"),
+          replace(sparseJumpShift,
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
+                  "#ctjs.number<13852790978814935040> {storage_test_id = \"count\"}")}) {
+        rows.push_back(
+            {.what = "signed conversion-jump right shifts preserve nonzero residue reload gaps",
+             .body = body,
+             .arrays = "a:[count,zero,zero,zero,zero,zero]",
+             .reads = "a[0]=count; a[0]=count; a[0]=count; a[2]=zero; a[0]=count; a[4]=zero",
+             .exit = "a -> {a}"});
+        reject(
+            "right-shift residue lattices retain every later count store",
+            replace(body, "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
+        reject("right-shift residue lattices cannot reload an actual written position",
+               replace(replace(body, "[%wideCount, %y, %zero, %y, %zero, %zero]",
+                               "[%wideCount, %wideCount, %zero, %y, %zero, %zero]"),
+                       "%count = ctjs.get_property %base[%zero]",
+                       "%count = ctjs.get_property %base[%one]"));
+    }
+    rows.push_back({.what = "right-shift residue bounds retain an unwritten child",
+                    .body = replace(sparseJumpShift, "[%wideCount, %y, %zero, %y, %zero, %zero]",
+                                    "[%wideCount, %y, %zero, %y, %y, %zero]"),
+                    .arrays = "a:[count,zero,zero,zero,y,zero]",
+                    .reads = "a[0]=count; a[0]=count; a[0]=count; a[2]=zero; a[0]=count; a[4]=y",
+                    .exit = "a -> {a,y}"});
+    rows.push_back(
+        {.what = "right-shift residue replay preserves a pre-loop child snapshot",
+         .body = replace(replace(sparseJumpShift, "  %finalIndex,",
+                                 "  %before = ctjs.get_property %a[%one]\n  %finalIndex,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[count,zero,zero,zero,zero,zero]",
+         .reads = "a[1]=y; a[0]=count; a[0]=count; a[0]=count; a[2]=zero; a[0]=count; a[4]=zero",
+         .exit = "y -> {y}"});
+    reject("unsigned conversion-jump right shifts still use their dense enclosure",
+           replace(replace(sparseJumpShift, "ctjs.binary add %maximum, %scaled",
+                           "ctjs.binary sub %scaled, %two"),
+                   "binary_static shr", "binary_static ushr"));
     const auto leftJumpShift = replace(
         replace(replace(jumpShift, "  %a =",
                         "  %divisor = ctjs.constant #ctjs.number<4746794007248502784>\n  %a ="),

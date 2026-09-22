@@ -539,15 +539,16 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // A conversion jump can hide interior extrema. Enclose every
                 // converted input before the monotone right shift; replay still
                 // records only actual writes.
-                // ponytail: dense interval; unions if precision needs them.
-                range->first = {operand, ContentsKind::NonBigInt, 0};
                 if (signedShift) {
-                    range->first.integerNumber.reset();
-                    range->first.negativeIntegerNumber = 2147483648ULL;
+                    const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
+                    range = signedLattice(operand, period, numberBits(range->first) % period);
+                    if (!range) { return std::nullopt; }
+                } else {
+                    // ponytail: dense unsigned interval; residue bounds if needed.
+                    range->first = {operand, ContentsKind::NonBigInt, 0};
+                    range->last = {operand, ContentsKind::NonBigInt, 4294967295ULL};
+                    range->stride = 1;
                 }
-                range->last = {operand, ContentsKind::NonBigInt,
-                               signedShift ? 2147483647ULL : 4294967295ULL};
-                range->stride = 1;
             }
             const auto count = positive ? static_cast<std::uint32_t>(*positive)
                                         : 0U - static_cast<std::uint32_t>(*negative);
