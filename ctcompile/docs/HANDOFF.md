@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mixed-input iterator selectors and signed bitwise gaps, 2026-09-22 UTC
+
+Resumed clean **6bfe8e48** and exact saved mixed-input selector `987dfd90`.
+**05a007b6** proves all original Style inputs and carries an ordinary borrowed
+engine pointer beside the selected element through branch and loop edges.
+Initialization, backedges, condition/result slots and selected return snapshots
+retain their association. Each input validates before DOM writes; no runtime
+value model or browser implementation is added. The saved source, before-close
+selector and explicit prototype call execute under both providers and policies.
+
+Parallel **f687c5d9** reuses bounded lattice refinement for XOR and sign-preserving
+AND/OR across signed conversion boundaries. Complete reload/store checks,
+actual-write replay and budgets remain. Four historical CFG and four SCF
+expectations now admit with their original constructions and retained children.
+
+Focused checks pass: host **1/1, 2.31 s total**, arrays **1/1, 2.19 s total**,
+right-shift lit **1/1, 0.14 s**. Four selected sources pass **64 native executions,
+318 refusals and 32 Node/VM observations**, with no nonexecuted admissions.
+Complete formatting passes **1124 C++, 157 Python and 114 web files**.
+All eleven final code/test hashes match the devbox; 32 generated C++ files
+contain no Script/VM protocol. Full suites were skipped.
+
+**Next native boundary:** original `body-throw`, `f1b3f6b8`, refuses under both
+policies: **DOM custom iterator requires one complete entry**. Node closes once
+before propagating the body exception; the VM currently omits that close.
+Zero-trip exhaustion agrees. Repair the source compiler's body-throw cleanup,
+then prove native abrupt completion without changing the source or weakening
+its oracle. Broader finally cleanup, nested custom iterators, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-mixed-style.md).
+
 ## Iterator Style associations and direct conversion gaps, 2026-09-22 UTC
 
 Resumed clean **5e921715** and exact saved selector source `7ea457e6`.
