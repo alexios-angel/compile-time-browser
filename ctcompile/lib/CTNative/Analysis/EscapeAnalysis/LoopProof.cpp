@@ -380,12 +380,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // this unsigned interval. The input lattice also fixes its low bits.
             auto varying = static_cast<std::uint32_t>(
                 std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
-            const bool complement = bitXor && mask == 4294967295U;
+            const bool complement = bitXor && (~mask & varying & ~fixed) == 0;
             if (signedBand(range->first) == signedBand(range->last) &&
                 (complement || ((bitAnd ? ~mask : mask) & varying & ~fixed) == 0)) {
-                // Changing only fixed input bits is a translation. Like identity
-                // and complement, it preserves the full stride within one
-                // ToInt32 band, including signed zero crossings.
+                // Changing only fixed input bits is a translation; flipping all
+                // varying bits reverses it. Both preserve the full stride within
+                // one ToInt32 band, including signed zero crossings.
                 for (ContentsValue * endpoint : {&range->first, &range->last}) {
                     if (!spend()) {
                         invariantFailure = ArrayContentsFailure::WorkLimit;

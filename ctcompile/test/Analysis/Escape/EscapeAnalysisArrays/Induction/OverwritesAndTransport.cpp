@@ -723,6 +723,109 @@ void InductionCases::overwritesAndTransport() {
                     std::string(kind == "bitand" ? "4617315517961601024" : "4621256167635550208") +
                     "> {storage_test_id = \"mask\"}"));
     }
+    const auto varyingComplement =
+        replace(replace(replace(replace(signedBits, "[%one, %x]",
+                                        "[%x, %seven, %zero, %x, %zero, %zero, %x]"),
+                                "add %i, %one", "add %i, %three"),
+                        "  %a =",
+                        "  %six = ctjs.binary add %three, %three\n"
+                        "  %seven = ctjs.constant #ctjs.number<4619567317775286272> "
+                        "{storage_test_id = \"mask\"}\n"
+                        "  %eight = ctjs.constant #ctjs.number<4620693217682128896>\n  %a ="),
+                "%position = ctjs.binary_static bitand %i, %one",
+                "%mask = ctjs.get_property %base[%one]\n"
+                "  %bits = ctjs.binary_static bitxor %i, %mask\n"
+                "  %position = ctjs.binary sub %bits, %one");
+    for (const auto & expression : {"%bits = ctjs.binary_static bitxor %i, %mask\n"
+                                    "  %position = ctjs.binary sub %bits, %one",
+                                    "%bits = ctjs.binary_static bitxor %mask, %i\n"
+                                    "  %position = ctjs.binary sub %bits, %one",
+                                    "%part = ctjs.binary sub %i, %eight\n"
+                                    "  %bits = ctjs.binary_static bitxor %part, %mask\n"
+                                    "  %position = ctjs.binary add %bits, %seven",
+                                    "%part = ctjs.binary add %sign, %i\n"
+                                    "  %bits = ctjs.binary_static bitxor %part, %mask\n"
+                                    "  %position = ctjs.binary add %bits, %maximum",
+                                    "%lowInput = ctjs.binary add %low, %six\n"
+                                    "  %part = ctjs.binary add %lowInput, %i\n"
+                                    "  %bits = ctjs.binary_static bitxor %part, %mask\n"
+                                    "  %offset = ctjs.binary add %eight, %one\n"
+                                    "  %position = ctjs.binary sub %bits, %offset"}) {
+        run({.what = "flipping every varying input bit reverses the full odd stride",
+             .body = replace(varyingComplement,
+                             "%bits = ctjs.binary_static bitxor %i, %mask\n"
+                             "  %position = ctjs.binary sub %bits, %one",
+                             expression),
+             .arrays = "a:[zero,mask,zero,zero,zero,zero,zero]",
+             .reads = "a[1]=mask; a[0]=x; a[1]=mask; a[3]=zero; a[1]=mask; a[6]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "a fixed sign bit may flip alongside all varying XOR bits",
+         .body = replace(replace(varyingComplement, "4619567317775286272", "4746794007263182848"),
+                         "sub %bits, %one", "add %bits, %maximum"),
+         .arrays = "a:[zero,mask,zero,zero,zero,zero,zero]",
+         .reads = "a[1]=mask; a[0]=x; a[1]=mask; a[3]=zero; a[1]=mask; a[6]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto fixedLowComplement = replace(
+        replace(
+            replace(replace(replace(varyingComplement, "[%x, %seven, %zero, %x, %zero, %zero, %x]",
+                                    "[%x, %zero, %seven, %zero, %zero, %zero, %x]"),
+                            "4619567317775286272", "4618441417868443648"),
+                    "add %i, %three", "add %i, %six"),
+            "%mask = ctjs.get_property %base[%one]", "%mask = ctjs.get_property %base[%two]"),
+        "sub %bits, %one", "add %bits, %zero");
+    const auto crossZeroComplement = replace(
+        replace(fixedLowComplement, "%seven = ctjs.constant #ctjs.number<4618441417868443648>",
+                "%seven = ctjs.unary neg %two"),
+        "%bits = ctjs.binary_static bitxor %i, %mask\n"
+        "  %position = ctjs.binary add %bits, %zero",
+        "%part = ctjs.binary sub %i, %three\n"
+        "  %bits = ctjs.binary_static bitxor %part, %mask\n"
+        "  %position = ctjs.binary add %bits, %three");
+    for (const auto & body : {fixedLowComplement, crossZeroComplement}) {
+        run({.what = "fixed low XOR bits do not erase the odd factor of a reversed stride",
+             .body = body,
+             .arrays = "a:[zero,zero,mask,zero,zero,zero,zero]",
+             .reads = "a[2]=mask; a[0]=x; a[2]=mask; a[6]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "varying-bit complements preserve children between actual writes",
+         .body = replace(varyingComplement, "[%x, %seven, %zero, %x, %zero, %zero, %x]",
+                         "[%x, %seven, %x, %x, %zero, %zero, %x]"),
+         .arrays = "a:[zero,mask,x,zero,zero,zero,zero]",
+         .reads = "a[1]=mask; a[0]=x; a[1]=mask; a[3]=zero; a[1]=mask; a[6]=zero",
+         .exit = "a -> {a,x}"});
+    reject("varying-bit complements cannot reload a written slot",
+           replace(replace(varyingComplement, "[%x, %seven, %zero, %x, %zero, %zero, %x]",
+                           "[%x, %zero, %zero, %seven, %zero, %zero, %x]"),
+                   "%mask = ctjs.get_property %base[%one]",
+                   "%mask = ctjs.get_property %base[%three]"));
+    reject("varying-bit complements retain the later-store census",
+           replace(varyingComplement,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("flipping only some varying bits cannot reverse the input lattice",
+           replace(replace(replace(replace(varyingComplement,
+                                           "[%x, %seven, %zero, %x, %zero, %zero, %x]",
+                                           "[%x, %zero, %zero, %zero, %zero, %seven, %x, %zero]"),
+                                   "4619567317775286272", "4618441417868443648"),
+                           "%mask = ctjs.get_property %base[%one]",
+                           "%five = ctjs.binary add %three, %two\n"
+                           "  %mask = ctjs.get_property %base[%five]"),
+                   "sub %bits, %one", "add %bits, %zero"));
+    for (const auto & input :
+         {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
+        reject("varying-bit complements still refuse signed conversion discontinuities",
+               replace(crossZeroComplement,
+                       "%part = ctjs.binary sub %i, %three\n"
+                       "  %bits = ctjs.binary_static bitxor %part, %mask\n"
+                       "  %position = ctjs.binary add %bits, %three",
+                       "%part = " + std::string(input) +
+                           "\n  %bits = ctjs.binary_static bitxor %part, %mask\n"
+                           "  %position = ctjs.binary_static bitand %bits, %one"));
+    }
     const auto complementBits = replace(signedBits, "%negativeOne = ctjs.unary neg %one",
                                         "%negativeOne = ctjs.unary neg %one "
                                         "{storage_test_id = \"negativeOne\"}");
