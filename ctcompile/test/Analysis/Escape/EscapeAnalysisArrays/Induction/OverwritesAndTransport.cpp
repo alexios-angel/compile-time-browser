@@ -1918,8 +1918,25 @@ void InductionCases::overwritesAndTransport() {
              .reads = "a[1]=two; a[0]=zero; a[1]=two; a[2]=zero",
              .exit = "a -> {a}"},
             "x");
-        reject("complement endpoints cannot omit an interior conversion-jump visit",
-               replace(body, "[%x, %one, %x, %one]", "[%x, %one, %x, %one, %x, %one]"));
+        run({.what = "complement jump enclosures retain an unwritten interior child",
+             .body = replace(body, "[%x, %one, %x, %one]", "[%x, %one, %x, %one, %x, %one]"),
+             .arrays = "a:[zero,one,zero,one,x,one]",
+             .reads = "a[0]=zero; a[2]=zero; a[4]=x",
+             .exit = "a -> {a,x}"});
+        auto wrappedReload =
+            replace(replace(body, "[%x, %one, %x, %one]", "[%x, %three, %x, %zero, %zero, %zero]"),
+                    "%position = ctjs.binary_static bitand %negative, %two",
+                    "%mask = ctjs.get_property %base[%one]\n"
+                    "  %position = ctjs.binary_static bitand %negative, %mask");
+        run({.what = "complement jump residues preserve low-bit reload gaps",
+             .body = wrappedReload,
+             .arrays = "a:[zero,three,zero,zero,zero,zero]",
+             .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("complement jump lattices retain every later reload store",
+               replace(wrappedReload,
+                       "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
     }
     run({.what = "a second complement reverses the exact conversion-jump endpoint images",
          .body =
@@ -1963,6 +1980,34 @@ void InductionCases::overwritesAndTransport() {
     reject("two-point complement gaps retain the complete later-store census",
            replace(complementReload,
                    "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    auto complementJump =
+        replace(complementReload, "[%x, %two, %x, %one]", "[%x, %three, %x, %zero, %zero, %zero]");
+    reject("complement jump lattices cannot reload an actual written position",
+           replace(replace(complementJump, "[%x, %three, %x, %zero, %zero, %zero]",
+                           "[%three, %zero, %x, %zero, %zero, %zero]"),
+                   "%mask = ctjs.get_property %base[%one]",
+                   "%mask = ctjs.get_property %base[%zero]"));
+    reject("unit strides cannot retain a complement low-bit reload gap",
+           replace(complementJump, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"));
+    run({.what = "complement jump bounds align to a nonzero output residue",
+         .body = replace(replace(replace(complementJump, "[%x, %three, %x, %zero, %zero, %zero]",
+                                         "[%zero, %x, %three, %x, %zero, %zero]"),
+                                 "%mask = ctjs.get_property %base[%one]",
+                                 "%mask = ctjs.get_property %base[%two]"),
+                         "%part = ctjs.binary add %maximum, %i",
+                         "%lowerMaximum = ctjs.binary sub %maximum, %one\n"
+                         "  %part = ctjs.binary add %lowerMaximum, %i"),
+         .arrays = "a:[zero,zero,three,zero,zero,zero]",
+         .reads = "a[2]=three; a[0]=zero; a[2]=three; a[2]=three; a[2]=three; a[4]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "complement jump replay preserves a pre-loop child snapshot",
+         .body = replace(replace(complementJump, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,three,zero,zero,zero,zero]",
+         .reads = "a[0]=x; a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=zero",
+         .exit = "x -> {x}"});
     run({.what = "subtracted Number offsets stay relative to a nonzero start",
          .body = previousIndex,
          .arrays = "a:[zero,one,zero,one]",

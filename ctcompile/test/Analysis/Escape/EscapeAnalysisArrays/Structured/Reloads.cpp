@@ -1632,8 +1632,29 @@ void StructuredCases::reloads() {
              .arrays = "a:[zero,two,zero,one]",
              .reads = "a[1]=two; a[0]=zero; a[1]=two; a[2]=zero",
              .exit = "zero -> {}"});
-        reject("complement endpoints cannot omit an interior conversion-jump visit",
-               replace(body, "[%y, %one, %y, %one]", "[%y, %one, %y, %one, %y, %one]"));
+        rows.push_back(
+            {.what = "complement jump enclosures retain an unwritten interior child",
+             .body = replace(body, "[%y, %one, %y, %one]", "[%y, %one, %y, %one, %y, %one]"),
+             .arrays = "a:[zero,one,zero,one,y,one]",
+             .reads = "a[0]=zero; a[2]=zero; a[4]=y",
+             .exit = "y -> {y}"});
+        auto wrappedReload =
+            replace(replace(body, "[%y, %one, %y, %one]", "[%y, %three, %y, %zero, %zero, %zero]"),
+                    "%position = ctjs.binary_static bitand %negative, %two",
+                    "%mask = ctjs.get_property %base[%one]\n"
+                    "    %position = ctjs.binary_static bitand %negative, %mask");
+        wrappedReload =
+            replace(wrappedReload, "  %a =",
+                    "  %three = ctjs.binary add %two, %one {storage_test_id = \"three\"}\n  %a =");
+        rows.push_back(
+            {.what = "complement jump residues preserve low-bit reload gaps",
+             .body = wrappedReload,
+             .arrays = "a:[zero,three,zero,zero,zero,zero]",
+             .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=zero",
+             .exit = "zero -> {}"});
+        reject("complement jump lattices retain every later reload store",
+               replace(wrappedReload,
+                       "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="));
     }
     rows.push_back(
         {.what = "a second complement reverses the exact conversion-jump endpoint images",
@@ -1681,6 +1702,39 @@ void StructuredCases::reloads() {
     reject("two-point complement gaps retain the complete later-store census",
            replace(complementReload,
                    "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    auto complementJump =
+        replace(complementReload, "[%y, %two, %y, %one]", "[%y, %three, %y, %zero, %zero, %zero]");
+    complementJump = replace(
+        complementJump,
+        "  %a =", "  %three = ctjs.binary add %two, %one {storage_test_id = \"three\"}\n  %a =");
+    reject("complement jump lattices cannot reload an actual written position",
+           replace(replace(complementJump, "[%y, %three, %y, %zero, %zero, %zero]",
+                           "[%three, %zero, %y, %zero, %zero, %zero]"),
+                   "%mask = ctjs.get_property %base[%one]",
+                   "%mask = ctjs.get_property %base[%zero]"));
+    reject("unit strides cannot retain a complement low-bit reload gap",
+           replace(complementJump, "%step = ctjs.binary_static add %i, %two",
+                   "%step = ctjs.binary_static add %i, %one"));
+    rows.push_back(
+        {.what = "complement jump bounds align to a nonzero output residue",
+         .body = replace(replace(replace(complementJump, "[%y, %three, %y, %zero, %zero, %zero]",
+                                         "[%zero, %y, %three, %y, %zero, %zero]"),
+                                 "%mask = ctjs.get_property %base[%one]",
+                                 "%mask = ctjs.get_property %base[%two]"),
+                         "%part = ctjs.binary add %maximum, %i",
+                         "%lowerMaximum = ctjs.binary sub %maximum, %one\n"
+                         "    %part = ctjs.binary add %lowerMaximum, %i"),
+         .arrays = "a:[zero,zero,three,zero,zero,zero]",
+         .reads = "a[2]=three; a[0]=zero; a[2]=three; a[2]=three; a[2]=three; a[4]=zero",
+         .exit = "zero -> {}"});
+    rows.push_back(
+        {.what = "complement jump replay preserves a pre-loop child snapshot",
+         .body = replace(replace(complementJump, "  %finalIndex,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  %finalIndex,"),
+                         "ctjs.return %result", "ctjs.return %before"),
+         .arrays = "a:[zero,three,zero,zero,zero,zero]",
+         .reads = "a[0]=y; a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=zero",
+         .exit = "y -> {y}"});
     rows.push_back({.what = "structured subtracted offsets retain a nonzero start",
                     .body = previousIndex,
                     .arrays = "a:[zero,one,zero,one]",

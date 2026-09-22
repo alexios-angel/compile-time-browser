@@ -35,6 +35,15 @@
 // CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function doubleComplement() {
     var child = {}, a = [child, child];
@@ -213,3 +222,50 @@ positiveComplementPair(); negativeComplementPair(); reversedComplementPair();
 repeatedComplementPair(); positivePairReloadGap(); negativePairReloadGap();
 pairRetainedChild(); pairSavedChild(); pairOverlapReload(); pairLaterStore();
 positiveComplementInterior(); negativeComplementInterior();
+
+function wrappedComplementReload() {
+    var child = {}, a = [child, 3, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~(i + 2147483647)) & a[1]] = 0;
+    return a;
+}
+function lowerComplementReload() {
+    var child = {}, a = [child, 3, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~(i - 2147483649)) & a[1]] = 0;
+    return a;
+}
+function oddComplementResidue() {
+    var child = {}, a = [0, child, 3, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~(i + 2147483646)) & a[2]] = 0;
+    return a;
+}
+function doubleWrappedComplement() {
+    var child = {}, a = [0, child, 3, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~~(i + 2147483647)) & a[2]] = 0;
+    return a;
+}
+function wrappedComplementSaved() {
+    var child = {}, a = [child, 3, child, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[(~(i + 2147483647)) & a[1]] = 0;
+    return saved;
+}
+function wrappedComplementOverlap() {
+    var child = {}, a = [3, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(~(i + 2147483647)) & a[0]] = 0;
+    return a;
+}
+function wrappedComplementLaterStore() {
+    var child = {}, a = [child, 3, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[(~(i + 2147483647)) & a[1]] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function unitComplementStride() {
+    var child = {}, a = [child, 3, child, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(~(i + 2147483647)) & a[1]] = 0;
+    return a;
+}
+wrappedComplementReload(); lowerComplementReload(); oddComplementResidue();
+doubleWrappedComplement(); wrappedComplementSaved(); wrappedComplementOverlap();
+wrappedComplementLaterStore(); unitComplementStride();

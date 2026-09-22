@@ -232,6 +232,30 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                    ? static_cast<std::uint32_t>(*endpoint.integerNumber)
                    : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
     };
+    const auto signedLattice = [&](mlir::Value operand, std::size_t period,
+                                   std::size_t residue) -> std::optional<IndexRange> {
+        // Intersect the full signed output interval with a proved residue.
+        // ponytail: one enclosing lattice; unions if precision needs them.
+        IndexRange range{
+            {operand, ContentsKind::NonBigInt}, {operand, ContentsKind::NonBigInt}, period};
+        const auto first =
+            -2147483648LL + static_cast<std::int64_t>((residue + 2147483648ULL) % period);
+        const auto last = first + (2147483647LL - first) / static_cast<std::int64_t>(period) *
+                                      static_cast<std::int64_t>(period);
+        for (auto [endpoint, value] :
+             {std::pair{&range.first, first}, std::pair{&range.last, last}}) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            if (value < 0) {
+                endpoint->negativeIntegerNumber = static_cast<std::size_t>(-value);
+            } else {
+                endpoint->integerNumber = static_cast<std::size_t>(value);
+            }
+        }
+        return range;
+    };
     const auto indexRange = [&](auto && self, mlir::Value operand,
                                 unsigned depth) -> std::optional<IndexRange> {
         if (!spend()) {
@@ -259,7 +283,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // endpoint images suffice only when the lattice has no interior point.
             if (wrappingComplement && endpointNumber(range->last) - endpointNumber(range->first) >
                                           static_cast<std::int64_t>(range->stride)) {
-                return std::nullopt;
+                // Complement negates each step modulo 2^32. Both the steps
+                // and every conversion wrap preserve this output residue.
+                const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
+                return signedLattice(operand, period, ~numberBits(range->first) % period);
             }
             // The recursive range already proves exact bounded Numbers. Negation
             // changes their sign and order; both signed zeros remain own key zero.
@@ -539,35 +566,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 };
                 if (conversionJump || outputBand(range->first) != outputBand(range->last) ||
                     range->stride > 4294967295ULL / factor) {
-                    // Each input step and every 2^32 wrap preserve this residue.
-                    // Intersect the full signed output interval with that lattice;
+                    // Each input step and every 2^32 wrap preserve this residue;
                     // endpoint images alone can miss intermediate wraps.
-                    // ponytail: one enclosing lattice; unions if precision needs them.
                     const auto period =
                         std::gcd(range->stride, std::size_t{4294967296ULL} / factor) * factor;
                     const auto residue =
                         static_cast<std::size_t>(numberBits(range->first) << (count & 31U)) %
                         period;
-                    const auto first = -2147483648LL + static_cast<std::int64_t>(
-                                                           (residue + 2147483648ULL) % period);
-                    const auto last = first + (2147483647LL - first) /
-                                                  static_cast<std::int64_t>(period) *
-                                                  static_cast<std::int64_t>(period);
-                    for (auto [endpoint, value] :
-                         {std::pair{&range->first, first}, std::pair{&range->last, last}}) {
-                        if (!spend()) {
-                            invariantFailure = ArrayContentsFailure::WorkLimit;
-                            return std::nullopt;
-                        }
-                        *endpoint = {operand, ContentsKind::NonBigInt};
-                        if (value < 0) {
-                            endpoint->negativeIntegerNumber = static_cast<std::size_t>(-value);
-                        } else {
-                            endpoint->integerNumber = static_cast<std::size_t>(value);
-                        }
-                    }
-                    range->stride = period;
-                    return range;
+                    return signedLattice(operand, period, residue);
                 }
                 range->stride *= factor;
             } else if (!twoPointShift) {
