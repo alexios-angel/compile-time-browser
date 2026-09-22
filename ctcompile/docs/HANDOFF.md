@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Multiple loop exit values and constant OR masks, 2026-09-22 UTC
+
+Continued clean **5f79f5fc** from its recorded two-projected-exit boundary.
+**d0db67ad** transports multiple independently selected values through pure
+break/exhaustion dispatch. Distinct compatible loop slots and simultaneous
+selection preserve crossed and repeated outputs; complete use/effect/ownership
+proofs and budgets remain required. Iterator close stays after the loop.
+The original two-output source executes unchanged, and a three-output weighted
+source distinguishes every output permutation. Generated C++ keeps typed scalar
+loops and public DOM calls with no VM iterator or Script dependency.
+
+Parallel escape work landed **11230889**: an exact all-one OR mask remains
+constant across zero and signed conversion boundaries. CFG/SCF tests retain
+near-mask and later-store controls; eight sources extend the unchanged original
+50. No browser implementation or runtime-oracle semantics changed.
+
+Focused checks pass: exact arrays **1/1, 1.57 s total**; exact host **1/1,
+0.70 s total**; OR/XOR and AND lit **2/2, 0.12 s**; custom/nested/dataset lit
+**3/3, 203.19 s**. Custom iteration completed **112 native executions,
+212 refusals and 42 Node/VM observations**. Nested iteration completed
+**48 native/two previous-source checks/94 refusals**; dataset completed
+**112 Node/VM observations, eight binaries, lifetime sanitizer and 432 refusals**.
+All seven final code/test hashes match the devbox. Formatting retains the same
+**16 pre-existing diagnostics in four untouched files**; changed files pass
+scoped checks. Full suites and broad replays were skipped; idle timer is active.
+
+**Next native boundary:** state on a confined custom iterator. Saved complete
+receiver-counter and captured-counter sources refuse for both providers and
+both optimization policies (**eight probes**): the former lacks a proved mutable
+holder slot, the latter an implicit-argument/capture proof. Sources, IR and exact
+diagnostics are in `../test-results/2026-09-22-multiple-break-exits/state-probes/`
+beside the monorepo. Body abrupt-close behavior, nested custom opens, literal
+range-for printing, unguarded Bootstrap defaults and the application driver
+remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-multiple-break-exits.md).
+
 ## Counted break exits and OR-mask proofs, 2026-09-22 UTC
 
 Continued clean **51425445** from the recorded counted-break boundary; the

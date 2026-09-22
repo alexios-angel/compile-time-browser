@@ -536,12 +536,13 @@ Private normalization selects the custom protocol before source completion
 expansion, substitutes ordinary method calls and carries scalar done state.
 The item must only be observed after a fresh false done test; done itself has
 truth-only observations. Exhaustion stops further next calls and skips return.
-A proved source `break` calls return once when it exists. A single live
-accumulator can cross the importer's pure break/exhaustion exit selection:
-each exact exit tag selects its defined value before leaving the loop. Other
-observers, productive backedges, unknown tags and effectful selections cannot
-authorize replacing inactive slots. Other ordinarily carried counters may remain
-live; multiple independently selected exit values remain unproved.
+A proved source `break` calls return once when it exists. Multiple live
+accumulators can cross the importer's pure break/exhaustion exit selection:
+each exact exit tag selects their defined values into distinct, type-compatible
+loop slots. The entire selected tuple is read before any destination changes,
+preserving crossed and repeated selections. Other observers, productive backedges,
+unknown tags and effectful selections cannot authorize replacing inactive slots.
+Other ordinarily carried counters may remain live.
 Generated C++ uses the existing scalar loop lowering and public DOM calls,
 with no iterator runtime,
 boxed result record or new runtime type. Nested custom opens, escaping or
