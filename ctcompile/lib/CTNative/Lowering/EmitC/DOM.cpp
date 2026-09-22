@@ -27,6 +27,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     hasHostEntry = true;
     domDocumentParameter = entry.documentParameter();
+    llvm::append_range(domStyleValues, entry.styleValues());
     needsDOM |= !entry.parameters().empty();
     if (entry.returnsUndefined()) {
         resultTypes[entry.entry().getSymName()] = mlir::NoneType::get(context);
@@ -106,7 +107,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     }
     for (mlir::BlockArgument parameter : entry.parameters()) {
         if (parameter == domDocumentParameter || llvm::any_of(domCalls, [&](const auto & item) {
-                return item.second.usesStyle() && item.second.styleParameter == parameter;
+                return item.second.usesStyle() &&
+                       (item.second.styleParameter == parameter ||
+                        llvm::is_contained(item.second.styleParameters, parameter));
             })) {
             domStyleParameters.push_back(parameter);
         }
@@ -162,6 +165,141 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         out << ");\n    }\n};\n";
         domSessionDefinition = std::move(text);
     }
+}
+
+void lowering::prepareDOMStyles(ec::FuncOp function) {
+    if (domStyleValues.empty() ||
+        llvm::none_of(domStyleParameters, [&](mlir::BlockArgument parameter) {
+            return parameter.getOwner() == &function.getBody().front();
+        })) {
+        return;
+    }
+    const auto engine = ec::OpaqueType::get(context, "ctbrowser::style::engine");
+    const auto pointer = ec::PointerType::get(engine);
+    auto at = mlir::OpBuilder::atBlockBegin(&function.getBody().front());
+    // Temporary SSA links permit backedges. All links are resolved and erased
+    // below; only ordinary borrowed pointers reach the C++ output.
+    llvm::DenseMap<mlir::Value, mlir::UnrealizedConversionCastOp> links;
+    for (auto value : domStyleValues) {
+        links[value] = mlir::UnrealizedConversionCastOp::create(
+            at, value.getLoc(), mlir::TypeRange{pointer}, mlir::ValueRange{});
+    }
+    const auto source = [&](mlir::Value value) { return links.find(value)->second.getResult(0); };
+    const auto bind = [&](mlir::Value value, mlir::Value style) {
+        links.find(value)->second->setOperands(mlir::ValueRange{style});
+    };
+    for (auto value : domStyleValues) {
+        if (auto style = domStyles.lookup(value)) {
+            bind(value, callWithConstValueOperands(at, value.getLoc(), mlir::TypeRange{pointer},
+                                                   at.getStringAttr("std::addressof"),
+                                                   mlir::ValueRange{style})
+                            .getResult(0));
+        } else if (auto call = domCalls.find(value.getDefiningOp()); call != domCalls.end()) {
+            bind(value, source(call->second.element));
+        } else if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
+            bind(value, source(domDocumentRoots.contains(read) ? mlir::Value(domDocumentParameter)
+                                                               : read.getObject()));
+        }
+    }
+    llvm::DenseMap<mlir::Value, mlir::Value> replacements;
+    const auto replaceResults = [&](mlir::Operation * old, mlir::Operation * made) {
+        for (auto [index, value] : llvm::enumerate(old->getResults())) {
+            replacements[value] = made->getResult(static_cast<unsigned>(index));
+            if (auto link = links.lookup(value)) {
+                links[made->getResult(static_cast<unsigned>(index))] = link;
+            }
+            value.replaceAllUsesWith(made->getResult(static_cast<unsigned>(index)));
+        }
+        // Source identities in the remaining frozen plans are not SSA uses.
+        for (auto & item : domDatasetValues) {
+            if (auto replacement = replacements.lookup(item.second)) { item.second = replacement; }
+        }
+    };
+    llvm::SmallVector<mlir::Operation *> retired;
+    function.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * operation) {
+        mlir::OpBuilder before(operation);
+        if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+            llvm::SmallVector<unsigned> slots;
+            for (auto result : branch.getResults()) {
+                if (links.contains(result)) { slots.push_back(result.getResultNumber()); }
+            }
+            if (slots.empty()) { return; }
+            llvm::SmallVector<mlir::Type> types(branch.getResultTypes());
+            types.append(slots.size(), pointer);
+            auto made = mlir::scf::IfOp::create(before, branch.getLoc(), types,
+                                                branch.getCondition(), true);
+            made.getThenRegion().takeBody(branch.getThenRegion());
+            made.getElseRegion().takeBody(branch.getElseRegion());
+            for (mlir::Region & region : made->getRegions()) {
+                auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                llvm::SmallVector<mlir::Value> styles;
+                for (unsigned slot : slots) { styles.push_back(source(yield.getOperand(slot))); }
+                yield->insertOperands(yield.getNumOperands(), styles);
+            }
+            for (auto [offset, slot] : llvm::enumerate(slots)) {
+                bind(branch.getResult(slot),
+                     made.getResult(branch.getNumResults() + static_cast<unsigned>(offset)));
+            }
+            replaceResults(branch, made);
+            retired.push_back(branch);
+        } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation)) {
+            llvm::SmallVector<unsigned> inputs, outputs;
+            for (auto arg : loop.getBeforeArguments()) {
+                if (links.contains(arg)) { inputs.push_back(arg.getArgNumber()); }
+            }
+            for (auto arg : loop.getAfterArguments()) {
+                if (links.contains(arg) || links.contains(loop.getResult(arg.getArgNumber()))) {
+                    outputs.push_back(arg.getArgNumber());
+                }
+            }
+            if (inputs.empty() && outputs.empty()) { return; }
+            llvm::SmallVector<mlir::Value> inits(loop.getInits());
+            for (unsigned slot : inputs) { inits.push_back(source(loop.getInits()[slot])); }
+            llvm::SmallVector<mlir::Type> types(loop.getResultTypes());
+            types.append(outputs.size(), pointer);
+            auto made = mlir::scf::WhileOp::create(before, loop.getLoc(), types, inits);
+            made.getBefore().takeBody(loop.getBefore());
+            made.getAfter().takeBody(loop.getAfter());
+            auto & head = made.getBefore().front();
+            auto & body = made.getAfter().front();
+            for (unsigned slot : inputs) {
+                bind(head.getArgument(slot), head.addArgument(pointer, loop.getLoc()));
+            }
+            auto condition = made.getConditionOp();
+            llvm::SmallVector<mlir::Value> styles;
+            for (auto [offset, slot] : llvm::enumerate(outputs)) {
+                auto argument = body.addArgument(pointer, loop.getLoc());
+                if (links.contains(body.getArgument(slot))) {
+                    bind(body.getArgument(slot), argument);
+                }
+                if (links.contains(loop.getResult(slot))) {
+                    bind(loop.getResult(slot),
+                         made.getResult(loop.getNumResults() + static_cast<unsigned>(offset)));
+                }
+                styles.push_back(source(condition.getArgs()[slot]));
+            }
+            condition.getArgsMutable().append(styles);
+            auto yield = made.getYieldOp();
+            styles.clear();
+            for (unsigned slot : inputs) { styles.push_back(source(yield.getOperand(slot))); }
+            yield->insertOperands(yield.getNumOperands(), styles);
+            replaceResults(loop, made);
+            retired.push_back(loop);
+        }
+    });
+    for (auto value : domStyleValues) {
+        mlir::Value style = source(value);
+        while (auto link = style.getDefiningOp<mlir::UnrealizedConversionCastOp>()) {
+            assert(link.getInputs().size() == 1 && "complete Style transport must resolve");
+            style = link.getInputs().front();
+        }
+        source(value).replaceAllUsesWith(style);
+        auto replacement = replacements.lookup(value);
+        domStylePointers[replacement ? replacement : value] = style;
+    }
+    for (auto value : domStyleValues) { links.find(value)->second.erase(); }
+    for (auto * operation : retired) { operation->erase(); }
+    domStyleValues.clear();
 }
 
 void lowering::prepareDOMStrings() {
@@ -231,6 +369,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
                         .getResult(0);
         }
         domStyles[value] = domStyles.lookup(domDocumentParameter);
+        if (auto style = domStylePointers.lookup(operation->getResult(0))) {
+            domStylePointers[value] = style;
+        }
         operation->getResult(0).replaceAllUsesWith(value);
         eraseIfUnused(operation);
         return true;
@@ -307,6 +448,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         }
         if (domElementVectorIndices.contains(operation)) {
             domStyles[value] = domStyles.lookup(read.getObject());
+            if (auto style = domStylePointers.lookup(read.getResult())) {
+                domStylePointers[value] = style;
+            }
         }
         read.getResult().replaceAllUsesWith(
             convertScalar(at, where, value, read.getResult().getType()));
@@ -712,7 +856,18 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             element = call.getArgs().front().getDefiningOp<ctjs::GetPropertyOp>().getObject();
         }
         arguments.push_back(element);
-        if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(edge.styleParameter)); }
+        if (edge.usesStyle()) {
+            auto style = domStyles.lookup(edge.styleParameter);
+            if (!style) {
+                auto pointer = domStylePointers.lookup(element);
+                assert(pointer && "proved mixed receiver must retain its Style pointer");
+                style = ec::DereferenceOp::create(
+                    at, where,
+                    ec::LValueType::get(ec::OpaqueType::get(context, "ctbrowser::style::engine")),
+                    pointer);
+            }
+            arguments.push_back(style);
+        }
         if (edge.kind != HostDOMMethod::datasetKeys) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }
@@ -790,6 +945,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             // Every chain begins with a parameter's selector call, which already
             // requires that parameter's engine in the native signature.
             domStyles[value] = domStyles.lookup(arguments.front());
+            if (auto style = domStylePointers.lookup(call.getResult())) {
+                domStylePointers[value] = style;
+            }
         }
         call.getResult().replaceAllUsesWith(convertScalar(at, where, value, type));
     } else {

@@ -403,16 +403,18 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             selectorOrigins[call.operation->getResult(0)] = call.element;
         }
     }
+    llvm::SmallVector<mlir::Value> provedStyleValues;
+    llvm::DenseSet<mlir::Value> seenStyleValues;
     for (auto & call : provedCalls) {
         if (!spend()) { return; }
         if (!call.usesStyle()) { continue; }
         // Follow every incoming edge, including zero-trip initialization and
         // backedges. Cycles grant no authority: the closure must reach exactly
-        // one original parameter. Different raw inputs may own different DOMs.
-        // ponytail: mixed roots refuse; carry Style with the element if needed.
+        // original parameters. Different inputs keep distinct Style engines.
         llvm::SmallVector<mlir::Value> pending{call.element};
         llvm::DenseSet<mlir::Value> visited;
-        mlir::BlockArgument root;
+        llvm::SmallVector<mlir::BlockArgument> roots;
+        llvm::SmallVector<mlir::Value> values;
         const auto append = [&](mlir::Value value) {
             if (!spend()) { return false; }
             pending.push_back(value);
@@ -423,14 +425,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             if (!spend()) { return; }
             auto value = pending.pop_back_val();
             if (!visited.insert(value).second) { continue; }
+            values.push_back(value);
             if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
                 if (argument.getOwner() == &targetBlock &&
                     argument.getArgNumber() >= ctjs::implicit_arguments) {
-                    if (root && root != argument) {
-                        complete = false;
-                        break;
-                    }
-                    root = argument;
+                    roots.push_back(argument);
                     continue;
                 }
                 auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
@@ -481,11 +480,19 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                 break;
             }
         }
-        if (!complete || !root) {
-            refusal = "DOM selector requires one original Style association";
+        if (!complete || roots.empty()) {
+            refusal = "DOM selector requires complete original Style associations";
             return;
         }
-        call.styleParameter = root;
+        if (roots.size() == 1) {
+            call.styleParameter = roots.front();
+        } else {
+            call.styleParameters = std::move(roots);
+            for (auto value : values) {
+                if (!spend()) { return; }
+                if (seenStyleValues.insert(value).second) { provedStyleValues.push_back(value); }
+            }
+        }
     }
     if (intrinsicEntry &&
         (!provedJSONObjects.empty() || llvm::any_of(provedCalls, [](const HostDOMCall & call) {
@@ -566,6 +573,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     checkedCallbacks = std::move(callbackFunctions);
     callbackClosures = std::move(provedClosures);
     checkedEntry = target;
+    carriedStyles.assign(provedStyleValues.begin(), provedStyleValues.end());
     undefinedReturn = provedUndefinedReturn;
     checkedWrapper = declaration;
     elements = std::move(provedElements);

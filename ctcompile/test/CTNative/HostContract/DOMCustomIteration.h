@@ -2099,9 +2099,6 @@ module {
              replaced(replaced(elementSource, "    %advanceName =",
                                "    %document = ctjs.load_global \"document\"\n    %advanceName ="),
                       "scf.yield %other : !ctjs.value", "scf.yield %document : !ctjs.value"),
-             replaced(elementSource, "      %returnMethod = ctjs.get_property %loop#3[%hasName]",
-                      "      %matchesName = ctjs.constant #ctjs.string<\"matches\">\n"
-                      "      %returnMethod = ctjs.get_property %loop#3[%matchesName]"),
              replaced(elementSource, "      %normalMethod =",
                       "      %observed = ctjs.truthy %loop#3\n      %normalMethod ="),
              replaced(elementSource, "      %returnMethod =",
@@ -2143,8 +2140,7 @@ module {
                   "mixed, observed, escaping or invalidated saved elements publish no proof");
         }
     }
-    // Selector calls on saved elements may reuse only one proved original Style
-    // association. The other declared input does not acquire that association.
+    // A unique-root selector still names just its original Style association.
     const auto selectorElementSource = [&](llvm::StringRef method, bool prototype) {
         auto text =
             replaced(elementSource,
@@ -2286,13 +2282,84 @@ module {
                   "incomplete Style association proof publishes no evidence");
         }
     }
-    for (const auto & invalid : {
+    for (const auto & text : {
+             replaced(elementSource, "      %returnMethod = ctjs.get_property %loop#3[%hasName]",
+                      "      %matchesName = ctjs.constant #ctjs.string<\"matches\">\n"
+                      "      %returnMethod = ctjs.get_property %loop#3[%matchesName]"),
              mixedSelectorSource,
              selectorElementSource("matches", true),
-             // A mixed backedge is invalid even though the initial owner is fixed.
              replaced(sameSelectorSource,
                       "scf.yield %count, %owner, %normalOwner, %returnOwner, %tag",
                       "scf.yield %count, %other, %normalOwner, %returnOwner, %tag"),
+             selectorElementSource("closest", false),
+             selectorElementSource("querySelector", false),
+             selectorElementSource("querySelectorAll", false),
+             replaced(mixedSelectorSource, "%done = ctjs.call %has(%element, %yielded)",
+                      "%done = ctjs.constant #ctjs.boolean<true>"),
+         }) {
+        check(!text.empty(), "mixed selector preserves its complete source construction");
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(fixture), "mixed-root selector fixture parses");
+        if (!fixture) { continue; }
+        // Function order must not make the entry's Style closure belong to a callback.
+        fixture->lookupSymbol<ctjs::FuncOp>("identity$1")
+            ->moveBefore(fixture->lookupSymbol<ctjs::FuncOp>("custom$0"));
+        const auto originalFingerprint = hostContractFingerprint(*fixture);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.elementParameters = {0, 1};
+            request.initialIntrinsics.push_back("Element");
+            request.initialIntrinsics.push_back("Function");
+            request.moduleSha256 = hostContractFingerprint(*fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            std::vector<mlir::Value> inactiveFillers;
+            auto failure =
+                normalizeDOMCustomIteration(*input, request, completeBudget, &inactiveFillers);
+            if (!failure) {
+                failure = expandDOMHelpers(*input, request.entry, completeBudget, nullptr,
+                                           inactiveFillers);
+            }
+            check(!failure, "mixed-root selectors normalize without relocating their reads");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            const DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "mixed-root selectors prove complete Style dependencies");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            unsigned observed = 0;
+            input->walk([&](ctjs::CallOp call) {
+                const auto evidence = proof.call(call);
+                if (!evidence || (evidence->kind != HostDOMMethod::matches &&
+                                  evidence->kind != HostDOMMethod::closest &&
+                                  evidence->kind != HostDOMMethod::querySelector &&
+                                  evidence->kind != HostDOMMethod::querySelectorAll)) {
+                    return;
+                }
+                ++observed;
+                check(!evidence->styleParameter && evidence->styleParameters.size() == 2 &&
+                          llvm::is_contained(evidence->styleParameters, proof.parameters()[0]) &&
+                          llvm::is_contained(evidence->styleParameters, proof.parameters()[1]),
+                      "mixed selectors retain both distinct original Style parameters");
+            });
+            check(observed && !proof.styleValues().empty(),
+                  "mixed selectors publish the complete carried Style closure");
+            for (unsigned budget : {0U, proof.steps() / 2, proof.steps() - 1}) {
+                const DOMEntryAnalysis incomplete(*input, request, budget);
+                check(noEvidence(*input, incomplete) && incomplete.styleValues().empty(),
+                      "incomplete mixed Style proof publishes neither calls nor carried styles");
+            }
+            check(hostContractFingerprint(*fixture) == originalFingerprint,
+                  "mixed Style proof leaves the caller's fixture intact");
+        }
+    }
+    for (const auto & invalid : {
              replaced(sameSelectorSource, "scf.yield %element : !ctjs.value",
                       "scf.yield %zero : !ctjs.value"),
              replaced(sameSelectorSource, "        %stopping =",
@@ -2302,6 +2369,20 @@ module {
                       "        %remove = ctjs.get_property %chosen[%removeName]\n"
                       "        %removed = ctjs.call %remove(%chosen)\n        %stopping ="),
              replaced(sameSelectorSource, "        %stopping =",
+                      "        %external = ctjs.load_global \"external\"\n"
+                      "        %reentered = ctjs.call %external(%undefined, %chosen)\n"
+                      "        %stopping ="),
+             replaced(mixedSelectorSource, "scf.yield %other : !ctjs.value",
+                      "scf.yield %undefined : !ctjs.value"),
+             replaced(mixedSelectorSource, "      %returnMethod =",
+                      "      %observed = ctjs.truthy %loop#2\n      %returnMethod ="),
+             replaced(mixedSelectorSource, "        %stopping =",
+                      "        ctjs.set_property %element[%visited], %chosen\n        %stopping ="),
+             replaced(mixedSelectorSource, "        %stopping =",
+                      "        %removeName = ctjs.constant #ctjs.string<\"remove\">\n"
+                      "        %remove = ctjs.get_property %chosen[%removeName]\n"
+                      "        %removed = ctjs.call %remove(%chosen)\n        %stopping ="),
+             replaced(mixedSelectorSource, "        %stopping =",
                       "        %external = ctjs.load_global \"external\"\n"
                       "        %reentered = ctjs.call %external(%undefined, %chosen)\n"
                       "        %stopping ="),
@@ -2328,8 +2409,9 @@ module {
             }
             if (failure) { llvm::consumeError(std::move(failure)); }
             request.moduleSha256 = hostContractFingerprint(*input);
-            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
-                  "mixed Style roots, invalidated lifetimes and reentry publish no evidence");
+            const DOMEntryAnalysis proof(*input, request);
+            check(noEvidence(*input, proof) && proof.styleValues().empty(),
+                  "mixed kinds, invalidated lifetimes and reentry publish no Style evidence");
         }
     }
     for (auto fixture : {*original,

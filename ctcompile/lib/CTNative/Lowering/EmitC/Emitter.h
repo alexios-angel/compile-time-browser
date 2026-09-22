@@ -75,6 +75,9 @@ struct lowering {
     llvm::DenseSet<mlir::Value> domParameters;
     llvm::SmallVector<mlir::BlockArgument> domStyleParameters;
     llvm::DenseMap<mlir::Value, mlir::Value> domStyles;
+    llvm::SmallVector<mlir::Value> domStyleValues;
+    llvm::DenseMap<mlir::Value, mlir::Value> domStylePointers;
+    void prepareDOMStyles(ec::FuncOp function);
     bool needsDOM = false;
     // A proved library entry keeps its typed return even without browser inputs.
     bool hasHostEntry = false;

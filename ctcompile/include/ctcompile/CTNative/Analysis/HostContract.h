@@ -193,6 +193,8 @@ struct HostDOMCall {
     bool explicitReceiver = false;
     // Unique original document/Style input, after complete transport proof.
     mlir::BlockArgument styleParameter{};
+    // Mixed inputs retain their selected association through the same SSA edges.
+    llvm::SmallVector<mlir::BlockArgument> styleParameters{};
     [[nodiscard]] bool returnsElement() const {
         return kind == HostDOMMethod::closest || kind == HostDOMMethod::querySelector ||
                kind == HostDOMMethod::documentQuerySelector;
@@ -273,6 +275,7 @@ public:
     [[nodiscard]] bool isCurrentDocument(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isDocumentElement(ctjs::GetPropertyOp read) const;
     [[nodiscard]] mlir::BlockArgument documentParameter() const { return documentAnchor; }
+    [[nodiscard]] llvm::ArrayRef<mlir::Value> styleValues() const { return carriedStyles; }
     [[nodiscard]] bool isStringVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isElementVectorLength(ctjs::GetPropertyOp read) const;
@@ -327,6 +330,7 @@ private:
     llvm::DenseSet<ctjs::GetPropertyOp> elementVectorLengths, elementVectorIndices;
     llvm::DenseSet<ctjs::GetPropertyOp> elementPrototypes;
     mlir::BlockArgument documentAnchor;
+    std::vector<mlir::Value> carriedStyles;
     llvm::DenseSet<ctjs::LoadGlobalOp> documentLoads;
     llvm::DenseSet<ctjs::GetPropertyOp> documentRoots;
     llvm::DenseSet<ctjs::LoadGlobalOp> elementIntrinsics, symbolIntrinsics;

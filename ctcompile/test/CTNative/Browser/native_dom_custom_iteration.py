@@ -95,6 +95,28 @@ SELECTOR_SOURCES = {
         "Element.prototype.matches.call(node, 'button'));",
     ),
 }
+MIXED_SELECTOR_SOURCE = (
+    SELECTOR_SOURCES["body-return-branch-element-selector"]
+    .replace("function customElements(anchor)", "function customElements(anchor, other)")
+    .replace(
+        "  for (const node of values) {",
+        "  for (const node of values) {\n"
+        "    const selected = anchor.hasAttribute('advance') ? node : other;",
+    )
+    .replace(
+        "return (node.setAttribute('data-visited', 'yes'), node.matches('button'));",
+        "return (selected.setAttribute('data-visited', 'yes'), selected.matches('button'));",
+    )
+)
+MIXED_SELECTOR_SOURCES = {
+    "body-return-branch-element-selector-mixed-roots": MIXED_SELECTOR_SOURCE,
+    "body-return-branch-selector-mixed-before-close": MIXED_SELECTOR_SOURCE.replace(
+        "selected.matches('button')", "selected.matches('[data-closed]')"
+    ),
+    "body-return-branch-selector-mixed-prototype": MIXED_SELECTOR_SOURCE.replace(
+        "selected.matches('button')", "Element.prototype.matches.call(selected, 'button')"
+    ),
+}
 BODY_RETURN_BRANCH_NUMBER_SOURCE = (
     BODY_RETURN_BRANCH_SOURCE.replace(
         "  const values = {", "  let count = 0;\n  const values = {", 1
@@ -1457,6 +1479,77 @@ var {name} = (function() {{
     return 2 * len(observations)
 
 
+def mixed_oracles(args):
+    script = "var Element = {prototype: {matches(s) { return this.matches(s); }}};\n"
+    observations = []
+    for index, (label, text) in enumerate(MIXED_SELECTOR_SOURCES.items()):
+        function = f"mixedElementsCase{index}"
+        script += text.replace("function customElements(", f"function {function}(")
+        for mode in range(4):
+            name = f"mixedObservation{len(observations)}"
+            setup = (
+                "anchor.saved.advance = '';",
+                "anchor.saved.advance = ''; anchor.saved.stop = '';",
+                "anchor.saved['data-yielded'] = 'yes';",
+                "anchor.saved.stop = '';",
+            )[mode]
+            script += f"""
+var {name} = (function() {{
+  let trace = '';
+  const make = function(label, button) {{ return {{
+    saved: {{}},
+    hasAttribute(name) {{ return name in this.saved; }},
+    setAttribute(name, value) {{
+      this.saved[name] = '' + value;
+      trace += label + '.' + name + '=' + this.saved[name] + ';';
+    }},
+    matches(selector) {{
+      trace += label + '.matches=' + selector + ';';
+      if (selector === 'button') return button;
+      if (selector === '[data-closed]') return 'data-closed' in this.saved;
+      throw 'unexpected selector';
+    }}
+  }}; }};
+  const anchor = make('a', true), other = make('b', false);
+  {setup}
+  const result = {function}(anchor, other);
+  return result + ':' + trace;
+}})();
+"""
+            before_close = "before-close" in label
+            selector = "[data-closed]" if before_close else "button"
+            expected = "false:a.data-next=true;a.data-yielded=yes;"
+            if mode != 2:
+                expected = "a.data-next=false;a.data-yielded=yes;"
+                if mode == 0:
+                    expected = (
+                        "true:"
+                        + expected
+                        + "a.data-visited=yes;a.data-next=true;a.data-yielded=yes;"
+                    )
+                else:
+                    selected = "a" if mode == 1 else "b"
+                    result = "true" if mode == 1 and not before_close else "false"
+                    closed = "true" if mode == 1 else "false"
+                    expected = (
+                        result + ":" + expected + f"{selected}.data-visited=yes;"
+                        f"{selected}.matches={selector};a.data-closed={closed};"
+                    )
+            observations.append((name, expected))
+    node = args.work / "custom-mixed-node.js"
+    node.write_text(script + "".join(f"console.log({name});\n" for name, _ in observations))
+    actual = dom.run([args.node, str(node)]).stdout.splitlines()
+    if actual != [value for _, value in observations]:
+        raise RuntimeError(f"Node mixed selector effects differ: {actual!r}")
+    vm = args.work / "custom-mixed-vm.js"
+    vm.write_text(script)
+    actual = dom.run([args.reference, str(vm)]).stdout
+    expected = "".join(f'{name}="{quote(value)}"\n' for name, value in sorted(observations))
+    if actual != expected:
+        raise RuntimeError(f"VM mixed selector effects differ: {actual!r}")
+    return 2 * len(observations)
+
+
 CHECKS = r"""
         (void)pressed;
         const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
@@ -1555,6 +1648,153 @@ OWNED_CHECKS = r"""
         catch (const std::invalid_argument &) { foreign_rejected = true; }
         assert(foreign_rejected && owned.take_writes().empty());
 """
+
+
+MIXED_CHECKS = r"""
+        (void)pressed;
+        style::engine selectors{atoms}, foreign_selectors{foreign_atoms};
+        const auto exercise = [&](element_ref first, element_ref second, auto && call) {
+            auto & target = *first.owner;
+            auto & peer = *second.owner;
+            target.log_writes(true);
+            peer.log_writes(true);
+            const auto key = [&](std::string_view name) { return target.atoms().intern(name); };
+            const auto check_writes = [](ctbrowser::document & owner,
+                std::initializer_list<std::pair<node_id, std::string_view>> expected) {
+                const auto writes = owner.take_writes();
+                assert(writes.size() == expected.size());
+                std::size_t at = 0;
+                for (const auto & [id, name] : expected) {
+                    assert(writes[at].node == id && writes[at].name == owner.atoms().intern(name)
+                           && !writes[at].text);
+                    ++at;
+                }
+            };
+            for (unsigned mode : {0u, 1u, 2u, 3u}) {
+                for (const auto input : {first, second}) {
+                    for (const auto name : {"advance", "stop", "data-next", "data-yielded",
+                                           "data-visited", "data-closed"}) {
+                        assert(input.owner->remove_attribute(input.id, input.owner->atoms().intern(name)));
+                    }
+                }
+                if (mode < 2) { assert(target.set_attribute(first.id, key("advance"), "")); }
+                if (mode == 1 || mode == 3) { assert(target.set_attribute(first.id, key("stop"), "")); }
+                if (mode == 2) { assert(target.set_attribute(first.id, key("data-yielded"), "yes")); }
+                (void)target.take_writes();
+                (void)peer.take_writes();
+                const bool stopped = mode == 1 || mode == 3;
+                const auto selected = mode == 3 ? second : first;
+                const bool expected = mode == 0 ||
+                    (stopped && @MATCH_RESULT@);
+                assert(static_cast<bool>(call()) == expected);
+                assert(target.read().attribute_value(first.id, key("data-next")) ==
+                       (mode == 0 || mode == 2 ? "true" : "false"));
+                assert(target.read().has_attribute(first.id, key("data-closed")) == stopped);
+                if (stopped) {
+                    assert(target.read().attribute_value(first.id, key("data-closed")) ==
+                           (mode == 1 ? "true" : "false"));
+                }
+                if (mode == 0) {
+                    check_writes(target, {{first.id, "data-next"}, {first.id, "data-yielded"},
+                        {first.id, "data-visited"}, {first.id, "data-next"}, {first.id, "data-yielded"}});
+                } else if (mode == 2) {
+                    check_writes(target, {{first.id, "data-next"}, {first.id, "data-yielded"}});
+                } else if (selected.owner == first.owner) {
+                    check_writes(target, {{first.id, "data-next"}, {first.id, "data-yielded"},
+                        {selected.id, "data-visited"}, {first.id, "data-closed"}});
+                } else {
+                    check_writes(target, {{first.id, "data-next"}, {first.id, "data-yielded"},
+                        {first.id, "data-closed"}});
+                }
+                if (&peer != &target) {
+                    if (mode == 3) { check_writes(peer, {{second.id, "data-visited"}}); }
+                    else { check_writes(peer, {}); }
+                }
+            }
+        };
+        exercise(alias, foreign, [&] { return @ENTRY@(alias, foreign, selectors, foreign_selectors); });
+        exercise(foreign, alias, [&] { return @ENTRY@(foreign, alias, foreign_selectors, selectors); });
+        const element_ref descendant{&doc, child};
+        exercise(alias, descendant, [&] { return @ENTRY@(alias, descendant, selectors, selectors); });
+        assert(doc.remove_child(button));
+        (void)doc.take_writes();
+        exercise(alias, foreign, [&] { return @ENTRY@(alias, foreign, selectors, foreign_selectors); });
+        const auto text = doc.create_text("invalid input");
+        for (const element_ref invalid : {element_ref{}, element_ref{&doc, {}},
+                 element_ref{&doc, text}, element_ref{&doc, {button.slot, button.generation + 2}}}) {
+            for (const bool first : {true, false}) {
+                bool rejected = false;
+                try { (void)@ENTRY@(first ? invalid : alias, first ? foreign : invalid,
+                                   selectors, foreign_selectors); }
+                catch (const std::exception &) { rejected = true; }
+                assert(rejected && doc.take_writes().empty() && foreign_doc.take_writes().empty());
+            }
+        }
+        for (const bool first : {true, false}) {
+            bool rejected = false;
+            try { (void)@ENTRY@(alias, foreign, first ? foreign_selectors : selectors,
+                               first ? foreign_selectors : selectors); }
+            catch (const std::invalid_argument &) { rejected = true; }
+            assert(rejected && doc.take_writes().empty() && foreign_doc.take_writes().empty());
+        }
+"""
+
+MIXED_OWNED_CHECKS = r"""
+        @ENTRY@_session session;
+        auto & owned = session.document();
+        const element_ref first{&owned, owned.create_element(owned.atoms().intern("button"))};
+        const element_ref second{&owned, owned.create_element(owned.atoms().intern("span"))};
+        exercise(first, second, [&] { return session.invoke(first, second); });
+        for (const bool left : {true, false}) {
+            bool rejected = false;
+            try { (void)session.invoke(left ? foreign : first, left ? second : foreign); }
+            catch (const std::invalid_argument &) { rejected = true; }
+            assert(rejected && owned.take_writes().empty() && foreign_doc.take_writes().empty());
+        }
+"""
+
+
+def mixed_selectors(args, compilers):
+    includes, libraries = dom.link_options(args, selectors=True)
+    executions = refused = 0
+    for label, text in MIXED_SELECTOR_SOURCES.items():
+        ir, contract = dom.prepare(args, f"custom-{label}", text, 2, entry_name="customElements")
+        contract.update(initial_intrinsics=INTRINSICS)
+        for owned in (False, True):
+            manifest = dict(
+                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+            )
+            for optimize in (False, True):
+                name = f"custom-iteration-{label}-{owned}-{optimize}"
+                native = dom.lower(args, ir, manifest, name, optimize=optimize)
+                cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+                if any(helper in cpp for helper in SNAPSHOT_INTRINSICS[4:]):
+                    raise RuntimeError(f"{name}: mixed selectors retained the VM protocol")
+                checks = (MIXED_CHECKS + (MIXED_OWNED_CHECKS if owned else "")).replace(
+                    "@MATCH_RESULT@",
+                    (
+                        "false"
+                        if "before-close" in label
+                        else 'selected.owner->read().local_name(selected.id) == "button"'
+                    ),
+                )
+                dom.standalone(args, native, name, checks, compilers, includes, libraries)
+                executions += 2 * len(compilers)
+                for suffix, bad, budget in (
+                    ("budget", manifest, 0),
+                    ("missing-second", dict(manifest, element_parameters=[0]), None),
+                ):
+                    dom.lower(
+                        args,
+                        ir,
+                        bad,
+                        name + "-" + suffix,
+                        optimize=optimize,
+                        max_steps=budget,
+                        success=False,
+                    )
+                    refused += 1
+    return executions, refused
 
 
 def refusals():
@@ -2029,11 +2269,12 @@ def main():
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
-    observations = oracles(args)
+    observations = oracles(args) + mixed_oracles(args)
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
-    executions = refused = admitted = 0
+    executions, refused = mixed_selectors(args, compilers)
+    admitted = 0
     for label, text, breaking, results, resetting, closed in POSITIVES:
         selecting = label in SELECTOR_SOURCES
         selected_includes, selected_libraries = (

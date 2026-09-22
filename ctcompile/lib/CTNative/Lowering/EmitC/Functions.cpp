@@ -104,6 +104,7 @@ void lowering::lower(ctjs::FuncOp fn) {
             domStyles[parameter] = body.addArgument(styleType, made.getLoc());
         }
     }
+    prepareDOMStyles(made);
 
     // THE ONE LOCAL A RECEIVER COSTS, built by memberAccess() at the first
     // field it reads: `emitc.member_of_ptr` wants an lvalue HOLDING the
