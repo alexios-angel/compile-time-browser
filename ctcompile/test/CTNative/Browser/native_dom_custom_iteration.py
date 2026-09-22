@@ -127,6 +127,48 @@ LOOP_ORDERED_CAPTURE_SOURCE = (
     .replace("this.emitted", "emitted")
     .replace("this.closed", "closed")
 )
+LOOP_BREAK_CAPTURE_SOURCE = CAPTURE_SOURCE.replace(
+    "emitted++;",
+    """while (emitted < 2) {
+        emitted++;
+        if (anchor.hasAttribute('stop')) break;
+      }""",
+)
+LOOP_BREAK_RECEIVER_SOURCE = (
+    RECEIVER_SOURCE.replace("emitted: 0,", "emitted: 0,\n    closed: 1,")
+    .replace(
+        "const done = this.emitted > 0;\n      this.emitted++;",
+        """let rounds = 0;
+      while (this.emitted < 2) {
+        this.emitted++;
+        this.closed += this.emitted;
+        rounds++;
+        if (anchor.hasAttribute('stop')) break;
+        this.closed += 3;
+      }
+      this.closed += rounds;
+      const done = rounds === 0;""",
+    )
+    .replace(
+        "anchor.setAttribute('data-closed', 'yes');",
+        """while (this.closed < 11) {
+        this.closed += this.emitted;
+        this.emitted++;
+        if (anchor.hasAttribute('stop')) break;
+        this.closed += 5;
+      }
+      this.closed += this.emitted;
+      anchor.setAttribute('data-closed', this.closed === 6);""",
+    )
+)
+LOOP_BREAK_ORDERED_CAPTURE_SOURCE = (
+    LOOP_BREAK_RECEIVER_SOURCE.replace(
+        "  const values = {\n    emitted: 0,\n    closed: 1,",
+        "  let emitted = 0;\n  let closed = 1;\n  const values = {",
+    )
+    .replace("this.emitted", "emitted")
+    .replace("this.closed", "closed")
+)
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -263,6 +305,25 @@ POSITIVES = (
     (
         "loop-captured-ordered-close",
         LOOP_ORDERED_CAPTURE_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
+    ),
+    ("loop-captured-break", LOOP_BREAK_CAPTURE_SOURCE, True, ("1", "1", "1"), True, "yes"),
+    (
+        # Break carries both preceding updates and the ordinary rounds result.
+        # Exhaustion takes zero trips; close sees the latest state and skips its suffix.
+        "loop-receiver-break-ordered-close",
+        LOOP_BREAK_RECEIVER_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
+    ),
+    (
+        "loop-captured-break-ordered-close",
+        LOOP_BREAK_ORDERED_CAPTURE_SOURCE,
         True,
         ("1", "1", "1"),
         True,
@@ -570,12 +631,29 @@ def refusals():
             "loop-external-captured-read": LOOP_ORDERED_CAPTURE_SOURCE.replace(
                 "return count;", "return count + emitted;"
             ),
-            "loop-captured-break": CAPTURE_SOURCE.replace(
-                "emitted++;",
-                """while (emitted < 2) {
-        emitted++;
-        if (anchor.hasAttribute('stop')) break;
-      }""",
+            "loop-break-nonnumber-captured-store": LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace(
+                "closed += emitted;", "closed = anchor;", 1
+            ),
+            "loop-break-nonnumber-state-store": LOOP_BREAK_RECEIVER_SOURCE.replace(
+                "this.closed += this.emitted;", "this.closed = anchor;", 1
+            ),
+            "loop-break-unknown-effect": LOOP_BREAK_CAPTURE_SOURCE.replace(
+                "if (anchor.hasAttribute('stop')) break;",
+                "if (anchor.hasAttribute('stop')) { external(anchor); break; }",
+                1,
+            ),
+            "loop-break-receiver-escape": LOOP_BREAK_RECEIVER_SOURCE.replace(
+                "if (anchor.hasAttribute('stop')) break;",
+                "if (anchor.hasAttribute('stop')) { anchor.saved = this; break; }",
+                1,
+            ),
+            "loop-break-nested-capture": LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace(
+                "if (anchor.hasAttribute('stop')) break;",
+                "if (anchor.hasAttribute('stop')) { const read = () => emitted; read(); break; }",
+                1,
+            ),
+            "loop-break-external-captured-read": LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace(
+                "return count;", "return count + emitted;"
             ),
         }
     )

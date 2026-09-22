@@ -533,6 +533,82 @@ module {
     if (!zeroCaptured || !zeroReceiver || !loopCaptured || !loopReceiver || !zeroTwoState) {
         return;
     }
+    // A method-local break has an empty exit dispatch, but its live trip count
+    // and sequential state writes must survive removal of the inactive tag.
+    const std::string methodBreakStores = R"MLIR(    %methodPoison = ub.poison : i32
+    %methodNormal = arith.constant 7 : i32
+    %methodBreak = arith.constant 11 : i32
+    %methodLimit = ctjs.constant #ctjs.number<4611686018427387904>
+    %methodSetName = ctjs.constant #ctjs.string<"setAttribute">
+    %methodSet = ctjs.get_property %element[%methodSetName]
+    %methodBreakName = ctjs.constant #ctjs.string<"method-break">
+    %methodContinueName = ctjs.constant #ctjs.string<"method-continue">
+    %methodExitName = ctjs.constant #ctjs.string<"method-exit">
+    %methodYes = ctjs.constant #ctjs.boolean<true>
+    %methodLoop:2 = scf.while (%trip = %zero, %tag = %methodPoison) : (!ctjs.value, i32) -> (!ctjs.value, i32) {
+      %within = ctjs.compare lt %trip, %methodLimit
+      %active = ctjs.truthy %within
+      %selected:3 = scf.if %active -> (i1, !ctjs.value, i32) {
+        %beforeEmitted = ctjs.load_upvalue %callee[1]
+        %beforeAdvanced = ctjs.binary_static add %beforeEmitted, %one
+        ctjs.store_upvalue %callee[1], %beforeAdvanced
+        %readBefore = ctjs.load_upvalue %callee[1]
+        %beforeExtra = ctjs.load_upvalue %callee[2]
+        %beforeExtraAdvanced = ctjs.binary_static add %beforeExtra, %readBefore
+        ctjs.store_upvalue %callee[2], %beforeExtraAdvanced
+        %stopping = ctjs.call %has(%element, %yielded)
+        %breaking = ctjs.truthy %stopping
+        %nextTrip = ctjs.binary_static add %trip, %one
+        %branch:3 = scf.if %breaking -> (i1, !ctjs.value, i32) {
+          %effectBreak = ctjs.call %methodSet(%element, %methodBreakName, %methodYes)
+          %stop = arith.constant false
+          scf.yield %stop, %nextTrip, %methodBreak : i1, !ctjs.value, i32
+        } else {
+          %effectContinue = ctjs.call %methodSet(%element, %methodContinueName, %methodYes)
+          %again = arith.constant true
+          scf.yield %again, %nextTrip, %methodNormal : i1, !ctjs.value, i32
+        }
+        scf.yield %branch#0, %branch#1, %branch#2 : i1, !ctjs.value, i32
+      } else {
+        %stop = arith.constant false
+        scf.yield %stop, %trip, %methodNormal : i1, !ctjs.value, i32
+      }
+      scf.condition(%selected#0) %selected#1, %selected#2 : !ctjs.value, i32
+    } do {
+    ^bb0(%carried: !ctjs.value, %inactiveTag: i32):
+      scf.yield %carried, %inactiveTag : !ctjs.value, i32
+    }
+    %methodSelector = arith.index_castui %methodLoop#1 : i32 to index
+    scf.index_switch %methodSelector
+    case 7 {
+      scf.yield
+    }
+    default {
+      scf.yield
+    }
+    %exitEmitted = ctjs.load_upvalue %callee[1]
+    %exitExtra = ctjs.load_upvalue %callee[2]
+    %exitUpdated = ctjs.binary_static add %exitEmitted, %methodLoop#0
+    ctjs.store_upvalue %callee[1], %exitUpdated
+    %exitSeen = ctjs.compare strict_eq %methodLoop#0, %exitExtra
+    %effectExit = ctjs.call %methodSet(%element, %methodExitName, %exitSeen))MLIR";
+    const auto methodBreakCapturedSource =
+        replaced(twoCapturedSource,
+                 "    ctjs.store_upvalue %callee[1], %advanced\n"
+                 "    ctjs.store_upvalue %callee[2], %extraAdvanced",
+                 methodBreakStores);
+    const auto methodBreakReceiverSource =
+        replaced(twoStateSource,
+                 "    ctjs.set_property %this[%emittedName], %advanced\n"
+                 "    ctjs.set_property %this[%extraName], %extraAdvanced",
+                 receiverAccess(methodBreakStores));
+    auto methodBreakCaptured =
+        mlir::parseSourceString<mlir::ModuleOp>(methodBreakCapturedSource, &context);
+    auto methodBreakReceiver =
+        mlir::parseSourceString<mlir::ModuleOp>(methodBreakReceiverSource, &context);
+    check(methodBreakCaptured && methodBreakReceiver,
+          "paired two-state method break witnesses with empty exit dispatch parse");
+    if (!methodBreakCaptured || !methodBreakReceiver) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -569,7 +645,9 @@ module {
                          *zeroReceiver,
                          *loopCaptured,
                          *loopReceiver,
-                         *zeroTwoState}) {
+                         *zeroTwoState,
+                         *methodBreakCaptured,
+                         *methodBreakReceiver}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -747,6 +825,82 @@ module {
                                                                         "loop-after", "loop-exit"},
                       "loop state projection keeps each effect in its source region and order");
             }
+            if (fixture == *methodBreakCaptured || fixture == *methodBreakReceiver) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
+                mlir::scf::WhileOp loop;
+                mlir::scf::IfOp outer, branch;
+                mlir::Value finalCount, finalExtra;
+                ctjs::CompareOp exitSeen;
+                llvm::SmallVector<llvm::StringRef> effects;
+                bool effectsLocal = true, completion = false;
+                body.walk([&](mlir::scf::WhileOp found) { loop = found; });
+                body.walk([&](mlir::scf::IfOp found) {
+                    (found->getParentOp() == loop ? outer : branch) = found;
+                });
+                body.walk([&](mlir::Operation * operation) {
+                    completion |= llvm::isa<mlir::ub::PoisonOp, mlir::scf::IndexSwitchOp,
+                                            mlir::arith::IndexCastUIOp>(operation);
+                    if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
+                        completion |= !constant.getType().isInteger(1);
+                    }
+                });
+                body.walk([&](ctjs::SetPropertyOp set) {
+                    const auto key = ctjs::constantKey(set.getKey());
+                    if (key == "__ctcompile_state_0") { finalCount = set.getValue(); }
+                    if (key == "__ctcompile_state_1") { finalExtra = set.getValue(); }
+                });
+                body.walk([&](ctjs::CallOp call) {
+                    if (call.getArgs().size() != 2) { return; }
+                    const auto key = ctjs::constantKey(call.getArgs()[0]);
+                    if (!key.starts_with("method-")) { return; }
+                    effects.push_back(key);
+                    auto * region = call->getParentRegion();
+                    effectsLocal &=
+                        branch && (key == "method-break"      ? region == &branch.getThenRegion()
+                                   : key == "method-continue" ? region == &branch.getElseRegion()
+                                                              : region == &body.getBody());
+                    if (key == "method-exit") {
+                        exitSeen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    }
+                });
+                const bool shape = loop && outer && branch && loop.getNumOperands() == 3 &&
+                                   loop.getNumResults() == 3 &&
+                                   loop.getBeforeArguments().size() == 3 &&
+                                   loop.getAfterArguments().size() == 3 &&
+                                   outer.getNumResults() == 4 && branch.getNumResults() == 4;
+                check(shape && !completion,
+                      "empty method exit dispatch drops only the dead completion tag");
+                if (shape) {
+                    const auto before = loop.getBeforeArguments();
+                    const auto after = loop.getAfterArguments();
+                    const auto then = branch.getThenRegion().front().back().getOperands();
+                    const auto otherwise = branch.getElseRegion().front().back().getOperands();
+                    const auto exhausted = outer.getElseRegion().front().back().getOperands();
+                    const auto yielded = loop.getAfter().front().back().getOperands();
+                    auto trip = then[1].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto count = then[2].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto extra = then[3].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto exitCount = finalCount ? finalCount.getDefiningOp<ctjs::BinaryStaticOp>()
+                                                : ctjs::BinaryStaticOp{};
+                    check(trip && trip.getLhs() == before[0] && count &&
+                              count.getLhs() == before[1] && extra && extra.getLhs() == before[2] &&
+                              extra.getRhs() == then[2] &&
+                              llvm::equal(then.drop_front(), otherwise.drop_front()) &&
+                              exhausted[1] == before[0] && exhausted[2] == before[1] &&
+                              exhausted[3] == before[2] && llvm::equal(yielded, after),
+                          "break and continue retain ordered writes and exhaustion keeps state");
+                    check(exitCount && exitCount.getLhs() == loop.getResult(1) &&
+                              exitCount.getRhs() == loop.getResult(0) &&
+                              finalExtra == loop.getResult(2) && exitSeen &&
+                              exitSeen.getLhs() == loop.getResult(0) &&
+                              exitSeen.getRhs() == loop.getResult(2),
+                          "post-break observations use the latest counter and both state slots");
+                }
+                check(effectsLocal && effects ==
+                                          llvm::SmallVector<llvm::StringRef>{
+                                              "method-break", "method-continue", "method-exit"},
+                      "method break and continue keep distinct effects before the exit effect");
+            }
             if (auto failure = expandDOMHelpers(*input, contract.entry, completeBudget)) {
                 check(false, "custom iterator methods expand without boxed protocol records");
                 std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
@@ -763,11 +917,13 @@ module {
                 fixture == *conditionalReceiver || fixture == *branchCaptured ||
                 fixture == *branchReceiver || fixture == *zeroCaptured ||
                 fixture == *zeroReceiver || fixture == *loopCaptured || fixture == *loopReceiver ||
-                fixture == *zeroTwoState) {
+                fixture == *zeroTwoState || fixture == *methodBreakCaptured ||
+                fixture == *methodBreakReceiver) {
                 const bool two = fixture == *twoState || fixture == *twoCaptured ||
                                  fixture == *reorderedCapture || fixture == *branchCaptured ||
                                  fixture == *branchReceiver || fixture == *loopCaptured ||
-                                 fixture == *loopReceiver || fixture == *zeroTwoState;
+                                 fixture == *loopReceiver || fixture == *zeroTwoState ||
+                                 fixture == *methodBreakCaptured || fixture == *methodBreakReceiver;
                 bool objects = false, stateProperties = false, cells = false;
                 mlir::Value closedCount, closedExtra;
                 llvm::SmallVector<llvm::StringRef> closeOrder;
@@ -991,34 +1147,105 @@ module {
                   "unsupported branch-state proof preserves source and publishes no evidence");
         }
     }
-    for (unsigned malformed = 0; malformed != 5; ++malformed) {
+    // This malformed callable passes method arity/capture checks. Normalizing
+    // its entry dispatch would invalidate the cached protocol operations.
+    const auto aliasedEntrySource =
+        replaced(replaced(replaced(countedSource, ", %element: !ctjs.value)", ")"),
+                          "    %frame = ctjs.frame_enter 16",
+                          "    %element = ctjs.constant #ctjs.undefined\n"
+                          "    %frame = ctjs.frame_enter 16"),
+                 "%step = ctjs.create_closure %callee[2] this %undefined captures %capture",
+                 "%step = ctjs.create_closure %callee[0] this %undefined");
+    auto aliasedEntry = mlir::parseSourceString<mlir::ModuleOp>(aliasedEntrySource, &context);
+    check(static_cast<bool>(aliasedEntry), "iterator method aliasing its dispatching entry parses");
+    if (aliasedEntry) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-            mlir::OwningOpRef<mlir::ModuleOp> input(loopCaptured->clone());
-            auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
-            mlir::scf::WhileOp loop;
-            body.walk([&](mlir::scf::WhileOp found) { loop = found; });
-            auto condition = llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
-            if (malformed == 0) {
-                condition->eraseOperands(1, 1);
-            } else if (malformed == 1) {
-                loop.getAfter().front().back().eraseOperands(0, 1);
-            } else if (malformed == 2) {
-                condition->setOperand(0, loop.getBeforeArguments()[0]);
-            } else if (malformed == 3) {
-                loop.getBeforeArguments()[0].setType(mlir::IntegerType::get(&context, 1));
-            } else {
-                loop.getAfterArguments()[0].setType(mlir::IntegerType::get(&context, 1));
-            }
+            mlir::OwningOpRef<mlir::ModuleOp> input(aliasedEntry->clone());
             auto request = contract;
             request.provider = provider;
             request.moduleSha256 = hostContractFingerprint(*input);
-            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
-            check(static_cast<bool>(failure), "malformed method loop correspondence refuses");
-            if (failure) { llvm::consumeError(std::move(failure)); }
+            const auto reason =
+                llvm::toString(normalizeDOMCustomIteration(*input, request, completeBudget));
+            check(reason.find("alias the entry") != std::string::npos,
+                  "entry alias refuses before method completion replaces cached protocol ops");
             check(hostContractFingerprint(*input) == request.moduleSha256 &&
                       noEvidence(*input, DOMEntryAnalysis(*input, request)),
-                  "malformed method loops preserve source and publish no evidence");
+                  "entry alias refusal preserves source and publishes no evidence");
+        }
+    }
+    for (const auto & source : {methodBreakCapturedSource, methodBreakReceiverSource}) {
+        const auto poisoned =
+            replaced(source, "    %methodPoison =",
+                     "    %methodValuePoison = ub.poison : !ctjs.value\n    %methodPoison =");
+        for (const auto & invalid : {
+                 replaced(source, "    scf.index_switch %methodSelector\n    case 7 {",
+                          "    scf.index_switch %methodSelector\n    case 7 {\n"
+                          "      %effectDispatch = ctjs.call "
+                          "%methodSet(%element, %methodExitName, %methodYes)"),
+                 replaced(source, "    %exitEmitted =",
+                          "    %observedTag = arith.index_castui %methodLoop#1 : i32 to index\n"
+                          "    %exitEmitted ="),
+                 replaced(source, "%methodNormal = arith.constant 7 : i32",
+                          "%unknownTag = ctjs.truthy %element\n"
+                          "    %methodNormal = arith.extui %unknownTag : i1 to i32"),
+                 replaced(source, "      scf.yield %carried, %inactiveTag",
+                          "      %observedTag = arith.index_castui %inactiveTag : i32 to index\n"
+                          "      scf.yield %carried, %inactiveTag"),
+                 replaced(poisoned, "%trip = %zero", "%trip = %methodValuePoison"),
+                 replaced(poisoned, "scf.yield %stop, %nextTrip, %methodBreak",
+                          "scf.yield %stop, %methodValuePoison, %methodBreak"),
+             }) {
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "invalid method break completion parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "method dispatch effects, unknown or observed tags and live poison refuse");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "incomplete method completion preserves source and publishes no evidence");
+            }
+        }
+    }
+    for (auto fixture : {*loopCaptured, *methodBreakCaptured, *methodBreakReceiver}) {
+        for (unsigned malformed = 0; malformed != 5; ++malformed) {
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+                auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
+                mlir::scf::WhileOp loop;
+                body.walk([&](mlir::scf::WhileOp found) { loop = found; });
+                auto condition =
+                    llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
+                if (malformed == 0) {
+                    condition->eraseOperands(1, 1);
+                } else if (malformed == 1) {
+                    loop.getAfter().front().back().eraseOperands(0, 1);
+                } else if (malformed == 2) {
+                    condition->setOperand(0, loop.getBeforeArguments()[0]);
+                } else if (malformed == 3) {
+                    loop.getBeforeArguments()[0].setType(mlir::IntegerType::get(&context, 1));
+                } else {
+                    loop.getAfterArguments()[0].setType(mlir::IntegerType::get(&context, 1));
+                }
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure), "malformed method loop correspondence refuses");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "malformed method loops preserve source and publish no evidence");
+            }
         }
     }
     for (const auto & invalid : {
@@ -1181,10 +1408,26 @@ module {
     }
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
-    for (auto fixture : {*original, *counted, *crossed, *receiver, *twoState, *captured,
-                         *twoCaptured, *initializedCapture, *reorderedCapture, *conditionalCaptured,
-                         *conditionalReceiver, *branchCaptured, *branchReceiver, *zeroCaptured,
-                         *zeroReceiver, *loopCaptured, *loopReceiver, *zeroTwoState}) {
+    for (auto fixture : {*original,
+                         *counted,
+                         *crossed,
+                         *receiver,
+                         *twoState,
+                         *captured,
+                         *twoCaptured,
+                         *initializedCapture,
+                         *reorderedCapture,
+                         *conditionalCaptured,
+                         *conditionalReceiver,
+                         *branchCaptured,
+                         *branchReceiver,
+                         *zeroCaptured,
+                         *zeroReceiver,
+                         *loopCaptured,
+                         *loopReceiver,
+                         *zeroTwoState,
+                         *methodBreakCaptured,
+                         *methodBreakReceiver}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

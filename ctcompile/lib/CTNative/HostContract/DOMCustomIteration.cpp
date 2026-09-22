@@ -209,6 +209,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto closure = slot.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto body = targetOf(closure);
         auto indices = closure.getEnclosingIndicesAttr();
+        if (body == entry) { return error("DOM iterator method must not alias the entry"); }
         if (!body || body->hasAttr("ctjs.skipped") || !body.getBody().hasOneBlock() ||
             body.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
             closure.getUpvalues().size() != body.getUpvalueCount() ||
@@ -218,6 +219,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                          llvm::any_of(indices.asArrayRef(), [](int32_t i) { return i != -1; })))) {
             return error("DOM iterator capture requires exact local slots");
         }
+        // Resolve proved break dispatch before checking state access ancestry.
+        // The complete continuation proof retains every source effect.
+        if (!work.normalizeCompletion(body)) { return error(work.reason); }
         const auto stores = body.walk([&](ctjs::StoreUpvalueOp store) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
             if (store.getClosure() != body.getBody().front().getArgument(ctjs::arg_callee) ||
@@ -834,6 +838,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM custom iterator has unconfined record state or source regions");
     }
     if (marker->use_empty()) { marker.erase(); }
+    llvm::SmallVector<ctjs::FuncOp> completed{entry};
+    if (!stateInitials.empty()) {
+        for (auto & [name, store] : slots) {
+            (void)name;
+            completed.push_back(targetOf(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
+            if (!completed.back()) { return error("DOM custom iterator budget exhausted"); }
+        }
+    }
     entry.getBody().takeBody(rewritten);
     // Only after selecting the custom arm can completion normalization discard
     // inactive eager-array state. A live record marker is poison and refuses.
@@ -841,14 +853,17 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // Drop unused completion tuple positions without erasing their producers.
     // Parent-first order exposes dead nested branch results in the same pass.
     llvm::SmallVector<mlir::Operation *> tuples;
-    const auto tupleScan = entry.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
-        if (!spend()) { return mlir::WalkResult::interrupt(); }
-        if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
-            tuples.push_back(operation);
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (tupleScan.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+    for (auto function : completed) {
+        const auto tupleScan =
+            function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
+                    tuples.push_back(operation);
+                }
+                return mlir::WalkResult::advance();
+            });
+        if (tupleScan.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+    }
     for (mlir::Operation * operation : tuples) {
         auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation);
         llvm::SmallVector<unsigned> dropped;
@@ -898,14 +913,18 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         operation->erase();
     }
     llvm::SmallVector<mlir::Operation *> arithmetic;
-    const auto arithmeticScan = entry.walk([&](mlir::Operation * operation) {
-        if (!spend()) { return mlir::WalkResult::interrupt(); }
-        if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
-            arithmetic.push_back(operation);
+    for (auto function : completed) {
+        const auto arithmeticScan = function.walk([&](mlir::Operation * operation) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
+                arithmetic.push_back(operation);
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (arithmeticScan.wasInterrupted()) {
+            return error("DOM custom iterator budget exhausted");
         }
-        return mlir::WalkResult::advance();
-    });
-    if (arithmeticScan.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+    }
     for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (operation->use_empty()) { operation->erase(); }

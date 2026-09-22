@@ -262,7 +262,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (exit.cast) { next = next->getNextNode(); }
                     if (!next || !step()) { return {}; }
                     exit.dispatch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(next);
-                    if (!exit.dispatch || exit.dispatch.getNumResults() == 0 ||
+                    if (!exit.dispatch ||
                         (exit.cast && (exit.dispatch.getArg() != exit.cast.getOut() ||
                                        !exit.cast->hasOneUse()))) {
                         return {};
