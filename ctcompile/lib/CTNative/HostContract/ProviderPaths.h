@@ -14,7 +14,9 @@ prefixAnalysis::completion providerRegion(Reader & reader, mlir::Region & region
     using completion = prefixAnalysis::completion;
     if (stopped) { *stopped = region.getParentOp(); }
     if (depth > 64) { return {}; }
-    if (region.empty()) { return {completion::Kind::yielded, {}}; }
+    if (region.empty()) {
+        return {completion::Kind::yielded, {}};
+    }
     if (!llvm::hasSingleElement(region)) { return {}; }
     for (mlir::Operation & operation : region.front()) {
         if (stopped) { *stopped = &operation; }

@@ -93,11 +93,15 @@ Fact Analysis::operation(mlir::Operation * op) {
             folded.literal) {
             return folded;
         }
-        if (binary.getKind() == ctjs::BinaryKind::Concat) { return {String, {}}; }
+        if (binary.getKind() == ctjs::BinaryKind::Concat) {
+            return {String, {}};
+        }
         if (!left.domains || !right.domains) { return {}; }
         switch (binary.getKind()) {
         case ctjs::BinaryKind::Add:
-            if (left.domains == String || right.domains == String) { return {String, {}}; }
+            if (left.domains == String || right.domains == String) {
+                return {String, {}};
+            }
             return {(left.domains | right.domains) & String ? Number | String : Number, {}};
         case ctjs::BinaryKind::Sub:
         case ctjs::BinaryKind::Mul:
@@ -128,8 +132,12 @@ Fact Analysis::operation(mlir::Operation * op) {
             }
             return {String, {}};
         }
-        if (unary.getKind() == ctjs::UnaryKind::Not) { return {Boolean, {}}; }
-        if (unary.getKind() == ctjs::UnaryKind::Plus || input.domains) { return {Number, {}}; }
+        if (unary.getKind() == ctjs::UnaryKind::Not) {
+            return {Boolean, {}};
+        }
+        if (unary.getKind() == ctjs::UnaryKind::Plus || input.domains) {
+            return {Number, {}};
+        }
         return {};
     }
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
