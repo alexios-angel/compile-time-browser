@@ -106,7 +106,7 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     }
     for (mlir::BlockArgument parameter : entry.parameters()) {
         if (parameter == domDocumentParameter || llvm::any_of(domCalls, [&](const auto & item) {
-                return item.second.usesStyle() && item.second.element == parameter;
+                return item.second.usesStyle() && item.second.styleParameter == parameter;
             })) {
             domStyleParameters.push_back(parameter);
         }
@@ -712,7 +712,7 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
             element = call.getArgs().front().getDefiningOp<ctjs::GetPropertyOp>().getObject();
         }
         arguments.push_back(element);
-        if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(element)); }
+        if (edge.usesStyle()) { arguments.push_back(domStyles.lookup(edge.styleParameter)); }
         if (edge.kind != HostDOMMethod::datasetKeys) {
             llvm::append_range(arguments, call.getArgs().drop_front(edge.explicitReceiver ? 1 : 0));
         }

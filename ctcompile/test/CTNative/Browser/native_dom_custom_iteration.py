@@ -83,6 +83,18 @@ BODY_RETURN_ELEMENT_IDENTITY_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SOURCE.repla
     "anchor.hasAttribute('data-closed'));",
     "node === anchor && !anchor.hasAttribute('data-closed'));",
 )
+SELECTOR_SOURCES = {
+    "body-return-branch-element-selector": BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
+        "anchor.hasAttribute('data-closed'));", "node.matches('button'));"
+    ),
+    "body-return-branch-selector-before-close": BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
+        "anchor.hasAttribute('data-closed'));", "node.matches('[data-closed]'));"
+    ),
+    "body-return-branch-selector-prototype": BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
+        "anchor.hasAttribute('data-closed'));",
+        "Element.prototype.matches.call(node, 'button'));",
+    ),
+}
 BODY_RETURN_BRANCH_NUMBER_SOURCE = (
     BODY_RETURN_BRANCH_SOURCE.replace(
         "  const values = {", "  let count = 0;\n  const values = {", 1
@@ -1323,6 +1335,31 @@ POSITIVES = (
         False,
         "yes",
     ),
+    (
+        "body-return-branch-element-selector",
+        SELECTOR_SOURCES["body-return-branch-element-selector"],
+        True,
+        ("true", "true", "false"),
+        False,
+        "true",
+    ),
+    (
+        # The selected return reads false before close creates data-closed.
+        "body-return-branch-selector-before-close",
+        SELECTOR_SOURCES["body-return-branch-selector-before-close"],
+        True,
+        ("true", "false", "false"),
+        False,
+        "true",
+    ),
+    (
+        "body-return-branch-selector-prototype",
+        SELECTOR_SOURCES["body-return-branch-selector-prototype"],
+        True,
+        ("true", "true", "false"),
+        False,
+        "true",
+    ),
 )
 
 
@@ -1330,7 +1367,12 @@ def oracles(args):
     # These receivers record the same source calls. The native clients below
     # separately check those calls against public DOM and document ownership.
     script, observations = "", []
+    if any(label in SELECTOR_SOURCES for label, *_ in POSITIVES):
+        script = (
+            "var Element = {prototype: {matches(selector) { return this.matches(selector); }}};\n"
+        )
     for index, (label, text, breaking, results, resetting, closed) in enumerate(POSITIVES):
+        selecting = label in SELECTOR_SOURCES
         function = f"customElementsCase{index}"
         script += text.replace("function customElements(", f"function {function}(")
         normal, stopped, exhausted = results
@@ -1353,12 +1395,23 @@ def oracles(args):
                 setup += "saved.stop = '';"
             elif state == "already-yielded":
                 setup += "saved['data-yielded'] = 'yes';"
+            selector_method = (
+                "matches(selector) { queries++; "
+                "if (selector === 'button') return true; "
+                "if (selector === '[data-closed]') return 'data-closed' in saved; "
+                "throw 'unexpected selector'; },"
+                if selecting
+                else ""
+            )
+            query_observation = "queries + ':' + " if selecting else ""
             script += f"""
 var {name} = (function() {{
   const saved = {{}};
   {setup}
   let writes = '';
+  let queries = 0;
   const anchor = {{
+    {selector_method}
     hasAttribute(name) {{ return name in saved; }},
     setAttribute(name, value) {{
       saved[name] = '' + value;
@@ -1366,7 +1419,7 @@ var {name} = (function() {{
     }}
   }};
   const result = {function}(anchor);
-  return result + ':' + writes;
+  return result + ':' + {query_observation}writes;
 }})();
 """
             expected = result + ":data-next=true;data-yielded=yes;"
@@ -1386,6 +1439,8 @@ var {name} = (function() {{
                     expected = expected.replace("data-visited=yes;", "")
             if label in ("preloop-captured-read", "extra-captured-closure"):
                 expected = expected.replace(":", ":data-extra=true;", 1)
+            if selecting:
+                expected = expected.replace(":", ":1:" if state.startswith("stop") else ":0:", 1)
             observations.append((name, expected))
     node = args.work / "custom-iteration-node.js"
     node.write_text(script + "".join(f"console.log({name});\n" for name, _ in observations))
@@ -1980,6 +2035,10 @@ def main():
     includes, libraries = dom.link_options(args)
     executions = refused = admitted = 0
     for label, text, breaking, results, resetting, closed in POSITIVES:
+        selecting = label in SELECTOR_SOURCES
+        selected_includes, selected_libraries = (
+            dom.link_options(args, selectors=True) if selecting else (includes, libraries)
+        )
         ir, contract = dom.prepare(args, f"custom-{label}", text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         for owned in (False, True):
@@ -1993,6 +2052,19 @@ def main():
                 if any(helper in cpp for helper in SNAPSHOT_INTRINSICS[4:]):
                     raise RuntimeError(f"{name}: custom iteration retained the VM protocol")
                 checks = CHECKS + (OWNED_CHECKS if owned else "")
+                if selecting:
+                    checks = (
+                        "style::engine selectors{atoms}, foreign_selectors{foreign_atoms};\n"
+                        + checks.replace("@ENTRY@(alias)", "@ENTRY@(alias, selectors)")
+                        .replace("@ENTRY@(foreign)", "@ENTRY@(foreign, foreign_selectors)")
+                        .replace("@ENTRY@(invalid)", "@ENTRY@(invalid, selectors)")
+                    )
+                    checks += r"""
+        bool incompatible = false;
+        try { (void)@ENTRY@(alias, foreign_selectors); }
+        catch (const std::invalid_argument &) { incompatible = true; }
+        assert(incompatible && doc.take_writes().empty());
+"""
                 if label in ("body-return", "body-return-ordered"):
                     checks = checks.replace("@BREAKING@ && stopping", "true")
                 if label == "body-return-multiple":
@@ -2045,10 +2117,15 @@ def main():
                         else f"{value} == {exhausted}"
                     ),
                 )
-                dom.standalone(args, native, name, checks, compilers, includes, libraries)
+                dom.standalone(
+                    args, native, name, checks, compilers, selected_includes, selected_libraries
+                )
                 executions += 2 * len(compilers)
                 controls = [("budget", manifest, 0)]
-                for intrinsic in ["Symbol", "Object", *SNAPSHOT_INTRINSICS[4:]]:
+                required_intrinsics = ["Symbol", "Object", *SNAPSHOT_INTRINSICS[4:]]
+                if selecting and "Element.prototype" in text:
+                    required_intrinsics += ["Element", "Function"]
+                for intrinsic in required_intrinsics:
                     controls.append(
                         (
                             "missing-" + intrinsic,
@@ -2089,7 +2166,7 @@ def main():
     print(
         f"Closed custom DOM iteration: {executions} native executions, {refused} refusals; "
         f"{admitted} nonexecuted source admissions; "
-        f"{observations} Node/VM source-double observations; DOM/Core only"
+        f"{observations} Node/VM source-double observations; public DOM/Style/Core"
     )
 
 

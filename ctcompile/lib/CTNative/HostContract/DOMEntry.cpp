@@ -396,16 +396,96 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         refusal = "DOM entry contains an uninvoked callback function";
         return;
     }
+    llvm::DenseMap<mlir::Value, mlir::Value> selectorOrigins;
     for (const auto & call : provedCalls) {
         if (!spend()) { return; }
+        if (call.returnsElement() || call.returnsElementVector()) {
+            selectorOrigins[call.operation->getResult(0)] = call.element;
+        }
+    }
+    for (auto & call : provedCalls) {
+        if (!spend()) { return; }
         if (!call.usesStyle()) { continue; }
-        auto argument = llvm::dyn_cast<mlir::BlockArgument>(call.element);
-        if ((argument && argument.getOwner() != &targetBlock) ||
-            llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(
-                call.element.getDefiningOp())) {
-            refusal = "DOM selector on a carried element needs its Style association";
+        // Follow every incoming edge, including zero-trip initialization and
+        // backedges. Cycles grant no authority: the closure must reach exactly
+        // one original parameter. Different raw inputs may own different DOMs.
+        // ponytail: mixed roots refuse; carry Style with the element if needed.
+        llvm::SmallVector<mlir::Value> pending{call.element};
+        llvm::DenseSet<mlir::Value> visited;
+        mlir::BlockArgument root;
+        const auto append = [&](mlir::Value value) {
+            if (!spend()) { return false; }
+            pending.push_back(value);
+            return true;
+        };
+        bool complete = true;
+        while (!pending.empty()) {
+            if (!spend()) { return; }
+            auto value = pending.pop_back_val();
+            if (!visited.insert(value).second) { continue; }
+            if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+                if (argument.getOwner() == &targetBlock &&
+                    argument.getArgNumber() >= ctjs::implicit_arguments) {
+                    if (root && root != argument) {
+                        complete = false;
+                        break;
+                    }
+                    root = argument;
+                    continue;
+                }
+                auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
+                if (!loop) {
+                    complete = false;
+                    break;
+                }
+                const auto index = argument.getArgNumber();
+                if (argument.getOwner() == &loop.getBefore().front()) {
+                    auto yield =
+                        llvm::cast<mlir::scf::YieldOp>(loop.getAfter().front().getTerminator());
+                    if (!append(loop.getInits()[index]) || !append(yield.getOperand(index))) {
+                        return;
+                    }
+                } else {
+                    auto condition = llvm::cast<mlir::scf::ConditionOp>(
+                        loop.getBefore().front().getTerminator());
+                    if (!append(condition.getArgs()[index])) { return; }
+                }
+                continue;
+            }
+            if (auto branch = value.getDefiningOp<mlir::scf::IfOp>()) {
+                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+                for (mlir::Region & region : branch->getRegions()) {
+                    auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                    if (!append(yield.getOperand(index))) { return; }
+                }
+                continue;
+            }
+            if (auto loop = value.getDefiningOp<mlir::scf::WhileOp>()) {
+                auto condition =
+                    llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator());
+                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+                if (!append(condition.getArgs()[index])) { return; }
+                continue;
+            }
+            if (auto origin = selectorOrigins.lookup(value)) {
+                if (!append(origin)) { return; }
+                continue;
+            }
+            auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
+            if (read && provedDocumentRoots.contains(read)) {
+                if (!append(documentParameter)) { return; }
+            } else if (read && provedElementVectorIndices.contains(read)) {
+                if (!append(read.getObject())) { return; }
+            } else {
+                complete = false;
+                break;
+            }
+        }
+        if (!complete || !root) {
+            refusal = "DOM selector requires one original Style association";
             return;
         }
+        call.styleParameter = root;
     }
     if (intrinsicEntry &&
         (!provedJSONObjects.empty() || llvm::any_of(provedCalls, [](const HostDOMCall & call) {

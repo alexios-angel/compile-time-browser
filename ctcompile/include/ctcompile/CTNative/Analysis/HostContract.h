@@ -191,6 +191,8 @@ struct HostDOMCall {
     ctjs::FuncOp callback{};
     // Function.prototype.call supplies the browser receiver as argument zero.
     bool explicitReceiver = false;
+    // Unique original document/Style input, after complete transport proof.
+    mlir::BlockArgument styleParameter{};
     [[nodiscard]] bool returnsElement() const {
         return kind == HostDOMMethod::closest || kind == HostDOMMethod::querySelector ||
                kind == HostDOMMethod::documentQuerySelector;

@@ -5,6 +5,8 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 
+#include <tuple>
+
 namespace ctcompile::test::host_contract {
 
 inline void checkDOMCustomIteration(mlir::MLIRContext & context) {
@@ -2139,6 +2141,195 @@ module {
             request.moduleSha256 = hostContractFingerprint(*input);
             check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
                   "mixed, observed, escaping or invalidated saved elements publish no proof");
+        }
+    }
+    // Selector calls on saved elements may reuse only one proved original Style
+    // association. The other declared input does not acquire that association.
+    const auto selectorElementSource = [&](llvm::StringRef method, bool prototype) {
+        auto text =
+            replaced(elementSource,
+                     "      %returnMethod = ctjs.get_property %loop#3[%hasName]\n"
+                     "      %returnRead = ctjs.call %returnMethod(%loop#3, %closedName)",
+                     "      %selectorName = ctjs.constant #ctjs.string<\"" + method.str() +
+                         "\">\n"
+                         "      %returnMethod = ctjs.get_property %loop#3[%selectorName]\n"
+                         "      %selectorValue = ctjs.call %returnMethod(%loop#3, %closedName)\n"
+                         "      %returnRead = ctjs.constant #ctjs.boolean<false>");
+        if (prototype) {
+            text = replaced(text,
+                            "      %returnMethod = ctjs.get_property %loop#3[%selectorName]\n"
+                            "      %selectorValue = ctjs.call %returnMethod(%loop#3, %closedName)",
+                            "      %Element = ctjs.load_global \"Element\"\n"
+                            "      %prototypeName = ctjs.constant #ctjs.string<\"prototype\">\n"
+                            "      %prototype = ctjs.get_property %Element[%prototypeName]\n"
+                            "      %returnMethod = ctjs.get_property %prototype[%selectorName]\n"
+                            "      %callName = ctjs.constant #ctjs.string<\"call\">\n"
+                            "      %explicitCall = ctjs.get_property %returnMethod[%callName]\n"
+                            "      %selectorValue = ctjs.call %explicitCall(%returnMethod, "
+                            "%loop#3, %closedName)");
+        }
+        if (method == "closest" || method == "querySelector") {
+            text = replaced(text, "      %returnRead = ctjs.constant #ctjs.boolean<false>",
+                            R"MLIR(      %selectorPresent = ctjs.truthy %selectorValue
+      scf.if %selectorPresent {
+        %descendantName = ctjs.constant #ctjs.string<"matches">
+        %descendantMethod = ctjs.get_property %selectorValue[%descendantName]
+        %descendantRead = ctjs.call %descendantMethod(%selectorValue, %closedName)
+        scf.yield
+      }
+      %returnRead = ctjs.constant #ctjs.boolean<false>)MLIR");
+        } else if (method == "querySelectorAll") {
+            text = replaced(text, "      %returnRead = ctjs.constant #ctjs.boolean<false>",
+                            R"MLIR(      %lengthName = ctjs.constant #ctjs.string<"length">
+      %length = ctjs.get_property %selectorValue[%lengthName]
+      %snapshotLoop = scf.while (%index = %zero) : (!ctjs.value) -> !ctjs.value {
+        %inRange = ctjs.compare lt %index, %length
+        %keepScanning = ctjs.truthy %inRange
+        scf.condition(%keepScanning) %index : !ctjs.value
+      } do {
+      ^bb0(%index: !ctjs.value):
+        %descendant = ctjs.get_property %selectorValue[%index]
+        %descendantName = ctjs.constant #ctjs.string<"matches">
+        %descendantMethod = ctjs.get_property %descendant[%descendantName]
+        %descendantRead = ctjs.call %descendantMethod(%descendant, %closedName)
+        %nextIndex = ctjs.binary_static add %index, %one
+        scf.yield %nextIndex : !ctjs.value
+      }
+      %returnRead = ctjs.constant #ctjs.boolean<false>)MLIR");
+        }
+        return text;
+    };
+    const auto mixedSelectorSource = selectorElementSource("matches", false);
+    const auto sameSelectorSource = replaced(mixedSelectorSource, "scf.yield %other : !ctjs.value",
+                                             "scf.yield %element : !ctjs.value");
+    for (const auto & [method, prototype, secondRoot, exhausted] : {
+             std::tuple{"matches", false, false, false},
+             std::tuple{"closest", false, false, false},
+             std::tuple{"querySelector", false, false, false},
+             std::tuple{"querySelectorAll", false, false, false},
+             std::tuple{"documentElement", false, false, false},
+             std::tuple{"matches", true, false, false},
+             std::tuple{"matches", false, true, false},
+             std::tuple{"matches", false, false, true},
+         }) {
+        const bool documentRoot = llvm::StringRef(method) == "documentElement";
+        auto text = selectorElementSource(documentRoot ? "matches" : method, prototype);
+        text = secondRoot ? replaced(text, "%owner = %element", "%owner = %other")
+                          : replaced(text, "scf.yield %other : !ctjs.value",
+                                     "scf.yield %element : !ctjs.value");
+        if (documentRoot) {
+            text = replaced(text, "scf.yield %element : !ctjs.value",
+                            R"MLIR(%document = ctjs.load_global "document"
+          %rootName = ctjs.constant #ctjs.string<"documentElement">
+          %root = ctjs.get_property %document[%rootName]
+          %rootPresent = ctjs.truthy %root
+          %rootOrElement = scf.if %rootPresent -> !ctjs.value {
+            scf.yield %root : !ctjs.value
+          } else {
+            scf.yield %element : !ctjs.value
+          }
+          scf.yield %rootOrElement : !ctjs.value)MLIR");
+        }
+        if (exhausted) {
+            text = replaced(text, "%done = ctjs.call %has(%element, %yielded)",
+                            "%done = ctjs.constant #ctjs.boolean<true>");
+        }
+        check(!text.empty(), "saved selector source retains every requested construction");
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(fixture), "same-root saved selector fixture parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.elementParameters = {0, 1};
+            if (documentRoot) { request.currentDocumentParameter = 0; }
+            request.initialIntrinsics.push_back("Element");
+            request.initialIntrinsics.push_back("Function");
+            request.moduleSha256 = hostContractFingerprint(*fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            std::vector<mlir::Value> inactiveFillers;
+            auto failure =
+                normalizeDOMCustomIteration(*input, request, completeBudget, &inactiveFillers);
+            if (!failure) {
+                failure = expandDOMHelpers(*input, request.entry, completeBudget, nullptr,
+                                           inactiveFillers);
+            }
+            check(!failure, "same-root saved selector normalizes without moving its call");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            const DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "saved selectors retain one original Style association");
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            bool observed = false;
+            input->walk([&](ctjs::CallOp call) {
+                const auto evidence = proof.call(call);
+                if (!evidence || (evidence->kind != HostDOMMethod::matches &&
+                                  evidence->kind != HostDOMMethod::closest &&
+                                  evidence->kind != HostDOMMethod::querySelector &&
+                                  evidence->kind != HostDOMMethod::querySelectorAll)) {
+                    return;
+                }
+                observed = true;
+                check(evidence->styleParameter == proof.parameters()[secondRoot ? 1 : 0] &&
+                          evidence->explicitReceiver == prototype,
+                      "saved selector evidence names its original parameter and call receiver");
+            });
+            check(observed, "saved selector remains an observable public browser call");
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request, proof.steps() - 1)),
+                  "incomplete Style association proof publishes no evidence");
+        }
+    }
+    for (const auto & invalid : {
+             mixedSelectorSource,
+             selectorElementSource("matches", true),
+             // A mixed backedge is invalid even though the initial owner is fixed.
+             replaced(sameSelectorSource,
+                      "scf.yield %count, %owner, %normalOwner, %returnOwner, %tag",
+                      "scf.yield %count, %other, %normalOwner, %returnOwner, %tag"),
+             replaced(sameSelectorSource, "scf.yield %element : !ctjs.value",
+                      "scf.yield %zero : !ctjs.value"),
+             replaced(sameSelectorSource, "        %stopping =",
+                      "        ctjs.set_property %element[%visited], %chosen\n        %stopping ="),
+             replaced(sameSelectorSource, "        %stopping =",
+                      "        %removeName = ctjs.constant #ctjs.string<\"remove\">\n"
+                      "        %remove = ctjs.get_property %chosen[%removeName]\n"
+                      "        %removed = ctjs.call %remove(%chosen)\n        %stopping ="),
+             replaced(sameSelectorSource, "        %stopping =",
+                      "        %external = ctjs.load_global \"external\"\n"
+                      "        %reentered = ctjs.call %external(%undefined, %chosen)\n"
+                      "        %stopping ="),
+         }) {
+        check(!invalid.empty(), "hostile Style root changes the complete fixture");
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "hostile saved selector fixture parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.elementParameters = {0, 1};
+            request.initialIntrinsics.push_back("Element");
+            request.initialIntrinsics.push_back("Function");
+            request.moduleSha256 = hostContractFingerprint(*fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            std::vector<mlir::Value> inactiveFillers;
+            auto failure =
+                normalizeDOMCustomIteration(*input, request, completeBudget, &inactiveFillers);
+            if (!failure) {
+                failure = expandDOMHelpers(*input, request.entry, completeBudget, nullptr,
+                                           inactiveFillers);
+            }
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "mixed Style roots, invalidated lifetimes and reentry publish no evidence");
         }
     }
     for (auto fixture : {*original,
