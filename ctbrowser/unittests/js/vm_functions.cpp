@@ -648,6 +648,10 @@ void test_new_function() {
     expect_result("try { new Function('this is not javascript ((('); } catch (e) { return e.name; }"
                   "return 'not thrown';",
                   "SyntaxError");
+    expect_result("let caught = 0; for (const body of ['<', '1 + <', 'for (<; ; ) {}', "
+                  "'for (in xs) {}', '{*a(){}}']) { try { Function(body); } catch (e) { "
+                  "if (e instanceof SyntaxError) caught++; } } return caught;",
+                  "5");
     // It runs NESTED, so it must not drain the microtask queue: that belongs to
     // the turn, not to the program that happened to build a function.
     expect_after_turn(
