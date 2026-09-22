@@ -253,6 +253,18 @@ SIBLING_LOOP_WRITER_SOURCE = SIBLING_BRANCH_WRITER_SOURCE.replace(
     "    }\n    if (closed > 1) emitted++;\n    else closed++;",
     "      if (closed > 1) emitted++;\n      else closed++;\n    }",
 ).replace("closed === 458", "closed === 541")
+SIBLING_BRANCH_RESULT_SOURCE = SIBLING_BRANCH_WRITER_SOURCE.replace(
+    "    if (closed > 1) emitted++;\n    else closed++;\n    return rounds + before;",
+    """    let result = 0;
+    if (closed > 1) {
+      emitted++;
+      result = before;
+    } else {
+      closed++;
+      result = rounds + before;
+    }
+    return result;""",
+)
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -530,6 +542,37 @@ POSITIVES = (
         SIBLING_LOOP_WRITER_SOURCE,
         True,
         ("61478", "68384", "61478"),
+        True,
+        "true",
+    ),
+    (
+        # The first call takes else; later calls take if. Both carry their
+        # latest cells into the one shared custom-iterator continuation.
+        "entry-captured-sibling-preloop-branch-writer",
+        SIBLING_BRANCH_WRITER_SOURCE,
+        True,
+        ("54163", "57856", "54163"),
+        True,
+        "true",
+    ),
+    (
+        # Different ordinary returns retain the earlier snapshot separately
+        # from the current cells, including calls after close and repeated calls.
+        "entry-captured-sibling-branch-result-writer",
+        SIBLING_BRANCH_RESULT_SOURCE,
+        True,
+        ("54153", "57846", "54153"),
+        True,
+        "true",
+    ),
+    (
+        "entry-captured-sibling-branch-return-writer",
+        SIBLING_BRANCH_RESULT_SOURCE.replace("    let result = 0;\n", "")
+        .replace("result = before;", "return before;")
+        .replace("result = rounds + before;", "return rounds + before;")
+        .replace("\n    return result;", ""),
+        True,
+        ("54153", "57846", "54153"),
         True,
         "true",
     ),
@@ -884,8 +927,9 @@ def refusals():
             "entry-captured-sibling-loop-nonnumber-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
                 "      closed += emitted;", "      closed = true;"
             ),
-            # A preloop helper branch currently duplicates the iterator continuation.
-            "entry-captured-sibling-preloop-branch-writer": SIBLING_BRANCH_WRITER_SOURCE,
+            "entry-captured-sibling-branch-nonnumber-writer": SIBLING_BRANCH_WRITER_SOURCE.replace(
+                "else closed++;", "else closed = true;"
+            ),
             "entry-captured-sibling-argument-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
                 "const read = () => {", "const read = (amount) => {"
             )

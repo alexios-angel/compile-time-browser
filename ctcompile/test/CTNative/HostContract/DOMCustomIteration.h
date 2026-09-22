@@ -830,6 +830,83 @@ module {
         !zeroSiblingWriter || !zeroDirectSiblingWriter) {
         return;
     }
+    // A helper loop followed by a root branch must join its saved ordinary
+    // result and ordered state before the one shared custom continuation.
+    auto branchWriterSource =
+        replaced(siblingWriterSource,
+                 "    %updated = ctjs.binary_static add %observed, %step\n"
+                 "    ctjs.store_upvalue %callee[0], %updated\n"
+                 "    %current = ctjs.load_upvalue %callee[0]\n"
+                 "    %updatedExtra = ctjs.binary_static add %oldExtra, %current\n"
+                 "    ctjs.store_upvalue %callee[1], %updatedExtra\n"
+                 "    ctjs.return %observed",
+                 R"MLIR(    %zero = ctjs.constant #ctjs.number<0>
+    %rounds = scf.while (%round = %zero) : (!ctjs.value) -> !ctjs.value {
+      %more = ctjs.compare lt %round, %step
+      %again = ctjs.truthy %more
+      scf.condition(%again) %round : !ctjs.value
+    } do {
+    ^bb0(%round: !ctjs.value):
+      %loopCount = ctjs.load_upvalue %callee[0]
+      %loopExtra = ctjs.load_upvalue %callee[1]
+      %advanced = ctjs.binary_static add %loopCount, %step
+      ctjs.store_upvalue %callee[0], %advanced
+      %liveCount = ctjs.load_upvalue %callee[0]
+      %advancedExtra = ctjs.binary_static add %loopExtra, %liveCount
+      ctjs.store_upvalue %callee[1], %advancedExtra
+      %nextRound = ctjs.binary_static add %round, %step
+      scf.yield %nextRound : !ctjs.value
+    }
+    %afterCount = ctjs.load_upvalue %callee[0]
+    %afterExtra = ctjs.load_upvalue %callee[1]
+    %first = ctjs.compare strict_eq %observed, %zero
+    %condition = ctjs.truthy %first
+    %saved = scf.if %condition -> (!ctjs.value) {
+      %updated = ctjs.binary_static add %afterCount, %rounds
+      ctjs.store_upvalue %callee[0], %updated
+      %current = ctjs.load_upvalue %callee[0]
+      %updatedExtra = ctjs.binary_static add %afterExtra, %current
+      ctjs.store_upvalue %callee[1], %updatedExtra
+      scf.yield %observed : !ctjs.value
+    } else {
+      %updated = ctjs.binary_static add %afterCount, %oldExtra
+      ctjs.store_upvalue %callee[0], %updated
+      %current = ctjs.load_upvalue %callee[0]
+      %updatedExtra = ctjs.binary_static add %afterExtra, %current
+      ctjs.store_upvalue %callee[1], %updatedExtra
+      scf.yield %oldExtra : !ctjs.value
+    }
+    ctjs.return %saved)MLIR");
+    for (const auto & [value, suffix] :
+         {std::pair{"entryBefore", "before"}, std::pair{"bodyEmitted", "body"},
+          std::pair{"preCloseCount", "close"}, std::pair{"finalCount", "final"}}) {
+        const auto extra = std::string("%writerExtra_") + suffix;
+        const auto count = std::string("%writerCount_") + suffix;
+        const auto state = std::string("%writerState_") + suffix;
+        branchWriterSource = replaced(branchWriterSource, extra + " = ctjs.cell_get %extraCell",
+                                      extra + " = ctjs.cell_get %extraCell\n    " + count +
+                                          " = ctjs.cell_get %emittedCell\n    " + state +
+                                          " = ctjs.binary_static add " + count + ", " + extra);
+        branchWriterSource = replaced(
+            branchWriterSource, std::string("ctjs.compare strict_eq %") + value + ", " + extra,
+            std::string("ctjs.compare strict_eq %") + value + ", " + state);
+    }
+    branchWriterSource = replaced(
+        branchWriterSource, "    %againSeen = ctjs.compare strict_eq %againCount, %finalExtra",
+        R"MLIR(    %againCurrent = ctjs.cell_get %emittedCell
+    %againState = ctjs.binary_static add %againCurrent, %finalExtra
+    %againSeen = ctjs.compare strict_eq %againCount, %againState)MLIR");
+    auto directBranchWriterSource = branchWriterSource;
+    for (unsigned i = 0; i != 5; ++i) {
+        directBranchWriterSource =
+            replaced(directBranchWriterSource, "ctjs.call %readCount(%undefined)",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)");
+    }
+    auto branchWriter = mlir::parseSourceString<mlir::ModuleOp>(branchWriterSource, &context);
+    auto directBranchWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directBranchWriterSource, &context);
+    check(branchWriter && directBranchWriter, "ordinary/direct helper branch join twins parse");
+    if (!branchWriter || !directBranchWriter) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -883,7 +960,9 @@ module {
                          *siblingWriter,
                          *directSiblingWriter,
                          *zeroSiblingWriter,
-                         *zeroDirectSiblingWriter}) {
+                         *zeroDirectSiblingWriter,
+                         *branchWriter,
+                         *directBranchWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -891,6 +970,7 @@ module {
         const bool siblingWrites = fixture == *siblingWriter || fixture == *directSiblingWriter ||
                                    fixture == *zeroSiblingWriter ||
                                    fixture == *zeroDirectSiblingWriter;
+        const bool branchWrites = fixture == *branchWriter || fixture == *directBranchWriter;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -909,6 +989,20 @@ module {
             });
             check(!protocolCall && !input->lookupSymbol<ctjs::FuncOp>("identity$1"),
                   "normalization retires protocol calls and the proved identity method");
+            if (branchWrites) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                unsigned nextCalls = 0;
+                body.walk([&](ctjs::CallOp call) {
+                    auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    if (!method || ctjs::constantKey(method.getKey()) != "next") { return; }
+                    ++nextCalls;
+                    auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(call->getParentOp());
+                    check(loop && loop->getBlock() == &body.getBody().front() &&
+                              call->getParentRegion() == &loop.getBefore(),
+                          "helper branch joins before the root custom next continuation");
+                });
+                check(nextCalls == 1, "helper branches do not duplicate the custom next call");
+            }
             if (fixture == *crossed || fixture == *duplicated) {
                 bool selected = false;
                 input->walk([&](ctjs::BinaryStaticOp sum) {
@@ -1154,10 +1248,90 @@ module {
             check(proof.proved(),
                   "projected custom iterator reproves element lifetime and effects");
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+            if (branchWrites) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                llvm::SmallVector<llvm::StringRef> effects;
+                bool ordered = true, boxed = false;
+                body.walk([&](mlir::Operation * operation) {
+                    boxed |=
+                        llvm::isa<ctjs::CreateObjectOp, ctjs::CreateCellOp, ctjs::CreateClosureOp,
+                                  ctjs::CellGetOp, ctjs::CellSetOp, ctjs::LoadUpvalueOp,
+                                  ctjs::StoreUpvalueOp, ctjs::CallDirectOp>(operation);
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                    if (!call || call.getArgs().size() != 2) { return; }
+                    const auto name = ctjs::constantKey(call.getArgs()[0]);
+                    if (!name.starts_with("writer-")) { return; }
+                    effects.push_back(name);
+                    auto seen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    auto saved =
+                        seen ? llvm::dyn_cast<mlir::OpResult>(seen.getLhs()) : mlir::OpResult{};
+                    auto state = seen ? seen.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                      : ctjs::BinaryStaticOp{};
+                    auto count =
+                        state ? llvm::dyn_cast<mlir::OpResult>(state.getLhs()) : mlir::OpResult{};
+                    auto extra =
+                        state ? llvm::dyn_cast<mlir::OpResult>(state.getRhs()) : mlir::OpResult{};
+                    auto join = saved ? llvm::dyn_cast<mlir::scf::IfOp>(saved.getOwner())
+                                      : mlir::scf::IfOp{};
+                    if (!join || join.getNumResults() < 3 || join.getNumResults() > 4 || !count ||
+                        !extra || count.getOwner() != join || extra.getOwner() != join ||
+                        saved.getResultNumber() != 0 ||
+                        count.getResultNumber() != join.getNumResults() - 2 ||
+                        extra.getResultNumber() != join.getNumResults() - 1) {
+                        ordered = false;
+                        return;
+                    }
+                    auto truth = join.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                    auto first = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                       : ctjs::CompareOp{};
+                    for (auto & region : join->getRegions()) {
+                        auto values = region.front().back().getOperands();
+                        const auto current = values.take_back(2);
+                        auto count = current[0].getDefiningOp<ctjs::BinaryStaticOp>();
+                        auto nextExtra = current[1].getDefiningOp<ctjs::BinaryStaticOp>();
+                        auto loopCount = count ? llvm::dyn_cast<mlir::OpResult>(count.getLhs())
+                                               : mlir::OpResult{};
+                        auto loopExtra = nextExtra
+                                             ? llvm::dyn_cast<mlir::OpResult>(nextExtra.getLhs())
+                                             : mlir::OpResult{};
+                        auto loop = loopCount
+                                        ? llvm::dyn_cast<mlir::scf::WhileOp>(loopCount.getOwner())
+                                        : mlir::scf::WhileOp{};
+                        ordered &= first && loop && loopExtra && loopExtra.getOwner() == loop &&
+                                   loopExtra != loopCount && nextExtra.getRhs() == current[0] &&
+                                   llvm::is_contained(loop.getInits(), values[0]);
+                        if (join.getNumResults() == 4) {
+                            ordered &=
+                                values[1] == join.getThenRegion().front().back().getOperand(1);
+                        }
+                        if (&region == &join.getThenRegion()) {
+                            ordered &= first && values[0] == first.getLhs();
+                        } else {
+                            ordered &= count && values[0] == count.getRhs();
+                        }
+                    }
+                });
+                check(ordered && effects ==
+                                     llvm::SmallVector<llvm::StringRef>{
+                                         "writer-before", "writer-body", "writer-close",
+                                         "writer-final", "writer-again"},
+                      "every helper branch joins old returns and ordered cells at its call site");
+                check(!boxed && !input->lookupSymbol<ctjs::FuncOp>("readCount$4") &&
+                          !input->lookupSymbol<ctjs::FuncOp>("readExtra$5"),
+                      "joined helper results and state need no boxed protocol or closures");
+            }
             if (fixture == *entryCaptured || fixture == *zeroEntryCaptured || siblingReads) {
                 auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
                 auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back());
-                auto close = returned.getValue().getDefiningOp<mlir::scf::IfOp>();
+                auto answer = returned.getValue().getDefiningOp<ctjs::BinaryStaticOp>();
+                auto total = answer ? answer.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+                auto count =
+                    total ? llvm::dyn_cast<mlir::OpResult>(total.getLhs()) : mlir::OpResult{};
+                auto extra =
+                    total ? llvm::dyn_cast<mlir::OpResult>(total.getRhs()) : mlir::OpResult{};
+                auto close =
+                    count ? llvm::dyn_cast<mlir::scf::IfOp>(count.getOwner()) : mlir::scf::IfOp{};
                 ctjs::CompareOp beforeClose, bodySeen;
                 llvm::SmallVector<llvm::StringRef> effects;
                 body.walk([&](ctjs::CallOp call) {
@@ -1169,42 +1343,21 @@ module {
                     if (name == "entry-before-close") { beforeClose = seen; }
                     if (name == "entry-body") { bodySeen = seen; }
                 });
-                // Completion normalization copies the final arithmetic into
-                // each close arm, then joins the complete return value.
-                check(close && close.getNumResults() == 1,
-                      "post-close observations retain a complete return on both close paths");
-                if (close && close.getNumResults() == 1) {
-                    auto exhausted = close.getThenRegion()
-                                         .front()
-                                         .back()
-                                         .getOperand(0)
-                                         .getDefiningOp<ctjs::BinaryStaticOp>();
-                    auto closed = close.getElseRegion()
-                                      .front()
-                                      .back()
-                                      .getOperand(0)
-                                      .getDefiningOp<ctjs::BinaryStaticOp>();
-                    auto exhaustedTotal =
-                        exhausted ? exhausted.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                  : ctjs::BinaryStaticOp{};
-                    auto closedTotal = closed
-                                           ? closed.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                           : ctjs::BinaryStaticOp{};
-                    auto closedCount =
-                        closedTotal ? closedTotal.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                    : ctjs::BinaryStaticOp{};
-                    auto closedExtra =
-                        closedTotal ? closedTotal.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                    : ctjs::BinaryStaticOp{};
+                check(close && close.getNumResults() == 2 && extra && extra.getOwner() == close &&
+                          count.getResultNumber() == 0 && extra.getResultNumber() == 1,
+                      "post-close observations use the joined current count and extra state");
+                if (close && close.getNumResults() == 2) {
+                    const auto exhausted = close.getThenRegion().front().back().getOperands();
+                    const auto closed = close.getElseRegion().front().back().getOperands();
+                    auto closedCount = closed[0].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto closedExtra = closed[1].getDefiningOp<ctjs::BinaryStaticOp>();
                     check(
-                        exhaustedTotal && closedTotal && beforeClose && closedCount &&
-                            closedExtra && exhausted.getLhs() == closed.getLhs() &&
-                            exhaustedTotal.getLhs() != exhaustedTotal.getRhs() &&
-                            beforeClose.getLhs() == exhaustedTotal.getLhs() &&
-                            beforeClose.getRhs() == exhaustedTotal.getRhs() &&
-                            closedCount.getLhs() == exhaustedTotal.getLhs() &&
-                            closedExtra.getLhs() == exhaustedTotal.getRhs() &&
-                            closedExtra.getRhs() == closedTotal.getLhs(),
+                        beforeClose && closedCount && closedExtra && exhausted[0] != exhausted[1] &&
+                            beforeClose.getLhs() == exhausted[0] &&
+                            beforeClose.getRhs() == exhausted[1] &&
+                            closedCount.getLhs() == exhausted[0] &&
+                            closedExtra.getLhs() == exhausted[1] &&
+                            closedExtra.getRhs() == closed[0],
                         "exhaustion keeps final next state and break keeps ordered return writes");
                 }
                 check(bodySeen && bodySeen.getLhs() == bodySeen.getRhs() &&
@@ -1243,39 +1396,43 @@ module {
                                count.getLhs() == seen.getLhs() &&
                                count.getResult() != seen.getLhs();
                 });
-                check(ordered &&
-                          effects ==
-                              llvm::SmallVector<llvm::StringRef>{
-                                  "writer-before", "writer-body", "writer-close", "writer-final",
-                                  "writer-again", "writer-final", "writer-again"},
+                check(ordered && effects ==
+                                     llvm::SmallVector<llvm::StringRef>{
+                                         "writer-before", "writer-body", "writer-close",
+                                         "writer-final", "writer-again"},
                       "each sibling call returns its old snapshot and publishes ordered writes");
                 auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back());
-                auto close = returned.getValue().getDefiningOp<mlir::scf::IfOp>();
-                check(close && close.getNumResults() == 1,
-                      "sibling writes preserve both complete close paths");
-                if (close && close.getNumResults() == 1) {
-                    for (auto * region : {&close.getThenRegion(), &close.getElseRegion()}) {
-                        auto answer = region->front()
-                                          .back()
-                                          .getOperand(0)
-                                          .getDefiningOp<ctjs::BinaryStaticOp>();
-                        auto total = answer ? answer.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                            : ctjs::BinaryStaticOp{};
-                        auto extra = total ? total.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                           : ctjs::BinaryStaticOp{};
-                        auto count = extra ? extra.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                           : ctjs::BinaryStaticOp{};
-                        auto firstExtra = extra
-                                              ? extra.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                              : ctjs::BinaryStaticOp{};
-                        auto firstCount = count
-                                              ? count.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
-                                              : ctjs::BinaryStaticOp{};
-                        check(total && firstExtra && firstCount &&
-                                  firstExtra.getRhs() == firstCount.getResult() &&
-                                  firstCount.getLhs() == total.getLhs(),
-                              "repeated final calls retain both latest cells and the first result");
-                    }
+                auto answer = returned.getValue().getDefiningOp<ctjs::BinaryStaticOp>();
+                auto total = answer ? answer.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+                auto extra = total ? total.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                   : ctjs::BinaryStaticOp{};
+                auto count = extra ? extra.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                   : ctjs::BinaryStaticOp{};
+                auto firstExtra = extra ? extra.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                        : ctjs::BinaryStaticOp{};
+                auto firstCount = count ? count.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                        : ctjs::BinaryStaticOp{};
+                check(total && firstExtra && firstCount &&
+                          firstExtra.getRhs() == firstCount.getResult() &&
+                          firstCount.getLhs() == total.getLhs(),
+                      "repeated final calls retain both latest cells and the first result");
+                auto initial =
+                    total ? llvm::dyn_cast<mlir::OpResult>(total.getLhs()) : mlir::OpResult{};
+                auto close = initial ? llvm::dyn_cast<mlir::scf::IfOp>(initial.getOwner())
+                                     : mlir::scf::IfOp{};
+                check(close && close.getNumResults() == 2 && initial.getResultNumber() == 0 &&
+                          firstExtra && firstExtra.getLhs() == close.getResult(1),
+                      "repeated sibling writes start from both joined close-state results");
+                if (close && close.getNumResults() == 2) {
+                    const auto exhausted = close.getThenRegion().front().back().getOperands();
+                    const auto closed = close.getElseRegion().front().back().getOperands();
+                    auto closedCount = closed[0].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto closedExtra = closed[1].getDefiningOp<ctjs::BinaryStaticOp>();
+                    check(closedCount && closedExtra && closedCount.getLhs() == exhausted[0] &&
+                              closedExtra.getLhs() == exhausted[1] &&
+                              closedExtra.getRhs() == closed[0],
+                          "sibling close joins preserve exhaustion and ordered return writes");
                 }
                 check(!boxed && !input->lookupSymbol<ctjs::FuncOp>("readCount$4") &&
                           !input->lookupSymbol<ctjs::FuncOp>("readExtra$5"),
@@ -1339,7 +1496,7 @@ module {
                                     extra.getResultNumber() == count.getResultNumber() + 1 &&
                                     closeOrder.back() == "data-closed-extra")),
                       "close reads distinct current scalar loop results without boxed state");
-            } else if (fixture != *original && fixture != *withoutReturn) {
+            } else if (!branchWrites && fixture != *original && fixture != *withoutReturn) {
                 unsigned loops = 0, calls = 0, poison = 0, switches = 0;
                 input->walk([&](mlir::scf::WhileOp) { ++loops; });
                 input->walk([&](ctjs::CallOp) { ++calls; });
@@ -1351,6 +1508,57 @@ module {
         }
     }
     contract.moduleSha256 = hostContractFingerprint(*original);
+
+    for (auto fixture : {*branchWriter, *directBranchWriter}) {
+        for (unsigned malformed = 0; malformed != 2; ++malformed) {
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+                auto body = input->lookupSymbol<ctjs::FuncOp>("readCount$4");
+                auto branch = *body.getBody().front().getOps<mlir::scf::IfOp>().begin();
+                if (malformed == 0) {
+                    branch.getThenRegion().front().back().eraseOperands(0, 1);
+                } else {
+                    branch->setOperand(0, branch.getElseRegion().front().back().getOperand(0));
+                }
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure), "malformed helper branch joins refuse");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "malformed helper joins preserve source and publish no evidence");
+            }
+        }
+    }
+    const auto poisonedJoinSource = replaced(
+        entryCapturedSource, "    %entryStart = ctjs.binary_static add %entryBefore, %zero",
+        R"MLIR(    %joinPoison = ub.poison : !ctjs.value
+    %joinTest = ctjs.truthy %entryBefore
+    %entryStart = scf.if %joinTest -> (!ctjs.value) {
+      scf.yield %joinPoison : !ctjs.value
+    } else {
+      scf.yield %entryBefore : !ctjs.value
+    })MLIR");
+    auto poisonedJoin = mlir::parseSourceString<mlir::ModuleOp>(poisonedJoinSource, &context);
+    check(static_cast<bool>(poisonedJoin), "ordinary branch with an outer live poison parses");
+    if (poisonedJoin) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(poisonedJoin->clone());
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure), "joining ordinary results cannot hide live poison");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "live poison branch cannot publish evidence after a partial normalization");
+        }
+    }
 
     auto uninitializedSiblingSource =
         replaced(siblingReaderSource, "%emittedCell = ctjs.create_cell %emittedInitial",
@@ -1958,7 +2166,9 @@ module {
                          *siblingWriter,
                          *directSiblingWriter,
                          *zeroSiblingWriter,
-                         *zeroDirectSiblingWriter}) {
+                         *zeroDirectSiblingWriter,
+                         *branchWriter,
+                         *directBranchWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

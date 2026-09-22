@@ -74,7 +74,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
             }
             if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
                 if (!continuation && terminal.kind == Terminal::yielded) {
-                    if (yield.getOperandTypes() != terminal.loop.getInits().getTypes()) {
+                    const auto types = terminal.loop
+                                           ? mlir::TypeRange(terminal.loop.getInits().getTypes())
+                                           : mlir::TypeRange(terminal.types);
+                    if (yield.getOperandTypes() != types) {
                         refuse("DOM helper loop lost its carried result correspondence");
                         return {};
                     }
@@ -430,10 +433,41 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     return self(self, selected.front(), selected.front().begin(), values, at, &tail,
                                 terminal, depth + 1);
                 }
-                // ponytail: duplicate bounded continuations, preserving their
-                // effects in each arm. Large trees stop at the work budget.
+                // Defined JavaScript results can join before their common
+                // continuation. Completion tags and inactive slots still need
+                // path expansion so their selectors retain exact values.
+                bool join = true;
+                for (mlir::Type type : branch.getResultTypes()) {
+                    if (!step()) { return {}; }
+                    join &= llvm::isa<ctjs::ValueType>(type);
+                }
+                if (join) {
+                    const auto scanned = branch.walk([&](mlir::Operation * inner) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        join &= !llvm::isa<mlir::ub::PoisonOp, mlir::scf::IndexSwitchOp>(inner);
+                        for (mlir::Value operand : inner->getOperands()) {
+                            if (!step()) { return mlir::WalkResult::interrupt(); }
+                            join &= !values.lookupOrDefault(operand)
+                                         .getDefiningOp<mlir::ub::PoisonOp>();
+                        }
+                        return mlir::WalkResult::advance();
+                    });
+                    if (scanned.wasInterrupted()) { return {}; }
+                }
+                Terminal joined;
+                joined.kind = Terminal::yielded;
+                if (join) {
+                    for (auto [index, type] : llvm::enumerate(branch.getResultTypes())) {
+                        if (!step()) { return {}; }
+                        joined.types.push_back(type);
+                        joined.carried.push_back(static_cast<unsigned>(index));
+                    }
+                }
+                auto & armTerminal = join ? joined : terminal;
+                // ponytail: other continuations are duplicated within the
+                // existing work budget; general completion joins need proof.
                 auto copied =
-                    mlir::scf::IfOp::create(at, branch.getLoc(), terminal.types,
+                    mlir::scf::IfOp::create(at, branch.getLoc(), armTerminal.types,
                                             values.lookupOrDefault(branch.getCondition()));
                 ++operationCount;
                 for (auto [source, target] :
@@ -451,11 +485,12 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     mlir::OpBuilder nested(&target.front(), target.front().begin());
                     Results returned;
                     if (source.empty() && branch.getNumResults() == 0) {
-                        returned = self(self, body, tail.next, path, nested, continuation, terminal,
-                                        depth + 1);
+                        returned = join ? Results(llvm::SmallVector<mlir::Value>{})
+                                        : self(self, body, tail.next, path, nested, continuation,
+                                               terminal, depth + 1);
                     } else if (source.hasOneBlock() && source.front().getNumArguments() == 0) {
                         returned = self(self, source.front(), source.front().begin(), path, nested,
-                                        &tail, terminal, depth + 1);
+                                        join ? nullptr : &tail, armTerminal, depth + 1);
                     }
                     if (!returned) {
                         refuse("DOM helper completion has an incomplete branch");
@@ -463,6 +498,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     }
                     mlir::scf::YieldOp::create(nested, branch.getLoc(), *returned);
                     ++operationCount;
+                }
+                if (join) {
+                    values.map(branch.getResults(), copied.getResults());
+                    continue;
                 }
                 return llvm::SmallVector<mlir::Value>(copied.getResults());
             }
