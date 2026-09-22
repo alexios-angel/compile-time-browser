@@ -383,7 +383,7 @@ void compiler_impl::compile_throw(const vp::node & n) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t r = alloc_reg();
     compile_expr(n.a, r);
-    proto().emit(instruction{op::throw_value, r});
+    emit_rethrow(r);
     release_to(mark);
 }
 

@@ -304,7 +304,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     // throw: close, then rethrow.
     patch_here(guard);
     close();
-    proto().emit(instruction{op::throw_value, caught});
+    emit_rethrow(caught);
     patch_here(exit);
     patch_here(leave);
     loops_.pop_back();
@@ -330,9 +330,10 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     // see for_of_open_name, which answers undefined for those. The choice is
     // one register tested at the top of every iteration, so the two paths
     // share one body and one set of locals, and `for (x in ...)` never has a
-    // record at all. Explicit returns close exited records through the same
-    // completion routing as finally. Throws out of the body still need a
-    // protected region around the body.
+    // record at all. Explicit returns and throws close exited records through
+    // the same completion routing as finally.
+    // ponytail: implicit body exceptions need protected loop regions and native
+    // exception recovery; explicit completions keep the existing loop shape.
     const std::uint16_t record = of ? alloc_reg() : 0;
     std::size_t lazy = 0;
     if (of) {

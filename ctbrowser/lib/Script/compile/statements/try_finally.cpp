@@ -183,7 +183,7 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
     // 1 - rethrow.
     {
         const std::size_t skip = branch_if_kind(1);
-        proto().emit(instruction{op::throw_value, open.value_reg});
+        emit_rethrow(open.value_reg);
         patch_here(skip);
     }
     // 2 - return. `wrap_promise` is re-applied here for the same reason the
@@ -218,6 +218,30 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
         patch_here(skip);
     }
     // 0 - fall through, which is the whole of the normal path.
+}
+
+void compiler_impl::emit_rethrow(std::uint16_t value_reg) {
+    // A catch/finally inside the iterator gets the exception before the iterator
+    // closes. Its eventual rethrow comes back here at the surrounding depth.
+    const std::uint32_t mark = reg_mark();
+    for (auto loop = loops_.rbegin(); loop != loops_.rend(); ++loop) {
+        if (loop->handler_depth != handler_depth_) { break; }
+        if (!loop->iterator_record) { continue; }
+        const std::uint16_t ignored = alloc_reg();
+        const std::uint16_t scratch = alloc_reg();
+        // The original exception wins even if getting iterator.return throws.
+        const std::size_t guard = proto().emit(instruction{op::push_handler, ignored});
+        emit_iterator_native(iterator_close_name, scratch, *loop->iterator_record, 1);
+        proto().emit(instruction{op::pop_handler});
+        const std::size_t closed = proto().emit(instruction{op::jump});
+        patch_here(guard);
+        // A catch landing must not also be reachable from the normal path.
+        const std::size_t suppressed = proto().emit(instruction{op::jump});
+        patch_here(closed);
+        patch_here(suppressed);
+        release_to(mark);
+    }
+    proto().emit(instruction{op::throw_value, value_reg});
 }
 
 bool compiler_impl::route_return_through_finally(std::uint16_t value_reg) {

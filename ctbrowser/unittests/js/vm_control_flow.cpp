@@ -146,6 +146,167 @@ try { run(); } catch (e) { return e + ':' + trace; })JS",
     }
 }
 
+void test_for_of_throw_close() {
+    const std::string prelude = R"JS(
+let trace = '';
+function make(name, done) {
+    return {
+        [Symbol.iterator]() { return this; },
+        next() { return {done: !!done, value: 1}; },
+        return() { trace += name; return {}; }
+    };
+}
+)JS";
+    // Explicit throws close only records crossed before the next catch/finally.
+    // Iterator protocol failures leave this loop without calling return().
+    for (
+        const auto & [body, expected] : {
+            // body-throw
+            std::pair{R"JS(try { for (const x of make('a')) { trace += 'v'; throw 'body'; } }
+catch (e) { return e + ':' + trace; })JS",
+                      "body:va"},
+            // zero-trip
+            std::pair{R"JS(for (const x of make('a', true)) { throw 'body'; }
+return 'empty:' + trace;)JS",
+                      "empty:"},
+            // caught-body-exhaustion
+            std::pair{R"JS(let n = 0; const a = make('a');
+a.next = function() { return {done: n++ === 2, value: n}; };
+for (const x of a) { try { throw x; } catch (e) { trace += e; } }
+return trace;)JS",
+                      "12"},
+            // inner-finally
+            std::pair{
+                R"JS(try { for (const x of make('a')) { try { throw 'body'; } finally { trace += 'f'; } } }
+catch (e) { return e + ':' + trace; })JS",
+                "body:fa"},
+            // outer-finally
+            std::pair{
+                R"JS(try { try { for (const x of make('a')) throw 'body'; } finally { trace += 'f'; } }
+catch (e) { return e + ':' + trace; })JS",
+                "body:af"},
+            // inner-finally-replace
+            std::pair{
+                R"JS(try { for (const x of make('a')) { try { throw 'body'; } finally { trace += 'f'; throw 'final'; } } }
+catch (e) { return e + ':' + trace; })JS",
+                "final:fa"},
+            // outer-finally-replace
+            std::pair{
+                R"JS(try { try { for (const x of make('a')) throw 'body'; } finally { trace += 'f'; throw 'final'; } }
+catch (e) { return e + ':' + trace; })JS",
+                "final:af"},
+            // finally-return
+            std::pair{
+                R"JS(function run() { for (const x of make('a')) { try { throw 'body'; } finally { trace += 'f'; return trace; } } }
+return run() + ':' + trace;)JS",
+                "f:fa"},
+            // finally-break
+            std::pair{
+                R"JS(for (const x of make('a')) { try { throw 'body'; } finally { trace += 'f'; break; } }
+return trace;)JS",
+                "fa"},
+            // finally-continue
+            std::pair{R"JS(let n = 0; const a = make('a');
+a.next = function() { return {done: n++ === 2, value: n}; };
+for (const x of a) { try { throw 'body'; } finally { trace += 'f'; continue; } }
+return trace;)JS",
+                      "ff"},
+            // nested-body
+            std::pair{
+                R"JS(try { for (const x of make('a')) for (const y of make('b')) throw 'body'; }
+catch (e) { return e + ':' + trace; })JS",
+                "body:ba"},
+            // nested-catch
+            std::pair{
+                R"JS(for (const x of make('a')) { try { for (const y of make('b')) throw 'body'; } catch (e) { trace += e; } break; }
+return trace;)JS",
+                "bbodya"},
+            // nested-close-errors
+            std::pair{R"JS(const a = make('a'), b = make('b');
+Object.defineProperty(a, 'return', {get() { trace += 'a'; throw 'outer'; }});
+b.return = function() { trace += 'b'; throw 'inner'; };
+try { for (const x of a) for (const y of b) throw 'body'; }
+catch (e) { return e + ':' + trace; })JS",
+                      "body:ba"},
+            // return-getter-error
+            std::pair{
+                R"JS(const a = make('a'); Object.defineProperty(a, 'return', {get() { trace += 'g'; throw 'getter'; }});
+try { for (const x of a) { trace += 'v'; throw 'body'; } }
+catch (e) { return e + ':' + trace; })JS",
+                "body:vg"},
+            // return-call-error
+            std::pair{
+                R"JS(const a = make('a'); a.return = function() { trace += 'c'; throw 'close'; };
+try { for (const x of a) { trace += 'v'; throw 'body'; } }
+catch (e) { return e + ':' + trace; })JS",
+                "body:vc"},
+            // return-primitive
+            std::pair{R"JS(const a = make('a'); a.return = function() { trace += 'c'; return 1; };
+try { for (const x of a) { trace += 'v'; throw 'body'; } }
+catch (e) { return e + ':' + trace; })JS",
+                      "body:vc"},
+            // return-noncallable
+            std::pair{R"JS(const a = make('a'); a.return = 1;
+try { for (const x of a) { trace += 'v'; throw 'body'; } }
+catch (e) { return e + ':' + trace; })JS",
+                      "body:v"},
+            // return-absent
+            std::pair{R"JS(const a = make('a'); delete a.return;
+try { for (const x of a) { trace += 'v'; throw 'body'; } }
+catch (e) { return e + ':' + trace; })JS",
+                      "body:v"},
+            // return-null
+            std::pair{R"JS(const a = make('a'); a.return = null;
+try { for (const x of a) { trace += 'v'; throw 'body'; } }
+catch (e) { return e + ':' + trace; })JS",
+                      "body:v"},
+            // iterator-call
+            std::pair{
+                R"JS(const a = make('a'); a[Symbol.iterator] = function() { trace += 'i'; throw 'iterator'; };
+try { for (const x of a) { throw 'body'; } }
+catch (e) { return (e.name || e) + ':' + trace; })JS",
+                "iterator:i"},
+            // next-call
+            std::pair{R"JS(const a = make('a'); a.next = function() { trace += 'n'; throw 'next'; };
+try { for (const x of a) { throw 'body'; } }
+catch (e) { return (e.name || e) + ':' + trace; })JS",
+                      "next:n"},
+            // next-result
+            std::pair{R"JS(const a = make('a'); a.next = function() { trace += 'n'; return 1; };
+try { for (const x of a) { throw 'body'; } }
+catch (e) { return (e.name || e) + ':' + trace; })JS",
+                      "TypeError:n"},
+            // done-getter
+            std::pair{
+                R"JS(const a = make('a'); a.next = function() { return {get done() { trace += 'd'; throw 'done'; }}; };
+try { for (const x of a) { throw 'body'; } }
+catch (e) { return (e.name || e) + ':' + trace; })JS",
+                "done:d"},
+            // value-getter
+            std::pair{
+                R"JS(const a = make('a'); a.next = function() { return {done: false, get value() { trace += 'v'; throw 'value'; }}; };
+try { for (const x of a) { throw 'body'; } }
+catch (e) { return (e.name || e) + ':' + trace; })JS",
+                "value:v"},
+            // catch-rethrow
+            std::pair{
+                R"JS(try { for (const x of make('a')) { try { throw 'first'; } catch (e) { trace += 'c'; throw e; } } }
+catch (e) { return e + ':' + trace; })JS",
+                "first:ca"},
+            // nested-catch-rethrow
+            std::pair{
+                R"JS(try { for (const x of make('a')) { try { for (const y of make('b')) throw 'body'; } catch (e) { trace += 'c'; throw e; } } }
+catch (e) { return e + ':' + trace; })JS",
+                "body:bca"},
+            // thrown-value-before-close
+            std::pair{R"JS(try { for (const x of make('a')) throw (trace += 'v'); }
+catch (e) { return e + ':' + trace; })JS",
+                      "v:va"},
+        }) {
+        expect_result(prelude + body, expected);
+    }
+}
+
 void test_increment_semantics() {
     expect_result("let i = 5; let a = i++; return a;", "5"); // postfix yields the old value
     expect_result("let i = 5; let a = i++; return i;", "6");
@@ -656,6 +817,7 @@ int main() {
     test_errors();
     test_variables_and_control_flow();
     test_for_of_return_close();
+    test_for_of_throw_close();
     test_increment_semantics();
     test_gc_traces_captured_cells();
     test_native_bindings();

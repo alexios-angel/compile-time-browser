@@ -649,6 +649,8 @@ public:
     // Where a `return` goes when a finally is open: into the innermost one.
     // Returns false when there is none and the caller should just emit `ret`.
     [[nodiscard]] bool route_return_through_finally(std::uint16_t value_reg);
+    // Close iterators exited before the nearest handler, then throw the saved value.
+    void emit_rethrow(std::uint16_t value_reg);
     // The same for a loop exit. `loop` must be one of loops_.
     [[nodiscard]] bool route_exit_through_finally(std::size_t loop_index, bool is_continue);
     // The tail of a finally: run the completion it was handed.
