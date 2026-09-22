@@ -486,8 +486,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator sibling callable capture is mutable or unproved");
         }
     }
-    // ponytail: one callable identity per formal; differing targets need a
-    // per-invocation proof. Rescan forwarding edges under the shared budget.
+    // ponytail: one callable identity per formal/result; differing targets need
+    // a per-invocation proof. Rescan forwarding edges under the shared budget.
     bool changed = true;
     while (changed) {
         changed = false;
@@ -515,16 +515,37 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 changed |= inserted;
             }
+            // checkBody proved one root return and complete region exits.
+            // Carry only its exact identity; branch/loop merges stay unproved.
+            auto returned = llvm::cast<ctjs::ReturnOp>(body.getTerminator());
+            auto target = callableValues.find(returned.getValue());
+            if (target != callableValues.end()) {
+                const unsigned targetIndex = target->second;
+                auto [bound, inserted] =
+                    callableValues.try_emplace(operation->getResult(0), targetIndex);
+                if (!inserted && bound->second != targetIndex) {
+                    return error("DOM iterator callable return requires one immutable target");
+                }
+                changed |= inserted;
+            }
         }
     }
     for (auto * operation : familyCalls) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-        auto found = callableValues.find(call ? call.getCallee() : direct.getCalleeValue());
+        auto callee = call ? call.getCallee() : direct.getCalleeValue();
+        auto found = callableValues.find(callee);
         if (found == callableValues.end()) {
             if (operation->getParentOfType<ctjs::FuncOp>() != entry) {
                 return error("DOM iterator sibling call requires an immutable local helper");
+            }
+            auto producer = callee.getDefiningOp();
+            auto ordinary = llvm::dyn_cast_or_null<ctjs::CallOp>(producer);
+            auto exact = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(producer);
+            if ((ordinary || exact) &&
+                callableValues.contains(ordinary ? ordinary.getCallee() : exact.getCalleeValue())) {
+                return error("DOM iterator sibling call requires a proved returned callable");
             }
             continue;
         }
@@ -555,6 +576,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 caller == entry && cell && use.getOperandNumber() == 0 &&
                 callableCells.lookup(cell) == helper.closure) {
                 continue;
+            }
+            if (llvm::isa<ctjs::ReturnOp>(user) && caller != entry &&
+                user == caller.getBody().front().getTerminator()) {
+                continue; // Every result observer is checked through callableValues.
             }
             auto ordinary = llvm::dyn_cast<ctjs::CallOp>(user);
             auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
@@ -675,19 +700,36 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         helper.body.setUpvalueCount(0);
     }
     llvm::SmallVector<mlir::Operation *> pending;
-    for (auto & helper : helpers) {
-        for (auto * call : helper.calls) {
-            if (call->getParentOfType<ctjs::FuncOp>() == entry) { pending.push_back(call); }
+    // Source order keeps dependency-scan costs independent of SSA hash order.
+    for (auto * operation : familyCalls) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
+        auto callee = ordinary ? ordinary.getCallee()
+                               : llvm::cast<ctjs::CallDirectOp>(operation).getCalleeValue();
+        if (operation->getParentOfType<ctjs::FuncOp>() == entry &&
+            callableValues.contains(callee)) {
+            pending.push_back(operation);
         }
     }
     while (!pending.empty()) {
-        auto * call = pending.pop_back_val();
+        // ponytail: bounded linear scan; use a dependency worklist if large
+        // helper families exhaust the shared budget. A returned callable must
+        // have its producer expanded before its invocation can bind the target.
+        auto ready = llvm::find_if(pending, [&](mlir::Operation * operation) {
+            if (!spend()) { return false; }
+            auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
+            auto callee = ordinary ? ordinary.getCallee()
+                                   : llvm::cast<ctjs::CallDirectOp>(operation).getCalleeValue();
+            return helperIndices.contains(callee);
+        });
+        if (ready == pending.end() || !work.remaining) {
+            return error("DOM iterator sibling call has no proved target");
+        }
+        auto * call = *ready;
+        pending.erase(ready);
         auto ordinary = llvm::dyn_cast<ctjs::CallOp>(call);
         auto callee =
             ordinary ? ordinary.getCallee() : llvm::cast<ctjs::CallDirectOp>(call).getCalleeValue();
-        if (!helperIndices.contains(callee)) {
-            return error("DOM iterator sibling call has no proved target");
-        }
         auto & helper = helpers[helperIndices.lookup(callee)];
         auto receiver =
             ordinary ? ordinary.getReceiver() : llvm::cast<ctjs::CallDirectOp>(call).getReceiver();

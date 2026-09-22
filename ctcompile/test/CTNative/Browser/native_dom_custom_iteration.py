@@ -362,6 +362,41 @@ SIBLING_CALLABLE_SHARED_SOURCE = (
     .replace("rounds += forward();", "rounds += forward(advance);")
     .replace("rounds += relay();", "rounds += relay(advance);")
 )
+SIBLING_RETURNED_CALLABLE_SOURCE = SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+    "  const relay = (writer) => writer();",
+    "  const identity = (writer) => writer;\n" "  const relay = (writer) => identity(writer)();",
+)
+SIBLING_RETURNED_SNAPSHOTS_SOURCE = SIBLING_CALLABLE_SNAPSHOTS_SOURCE.replace(
+    "  const relay = (amount, writer, prior) => writer(amount, prior);",
+    "  const identity = (writer) => { closed += emitted; return writer; };\n"
+    "  const relay = (amount, writer, prior) => identity(writer)(amount, prior);",
+)
+SIBLING_RETURNED_FORWARDED_SOURCE = (
+    SIBLING_CALLABLE_SHARED_SOURCE.replace(
+        "  const forward = (writer) => writer();",
+        "  const identity = (writer) => writer;\n"
+        "  const forward = (writer) => identity(writer);",
+    )
+    .replace("forward(writer) + 1", "forward(writer)() + 1")
+    .replace("rounds += forward(advance);", "rounds += forward(advance)();")
+)
+SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE = (
+    SIBLING_RETURNED_CALLABLE_SOURCE.replace(
+        "  const identity = (writer) => writer;",
+        "  const other = () => { const before = emitted; closed += emitted;\n"
+        "    emitted += closed; return before + 1; };\n"
+        "  const identity = (writer) => writer;",
+    )
+    .replace(
+        "  const relay = (writer) => identity(writer)();",
+        "  const relay = (writer) => identity(writer)();\n"
+        "  const alternate = () => identity(other)();",
+    )
+    .replace(
+        "      rounds += relay(advance);",
+        "      if (emitted === 0) rounds += relay(advance);\n" "      else rounds += alternate();",
+    )
+)
 
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
@@ -783,6 +818,33 @@ POSITIVES = (
         # Both branches pass the shared writer, one through another parameter.
         "entry-captured-sibling-callable-argument-shared",
         SIBLING_CALLABLE_SHARED_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-callable-writer",
+        SIBLING_RETURNED_CALLABLE_SOURCE,
+        True,
+        ("2724", "3598", "2724"),
+        True,
+        "false",
+    ),
+    (
+        # The returned writer receives earlier scalar snapshots after identity
+        # changes the shared state that the writer must read at call time.
+        "entry-captured-sibling-returned-callable-snapshots",
+        SIBLING_RETURNED_SNAPSHOTS_SOURCE,
+        True,
+        ("109776", "127479", "109776"),
+        True,
+        "false",
+    ),
+    (
+        # Both branches invoke the writer returned through two helper results.
+        "entry-captured-sibling-returned-callable-forwarded",
+        SIBLING_RETURNED_FORWARDED_SOURCE,
         True,
         ("2729", "3603", "2729"),
         True,
@@ -1220,11 +1282,28 @@ def refusals():
             "entry-captured-sibling-callable-argument-nonnumber": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
                 "emitted += closed; return before;", "emitted = true; return before;", 1
             ),
-            "entry-captured-sibling-returned-callable-writer": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
-                "  const relay = (writer) => writer();",
-                "  const identity = (writer) => writer;\n"
-                "  const relay = (writer) => identity(writer)();",
+            "entry-captured-sibling-returned-callable-escaping": SIBLING_RETURNED_CALLABLE_SOURCE.replace(
+                "(writer) => identity(writer)();",
+                "(writer) => { const returned = identity(writer);\n"
+                "    anchor.saved = returned; return returned(); };",
             ),
+            "entry-captured-sibling-returned-callable-observed": SIBLING_RETURNED_CALLABLE_SOURCE.replace(
+                "(writer) => identity(writer)();",
+                "(writer) => identity(writer) === writer;",
+            ),
+            "entry-captured-sibling-returned-callable-object": SIBLING_RETURNED_CALLABLE_SOURCE.replace(
+                "(writer) => writer;", "(writer) => anchor;"
+            ),
+            "entry-captured-sibling-returned-callable-missing": SIBLING_RETURNED_CALLABLE_SOURCE.replace(
+                "(writer) => writer;", "(writer) => {};"
+            ),
+            "entry-captured-sibling-returned-callable-recursive": SIBLING_RETURNED_CALLABLE_SOURCE.replace(
+                "(writer) => writer;", "(writer) => identity(writer);"
+            ),
+            "entry-captured-sibling-returned-callable-nonnumber": SIBLING_RETURNED_CALLABLE_SOURCE.replace(
+                "(writer) => writer;", "(writer) => { emitted = true; return writer; };"
+            ),
+            "entry-captured-sibling-returned-callable-different-targets": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE,
         }
     )
     return variants

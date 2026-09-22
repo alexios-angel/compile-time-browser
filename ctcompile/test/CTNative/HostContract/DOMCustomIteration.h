@@ -1090,6 +1090,49 @@ module {
     check(callableWriter && directCallableWriter,
           "ordinary/direct callable arguments and scalar snapshots parse");
     if (!callableWriter || !directCallableWriter) { return; }
+    // Returning the writer preserves its identity at every call position;
+    // invoking it still receives old arguments alongside current shared cells.
+    auto returnedWriterSource =
+        replaced(callableWriterSource,
+                 "%nestedWriter: !ctjs.value, %step: !ctjs.value, %snapshot: !ctjs.value)",
+                 "%nestedWriter: !ctjs.value)");
+    returnedWriterSource =
+        replaced(returnedWriterSource,
+                 "    %nestedResult = ctjs.call %nestedWriter(%nestedUndefined, %step, %snapshot)\n"
+                 "    ctjs.return %nestedResult",
+                 "    ctjs.return %nestedWriter");
+    for (const auto & [value, suffix] :
+         {std::pair{"entryBefore", "before"}, std::pair{"bodyEmitted", "body"},
+          std::pair{"preCloseCount", "close"}, std::pair{"finalCount", "final"}}) {
+        const auto result = std::string("%returnedWriter_") + suffix;
+        const auto arguments =
+            std::string("%argumentStep_") + suffix + ", %argumentCount_" + suffix;
+        returnedWriterSource =
+            replaced(returnedWriterSource,
+                     std::string("%") + value +
+                         " = ctjs.call %readCount(%undefined, %writeState, " + arguments + ")",
+                     result + " = ctjs.call %readCount(%undefined, %writeState)\n    %" + value +
+                         " = ctjs.call " + result + "(%undefined, " + arguments + ")");
+    }
+    auto directReturnedWriterSource = returnedWriterSource;
+    for (const auto * suffix : {"before", "body", "close", "final"}) {
+        directReturnedWriterSource =
+            replaced(directReturnedWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+        const auto result = std::string("%returnedWriter_") + suffix;
+        directReturnedWriterSource =
+            replaced(directReturnedWriterSource, "ctjs.call " + result + "(%undefined, ",
+                     "ctjs.call_direct @writeState$6(%undefined, %undefined, " + result + ", ");
+    }
+    directReturnedWriterSource =
+        replaced(directReturnedWriterSource, "ctjs.call %writeState(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %writeState, ");
+    auto returnedWriter = mlir::parseSourceString<mlir::ModuleOp>(returnedWriterSource, &context);
+    auto directReturnedWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directReturnedWriterSource, &context);
+    check(returnedWriter && directReturnedWriter,
+          "ordinary/direct returned callable and scalar snapshot twins parse");
+    if (!returnedWriter || !directReturnedWriter) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1153,7 +1196,9 @@ module {
                          *nestedWriter,
                          *directNestedWriter,
                          *callableWriter,
-                         *directCallableWriter}) {
+                         *directCallableWriter,
+                         *returnedWriter,
+                         *directReturnedWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1165,7 +1210,9 @@ module {
         const bool argumentWrites = fixture == *argumentWriter || fixture == *directArgumentWriter;
         const bool breakWrites = fixture == *breakWriter || fixture == *directBreakWriter;
         const bool nestedWrites = fixture == *nestedWriter || fixture == *directNestedWriter;
-        const bool callableWrites = fixture == *callableWriter || fixture == *directCallableWriter;
+        const bool callableWrites = fixture == *callableWriter ||
+                                    fixture == *directCallableWriter ||
+                                    fixture == *returnedWriter || fixture == *directReturnedWriter;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -1875,6 +1922,30 @@ module {
              replaced(callableWriterSource, "    ctjs.return %nestedResult",
                       "    %observedCallable = ctjs.binary_static add %nestedWriter, %step\n"
                       "    ctjs.return %nestedResult"),
+             replaced(returnedWriterSource, "    %entryBefore =",
+                      "    ctjs.store_global \"leaked\", %returnedWriter_before\n"
+                      "    %entryBefore ="),
+             replaced(directReturnedWriterSource, "    %finalCount =",
+                      "    %observedReturned = ctjs.binary_static add %returnedWriter_final, "
+                      "%argumentStep_final\n"
+                      "    %finalCount ="),
+             replaced(returnedWriterSource, "ctjs.return %nestedWriter",
+                      "ctjs.return %nestedUndefined"),
+             replaced(directReturnedWriterSource, "ctjs.return %nestedWriter",
+                      "ctjs.return %callee"),
+             replaced(returnedWriterSource, "    ctjs.return %nestedWriter",
+                      R"MLIR(    %returnCondition = ctjs.truthy %nestedUndefined
+    %mixedReturn = scf.if %returnCondition -> (!ctjs.value) {
+      scf.yield %nestedWriter : !ctjs.value
+    } else {
+      scf.yield %nestedUndefined : !ctjs.value
+    }
+    ctjs.return %mixedReturn)MLIR"),
+             replaced(
+                 replaced(directReturnedWriterSource, "\n}\n",
+                          "\n" + replaced(writerBody, "@readCount$4", "@otherWriter$7") + "}\n"),
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %returnedWriter_final, ",
+                 "ctjs.call_direct @otherWriter$7(%undefined, %undefined, %returnedWriter_final, "),
          }) {
         auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(fixture), "hostile nested helper witness parses");
@@ -2689,7 +2760,9 @@ module {
                          *nestedWriter,
                          *directNestedWriter,
                          *callableWriter,
-                         *directCallableWriter}) {
+                         *directCallableWriter,
+                         *returnedWriter,
+                         *directReturnedWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
