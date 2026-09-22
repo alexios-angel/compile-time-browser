@@ -4090,6 +4090,95 @@ void InductionCases::overwritesAndTransport() {
     reject(
         "direct remainder refinement retains the complete later-store census",
         replace(directRemainder, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
+    const auto directConverted =
+        replace(replace(replace(directMask, "[%x, %x, %five, %one, %x, %one, %one, %one]",
+                                "[%one, %shiftCount, %x, %one, %x, %one, %one, %x]"),
+                        "  %a =",
+                        "  %big = ctjs.constant #ctjs.number<4737786807993761792> "
+                        "{storage_test_id = \"big\"}\n"
+                        "  %twiceBig = ctjs.constant #ctjs.number<4742290407621132288>\n"
+                        "  %shiftCount = ctjs.constant #ctjs.number<4628855992006737920> "
+                        "{storage_test_id = \"shiftCount\"}\n"
+                        "  %thirty = ctjs.constant #ctjs.number<4629137466983448576>\n  %a ="),
+                "%count = ctjs.get_property %base[%two]\n"
+                "  %position = ctjs.binary_static bitand %i, %count",
+                "%count = ctjs.get_property %base[%one]\n"
+                "  %scaled = ctjs.binary mul %i, %big\n"
+                "  %part = ctjs.binary_static shr %scaled, %count\n"
+                "  %position = ctjs.binary add %part, %four");
+    const auto directConvertedUnsigned =
+        replace(replace(directConverted, "%scaled = ctjs.binary mul %i, %big",
+                        "%offset = ctjs.binary sub %i, %four\n"
+                        "  %scaled = ctjs.binary mul %offset, %big"),
+                "%part = ctjs.binary_static shr %scaled, %count\n"
+                "  %position = ctjs.binary add %part, %four",
+                "%position = ctjs.binary_static ushr %scaled, %count");
+    for (const auto & body : {directConverted, directConvertedUnsigned}) {
+        run({.what = "direct right-shift conversions refine gaps without earlier mixed rounding",
+             .body = body,
+             .arrays = "a:[one,shiftCount,zero,one,zero,one,one,zero]",
+             .reads = "a[1]=shiftCount; a[0]=one; a[1]=shiftCount; a[3]=one; "
+                      "a[1]=shiftCount; a[6]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto directConvertedComplement =
+        replace(replace(directConverted, "[%one, %shiftCount, %x, %one, %x, %one, %one, %x]",
+                        "[%x, %big, %one, %x, %one, %x, %one, %one]"),
+                "%part = ctjs.binary_static shr %scaled, %count\n"
+                "  %position = ctjs.binary add %part, %four",
+                "%negative = ctjs.unary bitnot %scaled\n"
+                "  %adjusted = ctjs.binary add %negative, %one\n"
+                "  %part = ctjs.binary div %adjusted, %count\n"
+                "  %position = ctjs.binary add %part, %three");
+    run({.what = "direct complement conversions preserve unwritten divisor gaps",
+         .body = directConvertedComplement,
+         .arrays = "a:[zero,big,one,zero,one,zero,one,one]",
+         .reads = "a[1]=big; a[0]=x; a[1]=big; a[3]=zero; a[1]=big; a[6]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto directConvertedLeft = replace(
+        replace(replace(directConverted, "[%one, %shiftCount, %x, %one, %x, %one, %one, %x]",
+                        "[%x, %x, %x, %one, %one, %one, %one, %one]"),
+                "%count = ctjs.get_property %base[%one]",
+                "%count = ctjs.get_property %base[%three]"),
+        "%part = ctjs.binary_static shr %scaled, %count\n"
+        "  %position = ctjs.binary add %part, %four",
+        "%shifted = ctjs.binary_static shl %scaled, %count\n"
+        "  %part = ctjs.binary div %shifted, %twiceBig\n"
+        "  %position = ctjs.binary add %part, %two");
+    run({.what = "direct left-shift conversions preserve unwritten count gaps",
+         .body = directConvertedLeft,
+         .arrays = "a:[zero,zero,zero,one,one,one,one,one]",
+         .reads = "a[3]=one; a[0]=x; a[3]=one; a[3]=one; a[3]=one; a[6]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "direct conversion replay retains a child in an unwritten lattice gap",
+         .body = replace(directConverted, "[%one, %shiftCount,", "[%x, %shiftCount,"),
+         .arrays = "a:[x,shiftCount,zero,one,zero,one,one,zero]",
+         .reads = "a[1]=shiftCount; a[0]=x; a[1]=shiftCount; a[3]=one; "
+                  "a[1]=shiftCount; a[6]=one",
+         .exit = "a -> {a,x}"});
+    run({.what = "direct conversion replay preserves a snapshot before its slot is overwritten",
+         .body = replace(replace(directConverted, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%four]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[one,shiftCount,zero,one,zero,one,one,zero]",
+         .reads = "a[4]=x; a[1]=shiftCount; a[0]=one; a[1]=shiftCount; a[3]=one; "
+                  "a[1]=shiftCount; a[6]=one",
+         .exit = "x -> {x}"});
+    reject("singleton conversion refinement still refuses a fractional quotient",
+           replace(replace(replace(directConvertedLeft,
+                                   "  %a =", "  %six = ctjs.binary add %three, %three\n  %a ="),
+                           "^header(%a, %zero, %zero", "^header(%a, %six, %zero"),
+                   "div %shifted, %twiceBig", "div %shifted, %three"));
+    reject("direct conversion gap refinement rejects an actual count overwrite",
+           replace(replace(directConverted, "[%one, %shiftCount, %x,", "[%one, %one, %shiftCount,"),
+                   "%count = ctjs.get_property %base[%one]",
+                   "%count = ctjs.get_property %base[%two]"));
+    reject("direct conversion gap refinement retains the complete later-store census",
+           replace(directConverted,
+                   "  %step =", "  ctjs.set_property %base[%one], %thirty\n  %step ="));
 }
 
 } // namespace ctcompile::test::escape::arrays::induction_detail

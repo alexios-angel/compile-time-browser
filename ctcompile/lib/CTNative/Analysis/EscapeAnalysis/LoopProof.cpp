@@ -235,16 +235,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                    ? static_cast<std::uint32_t>(*endpoint.integerNumber)
                    : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
     };
-    const auto convertedLattice = [&](mlir::Value operand, const IndexRange & input,
-                                      std::size_t period, std::size_t residue,
+    const auto convertedLattice = [&](mlir::Value operand, std::size_t period, std::size_t residue,
                                       bool unsignedOutput = false) -> std::optional<IndexRange> {
         // Intersect the full converted output interval with a proved residue.
-        // Conversion must retain eligibility for whole-key gap refinement.
+        // Conversion can introduce gaps even without earlier mixed rounding.
+        // Keep the enclosing lattice eligible for bounded whole-key refinement.
         // ponytail: one enclosing lattice; unions if precision needs them.
-        IndexRange range{{operand, ContentsKind::NonBigInt},
-                         {operand, ContentsKind::NonBigInt},
-                         period,
-                         input.mixedShift};
+        IndexRange range{
+            {operand, ContentsKind::NonBigInt}, {operand, ContentsKind::NonBigInt}, period, true};
         const auto lower = unsignedOutput ? 0LL : -2147483648LL;
         const auto upper = unsignedOutput ? 4294967295LL : 2147483647LL;
         const auto first = lower + static_cast<std::int64_t>(
@@ -296,8 +294,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // Complement negates each step modulo 2^32. Both the steps
                 // and every conversion wrap preserve this output residue.
                 const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
-                return convertedLattice(operand, *range, period,
-                                        ~numberBits(range->first) % period);
+                return convertedLattice(operand, period, ~numberBits(range->first) % period);
             }
             // The recursive range already proves exact bounded Numbers. Negation
             // changes their sign and order; both signed zeros remain own key zero.
@@ -557,7 +554,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // converted input before the monotone right shift; replay still
                 // records only actual writes.
                 const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
-                range = convertedLattice(operand, *range, period, numberBits(range->first) % period,
+                range = convertedLattice(operand, period, numberBits(range->first) % period,
                                          unsignedShift);
                 if (!range) { return std::nullopt; }
             }
@@ -585,7 +582,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     const auto residue =
                         static_cast<std::size_t>(numberBits(range->first) << (count & 31U)) %
                         period;
-                    return convertedLattice(operand, *range, period, residue);
+                    return convertedLattice(operand, period, residue);
                 }
                 range->stride *= factor;
             } else if (!twoPointShift) {
@@ -607,13 +604,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
             const auto first = range->first.integerNumber ? range->first.integerNumber
                                                           : range->first.negativeIntegerNumber;
+            const bool singleton = endpointNumber(range->first) == endpointNumber(range->last);
             // Divide the positive stride magnitude; divisor sign only reverses
-            // endpoint order. Integral endpoints can miss fractional positions.
+            // endpoint order. Distinct endpoints can hide fractional positions;
+            // a singleton has no adjacent visit whose stride needs dividing.
             if (!divisor || *divisor == 0 || *first % *divisor != 0 ||
-                range->stride % *divisor != 0) {
+                (!singleton && range->stride % *divisor != 0)) {
                 return std::nullopt;
             }
-            range->stride /= *divisor;
+            range->stride = singleton ? 1 : range->stride / *divisor;
         } else if (multiply) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
