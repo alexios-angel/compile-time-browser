@@ -1,12 +1,134 @@
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
+#include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Transforms/CFGToSCF.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/DenseSet.h"
 
+#include <algorithm>
+#include <tuple>
+
 namespace ctcompile::ctnative {
+
+// The caller owns a disposable clone. Preserve both source completions while
+// upstream structures their common CFG; no native effect or payload is proved here.
+static llvm::Error structureCloseCompletion(ctjs::FuncOp function, unsigned & remaining) {
+    const auto refuse = [](llvm::StringRef reason) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+    };
+    bool returns = false;
+    uint64_t size = 0, width = 8;
+    for (auto & block : function.getBody()) {
+        returns |= llvm::isa<ctjs::ReturnOp>(block.getTerminator());
+        width = std::max(width, uint64_t(block.getNumArguments()) + 8);
+        for (auto & operation : block) {
+            size += uint64_t(1) + operation.getNumOperands() + operation.getNumResults();
+        }
+    }
+    if (!returns) { return llvm::Error::success(); }
+    // Upstream has no work callback. Reserve its quadratic CFG work and the
+    // terminal-region rewrite before touching this clone.
+    const uint64_t blocks = function.getBody().getBlocks().size() + 1;
+    if (size > remaining / 4) { return refuse("DOM iterator completion work budget exhausted"); }
+    remaining -= static_cast<unsigned>(size * 4);
+    if (blocks > remaining / width / blocks) {
+        return refuse("DOM iterator completion work budget exhausted");
+    }
+    remaining -= static_cast<unsigned>(blocks * blocks * width);
+    auto * context = function.getContext();
+    context->getOrLoadDialect<mlir::arith::ArithDialect>();
+    context->getOrLoadDialect<mlir::scf::SCFDialect>();
+    context->getOrLoadDialect<mlir::ub::UBDialect>();
+    mlir::IRRewriter rewriter(context);
+    (void)mlir::simplifyRegions(rewriter, function->getRegions());
+    mlir::DominanceInfo dominance(function);
+    mlir::ControlFlowToSCFTransformation transformation;
+    mlir::FailureOr<bool> lifted = mlir::failure();
+    {
+        mlir::ScopedDiagnosticHandler quiet(context,
+                                            [](mlir::Diagnostic &) { return mlir::success(); });
+        lifted = mlir::transformCFGToSCF(function.getBody(), transformation, dominance);
+    }
+    if (mlir::failed(lifted)) {
+        return refuse("DOM iterator completion CFG could not be structured");
+    }
+    auto & root = function.getBody().front();
+    auto * dispatch = root.getTerminator();
+    auto switcher = llvm::dyn_cast<mlir::cf::SwitchOp>(dispatch);
+    auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(dispatch);
+    // ponytail: the two distinct terminal kinds produced by CFG-to-SCF;
+    // keep broader terminal graphs until their region correspondence is proved.
+    if (function.getBody().getBlocks().size() != 3 ||
+        (!branch && (!switcher || switcher.getCaseDestinations().size() != 1))) {
+        return refuse("DOM iterator completion requires one throw/return dispatch");
+    }
+    auto * normal = branch ? branch.getTrueDest() : switcher.getCaseDestinations().front();
+    auto * fallback = branch ? branch.getFalseDest() : switcher.getDefaultDestination();
+    auto operands = branch ? branch.getTrueDestOperands() : switcher.getCaseOperands(0);
+    auto fallbackOperands = branch ? branch.getFalseDestOperands() : switcher.getDefaultOperands();
+    if (normal == fallback || normal == &root || fallback == &root ||
+        normal->getSinglePredecessor() != &root || fallback->getSinglePredecessor() != &root ||
+        !((llvm::isa<ctjs::ReturnOp>(normal->getTerminator()) &&
+           llvm::isa<ctjs::ThrowOp>(fallback->getTerminator())) ||
+          (llvm::isa<ctjs::ThrowOp>(normal->getTerminator()) &&
+           llvm::isa<ctjs::ReturnOp>(fallback->getTerminator())))) {
+        return refuse("DOM iterator completion lost its distinct source exits");
+    }
+    mlir::OpBuilder at(dispatch);
+    mlir::Value selected;
+    if (branch) {
+        selected = branch.getCondition();
+    } else {
+        auto key = mlir::arith::ConstantOp::create(
+            at, dispatch->getLoc(), switcher.getFlag().getType(),
+            at.getIntegerAttr(switcher.getFlag().getType(),
+                              *switcher.getCaseValues()->getValues<llvm::APInt>().begin()));
+        selected = mlir::arith::CmpIOp::create(
+            at, dispatch->getLoc(), mlir::arith::CmpIPredicate::eq, switcher.getFlag(), key);
+    }
+    auto choice = mlir::scf::IfOp::create(at, dispatch->getLoc(), function.getResultTypes(),
+                                          selected, false, false);
+    for (auto [block, region, incoming] :
+         {std::tuple{normal, &choice.getThenRegion(), operands},
+          std::tuple{fallback, &choice.getElseRegion(), fallbackOperands}}) {
+        if (block->getNumArguments() != incoming.size()) {
+            return refuse("DOM iterator completion lost its incoming values");
+        }
+        for (auto [argument, value] : llvm::zip(block->getArguments(), incoming)) {
+            argument.replaceAllUsesWith(value);
+        }
+        block->eraseArguments(0, block->getNumArguments());
+        block->moveBefore(region, region->end());
+        auto * terminal = block->getTerminator();
+        mlir::OpBuilder end(terminal);
+        mlir::Value value = terminal->getOperand(0);
+        if (llvm::isa<ctjs::ThrowOp>(terminal)) {
+            auto abrupt = mlir::scf::ExecuteRegionOp::create(end, terminal->getLoc(),
+                                                             mlir::TypeRange{}, true);
+            auto & body = abrupt.getRegion().emplaceBlock();
+            terminal->moveBefore(&body, body.end());
+            end.setInsertionPointToEnd(block);
+            // This yield is structurally required and unreachable. The actual
+            // throw remains a terminator; only the real return supplies a result.
+            value = mlir::ub::PoisonOp::create(end, terminal->getLoc(), value.getType());
+        } else {
+            terminal->erase();
+            end.setInsertionPointToEnd(block);
+        }
+        mlir::scf::YieldOp::create(end, dispatch->getLoc(), value);
+    }
+    ctjs::ReturnOp::create(at, dispatch->getLoc(), choice.getResult(0));
+    dispatch->erase();
+    function->removeAttr("ctjs.not_structured");
+    return llvm::Error::success();
+}
 
 llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
                                                const HostContract & contract, unsigned maxSteps) {
@@ -214,6 +336,7 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     normal.push_back(caught);
     for (auto * block : normal) { block->dropAllReferences(); }
     for (auto * block : normal) { block->erase(); }
+    if (auto error = structureCloseCompletion(*copy, remaining)) { return std::move(error); }
     if (mlir::failed(mlir::verify(*copy))) {
         return refuse("DOM iterator close normalization lost source correspondence");
     }

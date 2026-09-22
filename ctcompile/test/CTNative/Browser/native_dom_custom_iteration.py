@@ -1847,6 +1847,17 @@ def refusals():
             "body-throw-close-getter": variants["body-throw"]
             .replace("return() {", "get return() {")
             .replace("return {};", "throw 2;"),
+            "body-throw-branch-boolean-snapshot": BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
+                "return (node.setAttribute", "throw (node.setAttribute", 1
+            ),
+            "body-throw-branch-number-snapshot": BODY_RETURN_BRANCH_NUMBER_SOURCE.replace(
+                "return (count += 2, count);", "throw (count += 2, count);", 1
+            ),
+            "body-throw-or-return-snapshot": BODY_RETURN_MULTIPLE_SOURCE.replace(
+                "return (node.setAttribute", "throw (node.setAttribute", 1
+            ),
+            # Abrupt completion wins even when return() produces a primitive.
+            "body-throw-close-primitive": variants["body-throw"].replace("return {};", "return 2;"),
         }
     )
     for helper in SNAPSHOT_INTRINSICS[4:]:

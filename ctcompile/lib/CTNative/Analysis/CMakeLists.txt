@@ -22,6 +22,7 @@ add_mlir_library(CTNativeAnalysis
     CTJSDialect
     MLIRAnalysis
     MLIRArithDialect
+    MLIRControlFlowToSCF
     MLIRIR
     MLIRSCFDialect
 )

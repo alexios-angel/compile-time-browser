@@ -1,6 +1,8 @@
 #pragma once
 
 #include "HostContractFixtures.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Verifier.h"
 
 namespace ctcompile::test::host_contract {
@@ -148,6 +150,85 @@ module {
     contract.moduleSha256 = hostContractFingerprint(*input);
     check(!DOMEntryAnalysis(*input, contract).proved(),
           "structural close success does not bypass complete typed DOM admission");
+
+    const auto mixed =
+        replaced(replaced(source, "    ctjs.push_handler ^body catch ^caught\n",
+                          "    %condition = ctjs.truthy %this\n"
+                          "    cf.cond_br %condition, ^install, ^normal\n"
+                          "  ^install:\n    ctjs.push_handler ^body catch ^caught\n"),
+                 "    ctjs.throw %saved\n",
+                 "    ctjs.throw %saved\n"
+                 "  ^normal:\n"
+                 "    %returned = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                 "    ctjs.store_global \"normal\", %returned\n"
+                 "    ctjs.frame_exit %frame\n"
+                 "    ctjs.return %returned\n");
+    for (bool reversed : {false, true}) {
+        auto text = reversed ? replaced(mixed, "^install, ^normal", "^normal, ^install") : mixed;
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto candidate = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+            check(static_cast<bool>(candidate), "mixed throw and return source parses");
+            if (!candidate) { continue; }
+            auto proof = contractForClose(*candidate);
+            proof.provider = provider;
+            auto result = normalizeDOMIteratorClose(*candidate, proof);
+            check(result && *result && mlir::succeeded(mlir::verify(*candidate)),
+                  "mixed source exits retain verified structured correspondence");
+            if (!result) {
+                std::fprintf(stderr, "%s\n", llvm::toString(result.takeError()).c_str());
+                continue;
+            }
+            auto entry = candidate->lookupSymbol<ctjs::FuncOp>(proof.entry);
+            check(entry.getBody().hasOneBlock(), "mixed completion has one root entry");
+            unsigned throws = 0, returns = 0, invokes = 0, normalWrites = 0;
+            mlir::scf::IfOp terminal;
+            entry.walk([&](ctjs::ThrowOp thrown) {
+                ++throws;
+                auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(thrown->getParentOp());
+                terminal = region ? llvm::dyn_cast<mlir::scf::IfOp>(region->getParentOp())
+                                  : mlir::scf::IfOp{};
+                auto saved = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
+                check(region && region.getNumResults() == 0 && region.getNoInline() &&
+                          llvm::hasSingleElement(region.getRegion().front()) && terminal && saved &&
+                          llvm::cast<ctjs::NumberAttr>(saved.getValue()).getDouble() == 1,
+                      "the original saved throw terminates its own standard SCF region");
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(
+                    region ? region->getBlock()->getTerminator() : nullptr);
+                check(yield && yield.getNumOperands() == 1 &&
+                          yield.getOperand(0).getDefiningOp<mlir::ub::PoisonOp>(),
+                      "the throwing arm has no fabricated return value");
+            });
+            entry.walk([&](ctjs::ReturnOp returned) {
+                ++returns;
+                check(returned->getParentOp() == entry &&
+                          returned.getValue().getDefiningOp<mlir::scf::IfOp>(),
+                      "the single real return receives the terminal dispatch result");
+            });
+            entry.walk([&](ctjs::InvokeOp invoke) {
+                ++invokes;
+                check(invoke->getParentOp() == terminal && invoke.getNumResults() == 0 &&
+                          invoke.getUnwindBody().front().getArgument(0).use_empty(),
+                      "the close stays suppressed inside the throwing completion arm");
+            });
+            entry.walk([&](ctjs::StoreGlobalOp store) {
+                if (store.getName() != "normal") { return; }
+                ++normalWrites;
+                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(store->getParentOp());
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(store->getBlock()->getTerminator());
+                auto value = store.getValue().getDefiningOp<ctjs::ConstantOp>();
+                check(branch == terminal && yield && yield.getOperand(0) == store.getValue() &&
+                          value && llvm::cast<ctjs::NumberAttr>(value.getValue()).getDouble() == 2,
+                      "normal effects and the actual return value remain in their source arm");
+            });
+            check(throws == 1 && returns == 1 && invokes == 1 && normalWrites == 1,
+                  "structuring neither duplicates nor drops source effects or exits");
+            proof.moduleSha256 = hostContractFingerprint(*candidate);
+            check(!DOMEntryAnalysis(*candidate, proof).proved(),
+                  "structured abrupt completion still needs full native payload and host proof");
+        }
+    }
+    for (unsigned budget : {0u, 128u, 512u}) { refuses(mixed, budget); }
 }
 
 } // namespace ctcompile::test::host_contract
