@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator return close and converted shift gaps, 2026-09-22 UTC
+
+Resumed clean **9e7ba1f9** and the saved `body-return` source `9bd2d5ba`.
+**380ee61d** fixes the source compiler's missing close on explicit synchronous
+iterator returns, preserving return snapshots, nested close error order and
+catch/finally scope. Node exposed 15 disagreements in 17 initial VM witnesses;
+those and two further finally regressions now pass. General body-throw cleanup
+remains separate. Claude was confirmed stopped before browser edits and landing.
+
+**1d5b4e55** admits acyclic traversal with close calls in separate completion
+arms after every traversal exit. The exact saved source and an ordered
+return-before-close witness execute unchanged. Missing closes and reordered
+protocols refuse; no VM protocol is emitted. Parallel **fdbae846** preserves
+mixed-shift gap refinement through composed conversion jumps without changing
+budgets, complete reload/store checks or actual-write replay.
+
+Focused checks pass: exact host **1/1, 2.12 s total**; four native sources plus
+136 refusal sources **64 executions, 368 refusals, two nonexecuted admissions
+and 32 Node/VM observations**. Exact arrays **1/1, 2.06 s total** and right-shift
+lit **1/1, 0.14 s** pass. Four selected browser CTests pass **4/4, 0.11 s total**.
+Complete formatting passes **1124 C++, 157 Python and 114 web files**.
+All 13 code/test hashes match the devbox; 32 generated C++ files have no Script
+symbols. All 210 historical native and 120 shift source bodies remain unchanged.
+Interrupted drafts and completed evidence were preserved. Full suites skipped.
+
+**Next native boundary:** `body-return-branch`, source `dc6fd4c5`, has a
+conditional return whose post-loop completion switch contains close effects.
+Both native policies refuse **DOM helper completion selector is not an exact
+constant**. Node and VM agree on four states: normal true/no close, stop
+false/one close, already exhausted false/no close. Prove the effectful switch
+without moving its saved return read across close. Nested custom opens, broader
+abrupt close, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain unfinished; difficult shift subranges remain budget-limited.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-return-close.md).
+
 ## Formal return callees and partitioned shift gaps, 2026-09-22 UTC
 
 Continued clean **2bfd3fbd** and saved formal-callee source `ee851de6`.
