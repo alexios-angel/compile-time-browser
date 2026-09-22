@@ -146,7 +146,7 @@ function inherited_post_super_holder_surplus() {
 }
 var a = inherited_post_super_holder_surplus();
 
-// A proved callable target does not authorize passing away the class receiver.
+// A closed helper can borrow the initialized receiver for ordinary field reads.
 //--- inherited-post-super-holder-argument-receiver.js
 const H = {read: receiver => receiver.n + 1};
 function inherited_post_super_holder_argument_receiver() {

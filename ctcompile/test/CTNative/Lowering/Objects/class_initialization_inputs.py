@@ -1003,6 +1003,7 @@ POSITIVES = GLOBAL_HOLDERS | {
     "inherited-post-super-holder-chain",
     "inherited-post-super-holder-branch-values",
     "inherited-post-super-holder-order",
+    "inherited-post-super-holder-argument-receiver",
     "own-fields-branch-same-order",
     "own-fields-branch-overwrite",
     "own-fields-branch-nested",
@@ -1313,7 +1314,21 @@ def check_super_inputs(args, source, manifest):
     return len(cases) + 3
 
 
-def check_super_roots(args, source, manifest, diagnostic):
+def check_super_roots(args, source, manifest, diagnostic, target=None):
+    original = source.read_text()
+    selected = original
+    if target is not None:
+        # A constructor root would reject before the super method is checked.
+        functions = re.findall(
+            r'^  "ctjs.func"\(\)[^\n]*sym_name = "'
+            + re.escape(target)
+            + r'"[^\n]*\n.*?^  \}\)[^\n]*',
+            original,
+            re.M | re.S,
+        )
+        if len(functions) != 1:
+            raise RuntimeError("super root control requires exactly one target function")
+        selected = functions[0]
     count = 0
 
     def rooted(match):
@@ -1324,13 +1339,11 @@ def check_super_roots(args, source, manifest, diagnostic):
             f"{match[1]}ctjs.root %super_root{count} in {match[2]}\n" + match[0]
         )
 
-    text, roots = re.subn(
-        r'(^[ \t]*)"ctjs.frame_exit"\((%\w+)\)', rooted, source.read_text(), flags=re.M
-    )
-    if not roots:
-        raise RuntimeError("super target control lost its original frame exits")
+    text, roots = re.subn(r'(^[ \t]*)"ctjs.frame_exit"\((%\w+)\)', rooted, selected, flags=re.M)
+    if not roots or (target is not None and roots != 1):
+        raise RuntimeError("super target control lost its expected frame exits")
     path = args.work / "super-rooted-target.mlir"
-    path.write_text(text)
+    path.write_text(original.replace(selected, text, 1))
     prepare(
         args,
         "super-rooted-target",

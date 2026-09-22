@@ -1079,6 +1079,7 @@ def main():
                     if name != "inherited-super-order"
                     else "super method target has unsupported control flow, roots or declarations"
                 ),
+                target="mix$4" if name == "inherited-super-order" else None,
             )
             cutoffs[name] = check_proof_budget(args, structured, manifest, prepared, name)
             preparation_refusals += 2
