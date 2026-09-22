@@ -466,6 +466,21 @@ SIBLING_RETURNED_LOOP_JOIN_SOURCE = SIBLING_RETURNED_BRANCH_JOIN_SOURCE.replace(
     1,
 )
 
+SIBLING_RETURNED_LOOP_ZERO_SOURCE = SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+    "while (rounds < 2)", "while (rounds < 0)", 1
+)
+SIBLING_RETURNED_LOOP_SNAPSHOTS_SOURCE = SIBLING_RETURNED_BRANCH_SNAPSHOTS_SOURCE.replace(
+    "    if (emitted > 0) selected = other;",
+    "    let rounds = 0;\n"
+    "    while (rounds < 2) {\n"
+    "      if (rounds === 0) selected = writer;\n"
+    "      else if (emitted > 0) selected = other;\n"
+    "      if (emitted > 0) closed += rounds;\n"
+    "      rounds++;\n"
+    "    }",
+    1,
+)
+
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
 COMPILE_ONLY = {"entry-captured-sibling-loop-break-writer": SIBLING_BREAK_WRITER_SOURCE}
@@ -966,6 +981,32 @@ POSITIVES = (
         SIBLING_RETURNED_BRANCH_FORWARDED_SOURCE,
         True,
         ("6305", "7671", "6305"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-callable-loop-join",
+        SIBLING_RETURNED_LOOP_JOIN_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-loop-zero",
+        SIBLING_RETURNED_LOOP_ZERO_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        # Selection changes across backedges, after earlier scalar arguments
+        # were evaluated and before the selected writer reads current state.
+        "entry-captured-sibling-returned-loop-snapshots",
+        SIBLING_RETURNED_LOOP_SNAPSHOTS_SOURCE,
+        True,
+        ("181308", "211052", "181308"),
         True,
         "false",
     ),
@@ -1474,7 +1515,26 @@ def refusals():
                 "  other = advance;\n  count += read();\n  closed += emitted;",
                 1,
             ),
-            "entry-captured-sibling-returned-callable-loop-join": SIBLING_RETURNED_LOOP_JOIN_SOURCE,
+            "entry-captured-sibling-returned-loop-unknown-initial": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+                "let selected = writer;", "let selected = unknownWriter;", 1
+            ),
+            "entry-captured-sibling-returned-loop-scalar-initial": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+                "let selected = writer;", "let selected = 0;", 1
+            ),
+            "entry-captured-sibling-returned-loop-unknown-backedge": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+                "selected = other;", "selected = unknownWriter;", 1
+            ),
+            "entry-captured-sibling-returned-loop-scalar-backedge": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+                "selected = other;", "selected = 0;", 1
+            ),
+            "entry-captured-sibling-returned-loop-observed": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+                "      rounds++;", "      closed += selected === other;\n      rounds++;", 1
+            ),
+            "entry-captured-sibling-returned-loop-call-result": SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
+                "  const identity =", "  const keep = (writer) => writer;\n  const identity =", 1
+            ).replace(
+                "      rounds++;", "      selected = keep(selected);\n      rounds++;", 1
+            ),
         }
     )
     return variants

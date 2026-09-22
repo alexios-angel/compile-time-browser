@@ -463,7 +463,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation)) {
                 familyCalls.push_back(operation);
             }
-            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, mlir::scf::IfOp>(operation)) {
+            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, mlir::scf::IfOp, mlir::scf::WhileOp>(
+                    operation)) {
                 familyFlow.push_back(operation);
             }
             return mlir::WalkResult::advance();
@@ -504,6 +505,59 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return true;
     };
+    // Follow every incoming edge, including the zero-trip initializer and the
+    // backedge. A visited set closes transport cycles; only known leaves supply
+    // identities. Never cache a partial traversal of a cycle.
+    const auto transportInputs = [](mlir::Value value,
+                                    llvm::SmallVectorImpl<mlir::Value> & inputs) {
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+            auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
+            if (!loop) { return false; }
+            auto index = argument.getArgNumber();
+            if (argument.getOwner() == &loop.getBefore().front()) {
+                inputs.push_back(loop.getInits()[index]);
+                inputs.push_back(loop.getAfter().front().getTerminator()->getOperand(index));
+            } else {
+                inputs.push_back(
+                    llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator())
+                        .getArgs()[index]);
+            }
+            return true;
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        if (!result) { return false; }
+        if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner())) {
+            for (auto & region : branch->getRegions()) {
+                inputs.push_back(
+                    region.front().getTerminator()->getOperand(result.getResultNumber()));
+            }
+            return true;
+        }
+        if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(result.getOwner())) {
+            inputs.push_back(
+                llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator())
+                    .getArgs()[result.getResultNumber()]);
+            return true;
+        }
+        return false;
+    };
+    const auto resolveTargets = [&](mlir::Value value, const CallableValues & known,
+                                    Targets & targets) {
+        llvm::SmallVector<mlir::Value> pending{value};
+        llvm::DenseSet<mlir::Value> visited;
+        bool complete = true;
+        while (!pending.empty()) {
+            if (!spend()) { return false; }
+            auto current = pending.pop_back_val();
+            if (!visited.insert(current).second) { continue; }
+            if (auto found = known.find(current); found != known.end()) {
+                if (!mergeTargets(targets, found->second)) { return false; }
+            } else if (!transportInputs(current, pending)) {
+                complete = false;
+            }
+        }
+        return complete && !targets.empty();
+    };
     llvm::DenseSet<mlir::Value> unknownArguments;
     const auto proveCalls = [&](auto && self, ctjs::FuncOp caller, CallableValues values,
                                 unsigned depth, Targets & result) -> bool {
@@ -511,29 +565,33 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (depth == 64 || !work.active.insert(caller).second) {
             return work.refuse("DOM iterator sibling call tree is recursive or too deep");
         }
-        // Postorder visits both arms before joining their callable results.
-        // Loop-carried callables still require a separate fixed-point proof.
+        const auto bindTransport = [&](mlir::Value value) {
+            Targets targets;
+            if (resolveTargets(value, values, targets)) {
+                values[value] = std::move(targets);
+            } else if (!targets.empty()) {
+                return work.refuse("DOM iterator callable branch has an unproved arm");
+            }
+            return work.remaining != 0;
+        };
+        // Calls retain source order. Transport-only cycles can be resolved
+        // before their enclosing loop is visited, from all of their leaves.
         for (auto * operation : familyFlow) {
             if (!spend()) { return false; }
             if (operation->getParentOfType<ctjs::FuncOp>() != caller) { continue; }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                for (auto [index, value] : llvm::enumerate(branch.getResults())) {
-                    Targets targets;
-                    bool unknown = false;
-                    for (auto & region : branch->getRegions()) {
-                        if (!spend()) { return false; }
-                        auto yielded = region.front().getTerminator()->getOperand(index);
-                        auto found = values.find(yielded);
-                        unknown |= found == values.end();
-                        if (found != values.end() && !mergeTargets(targets, found->second)) {
-                            return false;
-                        }
-                    }
-                    if (!targets.empty()) {
-                        if (unknown) {
-                            return work.refuse("DOM iterator callable branch has an unproved arm");
-                        }
-                        values[value] = std::move(targets);
+                for (auto value : branch.getResults()) {
+                    if (!bindTransport(value)) { return false; }
+                }
+                continue;
+            }
+            if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation)) {
+                for (auto value : loop.getResults()) {
+                    if (!bindTransport(value)) { return false; }
+                }
+                for (auto & region : loop->getRegions()) {
+                    for (auto argument : region.front().getArguments()) {
+                        if (!bindTransport(argument)) { return false; }
                     }
                 }
                 continue;
@@ -541,6 +599,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
             auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
             auto callee = call ? call.getCallee() : direct.getCalleeValue();
+            if (!bindTransport(callee)) { return false; }
             auto found = values.find(callee);
             if (found == values.end()) {
                 if (caller != entry) {
@@ -559,7 +618,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             Targets results;
             bool unknownResult = false;
-            for (auto index : found->second) {
+            const auto callees = found->second;
+            for (auto index : callees) {
                 if (!spend()) { return false; }
                 auto & target = helpers[index];
                 auto & body = target.body.getBody().front();
@@ -576,6 +636,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 auto arguments = initialCallables;
                 for (auto [index, actual] : llvm::enumerate(args)) {
                     if (!spend()) { return false; }
+                    if (!bindTransport(actual)) { return false; }
                     auto formal =
                         body.getArgument(ctjs::implicit_arguments + static_cast<unsigned>(index));
                     if (auto bound = values.find(actual); bound != values.end()) {
@@ -600,6 +661,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         // checkBody proved one root return; every possible identity is confined.
         auto returned = llvm::cast<ctjs::ReturnOp>(caller.getBody().front().getTerminator());
+        if (!bindTransport(returned.getValue())) { return false; }
         if (auto bound = values.find(returned.getValue()); bound != values.end()) {
             result = bound->second;
         }
@@ -645,6 +707,25 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
                 if (branch && callableValues.contains(branch.getResult(use.getOperandNumber()))) {
                     continue; // Both arms and every joined observer were proved above.
+                }
+                auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(yield->getParentOp());
+                if (loop && callableValues.contains(
+                                loop.getBefore().front().getArgument(use.getOperandNumber()))) {
+                    continue;
+                }
+            }
+            if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(user);
+                loop && callableValues.contains(
+                            loop.getBefore().front().getArgument(use.getOperandNumber()))) {
+                continue;
+            }
+            if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(user);
+                condition && use.getOperandNumber() > 0) {
+                auto loop = llvm::cast<mlir::scf::WhileOp>(condition->getParentOp());
+                auto index = use.getOperandNumber() - 1;
+                if (callableValues.contains(loop.getResult(index)) &&
+                    callableValues.contains(loop.getAfter().front().getArgument(index))) {
+                    continue;
                 }
             }
             auto ordinary = llvm::dyn_cast<ctjs::CallOp>(user);
@@ -762,6 +843,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // discriminator preserves branch selection until its ordinary calls expand;
     // no callable object, lookup table or runtime dispatch survives.
     llvm::SmallVector<mlir::Value> tags;
+    CallableValues tagCallables;
     for (auto [index, helper] : llvm::enumerate(helpers)) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         mlir::OpBuilder at(helper.closure);
@@ -771,26 +853,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                                   std::bit_cast<uint64_t>(static_cast<double>(index))));
         helper.closure.getResult().replaceAllUsesWith(tag);
         helperIndices[tag] = static_cast<unsigned>(index);
+        tagCallables[tag] = {static_cast<unsigned>(index)};
         tags.push_back(tag);
     }
-    const auto selectedTargets = [&](auto && self, mlir::Value value, Targets & targets,
-                                     unsigned depth) -> bool {
-        if (!spend() || depth == 64) { return false; }
-        if (auto found = helperIndices.find(value); found != helperIndices.end()) {
-            return mergeTargets(targets, {found->second});
-        }
-        auto result = llvm::dyn_cast<mlir::OpResult>(value);
-        auto branch =
-            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
-        if (!branch) { return false; }
-        for (auto & region : branch->getRegions()) {
-            if (!self(self, region.front().getTerminator()->getOperand(result.getResultNumber()),
-                      targets, depth + 1)) {
-                return false;
-            }
-        }
-        return true;
-    };
     while (!pending.empty()) {
         // ponytail: bounded linear scan; use a dependency worklist if large
         // helper families exhaust the shared budget. A returned callable must
@@ -802,7 +867,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
             auto callee = ordinary ? ordinary.getCallee()
                                    : llvm::cast<ctjs::CallDirectOp>(operation).getCalleeValue();
-            return selectedTargets(selectedTargets, callee, targets, 0);
+            return resolveTargets(callee, tagCallables, targets);
         });
         if (ready == pending.end() || !work.remaining) {
             return error("DOM iterator sibling call has no proved target");

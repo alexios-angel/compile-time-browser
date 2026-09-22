@@ -1280,6 +1280,61 @@ module {
     check(joinedWriter && directJoinedWriter,
           "ordinary/direct branch-selected returned writers and scalar snapshots parse");
     if (!joinedWriter || !directJoinedWriter) { return; }
+    // A loop carries the initial writer on zero trips and the last selected
+    // writer on its backedge. The caller still evaluates scalar arguments once.
+    const auto loopSelection = R"MLIR(    %selectZero = ctjs.constant #ctjs.number<0>
+    %selectLimit = ctjs.constant #ctjs.number<4611686018427387904>
+    %selectedLoop:2 = scf.while (%initialWriter = %nestedWriter, %trip = %selectZero) :
+        (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {
+      %keepGoing = ctjs.compare lt %trip, %selectLimit
+      %loopCondition = ctjs.truthy %keepGoing
+      scf.condition(%loopCondition) %initialWriter, %trip : !ctjs.value, !ctjs.value
+    } do {
+    ^bb0(%carriedWriter: !ctjs.value, %carriedTrip: !ctjs.value):
+      %selectedState = ctjs.load_upvalue %callee[0]
+      %selectPositive = ctjs.compare gt %selectedState, %selectZero
+      %selectCondition = ctjs.truthy %selectPositive
+      %selectedWriter = scf.if %selectCondition -> (!ctjs.value) {
+        scf.yield %alternateWriter : !ctjs.value
+      } else {
+        scf.yield %carriedWriter : !ctjs.value
+      }
+      %oneTrip = ctjs.constant #ctjs.number<4607182418800017408>
+      %nextTrip = ctjs.binary_static add %carriedTrip, %oneTrip
+      scf.yield %selectedWriter, %nextTrip : !ctjs.value, !ctjs.value
+    }
+    ctjs.return %selectedLoop#0)MLIR";
+    const auto loopWriterSource = [&](const std::string & source) {
+        auto text = source;
+        const auto begin = text.find("    %selectedState =");
+        const auto end = text.find("    ctjs.return %selectedWriter", begin);
+        text.replace(begin, end + std::string("    ctjs.return %selectedWriter").size() - begin,
+                     loopSelection);
+        return text;
+    };
+    const auto loopJoinedWriterSource = loopWriterSource(joinedWriterSource);
+    const auto directLoopJoinedWriterSource = loopWriterSource(directJoinedWriterSource);
+    auto loopJoinedWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(loopJoinedWriterSource, &context);
+    auto directLoopJoinedWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directLoopJoinedWriterSource, &context);
+    auto zeroLoopJoinedWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(loopJoinedWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    auto zeroDirectLoopJoinedWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(directLoopJoinedWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    check(loopJoinedWriter && directLoopJoinedWriter && zeroLoopJoinedWriter &&
+              zeroDirectLoopJoinedWriter,
+          "ordinary/direct loop-carried and zero-trip callable snapshots parse");
+    if (!loopJoinedWriter || !directLoopJoinedWriter || !zeroLoopJoinedWriter ||
+        !zeroDirectLoopJoinedWriter) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1351,7 +1406,11 @@ module {
                          *differentReturnedWriter,
                          *directDifferentReturnedWriter,
                          *joinedWriter,
-                         *directJoinedWriter}) {
+                         *directJoinedWriter,
+                         *loopJoinedWriter,
+                         *directLoopJoinedWriter,
+                         *zeroLoopJoinedWriter,
+                         *zeroDirectLoopJoinedWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1366,7 +1425,12 @@ module {
         const bool differentWrites =
             fixture == *differentCallableWriter || fixture == *directDifferentCallableWriter ||
             fixture == *differentReturnedWriter || fixture == *directDifferentReturnedWriter;
-        const bool joinedWrites = fixture == *joinedWriter || fixture == *directJoinedWriter;
+        const bool zeroLoopWrites =
+            fixture == *zeroLoopJoinedWriter || fixture == *zeroDirectLoopJoinedWriter;
+        const bool loopWrites =
+            fixture == *loopJoinedWriter || fixture == *directLoopJoinedWriter || zeroLoopWrites;
+        const bool joinedWrites =
+            fixture == *joinedWriter || fixture == *directJoinedWriter || loopWrites;
         const bool callableWrites =
             fixture == *callableWriter || fixture == *directCallableWriter ||
             fixture == *returnedWriter || fixture == *directReturnedWriter || differentWrites ||
@@ -1810,13 +1874,78 @@ module {
                         auto selector = selected
                                             ? llvm::dyn_cast<mlir::scf::IfOp>(selected.getOwner())
                                             : mlir::scf::IfOp{};
+                        auto selectorLoop =
+                            selected ? llvm::dyn_cast<mlir::scf::WhileOp>(selected.getOwner())
+                                     : mlir::scf::WhileOp{};
+                        if (loopWrites) {
+                            if (!selectorLoop || selectorLoop.getNumResults() != 5 ||
+                                selected.getResultNumber() != 0) {
+                                ordered = false;
+                                return;
+                            }
+                            auto carried = selectorLoop.getAfter()
+                                               .front()
+                                               .back()
+                                               .getOperand(0)
+                                               .getDefiningOp<mlir::scf::IfOp>();
+                            if (!carried || carried.getNumResults() != 4) {
+                                ordered = false;
+                                return;
+                            }
+                            selector = carried;
+                            auto initialTag =
+                                selectorLoop.getInits()[0].getDefiningOp<ctjs::ConstantOp>();
+                            auto otherTag = selector.getThenRegion()
+                                                .front()
+                                                .back()
+                                                .getOperand(0)
+                                                .getDefiningOp<ctjs::ConstantOp>();
+                            auto initial =
+                                initialTag ? llvm::dyn_cast<ctjs::NumberAttr>(initialTag.getValue())
+                                           : ctjs::NumberAttr{};
+                            auto other = otherTag
+                                             ? llvm::dyn_cast<ctjs::NumberAttr>(otherTag.getValue())
+                                             : ctjs::NumberAttr{};
+                            auto loopTruth = llvm::cast<mlir::scf::ConditionOp>(
+                                                 selectorLoop.getBefore().front().back())
+                                                 .getCondition()
+                                                 .getDefiningOp<ctjs::TruthyOp>();
+                            auto loopTest =
+                                loopTruth ? loopTruth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                          : ctjs::CompareOp{};
+                            auto limit = loopTest
+                                             ? loopTest.getRhs().getDefiningOp<ctjs::ConstantOp>()
+                                             : ctjs::ConstantOp{};
+                            auto number = limit ? llvm::dyn_cast<ctjs::NumberAttr>(limit.getValue())
+                                                : ctjs::NumberAttr{};
+                            const auto incoming = selectorLoop.getBeforeArguments();
+                            auto condition = llvm::cast<mlir::scf::ConditionOp>(
+                                selectorLoop.getBefore().front().back());
+                            const auto outgoing = selectorLoop.getAfterArguments();
+                            const auto yield = selectorLoop.getAfter().front().back().getOperands();
+                            ordered &=
+                                initial && other && initial != other && number &&
+                                number.getDouble() == (zeroLoopWrites ? 0.0 : 2.0) &&
+                                condition.getArgs()[0] == incoming[0] &&
+                                selector.getElseRegion().front().back().getOperand(0) ==
+                                    outgoing[0] &&
+                                llvm::equal(condition.getArgs().take_back(3),
+                                            incoming.take_back(3)) &&
+                                llvm::equal(yield.take_back(3),
+                                            selector.getResults().take_back(3)) &&
+                                llvm::all_of(selector->getRegions(), [&](mlir::Region & arm) {
+                                    return llvm::equal(
+                                        arm.front().back().getOperands().take_back(3),
+                                        outgoing.take_back(3));
+                                });
+                        }
                         auto predicate =
                             selector ? selector.getCondition().getDefiningOp<ctjs::TruthyOp>()
                                      : ctjs::TruthyOp{};
                         auto choice = predicate
                                           ? predicate.getValue().getDefiningOp<ctjs::CompareOp>()
                                           : ctjs::CompareOp{};
-                        if (selector) {
+                        if (selector && !loopWrites) {
                             for (auto [index, region] : llvm::enumerate(selector->getRegions())) {
                                 auto tag = region.front()
                                                .back()
@@ -1855,11 +1984,19 @@ module {
                                 updatedExtra ? llvm::dyn_cast<mlir::OpResult>(updatedExtra.getLhs())
                                              : mlir::OpResult{};
                             const bool preserved =
-                                carried && selector && carried.getOwner() == selector && step &&
-                                llvm::all_of(selector->getRegions(), [&](mlir::Region & arm) {
-                                    return arm.front().back().getOperand(
-                                               carried.getResultNumber()) == step.getLhs();
-                                });
+                                carried && selector && step &&
+                                (loopWrites
+                                     ? carried.getOwner() == selectorLoop &&
+                                           carried.getResultNumber() == 4 &&
+                                           selectorLoop.getInits()[4] == step.getLhs() &&
+                                           selectorLoop.getInits()[3] == snapshot
+                                     : carried.getOwner() == selector &&
+                                           llvm::all_of(selector->getRegions(),
+                                                        [&](mlir::Region & arm) {
+                                                            return arm.front().back().getOperand(
+                                                                       carried.getResultNumber()) ==
+                                                                   step.getLhs();
+                                                        }));
                             const bool mapped =
                                 updatedExtra && count && current && step &&
                                 updatedExtra.getKind() == ctjs::BinaryKind::Add &&
@@ -1868,7 +2005,11 @@ module {
                                 step.getKind() == ctjs::BinaryKind::Add &&
                                 current.getLhs() == snapshot && current.getResult() != snapshot &&
                                 preserved && choice && choice.getKind() == ctjs::CompareKind::Gt &&
-                                choice.getLhs() == snapshot && selector->isBeforeInBlock(current);
+                                (loopWrites
+                                     ? choice.getLhs() == selectorLoop.getAfterArguments()[3] &&
+                                           selectorLoop->isBeforeInBlock(current)
+                                     : choice.getLhs() == snapshot &&
+                                           selector->isBeforeInBlock(current));
                             ordered &= mapped;
                             if (!mapped) { return; }
                             counts.push_back(count);
@@ -2279,6 +2420,57 @@ module {
             check(hostContractFingerprint(*input) == request.moduleSha256 &&
                       noEvidence(*input, DOMEntryAnalysis(*input, request)),
                   "refused nested helpers preserve source and publish no evidence");
+        }
+    }
+    for (const auto & source : {loopJoinedWriterSource, directLoopJoinedWriterSource}) {
+        for (const auto & invalid : {
+                 replaced(source, "%initialWriter = %nestedWriter",
+                          "%initialWriter = %nestedUndefined"),
+                 replaced(replaced(source, "    %selectZero =",
+                                   "    %unknownWriter = ctjs.load_global \"unknownWriter\"\n"
+                                   "    %selectZero ="),
+                          "%initialWriter = %nestedWriter", "%initialWriter = %unknownWriter"),
+                 replaced(source, "scf.yield %selectedWriter, %nextTrip",
+                          "scf.yield %selectZero, %nextTrip"),
+                 replaced(replaced(source, "    %selectZero =",
+                                   "    %unknownWriter = ctjs.load_global \"unknownWriter\"\n"
+                                   "    %selectZero ="),
+                          "scf.yield %selectedWriter, %nextTrip",
+                          "scf.yield %unknownWriter, %nextTrip"),
+                 replaced(source, "      %keepGoing =",
+                          "      %observedInitial = ctjs.compare eq %initialWriter, %nestedWriter\n"
+                          "      %keepGoing ="),
+                 replaced(source, "      %oneTrip =",
+                          "      ctjs.store_global \"leaked\", %carriedWriter\n"
+                          "      %oneTrip ="),
+                 replaced(source, "      %oneTrip =",
+                          "      %observedSelected = ctjs.binary_static add %selectedWriter, "
+                          "%carriedTrip\n"
+                          "      %oneTrip ="),
+                 replaced(source, "    %finalCount =",
+                          "    ctjs.store_global \"leaked\", %returnedWriter_final\n"
+                          "    %finalCount ="),
+                 replaced(source, "ctjs.call %returnedWriter_final(%undefined, ",
+                          "ctjs.call_direct @writeState$6(%undefined, %undefined, "
+                          "%returnedWriter_final, "),
+             }) {
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "hostile loop-carried helper witness parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "loop callable initializers, backedges and every observer must be proved");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "refused loop helper preserves source and publishes no evidence");
+            }
         }
     }
     for (const auto & source : {breakWriterSource, directBreakWriterSource}) {
@@ -3084,7 +3276,11 @@ module {
                          *differentReturnedWriter,
                          *directDifferentReturnedWriter,
                          *joinedWriter,
-                         *directJoinedWriter}) {
+                         *directJoinedWriter,
+                         *loopJoinedWriter,
+                         *directLoopJoinedWriter,
+                         *zeroLoopJoinedWriter,
+                         *zeroDirectLoopJoinedWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
