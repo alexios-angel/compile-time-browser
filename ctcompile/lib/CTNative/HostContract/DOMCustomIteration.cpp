@@ -53,7 +53,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (mlir::failed(mlir::verify(entry))) {
         return error("DOM custom iterator requires a well-formed entry");
     }
-    // Source returns/throws need an independent IteratorClose handler proof.
+    // Returns already routed through source completion retain one root return.
+    // Throws and protected regions still need an independent handler proof.
     unsigned returns = 0;
     const auto completion = entry.walk([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -1215,7 +1216,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
 
-    ctjs::CallOp next, close;
+    ctjs::CallOp next;
+    llvm::SmallVector<ctjs::CallOp> closes;
     for (mlir::Operation * user : open->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (llvm::isa<ctjs::RootOp, mlir::scf::YieldOp>(user)) { continue; }
@@ -1244,27 +1246,71 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         if (helper(call) == "__ctbrowser_iter_next" && call.getArgs().size() == 1 && !next) {
             next = call;
-        } else if (helper(call) == "__ctbrowser_iter_close" && call.getArgs().size() == 2 &&
-                   !close) {
+        } else if (helper(call) == "__ctbrowser_iter_close" && call.getArgs().size() == 2) {
             auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
             auto boolean =
                 flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
             if (!boolean || boolean.getValue()) {
                 return error("DOM iterator close requires normal completion");
             }
-            close = call;
+            closes.push_back(call);
         } else {
-            return error("DOM iterator protocol requires one next and close site");
+            return error("DOM iterator protocol requires one next and normal close sites");
         }
     }
-    if (!next || !close || close->getBlock() != open->getBlock() || !open->isBeforeInBlock(close)) {
+    if (!next || closes.empty()) {
         return error("DOM iterator close must follow its complete traversal");
     }
+    // A return can reduce the traversal to one next call and put closes in
+    // separate completion arms. Every close must remain after the complete
+    // traversal, with no enclosing loop that could revisit next after close.
+    const auto continuationRoot = [&](mlir::Operation * operation) -> mlir::Operation * {
+        unsigned depth = 0;
+        while (operation->getBlock() != open->getBlock()) {
+            if (!spend() || ++depth == 64) { return nullptr; }
+            operation = operation->getParentOp();
+            if (!llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(operation)) {
+                return nullptr;
+            }
+        }
+        return operation;
+    };
     auto sourceLoop = next->getParentOfType<mlir::scf::WhileOp>();
-    if (!sourceLoop || sourceLoop->getBlock() != open->getBlock() ||
-        !sourceLoop.getBefore().isAncestor(next->getParentRegion()) ||
-        !open->isBeforeInBlock(sourceLoop) || !sourceLoop->isBeforeInBlock(close)) {
+    auto * traversal = sourceLoop ? sourceLoop.getOperation() : continuationRoot(next);
+    if (!traversal || traversal->getBlock() != open->getBlock() ||
+        !open->isBeforeInBlock(traversal) ||
+        (sourceLoop && !sourceLoop.getBefore().isAncestor(next->getParentRegion()))) {
         return error("DOM custom next requires one direct loop test");
+    }
+    for (auto close : closes) {
+        auto * root = continuationRoot(close);
+        if (!root || root == traversal || !traversal->isBeforeInBlock(root)) {
+            if (sourceLoop && root && root != traversal) {
+                return error("DOM custom next requires one direct loop test");
+            }
+            return error("DOM iterator close must follow its complete traversal");
+        }
+    }
+    const auto closesEveryPath = [&](auto && self, mlir::Block::iterator begin,
+                                     mlir::Block::iterator end, unsigned depth) -> bool {
+        if (depth == 64) { return false; }
+        for (auto cursor = begin; cursor != end; ++cursor) {
+            if (!spend()) { return false; }
+            if (llvm::is_contained(closes, &*cursor)) { return true; }
+            if (!llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(*cursor)) { continue; }
+            bool closed = true;
+            for (auto & region : cursor->getRegions()) {
+                if (!spend()) { return false; }
+                closed &= region.hasOneBlock() &&
+                          self(self, region.front().begin(), region.front().end(), depth + 1);
+            }
+            if (closed) { return true; }
+        }
+        return false;
+    };
+    if (!closesEveryPath(closesEveryPath, std::next(traversal->getIterator()),
+                         open->getBlock()->end(), 0)) {
+        return error("DOM iterator completion must close every traversal exit");
     }
     for (mlir::Operation * user : next->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
@@ -1511,7 +1557,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 values.map(next.getResult(), item.getResult());
                 continue;
             }
-            if (&operation == close) {
+            if (llvm::is_contained(closes, &operation)) {
                 auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), state.front());
                 state.front() = ctjs::ConstantOp::create(
                     at, where, ctjs::BooleanAttr::get(candidate.getContext(), true));
@@ -1541,7 +1587,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 auto empty = ctjs::ConstantOp::create(
                     at, where, ctjs::UndefinedAttr::get(candidate.getContext()));
-                values.map(close.getResult(), empty.getResult());
+                values.map(operation.getResult(0), empty.getResult());
                 continue;
             }
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
@@ -1812,11 +1858,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(emittedNext->getParentOp());
-    if (!loop || emittedNext->getParentRegion() != &loop.getBefore() ||
-        loop->getBlock() != &entry.getBody().front() || !emittedDone) {
+    if (!emittedDone || (loop ? emittedNext->getParentRegion() != &loop.getBefore() ||
+                                    loop->getBlock() != &entry.getBody().front()
+                              : emittedNext->getBlock() != &entry.getBody().front())) {
         return error("DOM custom next requires one direct loop test");
     }
-    auto condition = llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
     const auto stops = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
         if (!spend() || depth == 64) { return false; }
         if (auto constant = value.getDefiningOp<mlir::arith::ConstantOp>()) {
@@ -1840,8 +1886,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return true;
     };
-    if (!stops(stops, condition.getCondition(), 0)) {
-        return error("DOM custom iterator must stop before next can run after done");
+    if (loop) {
+        auto condition = llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
+        if (!stops(stops, condition.getCondition(), 0)) {
+            return error("DOM custom iterator must stop before next can run after done");
+        }
     }
     llvm::SmallVector<ctjs::LoadGlobalOp> unusedHelpers;
     const auto cleanup = entry.walk([&](ctjs::LoadGlobalOp load) {

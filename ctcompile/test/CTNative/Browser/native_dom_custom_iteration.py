@@ -47,6 +47,17 @@ def source(breaking):
     return text
 
 
+BODY_RETURN_SOURCE = source(True).replace(
+    "    node.setAttribute('data-visited', 'yes');",
+    "    return anchor.hasAttribute('data-visited');",
+)
+BODY_RETURN_ORDERED_SOURCE = BODY_RETURN_SOURCE.replace(
+    "return anchor.hasAttribute('data-visited');",
+    "return (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+    1,
+)
+
+
 RECEIVER_SOURCE = (
     SOURCE.replace("  const values = {", "  const values = {\n    emitted: 0,")
     .replace(
@@ -1183,6 +1194,15 @@ POSITIVES = (
         True,
         "false",
     ),
+    ("body-return", BODY_RETURN_SOURCE, True, ("false", "false", "false"), False, "yes"),
+    (
+        "body-return-ordered",
+        BODY_RETURN_ORDERED_SOURCE,
+        True,
+        ("false", "false", "false"),
+        False,
+        "yes",
+    ),
 )
 
 
@@ -1229,9 +1249,14 @@ var {name} = (function() {{
                 expected = result + ":data-next=false;data-yielded=yes;data-visited=yes;"
                 expected += (
                     f"data-closed={closed};"
-                    if breaking and state.startswith("stop")
+                    if breaking
+                    and (
+                        state.startswith("stop") or label in ("body-return", "body-return-ordered")
+                    )
                     else "data-next=true;data-yielded=yes;"
                 )
+                if label == "body-return":
+                    expected = expected.replace("data-visited=yes;", "")
             if label in ("preloop-captured-read", "extra-captured-closure"):
                 expected = expected.replace(":", ":data-extra=true;", 1)
             observations.append((name, expected))
@@ -1382,9 +1407,11 @@ def refusals():
             "      const done", "      external(anchor); const done"
         ),
         "escaping-value": text.replace(visited, "    anchor.saved=node;"),
-        # The source compiler does not close iterators on body return or throw.
-        # Keep both refused until that source completion boundary is proved.
-        "body-return": text.replace(visited, "    return anchor.hasAttribute('data-visited');"),
+        # Loop-internal return closes and throw completion remain unproved.
+        "body-return-branch": text.replace(
+            "if (anchor.hasAttribute('stop')) break;",
+            "if (anchor.hasAttribute('stop')) return anchor.hasAttribute('data-closed');",
+        ),
         "body-throw": text.replace(visited, "    throw 1;"),
     }
     for helper in SNAPSHOT_INTRINSICS[4:]:
@@ -1843,6 +1870,15 @@ def main():
                 if any(helper in cpp for helper in SNAPSHOT_INTRINSICS[4:]):
                     raise RuntimeError(f"{name}: custom iteration retained the VM protocol")
                 checks = CHECKS + (OWNED_CHECKS if owned else "")
+                if label in ("body-return", "body-return-ordered"):
+                    checks = checks.replace("@BREAKING@ && stopping", "true")
+                if label == "body-return":
+                    checks = checks.replace(
+                        "check_writes({next, yielded, visited,", "check_writes({next, yielded,"
+                    ).replace(
+                        'assert(target.read().attribute_value(id, visited) == "yes");',
+                        "assert(!target.read().has_attribute(id, visited));",
+                    )
                 checks = checks.replace("@BREAKING@", "true" if breaking else "false")
                 checks = checks.replace("@RESETTING@", "true" if resetting else "false")
                 checks = checks.replace("@CLOSED@", closed)
@@ -1863,7 +1899,9 @@ def main():
                         '                assert(target.read().attribute_value(id, extra) == "true");',
                     )
                 normal, stopped, exhausted = results
-                value = "static_cast<bool>(call())" if normal == "true" else "call().value()"
+                value = (
+                    "static_cast<bool>(call())" if normal in ("true", "false") else "call().value()"
+                )
                 checks = checks.replace(
                     "@FIRST_RESULT@",
                     f"{value} == (stopping ? {stopped} : {normal})",

@@ -1582,6 +1582,78 @@ module {
         return empty;
     };
     constexpr unsigned completeBudget = 100000;
+    // An unconditional body return reduces the traversal to one next. Both
+    // completion arms must close after the saved return expression is evaluated.
+    std::string returningSource = source;
+    const auto returnLoopBegin = returningSource.find("    %loop = scf.while");
+    const auto returnLoopEnd = returningSource.find("    ctjs.frame_exit %frame", returnLoopBegin);
+    check(returnLoopBegin != std::string::npos && returnLoopEnd != std::string::npos,
+          "acyclic iterator fixture has complete replacement bounds");
+    if (returnLoopBegin == std::string::npos || returnLoopEnd == std::string::npos) { return; }
+    returningSource.replace(returnLoopBegin, returnLoopEnd - returnLoopBegin, R"MLIR(
+    %item = ctjs.call %next(%undefined, %record)
+    %done = ctjs.get_property %record[%doneName]
+    %test = ctjs.truthy %done
+    %saved = scf.if %test -> !ctjs.value {
+      scf.yield %zero : !ctjs.value
+    } else {
+      %attribute = ctjs.get_property %item[%attributeName]
+      %written = ctjs.call %attribute(%item, %visited, %yes)
+      scf.yield %one : !ctjs.value
+    }
+    %loop = scf.if %test -> !ctjs.value {
+      %exhaustedClose = ctjs.call %close(%undefined, %record, %normal)
+      scf.yield %saved : !ctjs.value
+    } else {
+      %returnClose = ctjs.call %close(%undefined, %record, %normal)
+      scf.yield %saved : !ctjs.value
+    }
+)MLIR");
+    auto returning = mlir::parseSourceString<mlir::ModuleOp>(returningSource, &context);
+    check(static_cast<bool>(returning), "acyclic return completion parses");
+    if (!returning) { return; }
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto request = contract;
+        request.provider = provider;
+        request.moduleSha256 = hostContractFingerprint(*returning);
+        mlir::OwningOpRef<mlir::ModuleOp> input(returning->clone());
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        if (!failure) { failure = expandDOMHelpers(*input, request.entry, completeBudget); }
+        check(!failure, "acyclic return closes normalize and expand");
+        if (failure) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+            continue;
+        }
+        request.moduleSha256 = hostContractFingerprint(*input);
+        const DOMEntryAnalysis proof(*input, request);
+        check(proof.proved(), "acyclic return preserves complete DOM lifetime and effect proof");
+        if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+    }
+    for (const auto & invalid : {
+             replaced(returningSource,
+                      "      %returnClose = ctjs.call %close(%undefined, %record, %normal)\n", ""),
+             replaced(returningSource, "    %item =",
+                      "    %early = ctjs.call %close(%undefined, %record, %normal)\n    %item ="),
+             replaced(returningSource, "    %item =",
+                      "    %extra = ctjs.call %next(%undefined, %record)\n    %item ="),
+             replaced(returningSource, "#ctjs.boolean<false>", "#ctjs.boolean<true>"),
+         }) {
+        check(!invalid.empty(), "invalid acyclic fixture replacement matched");
+        if (invalid.empty()) { continue; }
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "invalid acyclic completion parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(static_cast<bool>(failure), "incomplete or reordered acyclic protocol refuses");
+        if (failure) { llvm::consumeError(std::move(failure)); }
+        check(hostContractFingerprint(*input) == request.moduleSha256,
+              "acyclic protocol refusal retains original source");
+        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+              "acyclic protocol refusal publishes no DOM evidence");
+    }
     for (auto fixture : {*original,
                          *withoutReturn,
                          *counted,
