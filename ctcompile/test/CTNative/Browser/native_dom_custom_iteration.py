@@ -97,6 +97,36 @@ BRANCH_CAPTURE_SOURCE = (
     .replace("this.emitted", "emitted")
     .replace("this.closed", "closed")
 )
+LOOP_CAPTURE_SOURCE = CAPTURE_SOURCE.replace("emitted++;", "while (emitted < 1) emitted++;")
+LOOP_RECEIVER_SOURCE = (
+    RECEIVER_SOURCE.replace("emitted: 0,", "emitted: 0,\n    closed: 1,")
+    .replace(
+        "this.emitted++;",
+        """let rounds = 0;
+      while (this.emitted < 2) {
+        this.emitted++;
+        this.closed += this.emitted;
+        rounds++;
+      }
+      this.closed += rounds;""",
+    )
+    .replace(
+        "anchor.setAttribute('data-closed', 'yes');",
+        """while (this.closed < 11) {
+        this.closed += this.emitted;
+        this.emitted++;
+      }
+      anchor.setAttribute('data-closed', this.closed === 11);""",
+    )
+)
+LOOP_ORDERED_CAPTURE_SOURCE = (
+    LOOP_RECEIVER_SOURCE.replace(
+        "  const values = {\n    emitted: 0,\n    closed: 1,",
+        "  let emitted = 0;\n  let closed = 1;\n  const values = {",
+    )
+    .replace("this.emitted", "emitted")
+    .replace("this.closed", "closed")
+)
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -214,6 +244,25 @@ POSITIVES = (
     (
         "conditional-receiver-ordered-close",
         BRANCH_RECEIVER_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
+    ),
+    ("loop-captured-store", LOOP_CAPTURE_SOURCE, True, ("1", "1", "1"), True, "yes"),
+    (
+        # First next loops twice, exhaustion loops zero times; close loops twice.
+        # The original rounds result survives alongside both carried state values.
+        "loop-receiver-ordered-close",
+        LOOP_RECEIVER_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
+    ),
+    (
+        "loop-captured-ordered-close",
+        LOOP_ORDERED_CAPTURE_SOURCE,
         True,
         ("1", "1", "1"),
         True,
@@ -501,8 +550,32 @@ def refusals():
             "conditional-nested-capture": CONDITIONAL_CAPTURE_SOURCE.replace(
                 "emitted++;", "{ emitted++; const change = () => { emitted++; }; change(); }"
             ),
-            "loop-captured-store": CAPTURE_SOURCE.replace(
-                "emitted++;", "while (emitted < 1) emitted++;"
+            "loop-nonnumber-captured-store": LOOP_ORDERED_CAPTURE_SOURCE.replace(
+                "closed += emitted;", "closed = anchor;", 1
+            ),
+            "loop-nonnumber-state-store": LOOP_RECEIVER_SOURCE.replace(
+                "this.closed += this.emitted;", "this.closed = anchor;", 1
+            ),
+            "loop-unknown-effect": LOOP_ORDERED_CAPTURE_SOURCE.replace(
+                "        emitted++;", "        emitted++; external(anchor);", 1
+            ),
+            "loop-receiver-escape": LOOP_RECEIVER_SOURCE.replace(
+                "        this.emitted++;", "        this.emitted++; anchor.saved = this;", 1
+            ),
+            "loop-nested-capture": LOOP_ORDERED_CAPTURE_SOURCE.replace(
+                "        emitted++;",
+                "        emitted++; const change = () => { emitted++; }; change();",
+                1,
+            ),
+            "loop-external-captured-read": LOOP_ORDERED_CAPTURE_SOURCE.replace(
+                "return count;", "return count + emitted;"
+            ),
+            "loop-captured-break": CAPTURE_SOURCE.replace(
+                "emitted++;",
+                """while (emitted < 2) {
+        emitted++;
+        if (anchor.hasAttribute('stop')) break;
+      }""",
             ),
         }
     )

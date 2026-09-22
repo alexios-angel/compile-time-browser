@@ -413,21 +413,24 @@ module {
                                                "    ctjs.store_upvalue %callee[1], %advanced\n"
                                                "    ctjs.store_upvalue %callee[2], %extraAdvanced",
                                                branchStores);
-    for (auto [from, to] : {
-             std::pair{"ctjs.load_upvalue %callee[1]", "ctjs.get_property %this[%emittedName]"},
-             std::pair{"ctjs.load_upvalue %callee[2]", "ctjs.get_property %this[%extraName]"},
-             std::pair{"ctjs.store_upvalue %callee[1],", "ctjs.set_property %this[%emittedName],"},
-             std::pair{"ctjs.store_upvalue %callee[2],", "ctjs.set_property %this[%extraName],"},
-         }) {
-        while (branchStores.find(from) != std::string::npos) {
-            branchStores = replaced(branchStores, from, to);
+    const auto receiverAccess = [](std::string text) {
+        for (auto [from, to] : {
+                 std::pair{"ctjs.load_upvalue %callee[1]", "ctjs.get_property %this[%emittedName]"},
+                 std::pair{"ctjs.load_upvalue %callee[2]", "ctjs.get_property %this[%extraName]"},
+                 std::pair{"ctjs.store_upvalue %callee[1],",
+                           "ctjs.set_property %this[%emittedName],"},
+                 std::pair{"ctjs.store_upvalue %callee[2],",
+                           "ctjs.set_property %this[%extraName],"},
+             }) {
+            while (text.find(from) != std::string::npos) { text = replaced(text, from, to); }
         }
-    }
+        return text;
+    };
     const auto branchReceiverSource =
         replaced(twoStateSource,
                  "    ctjs.set_property %this[%emittedName], %advanced\n"
                  "    ctjs.set_property %this[%extraName], %extraAdvanced",
-                 branchStores);
+                 receiverAccess(branchStores));
     auto conditionalCaptured =
         mlir::parseSourceString<mlir::ModuleOp>(conditionalCapturedSource, &context);
     auto conditionalReceiver =
@@ -437,6 +440,97 @@ module {
     check(conditionalCaptured && conditionalReceiver && branchCaptured && branchReceiver,
           "original conditional stores and ordered nested two-state joins parse");
     if (!conditionalCaptured || !conditionalReceiver || !branchCaptured || !branchReceiver) {
+        return;
+    }
+    // Preserve the prior zero-trip refusals intact: the before region still
+    // writes state once even when the after region is never entered.
+    const auto zeroCapturedSource =
+        replaced(conditionalCapturedSource, "      ctjs.store_upvalue %callee[1], %advanced",
+                 "      scf.while : () -> () {\n"
+                 "        ctjs.store_upvalue %callee[1], %advanced\n"
+                 "        %again = arith.constant false\n"
+                 "        scf.condition(%again)\n"
+                 "      } do {\n"
+                 "        scf.yield\n"
+                 "      }");
+    const auto zeroReceiverSource = replaced(
+        conditionalReceiverSource, "      ctjs.set_property %this[%emittedName], %advanced",
+        "      scf.while : () -> () {\n"
+        "        ctjs.set_property %this[%emittedName], %advanced\n"
+        "        %again = arith.constant false\n"
+        "        scf.condition(%again)\n"
+        "      } do {\n"
+        "        scf.yield\n"
+        "      }");
+    const std::string loopStores =
+        R"MLIR(    %loopSetName = ctjs.constant #ctjs.string<"setAttribute">
+    %loopSet = ctjs.get_property %element[%loopSetName]
+    %beforeName = ctjs.constant #ctjs.string<"loop-before">
+    %innerName = ctjs.constant #ctjs.string<"loop-inner">
+    %afterName = ctjs.constant #ctjs.string<"loop-after">
+    %exitName = ctjs.constant #ctjs.string<"loop-exit">
+    %yesLoop = ctjs.constant #ctjs.boolean<true>
+    %loopValue = scf.while (%original = %emitted) : (!ctjs.value) -> !ctjs.value {
+      %beforeEmitted = ctjs.load_upvalue %callee[1]
+      %beforeAdvanced = ctjs.binary_static add %beforeEmitted, %one
+      ctjs.store_upvalue %callee[1], %beforeAdvanced
+      %readBefore = ctjs.load_upvalue %callee[1]
+      %beforeExtra = ctjs.load_upvalue %callee[2]
+      %beforeExtraAdvanced = ctjs.binary_static add %beforeExtra, %readBefore
+      ctjs.store_upvalue %callee[2], %beforeExtraAdvanced
+      %effectBefore = ctjs.call %loopSet(%element, %beforeName, %yesLoop)
+      %more = ctjs.compare lt %beforeEmitted, %one
+      %again = ctjs.truthy %more
+      scf.condition(%again) %beforeEmitted : !ctjs.value
+    } do {
+    ^bb0(%carried: !ctjs.value):
+      %afterEmitted = ctjs.load_upvalue %callee[1]
+      %afterExtra = ctjs.load_upvalue %callee[2]
+      %first = ctjs.compare strict_eq %carried, %zero
+      %branchFlag = ctjs.truthy %first
+      %branchValue = scf.if %branchFlag -> !ctjs.value {
+        %updated = ctjs.binary_static add %afterEmitted, %afterExtra
+        ctjs.store_upvalue %callee[1], %updated
+        %reloaded = ctjs.load_upvalue %callee[1]
+        %added = ctjs.binary_static add %afterExtra, %reloaded
+        ctjs.store_upvalue %callee[2], %added
+        %effectInner = ctjs.call %loopSet(%element, %innerName, %yesLoop)
+        scf.yield %carried : !ctjs.value
+      } else {
+        scf.yield %afterEmitted : !ctjs.value
+      }
+      %joinedExtra = ctjs.load_upvalue %callee[2]
+      %nextExtra = ctjs.binary_static add %joinedExtra, %one
+      ctjs.store_upvalue %callee[2], %nextExtra
+      %afterSeen = ctjs.compare strict_eq %branchValue, %carried
+      %effectAfter = ctjs.call %loopSet(%element, %afterName, %afterSeen)
+      scf.yield %branchValue : !ctjs.value
+    }
+    %exitEmitted = ctjs.load_upvalue %callee[1]
+    %exitExtra = ctjs.load_upvalue %callee[2]
+    %exitUpdated = ctjs.binary_static add %exitEmitted, %one
+    ctjs.store_upvalue %callee[1], %exitUpdated
+    %exitSeen = ctjs.compare strict_eq %loopValue, %exitExtra
+    %effectExit = ctjs.call %loopSet(%element, %exitName, %exitSeen))MLIR";
+    const auto loopCapturedSource = replaced(twoCapturedSource,
+                                             "    ctjs.store_upvalue %callee[1], %advanced\n"
+                                             "    ctjs.store_upvalue %callee[2], %extraAdvanced",
+                                             loopStores);
+    const auto loopReceiverSource =
+        replaced(twoStateSource,
+                 "    ctjs.set_property %this[%emittedName], %advanced\n"
+                 "    ctjs.set_property %this[%extraName], %extraAdvanced",
+                 receiverAccess(loopStores));
+    const auto zeroTwoStateSource =
+        replaced(loopCapturedSource, "%again = ctjs.truthy %more", "%again = arith.constant false");
+    auto zeroCaptured = mlir::parseSourceString<mlir::ModuleOp>(zeroCapturedSource, &context);
+    auto zeroReceiver = mlir::parseSourceString<mlir::ModuleOp>(zeroReceiverSource, &context);
+    auto loopCaptured = mlir::parseSourceString<mlir::ModuleOp>(loopCapturedSource, &context);
+    auto loopReceiver = mlir::parseSourceString<mlir::ModuleOp>(loopReceiverSource, &context);
+    auto zeroTwoState = mlir::parseSourceString<mlir::ModuleOp>(zeroTwoStateSource, &context);
+    check(zeroCaptured && zeroReceiver && loopCaptured && loopReceiver && zeroTwoState,
+          "zero-trip and ordered two-state method loops parse");
+    if (!zeroCaptured || !zeroReceiver || !loopCaptured || !loopReceiver || !zeroTwoState) {
         return;
     }
     HostContract contract;
@@ -455,10 +549,27 @@ module {
         return empty;
     };
     constexpr unsigned completeBudget = 100000;
-    for (auto fixture :
-         {*original, *withoutReturn, *counted, *retagged, *crossed, *duplicated, *receiver,
-          *twoState, *captured, *twoCaptured, *initializedCapture, *reorderedCapture,
-          *conditionalCaptured, *conditionalReceiver, *branchCaptured, *branchReceiver}) {
+    for (auto fixture : {*original,
+                         *withoutReturn,
+                         *counted,
+                         *retagged,
+                         *crossed,
+                         *duplicated,
+                         *receiver,
+                         *twoState,
+                         *captured,
+                         *twoCaptured,
+                         *initializedCapture,
+                         *reorderedCapture,
+                         *conditionalCaptured,
+                         *conditionalReceiver,
+                         *branchCaptured,
+                         *branchReceiver,
+                         *zeroCaptured,
+                         *zeroReceiver,
+                         *loopCaptured,
+                         *loopReceiver,
+                         *zeroTwoState}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -559,6 +670,83 @@ module {
                                                                                     "branch-after"},
                       "state projection preserves all branch effects in source order");
             }
+            if (fixture == *loopCaptured || fixture == *loopReceiver || fixture == *zeroTwoState) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
+                mlir::scf::WhileOp loop;
+                mlir::scf::IfOp branch;
+                mlir::Value finalCount, finalExtra;
+                ctjs::CompareOp exitSeen;
+                llvm::SmallVector<llvm::StringRef> effects;
+                bool effectsLocal = true;
+                body.walk([&](mlir::scf::WhileOp found) { loop = found; });
+                body.walk([&](mlir::scf::IfOp found) { branch = found; });
+                body.walk([&](ctjs::SetPropertyOp set) {
+                    const auto key = ctjs::constantKey(set.getKey());
+                    if (key == "__ctcompile_state_0") { finalCount = set.getValue(); }
+                    if (key == "__ctcompile_state_1") { finalExtra = set.getValue(); }
+                });
+                body.walk([&](ctjs::CallOp call) {
+                    if (call.getArgs().size() != 2) { return; }
+                    const auto key = ctjs::constantKey(call.getArgs()[0]);
+                    if (!key.starts_with("loop-")) { return; }
+                    effects.push_back(key);
+                    auto * region = call->getParentRegion();
+                    effectsLocal &= loop && branch &&
+                                    (key == "loop-before"  ? region == &loop.getBefore()
+                                     : key == "loop-inner" ? region == &branch.getThenRegion()
+                                     : key == "loop-after" ? region == &loop.getAfter()
+                                                           : region == &body.getBody());
+                    if (key == "loop-exit") {
+                        exitSeen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    }
+                });
+                const bool shape =
+                    loop && branch && loop.getNumOperands() == 3 && loop.getNumResults() == 3 &&
+                    loop.getBeforeArguments().size() == 3 && loop.getAfterArguments().size() == 3 &&
+                    branch.getNumResults() == 3;
+                check(shape, "method loop and nested branch preserve the original result prefix");
+                if (shape) {
+                    const auto before = loop.getBeforeArguments();
+                    const auto after = loop.getAfterArguments();
+                    const auto args = body.getBody().front().getArguments();
+                    auto condition =
+                        llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
+                    const auto sent = condition.getArgs();
+                    const auto yielded = loop.getAfter().front().back().getOperands();
+                    const auto then = branch.getThenRegion().front().back().getOperands();
+                    const auto otherwise = branch.getElseRegion().front().back().getOperands();
+                    auto count = sent[1].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto extra = sent[2].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto changedCount = then[1].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto changedExtra = then[2].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto nextExtra = yielded[2].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto exitCount = finalCount ? finalCount.getDefiningOp<ctjs::BinaryStaticOp>()
+                                                : ctjs::BinaryStaticOp{};
+                    check(loop.getInits()[0] == args[3] && loop.getInits()[1] == args[3] &&
+                              loop.getInits()[2] == args[4] && sent[0] == before[1] && count &&
+                              count.getLhs() == before[1] && extra && extra.getLhs() == before[2] &&
+                              extra.getRhs() == sent[1],
+                          "before reads incoming state and conditions carry its ordered writes");
+                    check(
+                        then[0] == after[0] && changedCount && changedCount.getLhs() == after[1] &&
+                            changedCount.getRhs() == after[2] && changedExtra &&
+                            changedExtra.getLhs() == after[2] && changedExtra.getRhs() == then[1] &&
+                            otherwise[0] == after[1] && otherwise[1] == after[1] &&
+                            otherwise[2] == after[2] && yielded[0] == branch.getResult(0) &&
+                            yielded[1] == branch.getResult(1) && nextExtra &&
+                            nextExtra.getLhs() == branch.getResult(2),
+                        "after reads condition state and yields nested writes in tuple order");
+                    check(exitCount && exitCount.getLhs() == loop.getResult(1) &&
+                              finalExtra == loop.getResult(2) && exitSeen &&
+                              exitSeen.getLhs() == loop.getResult(0) &&
+                              exitSeen.getRhs() == loop.getResult(2),
+                          "method exit reads final condition state after every trip count");
+                }
+                check(effectsLocal &&
+                          effects == llvm::SmallVector<llvm::StringRef>{"loop-before", "loop-inner",
+                                                                        "loop-after", "loop-exit"},
+                      "loop state projection keeps each effect in its source region and order");
+            }
             if (auto failure = expandDOMHelpers(*input, contract.entry, completeBudget)) {
                 check(false, "custom iterator methods expand without boxed protocol records");
                 std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
@@ -573,10 +761,13 @@ module {
                 fixture == *twoCaptured || fixture == *initializedCapture ||
                 fixture == *reorderedCapture || fixture == *conditionalCaptured ||
                 fixture == *conditionalReceiver || fixture == *branchCaptured ||
-                fixture == *branchReceiver) {
+                fixture == *branchReceiver || fixture == *zeroCaptured ||
+                fixture == *zeroReceiver || fixture == *loopCaptured || fixture == *loopReceiver ||
+                fixture == *zeroTwoState) {
                 const bool two = fixture == *twoState || fixture == *twoCaptured ||
                                  fixture == *reorderedCapture || fixture == *branchCaptured ||
-                                 fixture == *branchReceiver;
+                                 fixture == *branchReceiver || fixture == *loopCaptured ||
+                                 fixture == *loopReceiver || fixture == *zeroTwoState;
                 bool objects = false, stateProperties = false, cells = false;
                 mlir::Value closedCount, closedExtra;
                 llvm::SmallVector<llvm::StringRef> closeOrder;
@@ -759,23 +950,6 @@ module {
         }
     }
     for (const auto & invalid : {
-             replaced(conditionalCapturedSource, "      ctjs.store_upvalue %callee[1], %advanced",
-                      "      scf.while : () -> () {\n"
-                      "        ctjs.store_upvalue %callee[1], %advanced\n"
-                      "        %again = arith.constant false\n"
-                      "        scf.condition(%again)\n"
-                      "      } do {\n"
-                      "        scf.yield\n"
-                      "      }"),
-             replaced(conditionalReceiverSource,
-                      "      ctjs.set_property %this[%emittedName], %advanced",
-                      "      scf.while : () -> () {\n"
-                      "        ctjs.set_property %this[%emittedName], %advanced\n"
-                      "        %again = arith.constant false\n"
-                      "        scf.condition(%again)\n"
-                      "      } do {\n"
-                      "        scf.yield\n"
-                      "      }"),
              replaced(branchCapturedSource, "%afterExtra = ctjs.load_upvalue %callee[2]",
                       "%afterExtra = ctjs.load_upvalue %callee[9]"),
              replaced(branchReceiverSource, "%afterExtra = ctjs.get_property %this[%extraName]",
@@ -787,6 +961,18 @@ module {
                       "      ctjs.set_property %this[%emittedName], %advanced",
                       "      ctjs.store_global \"leaked\", %this\n"
                       "      ctjs.set_property %this[%emittedName], %advanced"),
+             replaced(loopCapturedSource, "%beforeExtra = ctjs.load_upvalue %callee[2]",
+                      "%beforeExtra = ctjs.load_upvalue %callee[9]"),
+             replaced(loopCapturedSource, "ctjs.store_upvalue %callee[2], %nextExtra",
+                      "ctjs.store_upvalue %callee[9], %nextExtra"),
+             replaced(loopReceiverSource, "%afterExtra = ctjs.get_property %this[%extraName]",
+                      "%afterExtra = ctjs.get_property %this[%element]"),
+             replaced(loopReceiverSource, "ctjs.set_property %this[%extraName], %nextExtra",
+                      "ctjs.set_property %this[%element], %nextExtra"),
+             replaced(loopCapturedSource, "      %effectBefore =",
+                      "      ctjs.store_global \"leaked\", %callee\n      %effectBefore ="),
+             replaced(loopReceiverSource, "      %effectAfter =",
+                      "      ctjs.store_global \"leaked\", %this\n      %effectAfter ="),
          }) {
         auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(fixture), "unsupported conditional-state witness parses");
@@ -798,12 +984,41 @@ module {
             request.provider = provider;
             request.moduleSha256 = hostContractFingerprint(*input);
             auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
-            check(static_cast<bool>(failure),
-                  "nested loops, invalid slots and branch escapes refuse");
+            check(static_cast<bool>(failure), "invalid state slots and branch/loop escapes refuse");
             if (failure) { llvm::consumeError(std::move(failure)); }
             check(hostContractFingerprint(*input) == request.moduleSha256 &&
                       noEvidence(*input, DOMEntryAnalysis(*input, request)),
                   "unsupported branch-state proof preserves source and publishes no evidence");
+        }
+    }
+    for (unsigned malformed = 0; malformed != 5; ++malformed) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(loopCaptured->clone());
+            auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
+            mlir::scf::WhileOp loop;
+            body.walk([&](mlir::scf::WhileOp found) { loop = found; });
+            auto condition = llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
+            if (malformed == 0) {
+                condition->eraseOperands(1, 1);
+            } else if (malformed == 1) {
+                loop.getAfter().front().back().eraseOperands(0, 1);
+            } else if (malformed == 2) {
+                condition->setOperand(0, loop.getBeforeArguments()[0]);
+            } else if (malformed == 3) {
+                loop.getBeforeArguments()[0].setType(mlir::IntegerType::get(&context, 1));
+            } else {
+                loop.getAfterArguments()[0].setType(mlir::IntegerType::get(&context, 1));
+            }
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure), "malformed method loop correspondence refuses");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                      noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "malformed method loops preserve source and publish no evidence");
         }
     }
     for (const auto & invalid : {
@@ -815,6 +1030,14 @@ module {
                       "ctjs.store_upvalue %callee[1], %element"),
              replaced(branchReceiverSource, "ctjs.set_property %this[%emittedName], %advanced",
                       "ctjs.set_property %this[%emittedName], %element"),
+             replaced(loopCapturedSource, "ctjs.store_upvalue %callee[1], %beforeAdvanced",
+                      "ctjs.store_upvalue %callee[1], %element"),
+             replaced(loopReceiverSource, "ctjs.set_property %this[%extraName], %nextExtra",
+                      "ctjs.set_property %this[%extraName], %element"),
+             replaced(loopCapturedSource, "      %effectAfter =",
+                      "      %unknown = ctjs.load_global \"unknown\"\n"
+                      "      %effect = ctjs.call %unknown(%element, %afterEmitted)\n"
+                      "      %effectAfter ="),
          }) {
         auto nonScalar = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(nonScalar), "iterator-state category mutation parses");
@@ -828,7 +1051,7 @@ module {
         }
         request.moduleSha256 = hostContractFingerprint(*nonScalar);
         check(noEvidence(*nonScalar, DOMEntryAnalysis(*nonScalar, request)),
-              "initial Number state never authorizes an element-valued recurrence");
+              "initial Number state never authorizes a non-Number recurrence or unknown effect");
     }
 
     for (const auto & invalid : {
@@ -960,7 +1183,8 @@ module {
     // Sample early, middle and last incomplete budgets on fresh private clones.
     for (auto fixture : {*original, *counted, *crossed, *receiver, *twoState, *captured,
                          *twoCaptured, *initializedCapture, *reorderedCapture, *conditionalCaptured,
-                         *conditionalReceiver, *branchCaptured, *branchReceiver}) {
+                         *conditionalReceiver, *branchCaptured, *branchReceiver, *zeroCaptured,
+                         *zeroReceiver, *loopCaptured, *loopReceiver, *zeroTwoState}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

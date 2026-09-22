@@ -193,14 +193,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     llvm::DenseSet<mlir::Operation *> stateStorage;
     llvm::SmallVector<mlir::Value> stateInitials;
     for (auto field : stateSlots) { stateInitials.push_back(field.getValue()); }
-    const auto branchStateAccess = [&](mlir::Operation * operation, ctjs::FuncOp body) {
+    const auto structuredStateAccess = [&](mlir::Operation * operation, ctjs::FuncOp body) {
         unsigned depth = 0;
         while (operation->getBlock() != &body.getBody().front()) {
             if (!spend() || ++depth == 64) { return false; }
             operation = operation->getParentOp();
-            // ponytail: conditional state only; loop-local mutation needs
-            // its own recurrence transport before it can be scalarized.
-            if (!llvm::isa_and_nonnull<mlir::scf::IfOp>(operation)) { return false; }
+            if (!llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
+                return false;
+            }
         }
         return true;
     };
@@ -222,7 +222,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (!spend()) { return mlir::WalkResult::interrupt(); }
             if (store.getClosure() != body.getBody().front().getArgument(ctjs::arg_callee) ||
                 store.getIndex() < 0 || store.getIndex() >= body.getUpvalueCount() ||
-                !branchStateAccess(store, body)) {
+                !structuredStateAccess(store, body)) {
                 return mlir::WalkResult::interrupt();
             }
             auto cell = closure.getUpvalues()[static_cast<unsigned>(store.getIndex())]
@@ -304,7 +304,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                            : set ? ctjs::constantKey(set.getKey())
                                  : llvm::StringRef{};
                 if (argument.getArgNumber() != ctjs::arg_receiver ||
-                    !branchStateAccess(user, body) || !stateIndices.contains(key) ||
+                    !structuredStateAccess(user, body) || !stateIndices.contains(key) ||
                     (get ? get.getObject() != argument
                          : !set || set.getObject() != argument || set.getValue() == argument)) {
                     return error("DOM iterator receiver requires direct own state access");
@@ -363,7 +363,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             const auto reads = body.walk([&](ctjs::LoadUpvalueOp read) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
                 auto cell = closure.getUpvalues()[static_cast<unsigned>(read.getIndex())];
-                if (capturedState.contains(cell) && !branchStateAccess(read, body)) {
+                if (capturedState.contains(cell) && !structuredStateAccess(read, body)) {
                     return mlir::WalkResult::interrupt();
                 }
                 return mlir::WalkResult::advance();
@@ -477,19 +477,21 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (depth == 64) { return false; }
             for (mlir::Operation & operation : llvm::make_early_inc_range(source)) {
                 if (!spend()) { return false; }
-                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                    mlir::OperationState built(branch.getLoc(), branch->getName());
-                    built.addOperands(branch->getOperands());
-                    built.addTypes(branch.getResultTypes());
+                if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
+                    const bool loop = llvm::isa<mlir::scf::WhileOp>(operation);
+                    mlir::OperationState built(operation.getLoc(), operation.getName());
+                    built.addOperands(operation.getOperands());
+                    if (loop) { built.addOperands(current); }
+                    built.addTypes(operation.getResultTypes());
                     for (auto value : current) {
                         if (!spend()) { return false; }
                         built.addTypes(value.getType());
                     }
-                    built.addAttributes(branch->getAttrs());
-                    for (auto & region : branch->getRegions()) {
+                    built.addAttributes(operation.getAttrs());
+                    for (auto & region : operation.getRegions()) {
                         built.addRegion()->takeBody(region);
                     }
-                    mlir::OpBuilder at(branch);
+                    mlir::OpBuilder at(&operation);
                     auto * joined = at.create(built);
                     for (auto & region : joined->getRegions()) {
                         for (auto value : current) {
@@ -500,17 +502,25 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         if (region.empty()) {
                             auto & arm = region.emplaceBlock();
                             mlir::OpBuilder inside(&arm, arm.end());
-                            mlir::scf::YieldOp::create(inside, branch.getLoc(), armState);
+                            mlir::scf::YieldOp::create(inside, operation.getLoc(), armState);
                         } else {
+                            // Both loop regions receive the preceding edge's state.
+                            // The condition forwards its latest values on exit too.
+                            if (loop) {
+                                for (auto & value : armState) {
+                                    value = region.front().addArgument(value.getType(),
+                                                                       operation.getLoc());
+                                }
+                            }
                             if (!self(self, region.front(), armState, depth + 1)) { return false; }
                             auto * yield = region.front().getTerminator();
                             yield->insertOperands(yield->getNumOperands(), armState);
                         }
                     }
-                    branch.replaceAllUsesWith(
-                        joined->getResults().take_front(branch.getNumResults()));
+                    operation.replaceAllUsesWith(
+                        joined->getResults().take_front(operation.getNumResults()));
                     llvm::copy(joined->getResults().take_back(current.size()), current.begin());
-                    branch.erase();
+                    operation.erase();
                     continue;
                 }
                 auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
@@ -541,7 +551,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return true;
         };
         if (!scalarize(scalarize, block, current, 0)) {
-            return error("DOM custom iterator state branch budget or depth exhausted");
+            return error("DOM custom iterator state region budget or depth exhausted");
         }
         llvm::SmallVector<mlir::Value> retained;
         llvm::SmallVector<unsigned> indices;
