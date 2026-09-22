@@ -87,6 +87,19 @@
 // CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 91 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 92 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 93 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 94 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 95 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 96 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function orWrites() {
     var child = {}, a = [0, child, 0, child];
@@ -552,3 +565,70 @@ identityOrStride(); identityXorStride(); identityAndStride(); identityUnsignedAn
 identityCrossZero(); identityHighBand(); identityLowBand(); identityNonzeroPhase();
 identityRemainingChild(); identitySavedChild(); identityOverlappingReload(); identityLaterOverwrite();
 nearIdentityMask(); identityCrossUpper(); identityCrossLower();
+function complementXorStride() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return a;
+}
+function complementXorCommuted() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(a[1] ^ i) + 4] = 0;
+    return a;
+}
+function complementXorUnsignedMask() {
+    var child = {}, a = [child, 4294967295, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return a;
+}
+function complementXorCrossZero() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i - 1) ^ a[1]) + 3] = 0;
+    return a;
+}
+function complementXorHighBand() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483648 + i) ^ a[1]) - 2147483644] = 0;
+    return a;
+}
+function complementXorLowBand() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-4294967294 + i) ^ a[1]) + 6] = 0;
+    return a;
+}
+function complementXorRemainingChild() {
+    var child = {}, a = [child, -1, child, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return a;
+}
+function complementXorSavedChild() {
+    var child = {}, a = [child, -1, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[1]) + 4] = 0;
+    return saved;
+}
+function complementXorOverlappingReload() {
+    var child = {}, a = [-1, child, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[(i ^ a[0]) + 4] = 0;
+    return a;
+}
+function complementXorLaterOverwrite() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[(i ^ a[1]) + 4] = 0;
+        a[1] = -2;
+    }
+    return a;
+}
+function complementXorCrossUpper() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483647 + i) ^ a[1]) & 1] = 0;
+    return a;
+}
+function complementXorCrossLower() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-2147483648 - i) ^ a[1]) & 1] = 0;
+    return a;
+}
+complementXorStride(); complementXorCommuted(); complementXorUnsignedMask();
+complementXorCrossZero(); complementXorHighBand(); complementXorLowBand();
+complementXorRemainingChild(); complementXorSavedChild(); complementXorOverlappingReload();
+complementXorLaterOverwrite(); complementXorCrossUpper(); complementXorCrossLower();

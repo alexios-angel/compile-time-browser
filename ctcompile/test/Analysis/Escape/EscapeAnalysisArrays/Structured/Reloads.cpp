@@ -383,6 +383,83 @@ void StructuredCases::reloads() {
                                "    %position = ctjs.binary_static bitand %bits, %one"));
         }
     }
+    const auto complementBits = replace(signedBits, "%negativeOne = ctjs.unary neg %one",
+                                        "%negativeOne = ctjs.unary neg %one "
+                                        "{storage_test_id = \"negativeOne\"}");
+    const auto xorComplement = replace(
+        replace(replace(replace(replace(complementBits, "[%x]", "[%x, %negativeOne, %zero, %y]"),
+                                "  ctjs.append %y to %a\n", ""),
+                        "  %a =", "  %three = ctjs.binary add %two, %one\n  %a ="),
+                "add %i, %one", "add %i, %three"),
+        "%position = ctjs.binary_static bitand %i, %one",
+        "%mask = ctjs.get_property %base[%one]\n"
+        "    %bits = ctjs.binary_static bitxor %i, %mask\n"
+        "    %offset = ctjs.binary add %three, %one\n"
+        "    %position = ctjs.binary add %bits, %offset");
+    for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+        rows.push_back(
+            {.what = "XOR complement reverses odd-stride writes around an invariant mask",
+             .body = replace(xorComplement, "bitxor %i, %mask", "bitxor " + std::string(operands)),
+             .arrays = "a:[zero,negativeOne,zero,zero]",
+             .reads = "a[1]=negativeOne; a[0]=x; a[1]=negativeOne; a[3]=zero",
+             .exit = "a -> {a}"});
+    }
+    rows.push_back(
+        {.what = "unsigned all-one XOR retains the same complement lattice",
+         .body = replace(xorComplement, "%negativeOne = ctjs.unary neg %one",
+                         "%negativeOne = ctjs.constant #ctjs.number<4751297606873776128>"),
+         .arrays = "a:[zero,negativeOne,zero,zero]",
+         .reads = "a[1]=negativeOne; a[0]=x; a[1]=negativeOne; a[3]=zero",
+         .exit = "a -> {a}"});
+    for (const auto & expression : {"%part = ctjs.binary sub %i, %one\n"
+                                    "    %bits = ctjs.binary_static bitxor %part, %mask\n"
+                                    "    %position = ctjs.binary add %bits, %three",
+                                    "%part = ctjs.binary add %sign, %i\n"
+                                    "    %bits = ctjs.binary_static bitxor %part, %mask\n"
+                                    "    %offset = ctjs.binary sub %maximum, %three\n"
+                                    "    %position = ctjs.binary sub %bits, %offset",
+                                    "%part = ctjs.binary add %low, %i\n"
+                                    "    %bits = ctjs.binary_static bitxor %part, %mask\n"
+                                    "    %offset = ctjs.binary add %three, %three\n"
+                                    "    %position = ctjs.binary add %bits, %offset"}) {
+        rows.push_back({.what = "XOR complement retains odd strides within each conversion band",
+                        .body = replace(xorComplement,
+                                        "%bits = ctjs.binary_static bitxor %i, %mask\n"
+                                        "    %offset = ctjs.binary add %three, %one\n"
+                                        "    %position = ctjs.binary add %bits, %offset",
+                                        expression),
+                        .arrays = "a:[zero,negativeOne,zero,zero]",
+                        .reads = "a[1]=negativeOne; a[0]=x; a[1]=negativeOne; a[3]=zero",
+                        .exit = "a -> {a}"});
+    }
+    rows.push_back({.what = "XOR complement replay retains an unvisited child",
+                    .body = replace(xorComplement, "[%x, %negativeOne, %zero, %y]",
+                                    "[%x, %negativeOne, %x, %y]"),
+                    .arrays = "a:[zero,negativeOne,x,zero]",
+                    .reads = "a[1]=negativeOne; a[0]=x; a[1]=negativeOne; a[3]=zero",
+                    .exit = "a -> {a,x}"});
+    for (const auto & body :
+         {replace(replace(xorComplement, "[%x, %negativeOne, %zero, %y]",
+                          "[%negativeOne, %x, %zero, %y]"),
+                  "%mask = ctjs.get_property %base[%one]",
+                  "%mask = ctjs.get_property %base[%zero]"),
+          replace(xorComplement,
+                  "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="),
+          replace(xorComplement, "%negativeOne = ctjs.unary neg %one",
+                  "%negativeOne = ctjs.constant #ctjs.number<13835058055282163712>")}) {
+        reject("XOR complement requires the exact mask and complete disjoint reload census", body);
+    }
+    for (const auto & input :
+         {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
+        reject("XOR complement refuses signed conversion discontinuities",
+               replace(xorComplement,
+                       "%bits = ctjs.binary_static bitxor %i, %mask\n"
+                       "    %offset = ctjs.binary add %three, %one\n"
+                       "    %position = ctjs.binary add %bits, %offset",
+                       "%part = " + std::string(input) +
+                           "\n    %bits = ctjs.binary_static bitxor %part, %mask\n"
+                           "    %position = ctjs.binary_static bitand %bits, %one"));
+    }
     for (const auto & expression :
          {"%position = ctjs.binary_static bitand %i, %negativeOne",
           "%position = ctjs.binary_static bitand %negativeOne, %i",
