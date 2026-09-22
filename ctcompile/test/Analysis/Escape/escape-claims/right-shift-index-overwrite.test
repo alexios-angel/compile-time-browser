@@ -132,6 +132,15 @@
 // CHECK: escape {{[0-9a-f]+}} 119 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 120 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 121 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 122 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 123 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 124 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 125 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 126 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 127 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 128 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function signedShift() {
     var child = {}, a = [child, child, 0, 0];
@@ -802,3 +811,49 @@ function partitionedLaterShift() {
 }
 partitionedMixedShift(); partitionedUnsignedShift(); partitionedNonzeroShift();
 partitionedRetainedShift(); partitionedSavedShift(); partitionedOverlapShift(); partitionedLaterShift();
+
+function convertedMixedComplement() {
+    var child = {}, a = [0, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+    return a;
+}
+function convertedMixedLeftShift() {
+    var child = {}, a = [0, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[((((i * 10) >> a[2]) + 2147483647) << 1 >>> 1) & 5] = 0;
+    return a;
+}
+function convertedMixedSignedShift() {
+    var child = {}, a = [child, child, 3, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((((i * 10) >> a[2]) + 2147483646) >> 0) & 5] = 0;
+    return a;
+}
+function convertedMixedUnsignedShift() {
+    var child = {}, a = [child, child, 3, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((((i * 10) >> a[2]) - 2) >>> 0) & 5] = 0;
+    return a;
+}
+function convertedMixedRetained() {
+    var child = {}, a = [child, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+    return a;
+}
+function convertedMixedSaved() {
+    var child = {}, a = [0, child, 3, 0, child, child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+    return saved;
+}
+function convertedMixedOverlap() {
+    var child = {}, a = [0, 3, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) a[(~(((i * 10) >> a[1]) + 2147483646)) & 5] = 0;
+    return a;
+}
+function convertedMixedLaterStore() {
+    var child = {}, a = [0, child, 3, 0, child, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[(~(((i * 10) >> a[2]) + 2147483646)) & 5] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+convertedMixedComplement(); convertedMixedLeftShift(); convertedMixedSignedShift(); convertedMixedUnsignedShift();
+convertedMixedRetained(); convertedMixedSaved(); convertedMixedOverlap(); convertedMixedLaterStore();

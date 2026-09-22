@@ -2557,6 +2557,65 @@ void InductionCases::overwritesAndTransport() {
                  "a disjoint reload enumerated every visit or leaked incomplete replay");
         }
     }
+    const auto convertedMixedShift = replace(
+        replace(replace(replace(roundedShift, "4621256167635550208", "4621819117588971520"),
+                        "[%x, %three, %x, %one, %x, %one]", "[%one, %x, %three, %one, %x, %x]"),
+                "%base[%one]", "%base[%two]"),
+        "%position = ctjs.binary_static shr %scaled, %count",
+        "%rounded = ctjs.binary_static shr %scaled, %count\n"
+        "  %bias = ctjs.constant #ctjs.number<4746794007240114176>\n"
+        "  %mask = ctjs.constant #ctjs.number<4617315517961601024>\n"
+        "  %part = ctjs.binary add %rounded, %bias\n"
+        "  %converted = ctjs.unary bitnot %part\n"
+        "  %position = ctjs.binary_static bitand %converted, %mask");
+    const auto convertedLeftShift =
+        replace(replace(convertedMixedShift, "4746794007240114176", "4746794007244308480"),
+                "%converted = ctjs.unary bitnot %part",
+                "%shifted = ctjs.binary_static shl %part, %one\n"
+                "  %converted = ctjs.binary_static ushr %shifted, %one");
+    for (const auto & body : {convertedMixedShift, convertedLeftShift}) {
+        run({.what = "composed conversion jumps retain mixed-shift gap refinement",
+             .body = body,
+             .arrays = "a:[one,zero,three,one,zero,zero]",
+             .reads = "a[2]=three; a[0]=one; a[2]=three; a[2]=three; a[2]=three; a[4]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto convertedSignedShift =
+        replace(replace(convertedMixedShift, "[%one, %x, %three, %one, %x, %x]",
+                        "[%x, %x, %three, %one, %x, %one]"),
+                "ctjs.unary bitnot %part", "ctjs.binary_static shr %part, %zero");
+    const auto convertedUnsignedShift =
+        replace(replace(replace(convertedSignedShift, "4746794007240114176", "4611686018427387904"),
+                        "binary add %rounded, %bias", "binary sub %rounded, %bias"),
+                "shr %part, %zero", "ushr %part, %zero");
+    for (const auto & body : {convertedSignedShift, convertedUnsignedShift}) {
+        run({.what = "composed right-shift conversion jumps retain mixed-shift gaps",
+             .body = body,
+             .arrays = "a:[zero,zero,three,one,zero,one]",
+             .reads = "a[2]=three; a[0]=x; a[2]=three; a[2]=three; a[2]=three; a[4]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "mixed-shift conversion replay retains an unwritten child",
+         .body = replace(convertedMixedShift, "[%one, %x, %three,", "[%x, %x, %three,"),
+         .arrays = "a:[x,zero,three,one,zero,zero]",
+         .reads = "a[2]=three; a[0]=x; a[2]=three; a[2]=three; a[2]=three; a[4]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "mixed-shift conversion replay retains a pre-loop snapshot",
+         .body = replace(replace(convertedMixedShift, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[one,zero,three,one,zero,zero]",
+         .reads = "a[1]=x; a[2]=three; a[0]=one; a[2]=three; a[2]=three; a[2]=three; a[4]=zero",
+         .exit = "x -> {x}"});
+    reject("mixed-shift conversion gaps reject actual count overwrites",
+           replace(replace(convertedMixedShift, "[%one, %x, %three,", "[%one, %three, %three,"),
+                   "%count = ctjs.get_property %base[%two]",
+                   "%count = ctjs.get_property %base[%one]"));
+    reject("mixed-shift conversions retain the complete later-store census",
+           replace(convertedMixedShift,
+                   "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
     const auto crossingShift = replace(crossingComplement, "ctjs.unary bitnot %part",
                                        "ctjs.binary_static shr %part, %zero");
     const auto lowerCrossingShift = replace(negativeCrossingComplement, "ctjs.unary bitnot %part",
