@@ -559,9 +559,11 @@ helpers. The complete callable-cell and call census discovers the whole family,
 including helpers that capture only another callable or receive one explicitly.
 Callable arguments bind separately at each invocation, so one parameter may
 receive different proved immutable helpers at different calls. A helper's single
-root return carries that invocation's exact identity through further helper
-results and invocations. The bounded call-tree proof checks direct targets before
-rewriting; aggregate identities serve only the complete observer census. Every
+root return carries that invocation's proved identities through further helper
+results and invocations. Complete `if` arms may select among those identities;
+every possible target must satisfy the call proof. The bounded call-tree proof
+checks direct targets before rewriting; aggregate identities serve only the
+complete observer census. Every
 callable observer and invocation is checked, including alternate callers with unknown
 actuals and entry calls through unproved helper results. Exact closure, call,
 symbolic-use and acyclic call-tree checks precede rewriting. Helper bodies allow
@@ -578,7 +580,11 @@ change the shared state. Repeated calls see the latest values, including
 Retired helpers leave no closure or cell storage in native output. Helper-local
 breaks reuse the method completion proof before scalar body validation, retaining
 argument snapshots, ordered state writes and the ordinary return value. Escaping,
-recursive, mutable-callable and branch/loop-joined callable results remain refused.
+recursive, mutable-callable and loop-carried callable results remain refused.
+Branch selection retains a private scalar discriminator until each invocation
+expands into ordinary branches with inlined bodies. Selection and argument
+evaluation keep their original positions; no callable object or lookup table
+survives. Unknown or noncallable arms and scalar observations of a callable refuse.
 Returned-callable producers expand before their consumers;
 source-order scheduling keeps charged work independent of SSA hash order.
 A shared callee is expanded at each invocation with that call's current cells and already

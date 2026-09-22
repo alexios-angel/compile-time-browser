@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Callable branch joins and wrapped complements, 2026-09-22 UTC
+
+Continued clean **efbab738** and the saved branch-selected writer source.
+**4ad7e94c** proves every callable identity through complete `if` arms and
+expands selected invocations into ordinary branches. Selection, argument snapshots,
+current captured state and ordinary results retain their source order. Follow-up
+**8d6cb131** encodes the private discriminator as ordinary integer Numbers.
+No callable object, lookup table or browser/runtime-oracle change is introduced.
+
+Parallel **78040bbc** reuses wrapped-shift residue bounds for larger complements
+across signed conversion jumps. Complete reload/store checks, actual-write replay,
+unwritten children and prior snapshots remain. Eight new source witnesses retain
+all 32 historical complement bodies.
+
+Focused checks pass: final exact host **1/1, 1.50 s total**; the initial seven-source
+subset and all 106 refusal programs **112 native executions, 380 refusals, two
+nonexecuted admissions and 56 Node/VM observations**. After integer-tag encoding,
+the affected three-source subset passes **48 executions, 284 refusals, two
+nonexecuted admissions and 24 Node/VM observations**. Exact arrays pass **1/1,
+1.93 s total**; bitnot/left-shift lit **2/2, 0.13 s**. All seven final code/test
+hashes match the devbox. Required formatting retains **16 existing diagnostics
+in four untouched files**; changed scopes pass. Full suites and the complete
+custom case were skipped. The idle timer is active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-returned-callable-loop-join`
+carries its selected writer through a bounded two-trip loop. Node returns
+**2729 normally / 3603 on stop**, with `data-closed=false`; both native policies
+refuse an unproved branch arm. Prove loop-carried callable identities without
+losing selection time, effects, snapshots or complete observers. Nested custom
+opens, abrupt close, unguarded Bootstrap defaults and the application driver
+remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-callable-branches.md).
+
 ## Callable targets per invocation and wrapped left shifts, 2026-09-22 UTC
 
 Continued clean **f6496ace** and the saved differing-target source.
