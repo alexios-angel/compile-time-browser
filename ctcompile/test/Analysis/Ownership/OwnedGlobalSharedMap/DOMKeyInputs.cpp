@@ -34,7 +34,7 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
     };
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message,
-                             unsigned calls = 1, unsigned inputs = 1) {
+                             unsigned calls = 1, unsigned inputs = 1, unsigned unusedInputs = 0) {
         ++rows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "DOM key input fixture parses");
@@ -60,11 +60,14 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
                   "DOM source ownership retains the exact allocation and complete call family");
             auto entry = module->lookupSymbol<ctjs::FuncOp>(contract.entry);
             std::vector<mlir::BlockArgument> expectedInputs;
-            for (unsigned index = 0; index < inputs; ++index) {
+            for (unsigned index = 0; index < inputs + unusedInputs; ++index) {
                 expectedInputs.push_back(entry.getBody().front().getArgument(3 + index));
             }
             check(llvm::equal(owner.domInputs(), expectedInputs),
-                  "DOM source ownership publishes only the actual external input origins");
+                  "DOM source ownership retains every declared external input origin");
+            // Unused inputs still cross the validated entry boundary, but only
+            // the observed identities receive captured Map key authority.
+            expectedInputs.resize(inputs);
             if (rows == 1 && owner.proved()) {
                 using namespace ctcompile::ctnative;
                 context.getOrLoadDialect<CTNativeDialect>();
@@ -139,7 +142,10 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
         replaced(normal, "%element: !ctjs.value)", "%element: !ctjs.value, %other: !ctjs.value)");
     variant(repeat(distinct, "%other"), true,
             "different DOM inputs retain separate origins without a disjointness promise", 2, 2);
-    variant(distinct, false, "an unused input has no complete outer-key provenance");
+    variant(distinct, true, "an unused input has no captured Map key authority", 1, 1, 1);
+    variant(replaced(distinct, observation,
+                     "    %field = ctjs.get_property %other[%key]\n" + observation),
+            false, "an observed extra input cannot borrow the first input's Map key permission");
     variant(replaced(normal, has, retain + has), true,
             "retention as an outer key supplies provenance without native storage authority");
     variant(siblings, true, "both captured siblings revalidate the same explicit DOM origin", 2);
