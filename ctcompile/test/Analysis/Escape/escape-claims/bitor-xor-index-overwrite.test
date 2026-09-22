@@ -158,6 +158,16 @@
 // CHECK: escape {{[0-9a-f]+}} 149 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 151 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 152 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 153 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 154 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function orWrites() {
     var child = {}, a = [0, child, 0, child];
@@ -1008,3 +1018,60 @@ roundedOrOddStride();
 roundedOrNearMask();
 roundedOrHighCrossing();
 roundedOrLowCrossing();
+function fixedRoundedOr() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[0]) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrCommuted() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(a[0] | (i + 8)) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrNegative() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i - 8) | a[0]) + 8] = 0;
+    return a;
+}
+function fixedRoundedOrRemainingChild() {
+    var child = {}, a = [9, child, child, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[0]) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrLowStride() {
+    var child = {}, a = [2, 0, child, 0, 0, 0, child, 0, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i | a[0]] = 0;
+    return a;
+}
+function fixedRoundedOrOverlappingReload() {
+    var child = {}, a = [0, child, 0, 9, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[3]) - 8] = 0;
+    return a;
+}
+function fixedRoundedOrLaterOverwrite() {
+    var child = {}, a = [9, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) {
+        a[((i + 8) | a[0]) - 8] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function fixedRoundedOrUnitStride() {
+    var child = {}, a = [2, 0, child, 0, 0, 0, child, 0, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[i | a[0]] = 0;
+    return a;
+}
+function fixedRoundedOrNearMask() {
+    var child = {}, a = [10, child, 0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[((i + 8) | a[0]) - 8] = 0;
+    return a;
+}
+fixedRoundedOr();
+fixedRoundedOrCommuted();
+fixedRoundedOrNegative();
+fixedRoundedOrRemainingChild();
+fixedRoundedOrLowStride();
+fixedRoundedOrOverlappingReload();
+fixedRoundedOrLaterOverwrite();
+fixedRoundedOrUnitStride();
+fixedRoundedOrNearMask();

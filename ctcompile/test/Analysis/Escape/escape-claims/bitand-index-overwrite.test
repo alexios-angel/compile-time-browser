@@ -107,6 +107,16 @@
 // CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function masked() {
     var child = {}, a = [child, child, 0, 0];
@@ -684,3 +694,60 @@ roundedAndOddStride();
 roundedAndNearMask();
 roundedAndHighCrossing();
 roundedAndLowCrossing();
+function fixedRoundedAnd() {
+    var child = {}, a = [child, 0, child, 0, child, 6];
+    for (var i = 0; i < a.length; i++) a[(i + 8) & a[5]] = 0;
+    return a;
+}
+function fixedRoundedAndCommuted() {
+    var child = {}, a = [child, 0, child, 0, child, 6];
+    for (var i = 0; i < a.length; i++) a[a[5] & (i + 8)] = 0;
+    return a;
+}
+function fixedRoundedAndNegative() {
+    var child = {}, a = [child, 0, child, 0, child, 6];
+    for (var i = 0; i < a.length; i++) a[(i - 8) & a[5]] = 0;
+    return a;
+}
+function fixedRoundedAndRemainingChild() {
+    var child = {}, a = [child, child, child, 0, child, 6];
+    for (var i = 0; i < a.length; i++) a[(i + 8) & a[5]] = 0;
+    return a;
+}
+function fixedRoundedAndLowStride() {
+    var child = {}, a = [child, 0, 0, 0, child, -3, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i & a[5]] = 0;
+    return a;
+}
+function fixedRoundedAndOverlappingReload() {
+    var child = {}, a = [child, 0, 6, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 8) & a[2]] = 0;
+    return a;
+}
+function fixedRoundedAndLaterOverwrite() {
+    var child = {}, a = [child, 0, child, 0, child, 6];
+    for (var i = 0; i < a.length; i++) {
+        a[(i + 8) & a[5]] = 0;
+        a[5] = 0;
+    }
+    return a;
+}
+function fixedRoundedAndUnitStride() {
+    var child = {}, a = [child, 0, 0, 0, child, -3, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i & a[5]] = 0;
+    return a;
+}
+function fixedRoundedAndNearMask() {
+    var child = {}, a = [child, 0, child, 0, child, 5];
+    for (var i = 0; i < a.length; i++) a[(i + 8) & a[5]] = 0;
+    return a;
+}
+fixedRoundedAnd();
+fixedRoundedAndCommuted();
+fixedRoundedAndNegative();
+fixedRoundedAndRemainingChild();
+fixedRoundedAndLowStride();
+fixedRoundedAndOverlappingReload();
+fixedRoundedAndLaterOverwrite();
+fixedRoundedAndUnitStride();
+fixedRoundedAndNearMask();

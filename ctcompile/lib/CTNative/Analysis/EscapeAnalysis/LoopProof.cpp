@@ -382,7 +382,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 std::bit_ceil(static_cast<std::uint64_t>(lower ^ upper) + 1) - 1);
             const bool complement = bitXor && (~mask & varying & ~fixed) == 0;
             const bool affine = complement || ((bitAnd ? ~mask : mask) & varying & ~fixed) == 0;
-            const auto roundedBits = bitAnd ? ~mask : mask;
+            // Fixed high bits only translate the result; fixed low bits may
+            // fill gaps in the suffix without changing any visited position.
+            const auto roundedBits = ((bitAnd ? ~mask : mask) & varying) | fixed;
             const bool rounding =
                 !bitXor && std::has_single_bit(static_cast<std::uint64_t>(roundedBits) + 1);
             if (signedBand(range->first) == signedBand(range->last) && (affine || rounding)) {

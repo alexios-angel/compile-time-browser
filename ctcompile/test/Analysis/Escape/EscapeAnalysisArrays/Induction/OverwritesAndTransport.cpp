@@ -848,6 +848,98 @@ void InductionCases::overwritesAndTransport() {
                    replace(crossing, "ctjs.unary plus %bits",
                            "ctjs.binary_static bitand %bits, %one"));
         }
+
+        const auto fixedRounding = replace(
+            replace(replace(rounded, "  %a =",
+                            "  %roundEight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                            "  %a ="),
+                    "#ctjs.number<" +
+                        std::string(isAnd ? "13835058055282163712" : "4607182418800017408") +
+                        "> {storage_test_id = \"mask\"}",
+                    "#ctjs.number<" +
+                        std::string(isAnd ? "4618441417868443648" : "4621256167635550208") +
+                        "> {storage_test_id = \"mask\"}"),
+            "%bits = ctjs.binary_static " + kind +
+                " %i, %mask\n"
+                "  %position = ctjs.unary plus %bits",
+            "%part = ctjs.binary add %i, %roundEight\n"
+            "  %bits = ctjs.binary_static " +
+                kind +
+                " %part, %mask\n"
+                "  %position = " +
+                (isAnd ? "ctjs.unary plus %bits" : "ctjs.binary sub %bits, %roundEight"));
+        for (const auto & operands : {"%part, %mask", "%mask, %part"}) {
+            run({.what = "fixed upper bits retain exact low-suffix rounding endpoints",
+                 .body = replace(fixedRounding, kind + " %part, %mask", kind + " " + operands),
+                 .arrays = values,
+                 .reads = reads,
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        auto negativeFixedRounding = replace(fixedRounding, "ctjs.binary add %i, %roundEight",
+                                             "ctjs.binary sub %i, %roundEight");
+        if (!isAnd) {
+            negativeFixedRounding =
+                replace(negativeFixedRounding, "ctjs.binary sub %bits, %roundEight",
+                        "ctjs.binary add %bits, %roundEight");
+        }
+        run({.what = "negative fixed upper bits retain exact rounding endpoints",
+             .body = negativeFixedRounding,
+             .arrays = values,
+             .reads = reads,
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "fixed-bit rounding leaves unwritten children reachable",
+             .body = replace(fixedRounding, contents,
+                             isAnd ? "[%x, %x, %x, %zero, %x, %roundMask]"
+                                   : "[%roundMask, %x, %x, %x, %zero, %x]"),
+             .arrays = isAnd ? "a:[zero,x,zero,zero,zero,mask]" : "a:[mask,zero,x,zero,zero,zero]",
+             .reads = isAnd ? "a[5]=mask; a[0]=zero; a[5]=mask; a[1]=x; a[5]=mask; a[2]=zero; "
+                              "a[5]=mask; a[3]=zero; a[5]=mask; a[4]=zero; a[5]=mask; a[5]=mask"
+                            : "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=x; "
+                              "a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=zero",
+             .exit = "a -> {a,x}"});
+        const auto lowRounding = replace(
+            replace(replace(rounded, contents,
+                            isAnd ? "[%x, %zero, %zero, %zero, %x, %roundMask, %zero, %zero, %x, "
+                                    "%zero, %zero, %zero]"
+                                  : "[%roundMask, %zero, %x, %zero, %zero, %zero, %x, %zero, "
+                                    "%zero, %zero, %x, %zero]"),
+                    "#ctjs.number<" +
+                        std::string(isAnd ? "13835058055282163712" : "4607182418800017408") +
+                        "> {storage_test_id = \"mask\"}",
+                    "#ctjs.number<" +
+                        std::string(isAnd ? "13837309855095848960" : "4611686018427387904") +
+                        "> {storage_test_id = \"mask\"}"),
+            "add %i, %one", "add %i, %roundTwo");
+        run({.what = "fixed low input bits complete a monotone rounding suffix",
+             .body = lowRounding,
+             .arrays = isAnd ? "a:[zero,zero,zero,zero,zero,mask,zero,zero,zero,zero,zero,zero]"
+                             : "a:[mask,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero]",
+             .reads = isAnd ? "a[5]=mask; a[0]=zero; a[5]=mask; a[2]=zero; a[5]=mask; a[4]=zero; "
+                              "a[5]=mask; a[6]=zero; a[5]=mask; a[8]=zero; a[5]=mask; a[10]=zero"
+                            : "a[0]=mask; a[0]=mask; a[0]=mask; a[2]=zero; a[0]=mask; a[4]=zero; "
+                              "a[0]=mask; a[6]=zero; a[0]=mask; a[8]=zero; a[0]=mask; a[10]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("fixed-bit rounding still checks overlapping mask reloads",
+               replace(replace(fixedRounding, contents,
+                               isAnd ? "[%x, %zero, %roundMask, %zero, %x, %zero]"
+                                     : "[%zero, %x, %zero, %roundMask, %zero, %x]"),
+                       "%base[" + guard + "]", isAnd ? "%base[%roundTwo]" : "%base[%roundThree]"));
+        reject("fixed-bit rounding retains later writes in its complete census",
+               replace(fixedRounding,
+                       "  %step =", "  ctjs.set_property %base[" + guard + "], %zero\n  %step ="));
+        reject("a varying low bit cannot complete the rounding suffix",
+               replace(lowRounding, "add %i, %roundTwo", "add %i, %one"));
+        reject("a varying interior gap cannot borrow fixed-bit rounding endpoints",
+               replace(fixedRounding,
+                       "#ctjs.number<" +
+                           std::string(isAnd ? "4618441417868443648" : "4621256167635550208") +
+                           "> {storage_test_id = \"mask\"}",
+                       "#ctjs.number<" +
+                           std::string(isAnd ? "4617315517961601024" : "4621819117588971520") +
+                           "> {storage_test_id = \"mask\"}"));
     }
     const auto signedBits = replace(masked, "  %a =",
                                     "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
