@@ -319,6 +319,7 @@ UTF16_REFUSALS = {
 }
 UTF16_CASES["class_utf16_lowercase"] = (UTF16_REFUSALS.pop("class_utf16_lowercase"), "1111")
 UTF16_CASES["class_utf16_slice_extra"] = (UTF16_REFUSALS.pop("class_utf16_slice_extra"), "1111")
+UTF16_CASES["class_utf16_char_missing"] = (UTF16_REFUSALS.pop("class_utf16_char_missing"), "1111")
 for name in ("class_utf16_char_index", "class_utf16_slice_index"):
     UTF16_CASES[name] = (UTF16_REFUSALS.pop(name), "0000")
 CLASS_CASES.update(UTF16_CASES)
@@ -407,6 +408,11 @@ FILTER_REFUSALS.update(
         ),
     }
 )
+for name in (
+    "class_filter_direct_numeric_equality",
+    "class_filter_repeated_numeric_equality",
+):
+    FILTER_CASES[name] = (FILTER_REFUSALS.pop(name), "1000")
 FILTER_IDENTITIES = ["Object", "Array", "String"]
 DYNAMIC_ITERATION = ["__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"]
 CLASS_CASES.update(FILTER_CASES)

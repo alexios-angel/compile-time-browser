@@ -272,6 +272,10 @@ FILTER_REFUSALS.update(
     }
 )
 FILTER_CASES["class_holder_unused"] = (FILTER_REFUSALS.pop("class_holder_unused"), "1000")
+FILTER_CASES["class_holder_conditional_use"] = (
+    FILTER_REFUSALS.pop("class_holder_conditional_use"),
+    "1000",
+)
 # Bounded composition: original M and predicate share one slot's callee.
 # Complete H's dynamic-key loop and unused slots remain separate proof obligations.
 H_COMBINED_CLASS = (
@@ -650,6 +654,8 @@ for name, bits in (
     ("class_dynamic_holder_early", "1000"),
     ("class_dynamic_helper_early_inverse", "0111"),
     ("class_dynamic_conditional_nested_if", "1000"),
+    ("class_dynamic_nested", "1000"),
+    ("class_dynamic_conditional_nested_loop", "1000"),
 ):
     DYNAMIC_CASES[name] = (DYNAMIC_REFUSALS.pop(name), bits)
 # Repeated helpers keep their identity and saved results across branch transport.
