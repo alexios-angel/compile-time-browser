@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Explicit iterator throws and zero-factor indices, 2026-09-22 UTC
+
+Resumed clean **45cb1fc1** and unchanged `body-throw` source `f1b3f6b8`.
+**3d404e67** closes synchronous iterators on explicit throws and rethrows,
+preserving the saved exception, inner-to-outer close order and catch/finally
+scope. Separate suppression-handler landings keep the source importable.
+The original source now agrees with Node: one close before throwing `1`,
+and no close when already exhausted. Implicit body exceptions remain separate.
+
+Parallel **3878ce1e** proves exact zero-factor own-index ranges using the
+existing singleton lattice. Endpoint checks, complete reload/store census,
+actual-write replay and budgets remain. Two historical CFG and one SCF
+expectations now admit unchanged; all 18 prior source bodies remain intact.
+
+Focused checks pass: `vm_control_flow`, `vm_async`, host and arrays CTests,
+plus two selected scaled/composed-index lit cases. Three existing native
+sources pass **48 executions, 58 refusals and 24 Node/VM observations**, with
+zero nonexecuted admissions. All nine final code/test hashes match the devbox;
+24 generated C++ files contain no Script/VM dependency names. Complete
+formatting passes **1124 C++, 157 Python and 114 web files**. Full suites skipped.
+
+**Next native boundary:** `f1b3f6b8` imports completely but both policies refuse
+**DOM URI requires its fingerprinted initial provider binding**. DOM preparation
+routes the cleanup handler through URI recovery. Prove the close-only suppression
+handler and explicit primitive throw completion, using existing C++ throw emission;
+do not add a URI intrinsic to bypass the proof. Implicit exception cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver
+and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-throw-close.md).
+
 ## Mixed-input iterator selectors and signed bitwise gaps, 2026-09-22 UTC
 
 Resumed clean **6bfe8e48** and exact saved mixed-input selector `987dfd90`.
