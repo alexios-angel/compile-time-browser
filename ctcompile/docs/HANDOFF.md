@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Callable iterator arguments and rounded shift gaps, 2026-09-22 UTC
+
+Continued clean **6e2082e9** and the exact callable-argument boundary recorded
+in the previous handoff. **a9fe119c** proves one confined callable identity per
+helper parameter across all callers and forwarding edges. The existing inliner
+preserves each evaluated argument, current shared state and ordinary result.
+The saved source executes unchanged; new witnesses cover interleaved scalar
+arguments and shared forwarding. Native output retains ordinary scalar ownership
+and public browser calls. No browser or runtime-oracle semantics changed.
+
+**ad228463** preserves right-shift gaps when every rounded increment is equal,
+using the existing interval, stride and conversion-band proof. Mixed increments
+remain dense; complete reload/store and work-budget checks remain. Six new source
+witnesses extend all 66 historical right-shift function bodies.
+
+Focused checks pass: exact host **1/1, 1.35 s total**; seven custom sources plus
+all 88 refusal programs **112 native executions, 344 refusals, two nonexecuted
+admissions and 56 Node/VM observations**; exact arrays **1/1, 1.84 s total**;
+left-shift lit passed, corrected right-shift lit **1/1, 0.12 s**. Two new negative
+escape sources initially did not terminate; their fixtures were corrected without
+changing production or raw tests. All seven final code/test hashes match the
+devbox. Required formatting retains **16 existing diagnostics in four untouched
+files**; changed scopes pass. Full suites, the complete custom case and unchanged
+nested/dataset cases were skipped. The devbox idle timer is active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-returned-callable-writer`
+returns `writer` from `identity(writer)` and then invokes it. Node returns
+**2724 normally / 3598 on stop**, with `data-closed=false`; both native policies
+refuse the unproved returned identity. Preserve callable return provenance and
+complete caller/observer checks before expansion. Differing targets at one
+parameter, nested custom opens, abrupt close, unguarded Bootstrap defaults and
+the application driver remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-callable-arguments.md).
+
 ## Sibling iterator call trees and two-value shifts, 2026-09-22 UTC
 
 Continued clean **6ebf1280** and its saved nested sibling-helper boundary.
