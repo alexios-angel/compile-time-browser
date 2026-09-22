@@ -3134,6 +3134,51 @@ void StructuredCases::reloads() {
     reject(
         "direct mask gap proof retains the complete later-store census",
         replace(directMask, "    %step =", "    ctjs.set_property %base[%two], %one\n    %step ="));
+    const auto directRemainder = replace(
+        replace(replace(replace(directMask, "[%y, %y, %five, %one, %y, %one, %one, %one]",
+                                "[%y, %seven, %y, %y, %one, %one, %y, %one, %one, %one]"),
+                        "  %a =",
+                        "  %seven = ctjs.constant #ctjs.number<4619567317775286272> "
+                        "{storage_test_id = \"seven\"}\n  %a ="),
+                "%count = ctjs.get_property %base[%two]", "%count = ctjs.get_property %base[%one]"),
+        "ctjs.binary_static bitand %i, %count", "ctjs.binary mod %i, %count");
+    for (const auto & expression : {"%position = ctjs.binary mod %i, %count",
+                                    "%divisor = ctjs.unary neg %count\n"
+                                    "    %position = ctjs.binary mod %i, %divisor",
+                                    "%negative = ctjs.unary neg %i\n"
+                                    "    %part = ctjs.binary mod %negative, %count\n"
+                                    "    %position = ctjs.unary neg %part"}) {
+        rows.push_back(
+            {.what = "direct remainder gaps preserve reloaded divisors for either operand sign",
+             .body = replace(directRemainder, "%position = ctjs.binary mod %i, %count", expression),
+             .arrays = "a:[zero,seven,zero,zero,one,one,zero,one,one,one]",
+             .reads = "a[1]=seven; a[0]=zero; a[1]=seven; a[3]=zero; "
+                      "a[1]=seven; a[6]=zero; a[1]=seven; a[9]=one",
+             .exit = "a -> {a}"});
+    }
+    rows.push_back({.what = "direct remainder refinement retains children outside actual writes",
+                    .body = replace(directRemainder, "%seven, %y, %y, %one, %one,",
+                                    "%seven, %y, %y, %y, %one,"),
+                    .arrays = "a:[zero,seven,zero,zero,y,one,zero,one,one,one]",
+                    .reads = "a[1]=seven; a[0]=zero; a[1]=seven; a[3]=zero; "
+                             "a[1]=seven; a[6]=zero; a[1]=seven; a[9]=one",
+                    .exit = "a -> {a,y}"});
+    rows.push_back(
+        {.what = "direct remainder replay retains a child saved before its overwrite",
+         .body = replace(replace(directRemainder, "  %finalIndex,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  %finalIndex,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,seven,zero,zero,one,one,zero,one,one,one]",
+         .reads = "a[0]=y; a[1]=seven; a[0]=zero; a[1]=seven; a[3]=zero; "
+                  "a[1]=seven; a[6]=zero; a[1]=seven; a[9]=one",
+         .exit = "y -> {y}"});
+    reject("direct remainder refinement rejects an actual divisor overwrite",
+           replace(replace(directRemainder, "[%y, %seven, %y, %y,", "[%y, %one, %y, %seven,"),
+                   "%count = ctjs.get_property %base[%one]",
+                   "%count = ctjs.get_property %base[%three]"));
+    reject("direct remainder refinement retains the complete later-store census",
+           replace(directRemainder,
+                   "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="));
 }
 
 } // namespace ctcompile::test::escape::arrays::structured_detail

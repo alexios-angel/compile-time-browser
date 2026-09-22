@@ -64,6 +64,14 @@
 // CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function wrapped() {
     var child = {}, a = [child, child, 0, 0];
@@ -399,3 +407,45 @@ wrapStrideReload(); wrapOddReload(); negativeWrapReload(); negativeOddWrapReload
 crossingWrapReload(); dividedWrap(); constantResidueReload(); reducedStrideReload();
 wrapSavedChild(); wrapRemainingGap(); wrapOverlappingReload(); wrapLaterWrite();
 coprimeWrapReload(); negativeWrapGap();
+
+function directWrapGap() {
+    var child = {}, a = [child, 7, child, child, 1, 1, child, 1, 1, 1];
+    for (var i = 0; i < a.length; i += 3) a[i % a[1]] = 0;
+    return a;
+}
+function directNegativeDivisorGap() {
+    var child = {}, a = [child, 7, child, child, 1, 1, child, 1, 1, 1];
+    for (var i = 0; i < a.length; i += 3) a[i % -a[1]] = 0;
+    return a;
+}
+function directNegativeDividendGap() {
+    var child = {}, a = [child, 7, child, child, 1, 1, child, 1, 1, 1];
+    for (var i = 0; i < a.length; i += 3) a[-((-i) % a[1])] = 0;
+    return a;
+}
+function directRemainderRemainingGap() {
+    var child = {}, a = [child, 7, child, child, child, 1, child, 1, 1, 1];
+    for (var i = 0; i < a.length; i += 3) a[i % a[1]] = 0;
+    return a;
+}
+function directRemainderSavedChild() {
+    var child = {}, a = [child, 7, child, child, 1, 1, child, 1, 1, 1], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[i % a[1]] = 0;
+    return saved;
+}
+function directRemainderHit() {
+    var child = {}, a = [child, 1, child, 7, 1, 1, child, 1, 1, 1];
+    for (var i = 0; i < a.length; i += 3) a[i % a[3]] = 0;
+    return a;
+}
+function directRemainderLaterWrite() {
+    var child = {}, a = [child, 7, child, child, 1, 1, child, 1, 1, 1];
+    for (var i = 0; i < a.length; i += 3) {
+        a[i % a[1]] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+directWrapGap(); directNegativeDivisorGap(); directNegativeDividendGap();
+directRemainderRemainingGap(); directRemainderSavedChild();
+directRemainderHit(); directRemainderLaterWrite();

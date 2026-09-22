@@ -416,8 +416,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 }
                 return result;
             };
+            // Wrapping can leave gaps beyond the gcd lattice. Reuse the
+            // budgeted whole-key refinement before rejecting a reload there.
             return IndexRange{endpoint(first), endpoint(last), static_cast<std::size_t>(period),
-                              range->mixedShift};
+                              true};
         }
         if (bitAnd || bitOr || bitXor) {
             if (!spend()) {
