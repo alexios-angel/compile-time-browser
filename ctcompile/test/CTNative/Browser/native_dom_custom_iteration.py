@@ -531,6 +531,26 @@ SIBLING_RETURNED_LOOP_BRANCH_ZERO_SOURCE = SIBLING_RETURNED_LOOP_BRANCH_SOURCE.r
     1,
 ).replace("while (rounds < 2)", "while (rounds < 0)", 1)
 
+SIBLING_RETURNED_FORMAL_CALLEE_SOURCE = SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+    "const keep = (writer) => forward(writer);",
+    "const keep = (writer, chooser) => chooser(writer);",
+    1,
+).replace("selected = keep(selected);", "selected = keep(selected, forward);", 1)
+SIBLING_RETURNED_SELECTED_CALLEE_SNAPSHOTS_SOURCE = (
+    SIBLING_RETURNED_LOOP_BRANCH_SNAPSHOTS_SOURCE.replace(
+        "const keep = (writer, prior) => forward(writer, advance, prior);",
+        "const passthrough = (writer, alternate, prior) => { closed += prior; return writer; };\n"
+        "  const keep = (writer, prior, chooser) => { let selected = chooser;\n"
+        "    if (prior > 0) selected = passthrough; return selected(writer, advance, prior); };",
+        1,
+    ).replace("keep(selected, emitted);", "keep(selected, emitted, forward);", 1)
+)
+SIBLING_RETURNED_FORMAL_CALLEE_ZERO_SOURCE = SIBLING_RETURNED_FORMAL_CALLEE_SOURCE.replace(
+    "if (emitted > 0) selected = other; return selected;",
+    "if (emitted > 0) selected = other; closed += emitted; return selected;",
+    1,
+).replace("while (rounds < 2)", "while (rounds < 0)", 1)
+
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
 COMPILE_ONLY = {"entry-captured-sibling-loop-break-writer": SIBLING_BREAK_WRITER_SOURCE}
@@ -1137,6 +1157,32 @@ POSITIVES = (
         True,
         "false",
     ),
+    (
+        "entry-captured-sibling-returned-loop-branch-formal-callee",
+        SIBLING_RETURNED_FORMAL_CALLEE_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        # The selected callee keeps the outer writer instead of restoring advance;
+        # its state effect still follows the earlier scalar argument snapshots.
+        "entry-captured-sibling-returned-selected-callee-snapshots",
+        SIBLING_RETURNED_SELECTED_CALLEE_SNAPSHOTS_SOURCE,
+        True,
+        ("886698", "980596", "886698"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-formal-callee-zero",
+        SIBLING_RETURNED_FORMAL_CALLEE_ZERO_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
 )
 
 
@@ -1737,12 +1783,31 @@ def refusals():
                 "selected = other; closed += forward(writer)(); return selected;",
                 1,
             ),
-            "entry-captured-sibling-returned-loop-branch-formal-callee": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
-                "const keep = (writer) => forward(writer);",
-                "const keep = (writer, chooser) => chooser(writer);",
+            "entry-captured-sibling-returned-formal-callee-unknown": SIBLING_RETURNED_FORMAL_CALLEE_SOURCE.replace(
+                "keep(selected, forward);", "keep(selected, unknownChooser);", 1
+            ),
+            "entry-captured-sibling-returned-formal-callee-scalar": SIBLING_RETURNED_FORMAL_CALLEE_SOURCE.replace(
+                "keep(selected, forward);", "keep(selected, 0);", 1
+            ),
+            "entry-captured-sibling-returned-formal-callee-missing": SIBLING_RETURNED_FORMAL_CALLEE_SOURCE.replace(
+                "keep(selected, forward);", "keep(selected);", 1
+            ),
+            "entry-captured-sibling-returned-formal-callee-escaping": SIBLING_RETURNED_FORMAL_CALLEE_SOURCE.replace(
+                "=> chooser(writer);", "=> { anchor.saved = chooser; return chooser(writer); };", 1
+            ),
+            "entry-captured-sibling-returned-formal-callee-observed": SIBLING_RETURNED_FORMAL_CALLEE_SOURCE.replace(
+                "=> chooser(writer);",
+                "=> { closed += chooser === forward; return chooser(writer); };",
                 1,
-            ).replace(
-                "selected = keep(selected);", "selected = keep(selected, forward);", 1
+            ),
+            "entry-captured-sibling-returned-formal-callee-recursive": SIBLING_RETURNED_FORMAL_CALLEE_SOURCE.replace(
+                "keep(selected, forward);", "keep(selected, keep);", 1
+            ),
+            "entry-captured-sibling-returned-selected-callee-unknown-arm": SIBLING_RETURNED_SELECTED_CALLEE_SNAPSHOTS_SOURCE.replace(
+                "selected = passthrough;", "selected = unknownChooser;", 1
+            ),
+            "entry-captured-sibling-returned-selected-callee-scalar-arm": SIBLING_RETURNED_SELECTED_CALLEE_SNAPSHOTS_SOURCE.replace(
+                "selected = passthrough;", "selected = 0;", 1
             ),
         }
     )

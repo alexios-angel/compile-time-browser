@@ -1510,6 +1510,62 @@ module {
         !zeroDirectBranchLoopCallWriter) {
         return;
     }
+    // The return callee arrives through a formal instead of a closure capture.
+    // The original loop selection, scalar snapshots and zero-trip checks apply.
+    const auto formalCalleeSource = [&](const std::string & source) {
+        auto text = replaced(source, "%callee[8] this %undefined captures %forwardCell",
+                             "%callee[8] this %undefined");
+        text = replaced(text, "%emittedCell, %keepCell", "%emittedCell, %keepCell, %forwardCell");
+        text = replaced(text,
+                        "%alternateWriter: !ctjs.value) -> !ctjs.value attributes "
+                        "{upvalue_count = 2 : i32}",
+                        "%alternateWriter: !ctjs.value) -> !ctjs.value attributes "
+                        "{upvalue_count = 3 : i32}");
+        text = replaced(text, "    %keepWriter = ctjs.load_upvalue %callee[1]\n",
+                        "    %keepWriter = ctjs.load_upvalue %callee[1]\n"
+                        "    %forwardWriter = ctjs.load_upvalue %callee[2]\n");
+        text = replaced(text, "%carriedWriter, %alternateWriter, %selectedState)\n",
+                        "%carriedWriter, %alternateWriter, %selectedState, %forwardWriter)\n");
+        text = replaced(text,
+                        "%keptState: !ctjs.value) -> !ctjs.value attributes "
+                        "{upvalue_count = 1 : i32}",
+                        "%keptState: !ctjs.value, %keptChooser: !ctjs.value) -> !ctjs.value "
+                        "attributes {upvalue_count = 0 : i32}");
+        text = replaced(text, "    %forwardWriter = ctjs.load_upvalue %callee[0]\n", "");
+        if (source == branchLoopCallWriterSource) {
+            return replaced(text, "ctjs.call %forwardWriter(%forwardUndefined, ",
+                            "ctjs.call %keptChooser(%forwardUndefined, ");
+        }
+        return replaced(text, "%forwardUndefined, %forwardUndefined, %forwardWriter, ",
+                        "%forwardUndefined, %forwardUndefined, %keptChooser, ");
+    };
+    const auto formalCalleeWriterSource = formalCalleeSource(branchLoopCallWriterSource);
+    const auto directFormalCalleeWriterSource =
+        formalCalleeSource(directBranchLoopCallWriterSource);
+    check(!formalCalleeWriterSource.empty() && !directFormalCalleeWriterSource.empty(),
+          "formal return-callee twins retain complete source modules");
+    if (formalCalleeWriterSource.empty() || directFormalCalleeWriterSource.empty()) { return; }
+    auto formalCalleeWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(formalCalleeWriterSource, &context);
+    auto directFormalCalleeWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directFormalCalleeWriterSource, &context);
+    auto zeroFormalCalleeWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(formalCalleeWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    auto zeroDirectFormalCalleeWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(directFormalCalleeWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    check(formalCalleeWriter && directFormalCalleeWriter && zeroFormalCalleeWriter &&
+              zeroDirectFormalCalleeWriter,
+          "ordinary/direct formal return callees and zero-trip snapshots parse");
+    if (!formalCalleeWriter || !directFormalCalleeWriter || !zeroFormalCalleeWriter ||
+        !zeroDirectFormalCalleeWriter) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1597,7 +1653,11 @@ module {
                          *branchLoopCallWriter,
                          *directBranchLoopCallWriter,
                          *zeroBranchLoopCallWriter,
-                         *zeroDirectBranchLoopCallWriter}) {
+                         *zeroDirectBranchLoopCallWriter,
+                         *formalCalleeWriter,
+                         *directFormalCalleeWriter,
+                         *zeroFormalCalleeWriter,
+                         *zeroDirectFormalCalleeWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1616,12 +1676,14 @@ module {
             fixture == *zeroLoopJoinedWriter || fixture == *zeroDirectLoopJoinedWriter ||
             fixture == *zeroLoopCallWriter || fixture == *zeroDirectLoopCallWriter ||
             fixture == *zeroNestedLoopCallWriter || fixture == *zeroDirectNestedLoopCallWriter ||
-            fixture == *zeroBranchLoopCallWriter || fixture == *zeroDirectBranchLoopCallWriter;
+            fixture == *zeroBranchLoopCallWriter || fixture == *zeroDirectBranchLoopCallWriter ||
+            fixture == *zeroFormalCalleeWriter || fixture == *zeroDirectFormalCalleeWriter;
         const bool loopWrites =
             fixture == *loopJoinedWriter || fixture == *directLoopJoinedWriter ||
             fixture == *loopCallWriter || fixture == *directLoopCallWriter ||
             fixture == *nestedLoopCallWriter || fixture == *directNestedLoopCallWriter ||
             fixture == *branchLoopCallWriter || fixture == *directBranchLoopCallWriter ||
+            fixture == *formalCalleeWriter || fixture == *directFormalCalleeWriter ||
             zeroLoopWrites;
         const bool joinedWrites =
             fixture == *joinedWriter || fixture == *directJoinedWriter || loopWrites;
@@ -2856,6 +2918,81 @@ module {
             }
         }
     }
+    for (const auto & source : {formalCalleeWriterSource, directFormalCalleeWriterSource}) {
+        auto selected = replaced(source, "    %forwardResult =",
+                                 R"MLIR(    %unknownChooser = ctjs.load_global "unknownChooser"
+    %chooserCondition = ctjs.truthy %keptState
+    %selectedChooser = scf.if %chooserCondition -> (!ctjs.value) {
+      scf.yield %keptChooser : !ctjs.value
+    } else {
+      scf.yield %unknownChooser : !ctjs.value
+    }
+    %forwardResult =)MLIR");
+        selected = source == formalCalleeWriterSource
+                       ? replaced(selected, "ctjs.call %keptChooser(%forwardUndefined, ",
+                                  "ctjs.call %selectedChooser(%forwardUndefined, ")
+                       : replaced(selected, "%forwardUndefined, %forwardUndefined, %keptChooser, ",
+                                  "%forwardUndefined, %forwardUndefined, %selectedChooser, ");
+        const auto unknown =
+            replaced(source, "      %oneTrip =",
+                     "      %unknownChooser = ctjs.load_global \"unknownChooser\"\n"
+                     "      %oneTrip =");
+        for (const auto & invalid : {
+                 selected,
+                 replaced(selected, "scf.yield %unknownChooser :", "scf.yield %forwardUndefined :"),
+                 replaced(unknown, "%selectedState, %forwardWriter)\n",
+                          "%selectedState, %unknownChooser)\n"),
+                 replaced(source, "%selectedState, %forwardWriter)\n",
+                          "%selectedState, %selectZero)\n"),
+                 replaced(source, "%selectedState, %forwardWriter)\n",
+                          source == formalCalleeWriterSource
+                              ? "%selectedState)\n"
+                              : "%selectedState, %nestedUndefined)\n"),
+                 replaced(source, "    %forwardResult =",
+                          "    ctjs.store_global \"leaked\", %keptChooser\n"
+                          "    %forwardResult ="),
+                 replaced(source, "    %forwardResult =",
+                          "    %observedChooser = ctjs.compare eq %keptChooser, %keptChooser\n"
+                          "    %forwardResult ="),
+                 replaced(source, "%selectedState, %forwardWriter)\n",
+                          "%selectedState, %keepWriter)\n"),
+                 // Keep the wrong direct target structurally valid with its fourth actual.
+                 replaced(source == formalCalleeWriterSource
+                              ? replaced(source, "ctjs.call %keptChooser(%forwardUndefined, ",
+                                         "ctjs.call_direct @keepWriter$8(%forwardUndefined, "
+                                         "%forwardUndefined, %keptChooser, ")
+                              : replaced(source, "ctjs.call_direct @forwardWriter$9(",
+                                         "ctjs.call_direct @keepWriter$8("),
+                          "%keptWriter, %keptAlternate, %keptState)\n",
+                          "%keptWriter, %keptAlternate, %keptState, %forwardUndefined)\n"),
+                 replaced(source, "    ctjs.return %selectedWriter",
+                          "    %undefined = ctjs.constant #ctjs.undefined\n"
+                          "    %recursiveEffect = ctjs.call %callee(%undefined, %forwardedWriter, "
+                          "%forwardedAlternate, %forwardedState)\n"
+                          "    ctjs.return %selectedWriter"),
+             }) {
+            check(!invalid.empty() && invalid != source,
+                  "formal return-callee control changes its source");
+            if (invalid.empty() || invalid == source) { continue; }
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "hostile formal return-callee dependency parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "return callees retain actual, observer, recursion and direct-target checks");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "refused formal return callee preserves source and publishes no evidence");
+            }
+        }
+    }
     for (const auto & source : {breakWriterSource, directBreakWriterSource}) {
         const auto poisoned =
             replaced(source, "    %helperPoison =",
@@ -3675,7 +3812,11 @@ module {
                          *branchLoopCallWriter,
                          *directBranchLoopCallWriter,
                          *zeroBranchLoopCallWriter,
-                         *zeroDirectBranchLoopCallWriter}) {
+                         *zeroDirectBranchLoopCallWriter,
+                         *formalCalleeWriter,
+                         *directFormalCalleeWriter,
+                         *zeroFormalCalleeWriter,
+                         *zeroDirectFormalCalleeWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

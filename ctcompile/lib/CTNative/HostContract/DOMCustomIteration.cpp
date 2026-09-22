@@ -395,15 +395,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // accesses at each call, then let the entry rewrite below carry their state
     // through source branches and loops alongside the ordinary return value.
     using Targets = llvm::SmallVector<unsigned, 2>;
-    struct ReturnDependencies {
-        Targets arguments;
-        Targets callables;
-    };
     struct Helper {
         ctjs::CreateClosureOp closure;
         ctjs::FuncOp body;
         llvm::SmallVector<mlir::Operation *> calls;
-        std::optional<ReturnDependencies> returned;
+        unsigned returned = 0;
     };
     llvm::SmallVector<Helper> helpers;
     for (auto closure : entry.getBody().front().getOps<ctjs::CreateClosureOp>()) {
@@ -453,7 +449,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator sibling helper must be a scalar leaf");
         }
         if (!work.checkBody(body, false, false, true)) { return error(work.reason); }
-        helpers.push_back({closure, body, {}, std::nullopt});
+        helpers.push_back({closure, body, {}, 0});
     }
     llvm::DenseMap<mlir::Value, unsigned> helperIndices;
     llvm::DenseMap<mlir::Operation *, unsigned> helperBodies;
@@ -543,71 +539,67 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return false;
     };
-    // Summarize every return leaf as an immutable formal or fixed helper.
-    // Complete transport edges include branch arms and loop initializers;
-    // only grounded summaries compose, so cycles cannot invent a target.
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        for (auto & helper : helpers) {
-            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            if (helper.returned) { continue; }
-            auto & block = helper.body.getBody().front();
-            llvm::SmallVector<mlir::Value> pending{
-                llvm::cast<ctjs::ReturnOp>(block.getTerminator()).getValue()};
-            llvm::DenseSet<mlir::Value> visited;
-            ReturnDependencies dependencies;
-            bool complete = true;
-            while (!pending.empty()) {
-                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-                auto value = pending.pop_back_val();
-                if (!visited.insert(value).second) { continue; }
-                if (auto found = fixedCallables.find(value); found != fixedCallables.end()) {
-                    if (!mergeTargets(dependencies.callables, {found->second})) {
-                        return error("DOM custom iterator budget exhausted");
-                    }
-                    continue;
-                }
-                if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-                    argument && argument.getOwner() == &block &&
-                    argument.getArgNumber() >= ctjs::implicit_arguments) {
-                    if (!mergeTargets(dependencies.arguments,
-                                      {argument.getArgNumber() - ctjs::implicit_arguments})) {
-                        return error("DOM custom iterator budget exhausted");
-                    }
-                    continue;
-                }
-                if (transportInputs(value, pending)) { continue; }
-                auto call = value.getDefiningOp<ctjs::CallOp>();
-                auto direct = value.getDefiningOp<ctjs::CallDirectOp>();
-                if (!call && !direct) {
-                    complete = false;
-                    continue;
-                }
-                auto found = fixedCallables.find(call ? call.getCallee() : direct.getCalleeValue());
-                if (found == fixedCallables.end() || !helpers[found->second].returned) {
-                    complete = false;
-                    continue;
-                }
-                const auto & returned = *helpers[found->second].returned;
-                if (!mergeTargets(dependencies.callables, returned.callables)) {
-                    return error("DOM custom iterator budget exhausted");
-                }
-                auto args = call ? call.getArgs() : direct.getArgs();
-                for (auto argument : returned.arguments) {
-                    if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-                    if (argument < args.size()) {
-                        pending.push_back(args[argument]);
-                    } else {
-                        complete = false;
-                    }
-                }
-            }
-            if (complete && (!dependencies.arguments.empty() || !dependencies.callables.empty())) {
-                helper.returned = std::move(dependencies);
-                changed = true;
+    // Snapshot return provenance before capture erasure. Calls retain their
+    // callee and actual dependencies; formal callees are bound per invocation.
+    // The graph owns indices only, so no erased SSA definition is consulted.
+    enum class ReturnKind {
+        unknown,
+        argument,
+        callable,
+        transport,
+        call
+    };
+    struct ReturnValue {
+        ReturnKind kind = ReturnKind::unknown;
+        unsigned index = 0;
+        Targets inputs;
+    };
+    llvm::SmallVector<ReturnValue> returnValues;
+    llvm::SmallVector<mlir::Value> returnSources;
+    llvm::DenseMap<mlir::Value, unsigned> returnIndices;
+    const auto returnIndex = [&](mlir::Value value) {
+        auto [found, added] =
+            returnIndices.try_emplace(value, static_cast<unsigned>(returnValues.size()));
+        if (added) {
+            returnValues.emplace_back();
+            returnSources.push_back(value);
+        }
+        return found->second;
+    };
+    for (auto & helper : helpers) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        helper.returned = returnIndex(
+            llvm::cast<ctjs::ReturnOp>(helper.body.getBody().front().getTerminator()).getValue());
+    }
+    for (unsigned i = 0; i < returnSources.size(); ++i) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        auto value = returnSources[i];
+        ReturnValue node;
+        llvm::SmallVector<mlir::Value> inputs;
+        if (auto found = fixedCallables.find(value); found != fixedCallables.end()) {
+            node.kind = ReturnKind::callable;
+            node.index = found->second;
+        } else if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+                   argument && helperBodies.contains(argument.getOwner()->getParentOp()) &&
+                   argument.getArgNumber() >= ctjs::implicit_arguments) {
+            node.kind = ReturnKind::argument;
+            node.index = argument.getArgNumber() - ctjs::implicit_arguments;
+        } else if (transportInputs(value, inputs)) {
+            node.kind = ReturnKind::transport;
+        } else {
+            auto call = value.getDefiningOp<ctjs::CallOp>();
+            auto direct = value.getDefiningOp<ctjs::CallDirectOp>();
+            if (call || direct) {
+                node.kind = ReturnKind::call;
+                inputs.push_back(call ? call.getCallee() : direct.getCalleeValue());
+                llvm::append_range(inputs, call ? call.getArgs() : direct.getArgs());
             }
         }
+        for (auto input : inputs) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            node.inputs.push_back(returnIndex(input));
+        }
+        returnValues[i] = std::move(node);
     }
     // Bind each invocation separately before changing any body. The aggregate
     // identities below only enumerate observers; they never select a callee.
@@ -616,52 +608,105 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     for (auto [value, index] : fixedCallables) { initialCallables[value] = {index}; }
     const auto resolveTargets = [&](mlir::Value value, const CallableValues & known,
                                     Targets & targets) {
-        llvm::SmallVector<mlir::Value> pending{value};
-        llvm::DenseSet<mlir::Value> visited;
-        bool complete = true;
-        while (!pending.empty()) {
-            if (!spend()) { return false; }
-            auto current = pending.pop_back_val();
-            if (!visited.insert(current).second) { continue; }
-            if (auto found = known.find(current); found != known.end()) {
-                if (!mergeTargets(targets, found->second)) { return false; }
-            } else if (!transportInputs(current, pending)) {
-                auto call = current.getDefiningOp<ctjs::CallOp>();
-                auto direct = current.getDefiningOp<ctjs::CallDirectOp>();
-                if (!call && !direct) {
-                    complete = false;
-                    continue;
-                }
-                auto callee = call ? call.getCallee() : direct.getCalleeValue();
-                auto found = known.find(callee);
-                if (found == known.end()) {
-                    complete = false;
-                    continue;
-                }
-                // Arguments remain snapshots and fixed helpers retain identity.
-                // The summary only enumerates possibilities; source branches
-                // and effects still execute once when the proved call expands.
-                auto args = call ? call.getArgs() : direct.getArgs();
-                for (auto index : found->second) {
-                    if (!spend()) { return false; }
-                    const auto & returned = helpers[index].returned;
-                    if (!returned) {
+        struct Reference {
+            mlir::Value source;
+            unsigned node = 0;
+            unsigned frame = 0;
+        };
+        struct Invocation {
+            llvm::SmallVector<Reference> arguments;
+            unsigned depth = 0;
+        };
+        llvm::SmallVector<Invocation> invocations(1);
+        const auto resolve = [&](auto && self, Reference root, Targets & targets,
+                                 unsigned depth) -> bool {
+            if (depth == 64) { return false; }
+            llvm::SmallVector<Reference> pending{root};
+            llvm::DenseSet<mlir::Value> visitedSources;
+            llvm::DenseSet<std::pair<unsigned, unsigned>> visitedNodes;
+            bool complete = true;
+            while (!pending.empty()) {
+                if (!spend()) { return false; }
+                auto current = pending.pop_back_val();
+                llvm::SmallVector<Reference> inputs;
+                if (current.source) {
+                    if (!visitedSources.insert(current.source).second) { continue; }
+                    if (auto found = known.find(current.source); found != known.end()) {
+                        if (!mergeTargets(targets, found->second)) { return false; }
+                        continue;
+                    }
+                    llvm::SmallVector<mlir::Value> incoming;
+                    if (transportInputs(current.source, incoming)) {
+                        for (auto input : incoming) {
+                            if (!spend()) { return false; }
+                            pending.push_back({input});
+                        }
+                        continue;
+                    }
+                    auto call = current.source.getDefiningOp<ctjs::CallOp>();
+                    auto direct = current.source.getDefiningOp<ctjs::CallDirectOp>();
+                    if (!call && !direct) {
                         complete = false;
                         continue;
                     }
-                    if (!mergeTargets(targets, returned->callables)) { return false; }
-                    for (auto argument : returned->arguments) {
+                    inputs.push_back({call ? call.getCallee() : direct.getCalleeValue()});
+                    for (auto argument : call ? call.getArgs() : direct.getArgs()) {
                         if (!spend()) { return false; }
-                        if (argument < args.size()) {
-                            pending.push_back(args[argument]);
+                        inputs.push_back({argument});
+                    }
+                } else {
+                    if (!visitedNodes.insert({current.node, current.frame}).second) { continue; }
+                    const auto & node = returnValues[current.node];
+                    if (node.kind == ReturnKind::unknown) {
+                        complete = false;
+                        continue;
+                    }
+                    if (node.kind == ReturnKind::callable) {
+                        if (!mergeTargets(targets, {node.index})) { return false; }
+                        continue;
+                    }
+                    if (node.kind == ReturnKind::argument) {
+                        const auto & arguments = invocations[current.frame].arguments;
+                        if (node.index < arguments.size()) {
+                            // Follow the caller's original reference, closing loop
+                            // backedges without manufacturing another invocation.
+                            pending.push_back(arguments[node.index]);
                         } else {
                             complete = false;
                         }
+                        continue;
+                    }
+                    for (auto input : node.inputs) {
+                        if (!spend()) { return false; }
+                        inputs.push_back({{}, input, current.frame});
+                    }
+                    if (node.kind == ReturnKind::transport) {
+                        llvm::append_range(pending, inputs);
+                        continue;
                     }
                 }
+                // Callee candidates are separate from return candidates. Every
+                // selected callee must resolve, including unknown branch arms.
+                Targets callees;
+                complete &= self(self, inputs.front(), callees, depth + 1);
+                for (auto index : callees) {
+                    if (!spend()) { return false; }
+                    const unsigned nextDepth = invocations[current.frame].depth + 1;
+                    if (nextDepth == 64) { return false; }
+                    const unsigned frame = static_cast<unsigned>(invocations.size());
+                    Invocation invocation;
+                    invocation.depth = nextDepth;
+                    for (auto argument : llvm::ArrayRef(inputs).drop_front()) {
+                        if (!spend()) { return false; }
+                        invocation.arguments.push_back(argument);
+                    }
+                    invocations.push_back(std::move(invocation));
+                    pending.push_back({{}, helpers[index].returned, frame});
+                }
             }
-        }
-        return complete && !targets.empty();
+            return complete && !targets.empty();
+        };
+        return resolve(resolve, {value}, targets, 0);
     };
     llvm::DenseSet<mlir::Value> unknownArguments;
     const auto proveCalls = [&](auto && self, ctjs::FuncOp caller, CallableValues values,
