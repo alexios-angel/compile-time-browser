@@ -29,6 +29,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return mlir::WalkResult::advance();
     });
     if (census.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+    const unsigned sourceCost = maxSteps - work.remaining;
     if (!custom) { return llvm::Error::success(); }
     if (candidate->hasAttr("ctjs.skipped") ||
         hostContractFingerprint(candidate) != contract.moduleSha256) {
@@ -196,6 +197,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // Mutable captures join the existing receiver-state tuple only after a
     // complete local-cell census. Generic helper captures remain immutable.
     llvm::DenseMap<mlir::Value, unsigned> capturedState;
+    llvm::DenseSet<mlir::Operation *> siblingReaders;
     llvm::DenseSet<mlir::Operation *> stateStorage;
     llvm::SmallVector<mlir::Value> stateInitials;
     for (auto field : stateSlots) { stateInitials.push_back(field.getValue()); }
@@ -291,6 +293,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return error("DOM custom iterator budget exhausted"); }
                 method |= closure && slot.getValue() == closure.getResult();
             }
+            if (!method && closure && use.getOperandNumber() >= 2 &&
+                closure->getBlock() == &entry.getBody().front()) {
+                siblingReaders.insert(closure);
+                continue;
+            }
             if (!method || use.getOperandNumber() < 2) {
                 return error("DOM iterator capture cell has an external reader or writer");
             }
@@ -299,6 +306,148 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         stateInitials.push_back(initial.getResult());
         stateStorage.insert(cell);
         if (initializer) { stateStorage.insert(initializer); }
+    }
+    // A confined leaf reader can observe these cells at each invocation. Prove
+    // the complete family before changing bodies; no callback may mutate a cell
+    // between a call's scalar arguments and its capture loads.
+    struct Reader {
+        ctjs::CreateClosureOp closure;
+        ctjs::FuncOp body;
+        llvm::SmallVector<mlir::Operation *> calls;
+        llvm::SmallVector<ctjs::RootOp> roots;
+    };
+    llvm::SmallVector<Reader> readers;
+    for (auto closure : entry.getBody().front().getOps<ctjs::CreateClosureOp>()) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        if (!siblingReaders.contains(closure)) { continue; }
+        auto body = targetOf(closure);
+        auto indices = closure.getEnclosingIndicesAttr();
+        if (!body || body == entry || body->hasAttr("ctjs.skipped") ||
+            !body.getBody().hasOneBlock() || body.getBody().front().empty() ||
+            body.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
+            body.getUpvalueCount() != closure.getUpvalues().size() ||
+            (!undefined(closure.getEnclosingThis()) &&
+             closure.getEnclosingThis() !=
+                 entry.getBody().front().getArgument(ctjs::arg_receiver)) ||
+            closure.getEnclosingClosure() !=
+                entry.getBody().front().getArgument(ctjs::arg_callee) ||
+            (indices && (indices.size() != closure.getUpvalues().size() ||
+                         llvm::any_of(indices.asArrayRef(), [](int32_t i) { return i != -1; })))) {
+            return error("DOM iterator sibling reader requires an exact local leaf");
+        }
+        for (auto cell : closure.getUpvalues()) {
+            if (!spend() || !capturedState.contains(cell)) {
+                return error("DOM iterator sibling reader requires proved state captures");
+            }
+        }
+        unsigned count = 0;
+        const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            count += other.getFunction() == closure.getFunction();
+            return mlir::WalkResult::advance();
+        });
+        if (unique.wasInterrupted() || count != 1 || mlir::failed(mlir::verify(body))) {
+            return error("DOM iterator sibling reader is shared or malformed");
+        }
+        const auto leaf = body.walk([&](mlir::Operation * operation) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (operation == body.getOperation() ||
+                llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::BinaryOp,
+                          ctjs::BinaryStaticOp, ctjs::UnaryOp, ctjs::CompareOp, ctjs::TruthyOp,
+                          ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp,
+                          mlir::arith::ConstantOp, mlir::scf::IfOp, mlir::scf::WhileOp,
+                          mlir::scf::ConditionOp, mlir::scf::YieldOp>(operation)) {
+                return mlir::WalkResult::advance();
+            }
+            return mlir::WalkResult::interrupt();
+        });
+        if (leaf.wasInterrupted()) {
+            return error("DOM iterator sibling reader must be a read-only scalar leaf");
+        }
+        if (!work.checkBody(body, false)) { return error(work.reason); }
+        Reader reader{closure, body, {}, {}};
+        for (mlir::OpOperand & use : closure.getResult().getUses()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto * user = use.getOwner();
+            if (auto root = llvm::dyn_cast<ctjs::RootOp>(user);
+                root && use.getOperandNumber() == 1) {
+                reader.roots.push_back(root);
+                continue;
+            }
+            bool callable = false;
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+                callable = use.getOperandNumber() == 0 && call.getArgs().empty() &&
+                           undefined(call.getReceiver());
+            } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+                callable = use.getOperandNumber() == 2 && call.getTarget() == body &&
+                           call.getArgs().empty() && undefined(call.getReceiver()) &&
+                           undefined(call.getNewTarget());
+            }
+            if (!callable || user->getParentOfType<ctjs::FuncOp>() != entry ||
+                !entryDominance.properlyDominates(closure.getOperation(), user)) {
+                return error("DOM iterator sibling reader escapes or has an unsupported call");
+            }
+            reader.calls.push_back(user);
+        }
+        if (reader.calls.empty()) {
+            return error("DOM iterator sibling reader has no proved invocation");
+        }
+        if (work.remaining / 2 < sourceCost) {
+            return error("DOM custom iterator budget exhausted");
+        }
+        work.remaining -= 2 * sourceCost;
+        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(candidate.getOperation()),
+                                  mlir::SymbolTable::getSymbolUses(&candidate.getBodyRegion())}) {
+            if (!uses) { return error("DOM iterator sibling reader has unknown symbol uses"); }
+            for (const auto & use : *uses) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                        use.getUser(), use.getSymbolRef()) == body &&
+                    !llvm::is_contained(reader.calls, use.getUser())) {
+                    return error("DOM iterator sibling reader has an unproved symbolic observer");
+                }
+            }
+        }
+        readers.push_back(std::move(reader));
+    }
+    for (auto & reader : readers) {
+        auto & block = reader.body.getBody().front();
+        llvm::SmallVector<mlir::Value> arguments;
+        for (auto cell : reader.closure.getUpvalues()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            arguments.push_back(block.addArgument(cell.getType(), cell.getLoc()));
+        }
+        const auto replaced = reader.body.walk([&](ctjs::LoadUpvalueOp read) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            read.getResult().replaceAllUsesWith(arguments[static_cast<unsigned>(read.getIndex())]);
+            read.erase();
+            return mlir::WalkResult::advance();
+        });
+        if (replaced.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+        reader.body.setFunctionTypeAttr(mlir::TypeAttr::get(
+            mlir::FunctionType::get(candidate.getContext(), block.getArgumentTypes(),
+                                    reader.body.getFunctionType().getResults())));
+        reader.body.setUpvalueCount(0);
+        for (auto * call : reader.calls) {
+            mlir::OpBuilder at(call);
+            llvm::SmallVector<mlir::Value> actuals;
+            for (auto cell : reader.closure.getUpvalues()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                actuals.push_back(
+                    ctjs::CellGetOp::create(at, call->getLoc(), cell.getType(), cell));
+            }
+            auto ordinary = llvm::dyn_cast<ctjs::CallOp>(call);
+            auto receiver = ordinary ? ordinary.getReceiver()
+                                     : llvm::cast<ctjs::CallDirectOp>(call).getReceiver();
+            if (!work.inlineCall(entry, reader.body, call, actuals, receiver,
+                                 entry.getBody().front().getArgument(ctjs::arg_callee), {}, 0)) {
+                return error(work.reason);
+            }
+            call->erase();
+        }
+        for (auto root : reader.roots) { root.erase(); }
+        reader.closure.erase();
+        reader.body.erase();
     }
     // Projecting these records cannot invoke getters, consult a prototype or
     // lose evaluation of a field producer. Complete DOM proof checks values.

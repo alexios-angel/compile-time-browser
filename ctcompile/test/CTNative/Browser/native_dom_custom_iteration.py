@@ -191,6 +191,31 @@ ENTRY_CAPTURE_SOURCE = (
   return count + emitted + closed;""",
     )
 )
+SIBLING_CAPTURE_SOURCE = ENTRY_CAPTURE_SOURCE.replace(
+    "  return count + emitted + closed;",
+    "  const read = () => emitted;\n  return count + read() + closed;",
+)
+SIBLING_ORDERED_CAPTURE_SOURCE = (
+    ENTRY_CAPTURE_SOURCE.replace(
+        "  const values = {", "  const read = () => emitted + closed;\n  const values = {"
+    )
+    .replace("  let count = emitted + closed;", "  let count = read();")
+    .replace(
+        "  for (const node of values) {",
+        "  count += read();\n  for (const node of values) {",
+    )
+    .replace("    count += emitted + closed;", "    count += read();")
+    .replace(
+        "    closed += emitted;\n    if (anchor.hasAttribute('stop')) break;",
+        "    closed += emitted;\n    count += read();\n"
+        "    if (anchor.hasAttribute('stop')) break;",
+    )
+    .replace(
+        "  closed += emitted;\n  emitted += closed;",
+        "  count += read();\n  closed += emitted;\n  emitted += closed;",
+    )
+    .replace("return count + emitted + closed;", "return count + read() + read();")
+)
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -415,6 +440,36 @@ POSITIVES = (
         True,
         "true",
     ),
+    (
+        "entry-captured-sibling-reader",
+        SIBLING_CAPTURE_SOURCE,
+        True,
+        ("57", "68", "57"),
+        True,
+        "true",
+    ),
+    (
+        # Every call observes the current cells: before iteration, after body
+        # writes, after close, and twice after the final ordered writes.
+        "entry-captured-sibling-ordered-reader",
+        SIBLING_ORDERED_CAPTURE_SOURCE,
+        True,
+        ("146", "173", "146"),
+        True,
+        "true",
+    ),
+    (
+        "extra-captured-closure",
+        CAPTURE_SOURCE.replace(
+            "  for (const node of values) {",
+            "  anchor.setAttribute('data-extra', (() => emitted)() === 0);\n"
+            "  for (const node of values) {",
+        ),
+        True,
+        ("1", "1", "1"),
+        True,
+        "yes",
+    ),
 )
 
 
@@ -464,7 +519,7 @@ var {name} = (function() {{
                     if breaking and state.startswith("stop")
                     else "data-next=true;data-yielded=yes;"
                 )
-            if label == "preloop-captured-read":
+            if label in ("preloop-captured-read", "extra-captured-closure"):
                 expected = expected.replace(":", ":data-extra=true;", 1)
             observations.append((name, expected))
     node = args.work / "custom-iteration-node.js"
@@ -667,9 +722,6 @@ def refusals():
             "retained-captured-cell": CAPTURE_SOURCE.replace(
                 loop, "  anchor.saved = () => emitted;\n" + loop
             ),
-            "extra-captured-closure": CAPTURE_SOURCE.replace(
-                loop, "  anchor.setAttribute('data-extra', (() => emitted)() === 0);\n" + loop
-            ),
             "nonnumber-captured-initializer": CAPTURE_SOURCE.replace(
                 "let emitted = 0;", "let emitted = anchor;"
             ),
@@ -737,9 +789,22 @@ def refusals():
                 "  return count + emitted + closed;",
                 "  emitted = anchor;\n  return count + emitted + closed;",
             ),
-            "entry-captured-sibling-reader": ENTRY_CAPTURE_SOURCE.replace(
-                "  return count + emitted + closed;",
-                "  const read = () => emitted;\n  return count + read() + closed;",
+            "entry-captured-sibling-escaping-reader": SIBLING_CAPTURE_SOURCE.replace(
+                "  return count + read() + closed;",
+                "  anchor.saved = read;\n  return count + read() + closed;",
+            ),
+            "entry-captured-sibling-indirect-reader": SIBLING_CAPTURE_SOURCE.replace(
+                "  return count + read() + closed;",
+                "  const readers = {read: read};\n"
+                "  return count + readers[anchor.getAttribute('data-reader')]() + closed;",
+            ),
+            "entry-captured-sibling-recursive-reader": SIBLING_CAPTURE_SOURCE.replace(
+                "  const read = () => emitted;",
+                "  const read = () => anchor.hasAttribute('stop') ? read() : emitted;",
+            ),
+            "entry-captured-sibling-writer": SIBLING_CAPTURE_SOURCE.replace(
+                "  const read = () => emitted;",
+                "  const read = () => { emitted += closed; return emitted; };",
             ),
         }
     )
@@ -778,7 +843,7 @@ def main():
                 checks = checks.replace("@BREAKING@", "true" if breaking else "false")
                 checks = checks.replace("@RESETTING@", "true" if resetting else "false")
                 checks = checks.replace("@CLOSED@", closed)
-                if label == "preloop-captured-read":
+                if label in ("preloop-captured-read", "extra-captured-closure"):
                     checks = checks.replace(
                         'const auto stop = names.intern("stop")',
                         'const auto extra = names.intern("data-extra");\n'
