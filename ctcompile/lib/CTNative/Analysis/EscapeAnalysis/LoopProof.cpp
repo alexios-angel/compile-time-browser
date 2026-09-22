@@ -372,6 +372,25 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!positive && !negative) { return std::nullopt; }
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
+            if ((bitAnd && mask == 4294967295U) || (!bitAnd && mask == 0)) {
+                // Identity masks apply only ToInt32. Within one conversion
+                // band it is affine, preserving every stride, including odd
+                // strides and intervals crossing zero in the signed band.
+                if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
+                for (ContentsValue * endpoint : {&range->first, &range->last}) {
+                    if (!spend()) {
+                        invariantFailure = ArrayContentsFailure::WorkLimit;
+                        return std::nullopt;
+                    }
+                    ContentsValue result{operand, ContentsKind::NonBigInt};
+                    boundedNumberBitwise(*endpoint, *offset, addition.getKind(), result);
+                    if (!result.integerNumber && !result.negativeIntegerNumber) {
+                        return std::nullopt;
+                    }
+                    *endpoint = result;
+                }
+                return range;
+            }
             const auto inputStride = std::size_t{1} << std::countr_zero(range->stride);
             const auto changingMask = bitOr ? ~mask : mask;
             // AND fixes trailing zeros; OR fixes trailing ones. Both combine

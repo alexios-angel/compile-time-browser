@@ -531,6 +531,80 @@ void InductionCases::overwritesAndTransport() {
                                     "  %negativeOne = ctjs.unary neg %one\n"
                                     "  %low = ctjs.constant #ctjs.number<13974669643726454784>\n"
                                     "  %a =");
+    for (const std::string kind : {"bitor", "bitxor", "bitand"}) {
+        const auto literal = kind == "bitand" ? "13830554455654793216" : "0";
+        const auto identity =
+            replace(replace(replace(replace(signedBits, "[%one, %x]", "[%x, %identity, %zero, %x]"),
+                                    "add %i, %one", "add %i, %three"),
+                            "  %a =",
+                            "  %identity = ctjs.constant #ctjs.number<" + std::string(literal) +
+                                "> {storage_test_id = \"mask\"}\n  %a ="),
+                    "%position = ctjs.binary_static bitand %i, %one",
+                    "%mask = ctjs.get_property %base[%one]\n"
+                    "  %position = ctjs.binary_static " +
+                        kind + " %i, %mask");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            run({.what = "identity bitwise masks preserve odd strides through either operand order",
+                 .body = replace(identity, kind + " %i, %mask", kind + " " + operands),
+                 .arrays = "a:[zero,mask,zero,zero]",
+                 .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "identity bitwise replay retains a child in an odd-stride gap",
+             .body = replace(identity, "[%x, %identity, %zero, %x]", "[%x, %identity, %x, %x]"),
+             .arrays = "a:[zero,mask,x,zero]",
+             .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero",
+             .exit = "a -> {a,x}"});
+        for (const auto & expression : {"%part = ctjs.binary sub %i, %one\n"
+                                        "  %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "  %position = ctjs.binary add %bits, %one",
+                                        "%part = ctjs.binary add %sign, %i\n"
+                                        "  %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "  %position = ctjs.binary add %bits, %sign",
+                                        "%part = ctjs.binary add %low, %i\n"
+                                        "  %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "  %position = ctjs.binary sub %bits, %two"}) {
+            run({.what = "identity masks retain odd strides within each signed conversion band",
+                 .body = replace(identity, "%position = ctjs.binary_static " + kind + " %i, %mask",
+                                 expression),
+                 .arrays = "a:[zero,mask,zero,zero]",
+                 .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        reject(
+            "identity masks cannot reload a visited lattice point",
+            replace(replace(identity, "[%x, %identity, %zero, %x]", "[%identity, %x, %zero, %x]"),
+                    "%mask = ctjs.get_property %base[%one]",
+                    "%mask = ctjs.get_property %base[%zero]"));
+        reject("identity masks retain every later store in the reload census",
+               replace(identity, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+        reject("nonidentity masks cannot borrow an odd input lattice",
+               replace(identity,
+                       "#ctjs.number<" + std::string(literal) + "> {storage_test_id = \"mask\"}",
+                       "#ctjs.number<" +
+                           std::string(kind == "bitand" ? "13837309855095848960"
+                                                        : "4607182418800017408") +
+                           "> {storage_test_id = \"mask\"}"));
+        for (const auto & input :
+             {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
+            reject("identity masks still reject signed conversion discontinuities",
+                   replace(identity, "%position = ctjs.binary_static " + kind + " %i, %mask",
+                           "%part = " + std::string(input) +
+                               "\n"
+                               "  %bits = ctjs.binary_static " +
+                               kind +
+                               " %part, %mask\n"
+                               "  %position = ctjs.binary_static bitand %bits, %one"));
+        }
+    }
     for (const auto & expression : {"%position = ctjs.binary_static bitand %i, %negativeOne",
                                     "%position = ctjs.binary_static bitand %negativeOne, %i",
                                     "%full = ctjs.binary add %maximum, %sign\n"
@@ -567,12 +641,21 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a,x}"});
     for (const auto & input : {"ctjs.binary sub %i, %one", "ctjs.binary add %maximum, %i",
                                "ctjs.binary sub %negativeSign, %i"}) {
-        reject("signed AND retains conversion and sign-half guards through a final low mask",
-               replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
-                       "%part = " + std::string(input) +
-                           "\n"
-                           "  %bits = ctjs.binary_static bitand %part, %negativeOne\n"
-                           "  %position = ctjs.binary_static bitand %bits, %one"));
+        const auto body = replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                                  "%part = " + std::string(input) +
+                                      "\n"
+                                      "  %bits = ctjs.binary_static bitand %part, %negativeOne\n"
+                                      "  %position = ctjs.binary_static bitand %bits, %one");
+        if (std::string(input) == "ctjs.binary sub %i, %one") {
+            run({.what = "identity AND preserves the original zero-crossing source",
+                 .body = body,
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=one; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("identity AND retains conversion guards through a final low mask", body);
+        }
     }
     reject("a signed AND result must still become a nonnegative own key",
            replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
@@ -653,11 +736,15 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
     }
-    reject("OR/XOR cannot cross converted zero before a compensating offset",
-           replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
-                   "%part = ctjs.binary sub %i, %one\n"
-                   "  %bits = ctjs.binary_static bitor %part, %zero\n"
-                   "  %position = ctjs.binary add %bits, %one"));
+    run({.what = "identity OR preserves the original zero-crossing source",
+         .body = replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                         "%part = ctjs.binary sub %i, %one\n"
+                         "  %bits = ctjs.binary_static bitor %part, %zero\n"
+                         "  %position = ctjs.binary add %bits, %one"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
     for (const auto & input :
          {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
         reject("a final mask cannot hide an inner OR/XOR conversion discontinuity",

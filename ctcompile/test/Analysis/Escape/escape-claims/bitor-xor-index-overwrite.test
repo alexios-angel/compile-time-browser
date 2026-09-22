@@ -25,7 +25,7 @@
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj escapes:stored
@@ -71,6 +71,21 @@
 // CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function orWrites() {
@@ -455,3 +470,85 @@ signSettingCrossZero(); signSettingUpperCrossing(); signSettingLowerCrossing();
 signSettingUnsignedCommuted(); signSettingMaskGap(); signSettingInputGap();
 signSettingRemainingChild(); signSettingSavedChild(); signSettingOverlappingReload();
 signSettingLaterOverwrite(); signSettingInputOverlap();
+function identityOrStride() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[1]] = 0;
+    return a;
+}
+function identityXorStride() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[a[1] ^ i] = 0;
+    return a;
+}
+function identityAndStride() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i & a[1]] = 0;
+    return a;
+}
+function identityUnsignedAndStride() {
+    var child = {}, a = [child, 4294967295, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[a[1] & i] = 0;
+    return a;
+}
+function identityCrossZero() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((i - 1) ^ a[1]) + 1] = 0;
+    return a;
+}
+function identityHighBand() {
+    var child = {}, a = [child, -1, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483648 + i) & a[1]) + 2147483648] = 0;
+    return a;
+}
+function identityLowBand() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-4294967294 + i) | a[1]) - 2] = 0;
+    return a;
+}
+function identityNonzeroPhase() {
+    var child = {}, a = [0, child, -1, 0, child];
+    for (var i = 1; i < a.length; i += 3) a[i & a[2]] = 0;
+    return a;
+}
+function identityRemainingChild() {
+    var child = {}, a = [child, 0, child, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[1]] = 0;
+    return a;
+}
+function identitySavedChild() {
+    var child = {}, a = [child, 0, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[i ^ a[1]] = 0;
+    return saved;
+}
+function identityOverlappingReload() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[0]] = 0;
+    return a;
+}
+function identityLaterOverwrite() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) {
+        a[i ^ a[1]] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function nearIdentityMask() {
+    var child = {}, a = [child, -3, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[i & a[1]] = 0;
+    return a;
+}
+function identityCrossUpper() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((2147483647 + i) | a[1]) & 1] = 0;
+    return a;
+}
+function identityCrossLower() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 3) a[((-2147483648 - i) ^ a[1]) & 1] = 0;
+    return a;
+}
+identityOrStride(); identityXorStride(); identityAndStride(); identityUnsignedAndStride();
+identityCrossZero(); identityHighBand(); identityLowBand(); identityNonzeroPhase();
+identityRemainingChild(); identitySavedChild(); identityOverlappingReload(); identityLaterOverwrite();
+nearIdentityMask(); identityCrossUpper(); identityCrossLower();

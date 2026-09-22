@@ -305,6 +305,84 @@ void StructuredCases::reloads() {
                                     "  %low = ctjs.constant #ctjs.number<13974669643726454784>\n"
                                     "  %two = ctjs.binary add %one, %one\n"
                                     "  %a =");
+    for (const std::string kind : {"bitor", "bitxor", "bitand"}) {
+        const auto literal = kind == "bitand" ? "13830554455654793216" : "0";
+        const auto identity = replace(
+            replace(replace(replace(replace(signedBits, "[%x]", "[%x, %identity, %zero, %y]"),
+                                    "  ctjs.append %y to %a\n", ""),
+                            "add %i, %one", "add %i, %three"),
+                    "  %a =",
+                    "  %identity = ctjs.constant #ctjs.number<" + std::string(literal) +
+                        "> {storage_test_id = \"mask\"}\n"
+                        "  %three = ctjs.binary add %two, %one\n  %a ="),
+            "%position = ctjs.binary_static bitand %i, %one",
+            "%mask = ctjs.get_property %base[%one]\n"
+            "    %position = ctjs.binary_static " +
+                kind + " %i, %mask");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            rows.push_back(
+                {.what = "structured identity masks preserve odd strides in either operand order",
+                 .body = replace(identity, kind + " %i, %mask", kind + " " + operands),
+                 .arrays = "a:[zero,mask,zero,zero]",
+                 .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero",
+                 .exit = "a -> {a}"});
+        }
+        rows.push_back(
+            {.what = "structured identity replay retains an unvisited gap child",
+             .body = replace(identity, "[%x, %identity, %zero, %y]", "[%x, %identity, %x, %y]"),
+             .arrays = "a:[zero,mask,x,zero]",
+             .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero",
+             .exit = "a -> {a,x}"});
+        for (const auto & expression : {"%part = ctjs.binary sub %i, %one\n"
+                                        "    %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "    %position = ctjs.binary add %bits, %one",
+                                        "%part = ctjs.binary add %sign, %i\n"
+                                        "    %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "    %position = ctjs.binary add %bits, %sign",
+                                        "%part = ctjs.binary add %low, %i\n"
+                                        "    %bits = ctjs.binary_static " +
+                                            kind +
+                                            " %part, %mask\n"
+                                            "    %position = ctjs.binary sub %bits, %two"}) {
+            rows.push_back(
+                {.what = "structured identity masks preserve each affine conversion band",
+                 .body = replace(identity, "%position = ctjs.binary_static " + kind + " %i, %mask",
+                                 expression),
+                 .arrays = "a:[zero,mask,zero,zero]",
+                 .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[3]=zero",
+                 .exit = "a -> {a}"});
+        }
+        reject(
+            "structured identity masks cannot reload at a visited lattice point",
+            replace(replace(identity, "[%x, %identity, %zero, %y]", "[%identity, %x, %zero, %y]"),
+                    "%mask = ctjs.get_property %base[%one]",
+                    "%mask = ctjs.get_property %base[%zero]"));
+        reject("structured identity masks retain the complete later-store census",
+               replace(identity,
+                       "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+        reject("structured nonidentity masks cannot borrow an odd input lattice",
+               replace(identity,
+                       "#ctjs.number<" + std::string(literal) + "> {storage_test_id = \"mask\"}",
+                       "#ctjs.number<" +
+                           std::string(kind == "bitand" ? "13837309855095848960"
+                                                        : "4607182418800017408") +
+                           "> {storage_test_id = \"mask\"}"));
+        for (const auto & input :
+             {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
+            reject("structured identity masks reject signed conversion discontinuities",
+                   replace(identity, "%position = ctjs.binary_static " + kind + " %i, %mask",
+                           "%part = " + std::string(input) +
+                               "\n"
+                               "    %bits = ctjs.binary_static " +
+                               kind +
+                               " %part, %mask\n"
+                               "    %position = ctjs.binary_static bitand %bits, %one"));
+        }
+    }
     for (const auto & expression :
          {"%position = ctjs.binary_static bitand %i, %negativeOne",
           "%position = ctjs.binary_static bitand %negativeOne, %i",
@@ -327,12 +405,21 @@ void StructuredCases::reloads() {
     }
     for (const auto & input : {"ctjs.binary sub %i, %one", "ctjs.binary add %maximum, %i",
                                "ctjs.binary sub %negativeSign, %i"}) {
-        reject("structured signed AND retains conversion guards through a final low mask",
-               replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
-                       "%part = " + std::string(input) +
-                           "\n"
-                           "    %bits = ctjs.binary_static bitand %part, %negativeOne\n"
-                           "    %position = ctjs.binary_static bitand %bits, %one"));
+        const auto body = replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                                  "%part = " + std::string(input) +
+                                      "\n"
+                                      "    %bits = ctjs.binary_static bitand %part, %negativeOne\n"
+                                      "    %position = ctjs.binary_static bitand %bits, %one");
+        if (std::string(input) == "ctjs.binary sub %i, %one") {
+            rows.push_back({.what = "structured identity AND preserves the original zero crossing",
+                            .body = body,
+                            .arrays = "a:[zero,zero]",
+                            .reads = "a[0]=x; a[1]=zero",
+                            .exit = "a -> {a}"});
+        } else {
+            reject("structured identity AND retains conversion guards through a final low mask",
+                   body);
+        }
     }
     const auto andReload =
         replace(replace(replace(masked, "[%x]", "[%x, %y, %negativeMask, %zero]"),
