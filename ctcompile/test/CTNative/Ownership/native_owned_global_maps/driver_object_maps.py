@@ -231,7 +231,13 @@ def check_primitive_absence_preparation(text, original, case, name):
             raise RuntimeError(f"{name}: changed live {operation} census")
 
 
-def check_primitive_absence_carriers(args, node, reference):
+def check_primitive_absence_carriers(args, node, reference, compilers, nm):
+    promoted = {
+        "seeded_cleared",
+        "seeded_deleted",
+        "seeded_deleted_earlier",
+        "result_seeded_false_deleted",
+    }
     undefined_node = r"""const fs = require('node:fs'), vm = require('node:vm');
 const context = vm.createContext({});
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
@@ -260,6 +266,7 @@ process.stdout.write('trace=undefined\n');
         repaired_expected = f'trace={case["repaired_value"]}\n'
         if (
             repaired_count != count
+            or repaired_expected == expected
             or host.run([node, "-e", boundary.NODE, str(repaired_js)]).stdout != repaired_expected
             or host.run([str(reference), str(repaired_js)]).stdout != repaired_expected
         ):
@@ -275,43 +282,56 @@ process.stdout.write('trace=undefined\n');
         repaired_config = contract(args, repaired_ir, name + "-restored")
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
 
-            def reject(input_ir, label, current_config):
-                failed = owned.lower(
-                    args, input_ir, label, current_config, options=options, cleanup=False
+            def check(input_ir, label, current_config):
+                admitted = name in promoted
+                output = owned.lower(
+                    args, input_ir, label, current_config, options=options, cleanup=admitted
                 )
-                text = methods.census(failed, count, label, admitted=0)
-                origin = (
-                    "ctjs.load_upvalue"
-                    if case["carrier"].startswith("!ctnative.map<")
-                    else "ctjs.call_direct"
-                )
-                expected_reason = f'a value of type {case["carrier"]} from `{origin}`'
-                if (
-                    "ctnative.host_owner_proved = true" not in text
-                    or expected_reason not in boundary.REFUSAL.findall(text)
-                ):
-                    raise RuntimeError(f"{label}: lost exact complete-owner carrier diagnostic")
-                if origin == "ctjs.load_upvalue":
-                    reason = (
-                        "native Map needs supported keys and numeric, boolean, closed mixed, "
-                        "owning-string, object-identity union or acyclic Map values; inferred "
-                        + case["carrier"]
+                text = methods.census(output, count, label, admitted=count if admitted else 0)
+                if "ctnative.host_owner_proved = true" not in text:
+                    raise RuntimeError(f"{label}: lost complete-owner proof")
+                if admitted:
+                    cpp = host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout
+                    storage = (
+                        "ctnative::map_storage<ctnative::nullable_scalar, ctnative::js_boolean_t>"
+                        if name == "result_seeded_false_deleted"
+                        else "ctnative::number_map<ctnative::nullable_scalar>"
                     )
-                else:
-                    reason = "stored callable result has no supported concrete signature"
+                    if (
+                        f"std::shared_ptr<{storage}>" not in cpp
+                        or "std::function<ctnative::nullable_scalar()>" not in cpp
+                        or "std::function<ctnative::js_num(ctnative::nullable_scalar)>" not in cpp
+                    ):
+                        raise RuntimeError(f"{label}: lost nullable key/result callable carriers")
+                    for action in ("set", "get", "has", "delete", "clear"):
+                        if cpp.count(f"ctnative::map_{action}(") != len(
+                            re.findall(rf"\bstate\.{action}\(", case["source"])
+                        ):
+                            raise RuntimeError(f"{label}: changed live Map.{action} calls")
+                    return output, comparable_provenance(cpp, input_ir)
+                reason = (
+                    "mixed native Map read needs independent present payload type evidence"
+                    if name == "result_seeded_mixed_false_deleted"
+                    else "stored callable result has no supported concrete signature"
+                )
                 if reason not in boundary.REFUSAL.findall(text):
                     raise RuntimeError(f"{label}: lost independent Map/result carrier refusal")
                 check_primitive_absence_preparation(text, input_ir.read_text(), case, label)
-                return failed
+                return output, None
 
             label = name + "-" + mode
-            reject(ir, label, config)
+            original, expected_cpp = check(ir, label, config)
             repaired = owned.lower(
                 args, repaired_ir, label + "-restored", repaired_config, options=options
             )
             repaired_text = methods.census(repaired, count, label + "-restored", admitted=count)
             if "ctnative.host_owner_proved = true" not in repaired_text:
                 raise RuntimeError(f"{label}: exact absence repair lost native ownership")
+            if name in promoted:
+                owned.standalone(args, original, label, expected, compilers, nm)
+                owned.standalone(
+                    args, repaired, label + "-restored", repaired_expected, compilers, nm
+                )
             for payload in ("bool", "string", "nullable_string"):
                 forged_name = label + "-forged-" + payload
                 forged = args.work / f"{forged_name}.mlir"
@@ -329,7 +349,18 @@ process.stdout.write('trace=undefined\n');
                     forged.read_text(), stale.read_text(), forged_name + "-stale"
                 )
                 fresh = contract(args, forged, forged_name)
-                checked = reject(forged, forged_name, fresh)
+                checked, checked_cpp = check(forged, forged_name, fresh)
+                if checked_cpp != expected_cpp:
+                    raise RuntimeError(f"{forged_name}: forged facts changed native absence")
+                if name in promoted:
+                    rerun = owned.lower(args, checked, forged_name + "-rerun", fresh, cleanup=False)
+                    text = methods.census(rerun, count, forged_name + "-rerun", admitted=count)
+                    if (
+                        "ctnative.host_owner_proved = false" not in text
+                        or "fingerprint mismatch" not in text
+                    ):
+                        raise RuntimeError(f"{forged_name}: emitted source reused owner authority")
+                    continue
                 rerun = methods.refused(
                     args,
                     checked,

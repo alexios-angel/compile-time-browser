@@ -388,7 +388,7 @@ def main(group=None):
             forged_config = contract(args, forged, forged_name)
             failed = methods.refused(args, forged, forged_name, forged_config, admitted=0)
             check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
-    check_primitive_absence_carriers(args, node, reference)
+    check_primitive_absence_carriers(args, node, reference, compilers, nm)
     for name, (source, value) in size_result_refusals().items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 5:
