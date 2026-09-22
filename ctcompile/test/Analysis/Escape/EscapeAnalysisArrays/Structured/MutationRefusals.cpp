@@ -194,6 +194,74 @@ void StructuredCases::mutationRefusals() {
                   "    %position = ctjs.binary mul %i, %factor")}) {
         reject("structured scaled stores retain bounds, invariance and reload exclusions", body);
     }
+    for (const std::string literal : {"#ctjs.string<\"1\">", "#ctjs.boolean<true>"}) {
+        const auto primitive = replace(
+            replace(scaledIndex, "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+            "mul %i, %one", "mul %i, %factor");
+        for (const auto & body :
+             {primitive, replace(primitive, "mul %i, %factor", "mul %factor, %i")}) {
+            rows.push_back({.what = "structured primitive factors retain exact own-index products",
+                            .body = body,
+                            .arrays = "a:[zero,zero]",
+                            .reads = "a[0]=zero; a[1]=zero",
+                            .exit = "a -> {a}"});
+        }
+        rows.push_back(
+            {.what = "structured primitive scaling retains previously saved children",
+             .body = replace(replace(primitive, "  %finalIndex,",
+                                     "  %savedChild = ctjs.get_property %a[%zero]\n  %finalIndex,"),
+                             "ctjs.return %a", "ctjs.return %savedChild"),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=x; a[0]=zero; a[1]=zero",
+             .exit = "x -> {x}"});
+    }
+    for (const std::string literal :
+         {"#ctjs.null", "#ctjs.boolean<false>", "#ctjs.string<\"0\">"}) {
+        rows.push_back(
+            {.what = "structured zero-valued primitive factors retain unvisited children",
+             .body = replace(replace(scaledIndex,
+                                     "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                             "mul %i, %one", "mul %factor, %i"),
+             .arrays = "a:[zero,y]",
+             .reads = "a[0]=zero; a[1]=y",
+             .exit = "a -> {a,y}"});
+    }
+    rows.push_back({.what = "structured negative String factors reverse translated own indices",
+                    .body = replace(
+                        replace(scaledIndex,
+                                "  %a =", "  %factor = ctjs.constant #ctjs.string<\"-1\">\n  %a ="),
+                        "%position = ctjs.binary mul %i, %one",
+                        "%part = ctjs.binary mul %i, %factor\n"
+                        "    %position = ctjs.binary add %part, %one"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    reject("a structured object factor cannot borrow primitive Number conversion",
+           replace(scaledIndex, "mul %i, %one", "mul %i, %x"));
+    const auto stringReload = replace(
+        replace(reloadedFactor, "  %a =",
+                "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n  %a ="),
+        "ctjs.append %two to %a", "ctjs.append %text to %a");
+    rows.push_back({.what = "structured String factor reloads preserve original primitive identity",
+                    .body = stringReload,
+                    .arrays = "a:[zero,text]",
+                    .reads = "a[1]=text; a[0]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured String factor reloads cannot overlap a write",
+           replace(replace(replace(stringReload, "create_array [%x]", "create_array [%text]"),
+                           "ctjs.append %text to %a", "ctjs.append %x to %a"),
+                   "%factor = ctjs.get_property %base[%one]",
+                   "%factor = ctjs.get_property %base[%zero]"));
+    reject("structured later stores invalidate earlier String factor reloads",
+           replace(stringReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="));
+    for (const std::string literal :
+         {"#ctjs.string<\"01\">", "#ctjs.undefined", "#ctjs.bigint<\"1\">"}) {
+        reject("structured primitive scaling requires bounded side-effect-free conversion",
+               replace(replace(scaledIndex,
+                               "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                       "mul %i, %one", "mul %i, %factor"));
+    }
     const auto composedIndex =
         replace(replace(scaledVisit, "create_array [%x]", "create_array [%one, %x, %y]"),
                 "%position = ctjs.binary mul %i, %two",

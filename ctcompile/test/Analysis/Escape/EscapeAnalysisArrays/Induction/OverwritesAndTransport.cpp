@@ -3480,9 +3480,6 @@ void InductionCases::overwritesAndTransport() {
          {replace(scaledVisit, "add %i, %two", "add %i, %one"),
           replace(scaledStart, "[%one, %one, %x]", "[%one, %x]"),
           replace(scaledVisit, "mul %i, %two", "mul %i, %s"),
-          replace(
-              replace(scaledVisit, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
-              "mul %i, %two", "mul %i, %text"),
           replace(replace(reloadedFactor, "[%x, %two]", "[%two, %x]"),
                   "%factor = ctjs.get_property %base[%one]",
                   "%factor = ctjs.get_property %base[%zero]"),
@@ -3494,6 +3491,80 @@ void InductionCases::overwritesAndTransport() {
         run({.what = "scaled stores reject growth, invalid factors and overlapping reloads",
              .body = body,
              .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    }
+    run({.what = "canonical String scaling preserves the historical single-visit construction",
+         .body = replace(
+             replace(scaledVisit, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
+             "mul %i, %two", "mul %i, %text"),
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string literal : {"#ctjs.string<\"1\">", "#ctjs.boolean<true>"}) {
+        const auto primitive = replace(
+            replace(scaledIndex, "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+            "mul %i, %one", "mul %i, %factor");
+        for (const auto & body :
+             {primitive, replace(primitive, "mul %i, %factor", "mul %factor, %i")}) {
+            run({.what = "primitive factors convert before every exact own-index product",
+                 .body = body,
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "primitive scaling retains a previously saved child",
+             .body = replace(replace(primitive, "  cf.br ^header(%a,",
+                                     "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                             "ctjs.return %a", "ctjs.return %saved"),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[1]=x; a[0]=zero; a[1]=zero",
+             .exit = "x -> {x}"});
+    }
+    for (const std::string literal :
+         {"#ctjs.null", "#ctjs.boolean<false>", "#ctjs.string<\"0\">"}) {
+        run({.what = "zero-valued primitive scaling retains unvisited children",
+             .body = replace(replace(scaledIndex,
+                                     "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                             "mul %i, %one", "mul %factor, %i"),
+             .arrays = "a:[zero,x]",
+             .reads = "a[0]=zero; a[1]=x",
+             .exit = "a -> {a,x}"});
+    }
+    run({.what = "negative String factors reverse bounded translated own indices",
+         .body = replace(replace(scaledIndex, "  %a =",
+                                 "  %factor = ctjs.constant #ctjs.string<\"-1\">\n  %a ="),
+                         "%position = ctjs.binary mul %i, %one",
+                         "%part = ctjs.binary mul %i, %factor\n"
+                         "  %position = ctjs.binary add %part, %one"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("an object factor cannot borrow primitive Number conversion",
+           replace(scaledIndex, "mul %i, %one", "mul %i, %x"));
+    const auto stringReload = replace(
+        replace(reloadedFactor, "  %a =",
+                "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n  %a ="),
+        "[%x, %two]", "[%x, %text]");
+    run({.what = "String factor reloads retain their original primitive identity",
+         .body = stringReload,
+         .arrays = "a:[zero,text]",
+         .reads = "a[1]=text; a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("String factor reloads cannot overlap any write",
+           replace(replace(stringReload, "[%x, %text]", "[%text, %x]"),
+                   "%factor = ctjs.get_property %base[%one]",
+                   "%factor = ctjs.get_property %base[%zero]"));
+    reject("later stores invalidate earlier String factor reloads",
+           replace(stringReload, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
+    for (const std::string literal :
+         {"#ctjs.string<\"01\">", "#ctjs.undefined", "#ctjs.bigint<\"1\">"}) {
+        reject("primitive scaling still requires a bounded side-effect-free Number conversion",
+               replace(replace(scaledIndex,
+                               "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                       "mul %i, %one", "mul %i, %factor"));
     }
     const std::string quotientOffset =
         "ctjs.binary div %i, %two\n  %position = ctjs.binary add %part, %one";
