@@ -1,5 +1,7 @@
 #include "LoopProof.hpp"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+
 namespace ctcompile::ctnative {
 using namespace escape_detail;
 
@@ -287,6 +289,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const auto failure =
                     forward(state, branch.getDefaultDestination(), branch.getDefaultOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                continue;
+            }
+            // Branch folding can leave an arith predicate constant behind.
+            // It has no heap effects; preserve its identity for structural
+            // branch traversal without using its value to prune either arm.
+            if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(&op)) {
+                state.values[constant.getResult()] = {constant.getResult()};
                 continue;
             }
             // Truthy is total, noncapturing and nonthrowing (Operators.td). An

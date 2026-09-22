@@ -1,8 +1,11 @@
 #include "Harness.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+
 namespace ctcompile::test::escape::arrays {
 
 void checkArrayFrames(mlir::MLIRContext & context) {
+    context.getOrLoadDialect<mlir::arith::ArithDialect>();
     const std::string enter = "  %frame = ctjs.frame_enter 4\n";
     const std::string array =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -33,6 +36,17 @@ void checkArrayFrames(mlir::MLIRContext & context) {
          .body = enter + array + leave + done,
          .arrays = "a:[x]",
          .exit = "zero -> {}"},
+        {.what = "an unused folded predicate has no array retention effects",
+         .body = enter + array + "  %folded = arith.constant true\n" + leave + done,
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
+        {.what = "a folded predicate still checks both structural branch arms",
+         .body = enter + array +
+                 "  %folded = arith.constant true\n"
+                 "  cf.cond_br %folded, ^local, ^retained\n^local:\n" +
+                 leave + done + "^retained:\n" + leave + "  ctjs.return %a\n",
+         .arrays = "a:[x] | a:[x]",
+         .exit = "zero -> {}; a -> {a,x}"},
         {.what = "a successor allocation still belongs to the entry's active frame",
          .body = enter + "  cf.br ^next\n^next:\n" + array + root + leave + done,
          .arrays = "a:[x]",
