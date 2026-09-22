@@ -458,9 +458,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         helpers.push_back({closure, body, {}, returnedArgument});
     }
     llvm::DenseMap<mlir::Value, unsigned> helperIndices;
+    llvm::DenseMap<mlir::Operation *, unsigned> helperBodies;
     for (auto [index, helper] : llvm::enumerate(helpers)) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         helperIndices[helper.closure] = static_cast<unsigned>(index);
+        helperBodies[helper.body] = static_cast<unsigned>(index);
     }
     auto fixedCallables = helperIndices;
     llvm::SmallVector<mlir::Operation *> familyCalls;
@@ -498,6 +500,40 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         });
         if (captures.wasInterrupted() || collectCalls(helper.body).wasInterrupted()) {
             return error("DOM iterator sibling callable capture is mutable or unproved");
+        }
+    }
+    // Compose immutable argument-return dependencies through known helpers.
+    // Only a proved formal supplies a summary; cycles cannot invent one. The
+    // complete invocation/effect/observer proof below still precedes expansion.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto & helper : helpers) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (helper.returnedArgument) { continue; }
+            auto & block = helper.body.getBody().front();
+            mlir::Value value = llvm::cast<ctjs::ReturnOp>(block.getTerminator()).getValue();
+            while (true) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+                    if (argument.getOwner() == &block &&
+                        argument.getArgNumber() >= ctjs::implicit_arguments) {
+                        helper.returnedArgument =
+                            argument.getArgNumber() - ctjs::implicit_arguments;
+                        changed = true;
+                    }
+                    break;
+                }
+                auto call = value.getDefiningOp<ctjs::CallOp>();
+                auto direct = value.getDefiningOp<ctjs::CallDirectOp>();
+                if (!call && !direct) { break; }
+                auto found = fixedCallables.find(call ? call.getCallee() : direct.getCalleeValue());
+                if (found == fixedCallables.end()) { break; }
+                auto argument = helpers[found->second].returnedArgument;
+                auto args = call ? call.getArgs() : direct.getArgs();
+                if (!argument || *argument >= args.size()) { break; }
+                value = args[*argument];
+            }
         }
     }
     // Bind each invocation separately before changing any body. The aggregate
@@ -807,10 +843,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     for (auto & helper : helpers) {
-        auto body = helper.body;
         if (helper.calls.empty()) {
             return error("DOM iterator sibling helper has no proved invocation");
         }
+    }
+    if (!helpers.empty()) {
+        // Enumerate both symbol scopes once for the complete family. Charge
+        // the source walk before allocating either list, then each visited use.
         if (work.remaining / 2 < sourceCost) {
             return error("DOM custom iterator budget exhausted");
         }
@@ -820,9 +859,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (!uses) { return error("DOM iterator sibling helper has unknown symbol uses"); }
             for (const auto & use : *uses) {
                 if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        use.getUser(), use.getSymbolRef()) == body &&
-                    !llvm::is_contained(helper.calls, use.getUser())) {
+                auto body = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                    use.getUser(), use.getSymbolRef());
+                auto found = helperBodies.find(body);
+                if (found != helperBodies.end() &&
+                    !llvm::is_contained(helpers[found->second].calls, use.getUser())) {
                     return error("DOM iterator sibling helper has an unproved symbolic observer");
                 }
             }

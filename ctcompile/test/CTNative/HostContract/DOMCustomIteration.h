@@ -1392,6 +1392,64 @@ module {
         !zeroDirectLoopCallWriter) {
         return;
     }
+    // The returned dependency crosses another fixed helper before reaching
+    // the backedge; all existing loop and scalar snapshot assertions still apply.
+    auto nestedLoopCallWriterSource = replaced(
+        loopCallWriterSource, "    %keepWriter = ctjs.create_closure %callee[8] this %undefined",
+        "    %forwardWriter = ctjs.create_closure %callee[9] this %undefined\n"
+        "    %forwardCell = ctjs.create_cell %forwardWriter\n"
+        "    %keepWriter = ctjs.create_closure %callee[8] this %undefined captures %forwardCell");
+    nestedLoopCallWriterSource =
+        replaced(nestedLoopCallWriterSource,
+                 "%keptWriter: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32}",
+                 "%keptWriter: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32}");
+    nestedLoopCallWriterSource = replaced(nestedLoopCallWriterSource, "    ctjs.return %keptWriter",
+                                          R"MLIR(    %forwardWriter = ctjs.load_upvalue %callee[0]
+    %forwardUndefined = ctjs.constant #ctjs.undefined
+    %forwardResult = ctjs.call %forwardWriter(%forwardUndefined, %keptWriter)
+    ctjs.return %forwardResult)MLIR");
+    nestedLoopCallWriterSource = replaced(nestedLoopCallWriterSource, "\n}\n", R"MLIR(
+  ctjs.func @forwardWriter$9(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %forwardedWriter: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    ctjs.return %forwardedWriter
+  }
+}
+)MLIR");
+    auto directNestedLoopCallWriterSource = nestedLoopCallWriterSource;
+    for (unsigned i = 0; i != 4; ++i) {
+        directNestedLoopCallWriterSource =
+            replaced(directNestedLoopCallWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+    }
+    directNestedLoopCallWriterSource =
+        replaced(directNestedLoopCallWriterSource, "ctjs.call %writeState(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %writeState, ");
+    directNestedLoopCallWriterSource = replaced(
+        directNestedLoopCallWriterSource, "ctjs.call %keepWriter(%nestedUndefined, ",
+        "ctjs.call_direct @keepWriter$8(%nestedUndefined, %nestedUndefined, %keepWriter, ");
+    directNestedLoopCallWriterSource = replaced(
+        directNestedLoopCallWriterSource, "ctjs.call %forwardWriter(%forwardUndefined, ",
+        "ctjs.call_direct @forwardWriter$9(%forwardUndefined, %forwardUndefined, %forwardWriter, ");
+    auto nestedLoopCallWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(nestedLoopCallWriterSource, &context);
+    auto directNestedLoopCallWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directNestedLoopCallWriterSource, &context);
+    auto zeroNestedLoopCallWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(nestedLoopCallWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    auto zeroDirectNestedLoopCallWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(directNestedLoopCallWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    check(nestedLoopCallWriter && directNestedLoopCallWriter && zeroNestedLoopCallWriter &&
+              zeroDirectNestedLoopCallWriter,
+          "ordinary/direct nested loop return dependencies and zero-trip snapshots parse");
+    if (!nestedLoopCallWriter || !directNestedLoopCallWriter || !zeroNestedLoopCallWriter ||
+        !zeroDirectNestedLoopCallWriter) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1471,7 +1529,11 @@ module {
                          *loopCallWriter,
                          *directLoopCallWriter,
                          *zeroLoopCallWriter,
-                         *zeroDirectLoopCallWriter}) {
+                         *zeroDirectLoopCallWriter,
+                         *nestedLoopCallWriter,
+                         *directNestedLoopCallWriter,
+                         *zeroNestedLoopCallWriter,
+                         *zeroDirectNestedLoopCallWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1488,10 +1550,13 @@ module {
             fixture == *differentReturnedWriter || fixture == *directDifferentReturnedWriter;
         const bool zeroLoopWrites =
             fixture == *zeroLoopJoinedWriter || fixture == *zeroDirectLoopJoinedWriter ||
-            fixture == *zeroLoopCallWriter || fixture == *zeroDirectLoopCallWriter;
+            fixture == *zeroLoopCallWriter || fixture == *zeroDirectLoopCallWriter ||
+            fixture == *zeroNestedLoopCallWriter || fixture == *zeroDirectNestedLoopCallWriter;
         const bool loopWrites = fixture == *loopJoinedWriter ||
                                 fixture == *directLoopJoinedWriter || fixture == *loopCallWriter ||
-                                fixture == *directLoopCallWriter || zeroLoopWrites;
+                                fixture == *directLoopCallWriter ||
+                                fixture == *nestedLoopCallWriter ||
+                                fixture == *directNestedLoopCallWriter || zeroLoopWrites;
         const bool joinedWrites =
             fixture == *joinedWriter || fixture == *directJoinedWriter || loopWrites;
         const bool callableWrites =
@@ -2609,6 +2674,63 @@ module {
             }
         }
     }
+    for (const auto & source : {nestedLoopCallWriterSource, directNestedLoopCallWriterSource}) {
+        for (const auto & invalid : {
+                 replaced(source, "    ctjs.return %forwardedWriter",
+                          "    %unknownWriter = ctjs.load_global \"unknownWriter\"\n"
+                          "    ctjs.return %unknownWriter"),
+                 replaced(replaced(source, "    %forwardResult =",
+                                   "    %unknownWriter = ctjs.load_global \"unknownWriter\"\n"
+                                   "    %forwardResult ="),
+                          "%keptWriter)\n    ctjs.return %forwardResult",
+                          "%unknownWriter)\n    ctjs.return %forwardResult"),
+                 // Direct calls retain the resolver's undefined argument padding.
+                 source == nestedLoopCallWriterSource
+                     ? replaced(source, ", %keptWriter)\n    ctjs.return %forwardResult",
+                                ")\n    ctjs.return %forwardResult")
+                     : replaced(source, "%keptWriter)\n    ctjs.return %forwardResult",
+                                "%forwardUndefined)\n    ctjs.return %forwardResult"),
+                 replaced(source, "    ctjs.return %forwardResult",
+                          "    ctjs.store_global \"leaked\", %forwardResult\n"
+                          "    ctjs.return %forwardResult"),
+                 replaced(
+                     source, "    ctjs.return %forwardedWriter",
+                     "    %observedWriter = ctjs.compare eq %forwardedWriter, %forwardedWriter\n"
+                     "    ctjs.return %forwardedWriter"),
+                 replaced(source, "    ctjs.return %forwardedWriter",
+                          "    %undefined = ctjs.constant #ctjs.undefined\n"
+                          "    %recursiveEffect = ctjs.call %callee(%undefined, %forwardedWriter)\n"
+                          "    ctjs.return %forwardedWriter"),
+                 source == nestedLoopCallWriterSource
+                     ? replaced(
+                           source, "ctjs.call %forwardWriter(%forwardUndefined, ",
+                           "ctjs.call_direct @keepWriter$8(%forwardUndefined, %forwardUndefined, "
+                           "%forwardWriter, ")
+                     : replaced(source, "ctjs.call_direct @forwardWriter$9(",
+                                "ctjs.call_direct @keepWriter$8("),
+             }) {
+            check(!invalid.empty() && invalid != source,
+                  "nested loop call-result control changes its source");
+            if (invalid.empty() || invalid == source) { continue; }
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "hostile nested loop return dependency parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "nested return summaries retain actual, observer and direct-target checks");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "refused nested return preserves source and publishes no evidence");
+            }
+        }
+    }
     for (const auto & source : {breakWriterSource, directBreakWriterSource}) {
         const auto poisoned =
             replaced(source, "    %helperPoison =",
@@ -3420,7 +3542,11 @@ module {
                          *loopCallWriter,
                          *directLoopCallWriter,
                          *zeroLoopCallWriter,
-                         *zeroDirectLoopCallWriter}) {
+                         *zeroDirectLoopCallWriter,
+                         *nestedLoopCallWriter,
+                         *directNestedLoopCallWriter,
+                         *zeroNestedLoopCallWriter,
+                         *zeroDirectNestedLoopCallWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
