@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nested callable returns and exact mixed shift gaps, 2026-09-22 UTC
+
+Continued clean **94371e90** and the saved nested-return source `bd1a8aa5`.
+**4eec52db** composes exact argument-return dependencies through known helpers.
+The complete invocation, effect, recursion and observer proofs remain. Both
+symbol scopes are now scanned once per helper family, removing repeated work
+without raising the proof budget. The saved source, zero-trip and nested
+state/argument snapshot witnesses execute unchanged.
+
+Parallel **3ec40a4f** resolves mixed rounded-shift gaps by evaluating the existing
+index proof at exact induction visits under the shared budget. Complete
+reload/store checks and actual-write replay retain untouched children and saved
+snapshots. All 183 historical native and 101 right-shift source bodies remain
+unchanged; newly proved historical cases retain their original inputs.
+
+Focused checks pass: exact host **1/1, 2.10 s total**; four source programs plus
+all 123 refusal sources **64 native executions, 342 refusals, two nonexecuted
+admissions and 32 Node/VM observations**. Exact arrays pass **1/1, 1.97 s total**;
+right-shift lit **1/1, 0.13 s**. The complete formatter passes **1124 C++, 157
+Python and 114 web files**. All seven final code/test hashes match the devbox;
+32 generated C++ files contain no Script/VM symbols. Full suites and broad
+matrices were skipped. No browser/runtime-oracle changes; the idle timer is
+active/enabled. Interrupted agents resumed their preserved drafts.
+
+**Next native boundary:** `entry-captured-sibling-returned-loop-forwarded-branch`
+returns a callable selected by captured state inside `forward(writer)`. Node
+returns **2729 normally / 3603 on stop**, `data-closed=false`; both native policies
+refuse an unproved arm. Prove branch-dependent return summaries around the loop
+without dropping effects, snapshots or observers. Nested custom opens, abrupt
+close, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain unfinished. Larger mixed shift gaps remain proof-budget limited.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-nested-callable-returns.md).
+
 ## Callable loop return dependencies and unsigned residues, 2026-09-22 UTC
 
 Continued clean **f99f5aea** and its exact saved `keep(selected)` backedge source.
