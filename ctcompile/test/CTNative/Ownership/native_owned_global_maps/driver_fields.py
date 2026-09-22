@@ -3,6 +3,7 @@ from .driver_common import (
     StringValue,
     boundary,
     check_call_preservation,
+    comparable_provenance,
     contract,
     forge_leaf_evidence,
     host,
@@ -13,6 +14,7 @@ from .driver_common import (
     re,
     scalar_global_output,
     source_calls,
+    standalone,
     string_field_cases,
     string_field_observer_source,
     subprocess,
@@ -291,28 +293,24 @@ def string_field_method_graph(text, function, prepared):
 
 
 def check_historical_string_field_preparation(text, original, name):
-    field = name == "leaf_readback_unknown_alias_field"
-    functions, calls = (5, 6) if field else (6, 11)
     diagnostic = (
-        "equality operand is !ctnative.str<utf8>, not a number"
-        if field
-        else "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, "
+        "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, "
         "object-identity union or acyclic Map values; inferred "
         "!ctnative.map<!ctnative.opt<!ctnative.str<utf8>>, !ctnative.boxed>"
     )
     if (
-        name not in HISTORICAL_STRING_FIELD_CARRIERS
+        name != "nullable_payload_object"
         or "ctnative.host_owner_proved = true" not in text
         or diagnostic not in text
-        or len(boundary.FUNCTION.findall(text)) != functions
+        or len(boundary.FUNCTION.findall(text)) != 6
         or boundary.NATIVE.search(text)
-        or len(source_calls(original)) != calls
-        or len(source_calls(text)) != calls
+        or len(source_calls(original)) != 11
+        or len(source_calls(text)) != 11
     ):
         raise RuntimeError(
             f"{name}: lost exact ownership, native refusal or historical call census"
         )
-    for function in ("fn$3", "fn$4") if field else ("fn$3", "fn$4", "fn$5"):
+    for function in ("fn$3", "fn$4", "fn$5"):
         if string_field_method_graph(original, function, False) != string_field_method_graph(
             text, function, True
         ):
@@ -326,8 +324,8 @@ def check_historical_string_field_preparation(text, original, name):
         re.M,
     )
     actuals = [arguments.split(", ") for _, _, arguments in published]
-    expected = ["fn$3", "fn$4"] if field else ["fn$4", "fn$5", "fn$4", "fn$5", "fn$3"]
-    arities = [4, 5] if field else [5, 5, 5, 5, 4]
+    expected = ["fn$4", "fn$5", "fn$4", "fn$5", "fn$3"]
+    arities = [5, 5, 5, 5, 4]
     if (
         [target for _, target, _ in published] != expected
         or list(map(len, actuals)) != arities
@@ -343,21 +341,15 @@ def check_historical_string_field_preparation(text, original, name):
             raise RuntimeError(
                 f"{name}: published call lost its current receiver/callee/Map capture"
             )
-    if field:
-        if f'{actuals[1][-1]} = ctjs.constant #ctjs.string<"x">' not in text:
-            raise RuntimeError(f"{name}: lost the source String actual")
-    else:
-        for producer, consumer, flag in ((0, 1, "false"), (2, 3, "true")):
-            if (
-                actuals[consumer][-1] != published[producer][0]
-                or f"{actuals[producer][-1]} = ctjs.constant #ctjs.boolean<{flag}>" not in text
-            ):
-                raise RuntimeError(
-                    f"{name}: mixed Object/String refusal lost a producer-result actual"
-                )
+    for producer, consumer, flag in ((0, 1, "false"), (2, 3, "true")):
+        if (
+            actuals[consumer][-1] != published[producer][0]
+            or f"{actuals[producer][-1]} = ctjs.constant #ctjs.boolean<{flag}>" not in text
+        ):
+            raise RuntimeError(f"{name}: mixed Object/String refusal lost a producer-result actual")
 
 
-def check_historical_string_field_refusals(args, positives, node, reference):
+def check_historical_string_field_carriers(args, positives, node, reference, compilers, nm):
     controls = {
         "leaf_readback_unknown_alias_field": leaf_readback_refusals()[
             "leaf_readback_unknown_alias_field"
@@ -393,19 +385,30 @@ def check_historical_string_field_refusals(args, positives, node, reference):
             raise RuntimeError(f"{name}: exact repair changed function census")
         config = contract(args, ir, name)
         restored_config = contract(args, restored, name + "-restored")
+        admitted = name == "leaf_readback_unknown_alias_field"
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             label = name + "-" + mode
 
-            def reject(input_ir, current, current_config):
+            def lower(input_ir, current, current_config):
                 output = owned.lower(
-                    args, input_ir, current, current_config, options=options, cleanup=False
+                    args, input_ir, current, current_config, options=options, cleanup=admitted
                 )
-                check_historical_string_field_preparation(
-                    output.read_text(), input_ir.read_text(), name
-                )
+                if admitted:
+                    text = methods.census(output, count, current, admitted=count)
+                    if "ctnative.host_owner_proved = true" not in text:
+                        raise RuntimeError(f"{current}: lost the original String field owner")
+                else:
+                    check_historical_string_field_preparation(
+                        output.read_text(), input_ir.read_text(), name
+                    )
                 return output
 
-            reject(ir, label, config)
+            output = lower(ir, label, config)
+            if admitted:
+                standalone(args, output, label, value, compilers, nm)
+                expected_cpp = comparable_provenance(
+                    host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir
+                )
             repaired = owned.lower(
                 args, restored, label + "-restored", restored_config, options=options
             )
@@ -428,14 +431,27 @@ def check_historical_string_field_refusals(args, positives, node, reference):
                 )
                 check_call_preservation(forged.read_text(), stale.read_text(), current + "-stale")
                 fresh = contract(args, forged, current)
-                failed = reject(forged, current + "-fresh", fresh)
-                rerun = methods.refused(
+                failed = lower(forged, current + "-fresh", fresh)
+                if (
+                    admitted
+                    and comparable_provenance(
+                        host.run([args.translate, "--mlir-to-cpp", str(failed)]).stdout, forged
+                    )
+                    != expected_cpp
+                ):
+                    raise RuntimeError(f"{current}: forged facts changed native String equality")
+                rerun = owned.lower(
                     args,
                     failed,
                     current + "-rerun",
                     fresh,
                     options=options,
-                    reason="fingerprint mismatch",
-                    admitted=0,
+                    cleanup=False,
                 )
+                text = methods.census(rerun, count, current, admitted=count if admitted else 0)
+                if (
+                    "ctnative.host_owner_proved = false" not in text
+                    or "fingerprint mismatch" not in text
+                ):
+                    raise RuntimeError(f"{current}: prepared output reused source authority")
                 check_call_preservation(failed.read_text(), rerun.read_text(), current + "-rerun")

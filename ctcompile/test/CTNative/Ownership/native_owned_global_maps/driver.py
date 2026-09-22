@@ -601,7 +601,7 @@ def main(group=None):
     check_leaf_object_forgeries(
         args, saved, ("zero_size_read_after_write", "size_one_saved_lifetime")
     )
-    check_historical_string_field_refusals(args, positives, node, reference)
+    check_historical_string_field_carriers(args, positives, node, reference, compilers, nm)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
     mixed_read_refusals = mixed_nullable_payload_refusals()

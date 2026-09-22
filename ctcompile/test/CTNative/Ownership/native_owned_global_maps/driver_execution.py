@@ -482,7 +482,7 @@ def report(positives, shared_refusals, rollback):
         "clear, reentry and final Map/key release; "
         f"{len(string_field_sources())} owning String-field programs preserve exact tags, bytes and live accesses; "
         "six field refusal/repair families and six emitted field-tag controls remain independent; "
-        "two historical String-field sources retain complete ownership and exact equality/mixed-Map refusals; "
+        "two historical String-field sources retain complete ownership: native primitive equality and a mixed-Map refusal; "
         "saved String callables and snapshots survive 128 future calls, both flags and final Map/leaf release; "
         f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
         "final Map release and independent leaf release; "
