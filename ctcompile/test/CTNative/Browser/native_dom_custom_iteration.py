@@ -1832,6 +1832,23 @@ def refusals():
         # Throw completion still needs its cleanup and handler proof.
         "body-throw": text.replace(visited, "    throw 1;"),
     }
+    variants.update(
+        {
+            "body-throw-boolean-snapshot": text.replace(
+                visited,
+                "    throw (node.setAttribute('data-visited', 'yes'), "
+                "anchor.hasAttribute('data-closed'));",
+            ),
+            "body-throw-number-snapshot": BODY_RETURN_BRANCH_NUMBER_SOURCE.replace(
+                "if (anchor.hasAttribute('stop')) return (count += 2, count);",
+                "throw (count += 2, count);",
+            ),
+            "body-throw-close-throws": variants["body-throw"].replace("return {};", "throw 2;"),
+            "body-throw-close-getter": variants["body-throw"]
+            .replace("return() {", "get return() {")
+            .replace("return {};", "throw 2;"),
+        }
+    )
     for helper in SNAPSHOT_INTRINSICS[4:]:
         variants["replaced-" + helper] = text.replace(
             "  const values", f"  {helper}=anchor;\n  const values"

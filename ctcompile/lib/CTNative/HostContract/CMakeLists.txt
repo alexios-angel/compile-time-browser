@@ -4,6 +4,7 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   DOMSource.cpp
   DOMIteration.cpp
   DOMCustomIteration.cpp
+  DOMIteratorClose.cpp
   DOMSnapshotLengths.cpp
   Values.cpp
   CapturedMapBody.cpp

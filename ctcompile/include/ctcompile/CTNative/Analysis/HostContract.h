@@ -143,6 +143,16 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
 llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                         unsigned maxSteps,
                                         std::vector<mlir::Value> * inactiveFillers = nullptr);
+// Represent one original iterator-close suppression handler with an invoke:
+// both close outcomes resume the same saved throw. False means no entry close
+// handler; failure leaves the candidate untouched. This is structural proof,
+// not permission to inline the close or emit the remaining abrupt completion.
+// Use only on a private candidate; initial lookup moves outside suppression,
+// so publication still requires complete prefix/global/reentry and DOM reproof.
+llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
+                                               const HostContract & contract,
+                                               unsigned maxSteps = 100000);
+
 // Replace confined query-result spread/empty-concat observations.
 // Reprove on a private clone; refusal leaves the original module unchanged.
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,

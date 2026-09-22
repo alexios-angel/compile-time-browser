@@ -11,6 +11,7 @@
 #include "DOMCustomIteration.h"
 #include "DOMDataset.h"
 #include "DOMIteration.h"
+#include "DOMIteratorClose.h"
 #include "DOMJSON.h"
 #include "DOMNullable.h"
 #include "DOMNumbers.h"
@@ -1015,6 +1016,7 @@ int main() {
     checkDOMBranchFilter(context);
     checkDOMIteration(context);
     checkDOMCustomIteration(context);
+    checkDOMIteratorClose(context);
     checkDOMURI(context);
     checkDOMJSON(context);
     checkDOMNullable(context);

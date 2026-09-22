@@ -392,10 +392,22 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         function.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
         if (hasHandler) { handlers.push_back(function.getSymName().str()); }
     }
-    const bool entryHandler = llvm::is_contained(handlers, contract.entry);
+    bool entryHandler = llvm::is_contained(handlers, contract.entry);
     llvm::Error sourceError = llvm::Error::success();
     for (const std::string & handler : handlers) {
         if (sourceError) { break; }
+        if (handler == contract.entry) {
+            auto close = normalizeDOMIteratorClose(*composed, transformed, maxSteps);
+            if (!close) {
+                sourceError = close.takeError();
+                break;
+            }
+            if (*close) {
+                entryHandler = false;
+                transformed.moduleSha256 = hostContractFingerprint(*composed);
+                continue;
+            }
+        }
         sourceError = lowering_detail::normalizeDOMURI(*composed, transformed, maxSteps, handler);
         transformed.moduleSha256 = hostContractFingerprint(*composed);
     }
