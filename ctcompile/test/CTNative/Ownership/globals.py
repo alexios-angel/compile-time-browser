@@ -98,11 +98,11 @@ int main() {
     g_host.reset();
     for (int index = 0; index < 4096; ++index) {
         auto churn = std::make_shared<ctn_slot>();
-        churn->slot = index;
+        churn->slot = ctnative::js_num{static_cast<double>(index)};
     }
-    if (lifetime.expired() || first->slot != 42) { return 91; }
+    if (lifetime.expired() || first->slot.value() != 42) { return 91; }
     if (ctnative_test_entry() != 0) { return 92; }
-    if (first == g_host || first->slot != 42 || g_host->slot != 42) { return 93; }
+    if (first == g_host || first->slot.value() != 42 || g_host->slot.value() != 42) { return 93; }
     first.reset();
     if (!lifetime.expired()) { return 94; }
     g_host.reset();

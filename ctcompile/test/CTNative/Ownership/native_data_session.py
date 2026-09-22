@@ -131,21 +131,24 @@ int main() {
     auto element = g_element;
     std::weak_ptr lifetime = table;
     auto child = ctnative::map_get_present(table->capture_map(), element);
-    auto payload = table->m_get(element, "bs.collapse");
+    auto payload = table->m_get(element, ctnative::js_string{"bs.collapse"});
     std::weak_ptr payload_lifetime = payload.object;
     std::weak_ptr other_child = ctnative::map_get_present(table->capture_map(), g_other);
     std::weak_ptr other_key = g_other;
     g_globalThis.reset();
-    table->m_remove(element, "bs.collapse");
+    table->m_remove(element, ctnative::js_string{"bs.collapse"});
     if (ctnative::map_size(child).value() != 0) { return 7; }
-    table->m_set(element, "bs.alert", 47.0);
+    table->m_set(element, ctnative::js_string{"bs.alert"}, ctnative::js_num{47.0});
     auto replacement = ctnative::map_get_present(table->capture_map(), element);
     if (replacement == child) { return 8; }
-    if (ctnative::global_number(table->m_get(element, "bs.alert")).value() != 47) { return 2; }
+    if (ctnative::global_number(table->m_get(element, ctnative::js_string{"bs.alert"})).value()
+        != 47) { return 2; }
     if (session_entry() != 0) { return 3; }
-    if (ctnative::global_number(table->m_get(element, "bs.alert")).value() != 47) { return 4; }
-    if (!ctnative::object_strict_equal(g_globalThis->bootstrap->m_get(element, "bs.alert"),
-                                     ctnative::nullable_scalar::null())) { return 5; }
+    if (ctnative::global_number(table->m_get(element, ctnative::js_string{"bs.alert"})).value()
+        != 47) { return 4; }
+    if (!ctnative::object_strict_equal(
+            g_globalThis->bootstrap->m_get(element, ctnative::js_string{"bs.alert"}),
+            ctnative::nullable_scalar::null())) { return 5; }
     table.reset();
     if (!lifetime.expired()) { return 6; }
     if (!other_child.expired() || !other_key.expired()) { return 9; }

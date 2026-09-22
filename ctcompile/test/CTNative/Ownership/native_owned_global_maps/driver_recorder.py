@@ -3,6 +3,25 @@
 from .sources_recorders import *
 
 
+def typed_lifetime_arguments(cpp):
+    # Adapt only the appended observer; never repair the compiler's own output.
+    generated, marker, observer = cpp.rpartition("\nint main() {")
+    if not marker:
+        raise RuntimeError("typed lifetime arguments need the appended observer")
+    observer = re.sub(
+        r"\b((?:m_)?(?:get|set|remove)|(?:current_)?error)\("
+        r'((?:(?:element|other|absent|g_element), )?)("[^"\n]*"|key|original)',
+        r"\1(\2ctnative::js_string{\3}",
+        observer,
+    )
+    observer = re.sub(
+        r"\b(set|m_set)\(([^;\n]+), ([0-9]+)\)",
+        r"\1(\2, ctnative::js_num{\3.0})",
+        observer,
+    )
+    return generated + marker + observer
+
+
 def template_lifetime_cpp(cpp, child):
     # The existing observer records weak allocation witnesses without changing
     # the generated Map implementation or its ownership.
@@ -65,7 +84,7 @@ int main() {{
     if child:
         changed += "    element.reset();\n    g_element.reset();\n"
     changed = re.sub(r"\b(get|m_get)\((element|g_element)?\)(?= !=)", r"\1(\2).value()", changed)
-    return changed + """    for (const auto & map : ctn_test_maps) {
+    return typed_lifetime_arguments(changed + """    for (const auto & map : ctn_test_maps) {
         if (!map.expired()) { return 110; }
     }
     for (const auto & object : ctn_test_objects) {
@@ -73,7 +92,7 @@ int main() {{
     }
     return 0;
 }
-"""
+""")
 
 
 def recorder_future_body(entry_objects=False):
@@ -294,18 +313,14 @@ int main() {
         )
         signature = (
             "std::function<ctnative::object_value("
-            "std::shared_ptr<ctnative::identity_object>, std::string)>"
+            "std::shared_ptr<ctnative::identity_object>, ctnative::js_string)>"
         )
         changed = changed.replace(
             "auto get = table->m_get;",
             "auto get = table->m_get;\n"
             f"    static_assert(std::is_same_v<decltype(get), {signature}>);",
         )
-    return re.sub(
-        r"\b(set|m_set)\(([^;\n]+), ([0-9]+)\)",
-        r"\1(\2, ctnative::js_num{\3.0})",
-        changed,
-    )
+    return typed_lifetime_arguments(changed)
 
 
 def template_lifetime(

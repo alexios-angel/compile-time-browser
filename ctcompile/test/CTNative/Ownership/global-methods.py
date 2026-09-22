@@ -159,20 +159,21 @@ int main() {
     }
     if (first_lifetime.expired() || table_lifetime.expired()) { return 91; }
     for (int index = 0; index < 1024; ++index) {
-        if (first->slot->m_get() != 42 || table->m_get() != 42 || callable() != 42) {
+        if (first->slot->m_get().value() != 42 || table->m_get().value() != 42 ||
+            callable().value() != 42) {
             return 92;
         }
     }
     if (ctnative_test_entry() != 0) { return 93; }
-    if (first == g_host || table == g_host->slot || g_host->slot->m_get() != 42) {
+    if (first == g_host || table == g_host->slot || g_host->slot->m_get().value() != 42) {
         return 94;
     }
     first.reset();
-    if (!first_lifetime.expired() || table_lifetime.expired() || table->m_get() != 42) {
+    if (!first_lifetime.expired() || table_lifetime.expired() || table->m_get().value() != 42) {
         return 95;
     }
     table.reset();
-    if (!table_lifetime.expired() || callable() != 42) { return 96; }
+    if (!table_lifetime.expired() || callable().value() != 42) { return 96; }
     callable = {};
     std::weak_ptr second_lifetime = g_host;
     std::weak_ptr second_table_lifetime = g_host->slot;
@@ -213,7 +214,7 @@ int main() {
         raise RuntimeError(f"{name}/{mode}: lifetime failure\n{result.stdout}{result.stderr}")
 
 
-def standalone(args, output, name, expected, compilers, nm, *, result_type="js_num"):
+def standalone(args, output, name, expected, compilers, nm, *, result_type="ctnative::js_num"):
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
@@ -232,7 +233,7 @@ def standalone(args, output, name, expected, compilers, nm, *, result_type="js_n
             "ctnative::global_boolean(" not in cpp or "ctnative::invoke_callable(" not in cpp
         ):
             raise RuntimeError(f"{name}/{mode}: missing live Boolean call/observation\n{cpp}")
-        if result_type == "std::string" and (
+        if result_type == "ctnative::js_string" and (
             "ctnative::global_string(" not in cpp
             or "ctnative::print_string(" not in cpp
             or "ctnative::invoke_callable(" not in cpp
@@ -274,13 +275,13 @@ int main() {
     if (g_trace.tag != ctnative::nullable_string::kind::string ||
         g_trace.value != expected_bytes) { return 91; }
     auto callable = g_host->slot->m_get;
-    std::string saved = callable();
-    g_trace = ctnative::to_nullable_string(std::string("overwritten"));
+    ctnative::js_string saved = callable();
+    g_trace = ctnative::to_nullable_string(ctnative::js_string{"overwritten"});
     g_host.reset();
-    if (saved != expected_bytes || callable() != expected_bytes) { return 92; }
-    std::string other = callable();
-    other.assign("changed caller result");
-    if (saved != expected_bytes || callable() != expected_bytes) { return 93; }
+    if (saved.value() != expected_bytes || callable().value() != expected_bytes) { return 92; }
+    ctnative::js_string other = callable();
+    other = ctnative::js_string{"changed caller result"};
+    if (saved.value() != expected_bytes || callable().value() != expected_bytes) { return 93; }
     return 0;
 }
 """.replace("STRING_BYTES", literal).replace("STRING_SIZE", str(len(raw)))
@@ -411,9 +412,9 @@ def main():
             compilers,
             nm,
             result_type=(
-                "std::string"
+                "ctnative::js_string"
                 if string_result
-                else "ctnative::js_boolean_t" if boolean_result else "js_num"
+                else "ctnative::js_boolean_t" if boolean_result else "ctnative::js_num"
             ),
         )
         if boolean_result or string_result:
