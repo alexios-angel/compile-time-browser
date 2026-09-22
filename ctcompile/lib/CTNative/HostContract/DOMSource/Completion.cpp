@@ -1,4 +1,5 @@
 #include "Proof.hpp"
+#include "mlir/IR/Verifier.h"
 
 namespace ctcompile::ctnative::dom_source_detail {
 
@@ -50,6 +51,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     mlir::IRMapping mapping;
     mlir::DominanceInfo dominance(function);
     llvm::DenseSet<mlir::Operation *> visited;
+    bool normalReturn = false;
     for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
         if (!step()) { return false; }
         mapping.map(argument, destination.addArgument(argument.getType(), argument.getLoc()));
@@ -500,7 +502,63 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     refuse("DOM helper completion returns inside a source region");
                     return {};
                 }
+                normalReturn = true;
                 return llvm::SmallVector<mlir::Value>{values.lookupOrDefault(result.getValue())};
+            }
+            if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
+                auto & region = abrupt.getRegion();
+                auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
+                                  ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
+                                  : ctjs::ThrowOp{};
+                if (!depth || !abrupt.getNoInline() || abrupt->getNumOperands() ||
+                    abrupt.getNumResults() || !thrown || region.front().getNumArguments() ||
+                    !step() || !values.contains(thrown.getValue()) ||
+                    !dominance.dominates(thrown.getValue(), thrown) ||
+                    values.lookup(thrown.getValue()).getDefiningOp<mlir::ub::PoisonOp>()) {
+                    refuse("DOM helper abrupt completion requires one exact saved throw");
+                    return {};
+                }
+                visited.insert(thrown);
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(body.getTerminator());
+                if (!yield || yield.getOperandTypes() != body.getParentOp()->getResultTypes()) {
+                    refuse("DOM helper abrupt completion lacks its unreachable yield");
+                    return {};
+                }
+                // Only structural padding may follow this non-returning region.
+                // Do not visit the shared continuation on the throwing path.
+                for (auto tail = std::next(cursor); tail != body.end(); ++tail) {
+                    if (!step()) { return {}; }
+                    if (&*tail != yield && !llvm::isa<mlir::ub::PoisonOp>(*tail)) {
+                        refuse("DOM helper abrupt completion has an unproved continuation");
+                        return {};
+                    }
+                    for (mlir::Value operand : tail->getOperands()) {
+                        if (!step()) { return {}; }
+                        if (!dominance.dominates(operand, &*tail)) {
+                            refuse("DOM helper abrupt completion has an undefined yield");
+                            return {};
+                        }
+                    }
+                    visited.insert(&*tail);
+                }
+                llvm::SmallVector<mlir::Value> padding;
+                for (mlir::Type type : terminal.types) {
+                    if (!step()) { return {}; }
+                    // ponytail: scalar source result slots only; abrupt loop
+                    // conditions need a separate non-returning tuple proof.
+                    if (!llvm::isa<ctjs::ValueType>(type)) {
+                        refuse("DOM helper abrupt completion requires source result slots");
+                        return {};
+                    }
+                    auto filler = ctjs::ConstantOp::create(
+                        at, abrupt.getLoc(), ctjs::UndefinedAttr::get(function.getContext()));
+                    inactiveFillers.insert(filler.getResult());
+                    padding.push_back(filler.getResult());
+                    ++operationCount;
+                }
+                at.clone(operation, values);
+                operationCount += 2;
+                return padding;
             }
             Continuation tail{&body, std::next(cursor), operation.getResults(), continuation};
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
@@ -622,6 +680,56 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 return self(self, selected->front(), selected->front().begin(), values, at, &tail,
                             terminal, depth + 1);
             }
+            if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
+                // Preserve suppression and both continuations verbatim. The
+                // complete DOM admission still proves their host effects.
+                const auto checked = invocation.walk([&](mlir::Operation * nested) {
+                    // Charge verification and cloning before either traverses
+                    // this opaque region without a work callback.
+                    const uint64_t cost =
+                        uint64_t(3) * (1 + nested->getNumOperands() + nested->getNumResults() +
+                                       nested->getAttrs().size());
+                    if (cost > remaining) {
+                        remaining = 0;
+                        refuse("DOM helper expansion work budget exhausted");
+                        return mlir::WalkResult::interrupt();
+                    }
+                    remaining -= static_cast<unsigned>(cost);
+                    for (auto & region : nested->getRegions()) {
+                        for (auto & block : region) {
+                            if (!step()) { return mlir::WalkResult::interrupt(); }
+                            for (auto argument : block.getArguments()) {
+                                (void)argument;
+                                if (!step()) { return mlir::WalkResult::interrupt(); }
+                            }
+                        }
+                    }
+                    if (llvm::isa<mlir::ub::PoisonOp>(nested)) {
+                        refuse("DOM helper invocation contains inactive source state");
+                        return mlir::WalkResult::interrupt();
+                    }
+                    visited.insert(nested);
+                    for (mlir::Value operand : nested->getOperands()) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        auto * owner = operand.getParentBlock()->getParentOp();
+                        if (owner == invocation || invocation->isAncestor(owner)) { continue; }
+                        if (!values.contains(operand) || !dominance.dominates(operand, nested) ||
+                            values.lookup(operand).getDefiningOp<mlir::ub::PoisonOp>()) {
+                            refuse("DOM helper invocation observes an inactive or unbound value");
+                            return mlir::WalkResult::interrupt();
+                        }
+                    }
+                    ++operationCount;
+                    return mlir::WalkResult::advance();
+                });
+                if (checked.wasInterrupted()) { return {}; }
+                if (mlir::failed(mlir::verify(invocation))) {
+                    refuse("DOM helper completion has an invalid invocation");
+                    return {};
+                }
+                at.clone(operation, values);
+                continue;
+            }
             if (operation.getNumRegions() || operation.getNumSuccessors()) {
                 refuse("DOM helper completion requires acyclic structured source");
                 return {};
@@ -665,6 +773,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     terminal.types.append(function.getResultTypes().begin(), function.getResultTypes().end());
     auto result = emit(emit, body, body.begin(), mapping, at, nullptr, terminal, 0);
     if (!result) { return false; }
+    if (!normalReturn) { return refuse("DOM helper completion lacks a reachable source return"); }
     const auto complete = function.walk([&](mlir::Operation * operation) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         if (operation != function && !visited.contains(operation)) {

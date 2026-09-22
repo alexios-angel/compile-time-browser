@@ -55,8 +55,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (mlir::failed(mlir::verify(entry))) {
         return error("DOM custom iterator requires a well-formed entry");
     }
-    // Returns already routed through source completion retain one root return.
-    // Throws and protected regions still need an independent handler proof.
+    // This is structural protocol proof. Keep the protected call and original
+    // throw until complete DOM admission reproves their effects and payload.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> protectedCloses;
     unsigned returns = 0;
     const auto completion = entry.walk([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -66,8 +67,47 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return mlir::WalkResult::interrupt();
             }
         }
-        if (llvm::isa<ctjs::ThrowOp, ctjs::PushHandlerOp, ctjs::InvokeOp>(operation)) {
-            return mlir::WalkResult::interrupt();
+        if (llvm::isa<ctjs::PushHandlerOp>(operation)) { return mlir::WalkResult::interrupt(); }
+        if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(operation)) {
+            auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(thrown->getParentOp());
+            if (!region || !region.getNoInline() || region.getNumResults() ||
+                region->getNumOperands() || !region.getRegion().hasOneBlock() ||
+                region.getRegion().front().getNumArguments() ||
+                !llvm::hasSingleElement(region.getRegion().front())) {
+                return mlir::WalkResult::interrupt();
+            }
+        }
+        if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
+            if (invocation.getNumResults() || invocation->getNumOperands() ||
+                !invocation.getBody().hasOneBlock() || !invocation.getNormalBody().hasOneBlock() ||
+                !invocation.getUnwindBody().hasOneBlock()) {
+                return mlir::WalkResult::interrupt();
+            }
+            auto & body = invocation.getBody().front();
+            auto call = body.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(body.front());
+            auto exit = body.empty() ? ctjs::InvokeExitOp{}
+                                     : llvm::dyn_cast<ctjs::InvokeExitOp>(body.back());
+            if (body.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
+                helper(call) != "__ctbrowser_iter_close" || !undefined(call.getReceiver()) ||
+                call.getArgs().size() != 2 || exit.getNormalResult() != call.getResult() ||
+                !exit.getState().empty() || !call.getResult().hasOneUse()) {
+                return mlir::WalkResult::interrupt();
+            }
+            auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
+            auto boolean =
+                flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
+            if (!boolean || !boolean.getValue()) { return mlir::WalkResult::interrupt(); }
+            for (auto * region : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                auto & block = region->front();
+                auto yield = block.empty() ? ctjs::InvokeYieldOp{}
+                                           : llvm::dyn_cast<ctjs::InvokeYieldOp>(block.back());
+                if (block.getNumArguments() != 1 || !block.getArgument(0).use_empty() ||
+                    !llvm::hasSingleElement(block) || !yield || yield.getNumOperands()) {
+                    return mlir::WalkResult::interrupt();
+                }
+            }
+            protectedCloses[invocation] = call;
         }
         return mlir::WalkResult::advance();
     });
@@ -1252,8 +1292,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
             auto boolean =
                 flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
-            if (!boolean || boolean.getValue()) {
-                return error("DOM iterator close requires normal completion");
+            const bool protectedClose = protectedCloses.lookup(call->getParentOp()) == call;
+            if (!boolean || boolean.getValue() != protectedClose) {
+                return error("DOM iterator abrupt close requires its exact suppression region");
             }
             closes.push_back(call);
         } else {
@@ -1263,6 +1304,17 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (!next || closes.empty()) {
         return error("DOM iterator close must follow its complete traversal");
     }
+    for (auto & [invocation, call] : protectedCloses) {
+        (void)invocation;
+        if (!spend() || !llvm::is_contained(closes, call)) {
+            return error("DOM iterator suppression must close its original record");
+        }
+    }
+    // ponytail: mutable state across a caught close needs exceptional-state
+    // transport; immutable captures already retain their ordinary DOM effects.
+    if (!protectedCloses.empty() && !stateInitials.empty()) {
+        return error("DOM iterator protected close needs a mutable-state proof");
+    }
     // A return can reduce the traversal to one next call and put closes in
     // separate completion arms. Every close must remain after the complete
     // traversal, with no enclosing loop that could revisit next after close.
@@ -1271,7 +1323,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         while (operation->getBlock() != open->getBlock()) {
             if (!spend() || ++depth == 64) { return nullptr; }
             operation = operation->getParentOp();
-            if (!llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(operation)) {
+            if (!llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(operation) &&
+                !protectedCloses.contains(operation)) {
                 return nullptr;
             }
         }
@@ -1298,7 +1351,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (depth == 64) { return false; }
         for (auto cursor = begin; cursor != end; ++cursor) {
             if (!spend()) { return false; }
-            if (llvm::is_contained(closes, &*cursor)) { return true; }
+            if (llvm::is_contained(closes, &*cursor) || protectedCloses.contains(&*cursor)) {
+                return true;
+            }
             if (!llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(*cursor)) { continue; }
             bool closed = true;
             for (auto & region : cursor->getRegions()) {
@@ -1590,6 +1645,41 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 auto empty = ctjs::ConstantOp::create(
                     at, where, ctjs::UndefinedAttr::get(candidate.getContext()));
                 values.map(operation.getResult(0), empty.getResult());
+                continue;
+            }
+            if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation);
+                invocation && protectedCloses.contains(invocation)) {
+                auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), state.front());
+                state.front() = ctjs::ConstantOp::create(
+                    at, where, ctjs::BooleanAttr::get(candidate.getContext(), true));
+                if (slots.contains("return")) {
+                    auto branch = mlir::scf::IfOp::create(at, where, test, true);
+                    auto & body = branch.getElseRegion().front();
+                    mlir::OpBuilder inside(&body, body.begin());
+                    // The unique own data slot has no getter or user lookup.
+                    // Keep the actual method call protected, and keep Invoke's
+                    // exact call/exit body for the downstream effect proof.
+                    auto key = ctjs::ConstantOp::create(
+                        inside, where, ctjs::StringAttr::get(candidate.getContext(), "return"));
+                    auto holder = values.lookup(object.getResult());
+                    auto method = ctjs::GetPropertyOp::create(inside, where, type, holder, key);
+                    auto copied = llvm::cast<ctjs::InvokeOp>(inside.clone(operation, values));
+                    auto call = llvm::cast<ctjs::CallOp>(copied.getBody().front().front());
+                    call.getCalleeMutable().assign(method.getResult());
+                    call.getReceiverMutable().assign(holder);
+                    call.getArgsMutable().clear();
+                }
+                continue;
+            }
+            if (auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
+                if (!region.getNoInline() || region.getNumResults() || region->getNumOperands() ||
+                    !region.getRegion().hasOneBlock() ||
+                    region.getRegion().front().getNumArguments() ||
+                    !llvm::hasSingleElement(region.getRegion().front()) ||
+                    !llvm::isa<ctjs::ThrowOp>(region.getRegion().front().back()) || !spend()) {
+                    return false;
+                }
+                at.clone(operation, values);
                 continue;
             }
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
