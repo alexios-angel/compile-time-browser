@@ -552,11 +552,13 @@ reindexes remaining immutable captures. General helper capture admission still r
 immutability.
 
 A unique local sibling closure may read and update those state cells through
-ordinary or direct calls in the enclosing entry. Explicit arguments must match
-the helper's verified parameter count. Every capture must identify
-proved iterator state; the complete body must be a scalar leaf without calls
-or nested closures. Exact closure, call and symbolic-use checks precede
-rewriting. An arrow's lexical receiver may be retained only when its body does
+ordinary or direct calls in the enclosing entry or another confined sibling.
+Explicit arguments must match the helper's verified parameter count. Captures
+identify proved iterator state or single-initialized local cells holding other
+helpers. The complete callable-cell and call census discovers the whole family,
+including helpers that capture only another callable. Exact closure, call,
+symbolic-use and acyclic call-tree checks precede rewriting. Helper bodies allow
+scalar operations and proved sibling calls; nested closure creation stays refused. An arrow's lexical receiver may be retained only when its body does
 not observe it. Capture slots become temporary cell parameters for the existing
 helper inliner, following that call's already-evaluated explicit arguments.
 Argument values keep their own snapshots even when a later argument or the
@@ -569,8 +571,10 @@ change the shared state. Repeated calls see the latest values, including
 Retired helpers leave no closure or cell storage in native output. Helper-local
 breaks reuse the method completion proof before scalar body validation, retaining
 argument snapshots, ordered state writes and the ordinary return value. Escaping,
-recursive and nested-call helpers remain refused. Unknown or coercing
-arguments still require complete DOM proof; arity alone authorizes no value facts.
+recursive, mutable-callable and indirect-argument calls remain refused. A shared
+callee is expanded at each invocation with that call's current cells and already
+evaluated scalar arguments. Unknown or coercing arguments still require complete
+DOM proof; arity alone authorizes no value facts.
 Fully defined JavaScript branch results join their ordered scalar state before
 one common continuation, including a helper conditional after its local loop.
 The existing importer also normalizes early helper returns into this form.

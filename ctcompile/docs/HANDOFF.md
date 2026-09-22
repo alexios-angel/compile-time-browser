@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Sibling iterator call trees and two-value shifts, 2026-09-22 UTC
+
+Continued clean **6ebf1280** and its saved nested sibling-helper boundary.
+**d4e18328** proves confined helper call trees through single-initialized local
+callable cells. Complete capture, call, symbol and cycle checks precede expansion.
+The existing inliner and scalar rewrite preserve argument snapshots, current
+shared state and ordinary results through nested calls, branches, loops and close.
+The original source executes unchanged; new witnesses cover a shared callee and
+an inner argument that changes the first argument's captured cell. No browser or
+runtime-oracle semantics changed.
+
+Parallel **9d5506d4** reuses exact endpoint bounds for shifts with at most two
+possible inputs, including conversion jumps, left-shift wraps and uneven right
+shifts. Larger ranges retain the existing conservative proof. Twenty-two source
+witnesses extend all 106 previous bodies; complete store/reload census and budgets
+remain.
+
+Focused checks pass: exact host **1/1, 1.31 s total**; seven custom sources plus
+all 82 refusal programs **112 native executions, 332 refusals, two nonexecuted
+admissions and 56 Node/VM observations**; exact arrays **1/1, 1.81 s total**;
+left/right-shift lit **2/2, 0.13 s**. All eight final code/test hashes match
+local/devbox files. Required formatting retains **16 pre-existing diagnostics in
+four untouched files**; changed scopes pass. Full suites, the complete custom
+case and unchanged nested/dataset cases were skipped. The devbox idle timer is
+active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-callable-argument-writer`
+passes `advance` to `relay(writer)`, which calls its argument. Node returns
+**2724 normally / 3598 on stop**, with `data-closed=false`; both native policies
+refuse the unproved helper identity. Carry a confined callable argument through
+the complete call census while preserving state and value snapshots. Nested
+custom opens, abrupt close, unguarded Bootstrap defaults and the application
+driver remain unfinished. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-sibling-calls.md).
+
 ## Sibling iterator helper breaks and two-value complements, 2026-09-22 UTC
 
 Continued clean **e26b8342** and its exact finite sibling-helper break boundary.
