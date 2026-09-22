@@ -1534,7 +1534,7 @@ def refusals():
             "      const done", "      external(anchor); const done"
         ),
         "escaping-value": text.replace(visited, "    anchor.saved=node;"),
-        # A return-expression snapshot across the loop and throw completion remain unproved.
+        # Throw completion still needs its cleanup and handler proof.
         "body-throw": text.replace(visited, "    throw 1;"),
     }
     for helper in SNAPSHOT_INTRINSICS[4:]:

@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved element payloads and direct remainder gaps, 2026-09-22 UTC
+
+Resumed clean **4c132a5b** and unchanged saved source `2b611964`.
+**995bdf39** carries homogeneous DOM elements through branches and loops using
+existing `element_ref` owner/id pairs. Private inactive-slot provenance survives
+custom normalization and helper expansion; only a dominating value from the
+same branch slot can replace padding. Complete kind, observer and lifetime
+checks remain. Return reads stay before close. The saved source, its two-read
+snapshot, an identity witness and the original multiple-return source execute.
+The latter also checks fallthrough without either return and zero-trip exhaustion.
+
+Parallel **46d716a4** enables existing bounded refinement for direct remainder
+gaps. Complete reload/store checks, actual-write replay and budgets remain.
+Seven source witnesses preserve all 61 historical remainder bodies; one original
+coprime-stride construction now admits unchanged. All 218 original native source
+bodies and 79 existing positive metadata rows survive.
+
+Focused validation: exact host **1/1, 2.30 s total**, exact arrays **1/1, 2.12 s
+total**, remainder lit **1/1, 0.12 s**. Five selected sources complete **80 native
+executions and 42 Node/VM observations** across two runs. The first finishes
+64 executions, 130 refusal checks and two nonexecuted admissions before detecting
+the now-admitted multiple-return source; its corrected follow-up passes
+16 executions and 294 refusal checks. Full suites were skipped. Complete
+formatting passes **1124 C++, 157 Python and 114 web files**. Fifteen final hashes
+match the devbox; 40 generated C++ files contain no Script/VM protocol.
+No browser implementation or runtime-oracle changes were made.
+
+**Next native boundary:** source `7ea457e6`, derived from the unchanged saved
+source by returning `node.matches('button')`, refuses under both policies:
+**DOM selector on a carried element needs its Style association**. Prove and
+transport the matching document/Style association through the same branch/loop
+path before enabling selector calls. Eight Node/VM observations agree; this
+source has no native execution claim. Broader completion shapes, abrupt cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver
+and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-element-payloads.md).
+
 ## Selected iterator payloads and direct mask gaps, 2026-09-22 UTC
 
 Resumed clean **ee141a82** and unchanged saved source `2b611964`.
