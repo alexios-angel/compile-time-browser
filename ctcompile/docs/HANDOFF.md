@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Branch-dependent callable returns and composed shift gaps, 2026-09-22 UTC
+
+Continued clean **4e25be51** and saved branch-dependent return source `191c2e50`.
+**802c0d1a** records every formal and fixed-helper return dependency through
+branches and loops, retaining complete invocation, effect, recursion and observer
+proofs. Sharing the SSA clone mapping removes repeated region copies and saves
+**29,003 proof steps** on the saved source without raising the budget. The saved
+source, zero-trip and branch/argument/state snapshot witnesses execute unchanged.
+
+Parallel **80bd870b** preserves exact mixed-shift gap refinement through remainder
+and bit-mask enclosures. Complete reload/store checks and actual-write replay
+retain untouched children and earlier snapshots. All 191 historical native and
+105 right-shift source bodies remain unchanged.
+
+Focused checks pass: exact host **1/1, 2.26 s total**; four source programs plus
+all 129 refusal sources **64 native executions, 354 refusals, two nonexecuted
+admissions and 32 Node/VM observations**. Exact arrays pass **1/1, 2.21 s total**;
+right-shift lit **1/1, 0.14 s**. The complete formatter passes **1124 C++, 157
+Python and 114 web files**. All seven final code/test hashes match the devbox;
+32 generated C++ files contain no Script/VM symbols. Full suites and broad
+matrices were skipped. No browser/runtime-oracle changes; the idle timer is
+active/enabled. Interrupted agents resumed preserved drafts. A new raw fixture
+spelling was corrected; production did not change after its gate failure.
+
+**Next native boundary:** `entry-captured-sibling-returned-loop-branch-formal-callee`
+uses `keep(writer, chooser) => chooser(writer)` on the existing loop backedge.
+Node returns **2729 normally / 3603 on stop**, `data-closed=false`; both native
+policies refuse an unproved arm. Prove return dependencies through formal callees
+with complete invocation checks. Nested custom opens, abrupt close, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain
+unfinished. Larger composed shift gaps remain proof-budget limited.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-branch-callable-returns.md).
+
 ## Nested callable returns and exact mixed shift gaps, 2026-09-22 UTC
 
 Continued clean **94371e90** and the saved nested-return source `bd1a8aa5`.
