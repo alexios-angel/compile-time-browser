@@ -373,9 +373,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
             const auto inputStride = std::size_t{1} << std::countr_zero(range->stride);
+            const auto changingMask = bitOr ? ~mask : mask;
+            // AND fixes trailing zeros; OR fixes trailing ones. Both combine
+            // with the input's power-of-two lattice by taking its larger period.
+            // Zero/all-one constant results need no extra period or width-sized shift.
             const auto writeStride =
-                bitAnd && mask != 0
-                    ? std::max(inputStride, std::size_t{1} << std::countr_zero(mask))
+                (bitAnd || bitOr) && changingMask != 0
+                    ? std::max(inputStride, std::size_t{1} << std::countr_zero(changingMask))
                     : inputStride;
             const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
             std::uint32_t first = numberBits(range->first) & mask & fixed;

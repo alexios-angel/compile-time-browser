@@ -272,8 +272,26 @@ void StructuredCases::reloads() {
         reject("later structured stores invalidate a reload in an OR/XOR low-bit gap",
                replace(gapReload,
                        "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
-        reject("structured odd input strides cannot retain an OR/XOR low-bit gap",
-               replace(three, "add %i, %two", "add %i, %three"));
+        const auto oddStride = replace(three, "add %i, %two", "add %i, %three");
+        if (isOr) {
+            rows.push_back({.what = "structured OR mask bits preserve the original odd stride",
+                            .body = oddStride,
+                            .arrays = "a:[zero,zero,one,zero]",
+                            .reads = "a[2]=one; a[0]=zero; a[2]=one; a[3]=zero",
+                            .exit = "a -> {a}"});
+            for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+                rows.push_back(
+                    {.what = "structured OR mask bits preserve unit-stride reload gaps",
+                     .body = replace(replace(gapReload, "add %i, %two", "add %i, %one"),
+                                     "bitor %i, %mask", "bitor " + std::string(operands)),
+                     .arrays = "a:[zero,zero,one,zero]",
+                     .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one; "
+                              "a[2]=one; a[3]=zero",
+                     .exit = "a -> {a}"});
+            }
+        } else {
+            reject("structured odd input strides cannot retain an XOR low-bit gap", oddStride);
+        }
         reject("structured OR/XOR reject an enclosure beyond the guard allocation",
                replace(bitwise, "[%x]", "[%x, %y]"));
         reject("structured OR/XOR require an invariant mask",
@@ -467,6 +485,16 @@ void StructuredCases::reloads() {
                     .exit = "a -> {a}"});
     reject("structured signed XOR cannot borrow OR's disjoint reload proof",
            replace(signedReload, "bitor", "bitxor"));
+    rows.push_back(
+        {.what = "structured signed OR mask bits preserve translated interior reload gaps",
+         .body = replace(
+             replace(replace(signedReload, "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                     "[%negativeMask, %y, %zero, %zero]", "[%zero, %x, %negativeMask, %y]"),
+             "%mask = ctjs.get_property %base[%zero]", "%mask = ctjs.get_property %base[%two]"),
+         .arrays = "a:[zero,zero,mask,zero]",
+         .reads = "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                  "a[2]=mask; a[3]=zero",
+         .exit = "a -> {a}"});
     reject("structured signed masks retain the complete later-store census",
            replace(signedReload,
                    "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));

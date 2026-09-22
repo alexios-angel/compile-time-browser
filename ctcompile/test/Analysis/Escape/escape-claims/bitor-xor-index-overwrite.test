@@ -42,6 +42,16 @@
 // CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function orWrites() {
@@ -263,3 +273,59 @@ function orStrideLaterOverwrite() {
 orStrideReload(); xorStrideReloadCommuted(); orOddStridePhase(); xorOddStridePhase();
 xorNegativeStrideReload(); orSignedStrideReload(); xorSixStrideReload(); xorFourStrideReload();
 savedStrideChild(); xorStrideRemainingGap(); xorStrideOverlappingReload(); orStrideLaterOverwrite();
+function orMaskUnitStrideReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i | a[2]] = 0;
+    return a;
+}
+function orMaskCommutedReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i++) a[a[2] | i] = 0;
+    return a;
+}
+function orMaskOddStrideReload() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i += 3) a[i | a[2]] = 0;
+    return a;
+}
+function orMaskThreeReload() {
+    var child = {}, a = [0, 0, 0, child, 3, 0, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[4]] = 0;
+    return a;
+}
+function orMaskSignedReload() {
+    var child = {}, a = [0, child, -2147483647, child];
+    for (var i = 0; i < a.length; i++) a[(i | a[2]) + 2147483648] = 0;
+    return a;
+}
+function orMaskAllOnes() {
+    var child = {}, a = [child, -1];
+    for (var i = 0; i < a.length; i++) a[(i | a[1]) + 1] = 0;
+    return a;
+}
+function orMaskRemainingChild() {
+    var child = {}, a = [child, child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i | a[2]] = 0;
+    return a;
+}
+function orMaskOverlappingReload() {
+    var child = {}, a = [0, 1, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | a[1]] = 0;
+    return a;
+}
+function orMaskLaterOverwrite() {
+    var child = {}, a = [0, child, 1, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i | a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function orMaskCombinedPeriodsOverlap() {
+    var child = {}, a = [0, child, 0, 0, 0, 1, 0, 0];
+    for (var i = 0; i < a.length; i += 4) a[a[5] | i] = 0;
+    return a;
+}
+orMaskUnitStrideReload(); orMaskCommutedReload(); orMaskOddStrideReload(); orMaskThreeReload();
+orMaskSignedReload(); orMaskAllOnes(); orMaskRemainingChild(); orMaskOverlappingReload();
+orMaskLaterOverwrite(); orMaskCombinedPeriodsOverlap();

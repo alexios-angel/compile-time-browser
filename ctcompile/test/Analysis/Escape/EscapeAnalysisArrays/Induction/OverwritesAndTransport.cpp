@@ -466,8 +466,40 @@ void InductionCases::overwritesAndTransport() {
         reject(
             "later stores invalidate a reload in an OR/XOR low-bit gap",
             replace(gapReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
-        reject("odd input strides cannot retain a low-bit gap through OR/XOR",
-               replace(gapReload, "add %i, %two", "add %i, %three"));
+        const auto oddStride = replace(gapReload, "add %i, %two", "add %i, %three");
+        if (isOr) {
+            run({.what = "OR mask low bits preserve the original odd-stride reload",
+                 .body = oddStride,
+                 .arrays = "a:[zero,zero,one,zero]",
+                 .reads = "a[2]=one; a[0]=zero; a[2]=one; a[3]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+            for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+                run({.what = "OR mask low bits preserve a gap with unit input stride",
+                     .body = replace(replace(gapReload, "add %i, %two", "add %i, %one"),
+                                     "bitor %i, %mask", "bitor " + std::string(operands)),
+                     .arrays = "a:[zero,zero,one,zero]",
+                     .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one; "
+                              "a[2]=one; a[3]=zero",
+                     .exit = "a -> {a}"},
+                    "x");
+            }
+            reject(
+                "OR input and mask periods combine without multiplying away a write",
+                replace(
+                    replace(replace(replace(replace(gapReload, "  %a =",
+                                                    "  %four = ctjs.binary add %two, %two\n"
+                                                    "  %five = ctjs.binary add %four, %one\n"
+                                                    "  %a ="),
+                                            "[%zero, %x, %one, %x]",
+                                            "[%zero, %x, %zero, %zero, %zero, %one, %zero, %zero]"),
+                                    "add %i, %two", "add %i, %four"),
+                            "%mask = ctjs.get_property %base[%two]",
+                            "%mask = ctjs.get_property %base[%five]"),
+                    "bitor %i, %mask", "bitor %mask, %i"));
+        } else {
+            reject("odd input strides cannot retain a low-bit gap through XOR", oddStride);
+        }
         reject("OR/XOR bounds cannot miss a store beyond the guard array",
                replace(bitwise, "[%one, %x]", "[%one, %x, %zero]"));
         reject("OR/XOR require one invariant operand", replace(bitwise, "%i, %one", "%i, %i"));
@@ -668,6 +700,27 @@ void InductionCases::overwritesAndTransport() {
         "x");
     reject("signed XOR cannot borrow OR's disjoint reload proof",
            replace(signedReload, "bitor", "bitxor"));
+    run({.what = "signed OR low bits preserve a reload inside the translated interval",
+         .body = replace(replace(signedReload, "[%negativeMask, %x, %zero, %zero]",
+                                 "[%zero, %x, %negativeMask, %x]"),
+                         "%mask = ctjs.get_property %base[%zero]",
+                         "%mask = ctjs.get_property %base[%two]"),
+         .arrays = "a:[zero,zero,mask,zero]",
+         .reads = "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                  "a[2]=mask; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "an all-one OR mask remains a singleton without a width-sized stride shift",
+         .body = replace(
+             replace(replace(replace(signedReload, "13970166044099084288", "13830554455654793216"),
+                             "[%negativeMask, %x, %zero, %zero]", "[%x, %negativeMask]"),
+                     "%mask = ctjs.get_property %base[%zero]",
+                     "%mask = ctjs.get_property %base[%one]"),
+             "add %negative, %sign", "add %negative, %one"),
+         .arrays = "a:[zero,mask]",
+         .reads = "a[1]=mask; a[0]=zero; a[1]=mask; a[1]=mask",
+         .exit = "a -> {a}"},
+        "x");
     reject(
         "signed masks retain the complete later-store census",
         replace(signedReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
