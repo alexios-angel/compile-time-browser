@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Compiler failure repairs, 2026-09-22 UTC
+
+Continued the failures recorded by the full run of **a1d6680d**, then resumed
+its interrupted focused repair drivers. Fixed array-contents handling of pure
+`arith.constant` producers and nondeterministic class-heritage budget accounting.
+Updated stale carrier, specialization, equality and DOM/class expectations while
+preserving original JavaScript sources, oracle observations and refusal controls.
+Lit now excludes the 51 `Inputs` fixtures; discovery contains 355 real cases.
+No browser implementation or runtime-oracle semantics changed.
+
+The three selected CTests pass: `ctcompile_escape_analysis_arrays` **1.61 s**,
+`ctcompile_owned_global_shared_map` **258.39 s**, and
+`ctcompile_host_contract_seeded_maps` **42.00 s**. **25 of the original 27 failing
+lit cases have whole-case PASS results**. The other two drivers completed through
+preserved prefixes and focused continuations: class initialization covers all
+**836 source observations**; Global Map completed its remaining controls, with
+**681 further rollback cutoffs** in its final **26 s** continuation. The final
+Map access/trace guard check passes **16 deliberate mutations** in **9 s**.
+These are focused results, not a fresh full CTest or compiler-lit pass.
+
+All repairs are committed in small concerns. Required formatting still reports
+**16 pre-existing diagnostics in four untouched files**; changed files pass
+scoped formatting. Full suites, conformance, broad corpora and matrices were
+not rerun. Logs, exact commands, source hashes and continuation scripts are in
+`../test-results/2026-09-22-compiler-repairs/` beside the monorepo. The devbox idle
+timer was stopped during tests and verified **active/enabled afterward**.
+
+**Next native boundary:** `counted-break-exit`, transporting the live counter
+across the importer's conditional break exit. Broader iterator state, literal
+range-for printing, unguarded Bootstrap defaults and the application driver
+remain unfinished. The earlier seven conformance crashes and two WPT event
+regressions remain separate follow-up work. Do not repeat the completed compiler
+repair drivers on the next iteration.
+
+[Repair findings and exact validation](handoff/2026-09-22-compiler-failures.md).
+
 ## Full monorepo validation, 2026-09-21–22 UTC
 
 The user explicitly requested full validation of clean **a1d6680d**. The devbox
