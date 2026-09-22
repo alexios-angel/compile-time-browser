@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Selected iterator payloads and direct mask gaps, 2026-09-22 UTC
+
+Resumed clean **ee141a82** and unchanged saved source `2b611964`.
+**2618a169** proves that an inactive loop-exit payload has no observer in the
+selected completion arm or outside its dispatch. Selected, nested, external and
+after-region observers remain checked; reads and close stay in source order.
+Two historical effectful constructions now admit unchanged. **e16b8352** adds
+an explicit loop-local Number snapshot: **1 normally, 3 on stop, 0 when already
+exhausted**, preserved across close. No runtime completion representation is added.
+
+Parallel **bcf17b3a** enables existing bounded gap refinement for direct
+non-affine AND/OR/XOR masks. Complete reload/store checks, actual-write replay
+and budgets remain. Seven source witnesses retain all 134 historical bodies;
+two historical unit-stride constructions now admit with exact Node-backed traces.
+All 214 original native source bodies remain; the final source-only follow-up
+also preserves all 217 sources already committed during this iteration.
+
+Focused validation passes: exact host **1/1, 2.09 s total**, exact arrays
+**1/1, 2.14 s total**, right-shift lit **1/1, 0.14 s**. The initial four-source run
+and one-source follow-up total **80 native executions, 396 refusal checks, two
+nonexecuted admissions and 40 Node/VM observations**. Complete formatting passes
+**1124 C++, 157 Python and 114 web files**. Seven final hashes match the devbox;
+40 generated C++ files contain no Script/VM protocol. Full suites were skipped;
+no browser implementation changed.
+
+**Next native boundary:** the original `body-return-branch-expression`,
+`2b611964`, now passes inactive-slot proof but both policies refuse **DOM entry
+branch cannot carry a borrowed or callable value**. Its payload is a saved DOM
+element. Prove compatible inactive slots and the element's document/lifetime
+through branch/loop transport, preserving the return read before close. Eight
+Node/VM observations agree; no native execution of that source is claimed.
+Further completion arms, abrupt cleanup, nested custom iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-selected-payloads.md).
+
 ## Effectful iterator exits and low-suffix mask gaps, 2026-09-22 UTC
 
 Resumed clean **27abbc26** and saved conditional-return source `dc6fd4c5`.
