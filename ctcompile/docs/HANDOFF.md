@@ -22,6 +22,32 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Test failure repairs, 2026-09-22 UTC
+
+The user redirected this iteration to test failures. **8207bc70** and **25e68e9d**
+clear all 16 formatter diagnostics in the three native files and `ctdrive.cpp`.
+**6aec6d46** fixes an ASan-proven use-after-free during Set builtin installation:
+adding `keys` could invalidate the property pointer reused for `Symbol.iterator`.
+Both aliases now use a copied function value; an identity assertion accompanies
+the fix. A parallel audit found no matching defect in sibling builtin aliases.
+Claude was confirmed stopped through Linux and Windows process checks before
+browser edits and landing. No JS behavior or native admission changed.
+
+The final focused `aot_gc` and `keyed_collections` checks pass **2/2 normally,
+0.03 s total**, and **2/2 with ASan/UBSan, 0.16 s total**. Both sanitizer tests
+reproduced the invalid read before the fix. Earlier, normal `aot_gc` and
+`ctcompile_host_contract` passed **2/2, 1.51 s total**; `ctjs-opt` and `ctdrive`
+also built. The complete formatter passes **1124 C++, 157 Python and 114 web
+files**, superseding the historical outstanding-format reports below. All six
+code/test hashes match the devbox; its idle timer is active/enabled. Full CTest,
+compiler lit, WPT/test262 and corpus/matrix runs were skipped.
+
+Exact commands, logs and hashes are in
+`../../../test-results/2026-09-22-validation-cleanup/README.md`.
+The next native boundary remains
+`entry-captured-sibling-returned-callable-loop-join` below. Full native Bootstrap
+and the application driver remain unfinished.
+
 ## Callable branch joins and wrapped complements, 2026-09-22 UTC
 
 Continued clean **efbab738** and the saved branch-selected writer source.
