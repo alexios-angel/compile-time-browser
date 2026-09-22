@@ -193,6 +193,17 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     llvm::DenseSet<mlir::Operation *> stateStorage;
     llvm::SmallVector<mlir::Value> stateInitials;
     for (auto field : stateSlots) { stateInitials.push_back(field.getValue()); }
+    const auto branchStateAccess = [&](mlir::Operation * operation, ctjs::FuncOp body) {
+        unsigned depth = 0;
+        while (operation->getBlock() != &body.getBody().front()) {
+            if (!spend() || ++depth == 64) { return false; }
+            operation = operation->getParentOp();
+            // ponytail: conditional state only; loop-local mutation needs
+            // its own recurrence transport before it can be scalarized.
+            if (!llvm::isa_and_nonnull<mlir::scf::IfOp>(operation)) { return false; }
+        }
+        return true;
+    };
     for (auto & [name, slot] : slots) {
         (void)name;
         auto closure = slot.getValue().getDefiningOp<ctjs::CreateClosureOp>();
@@ -211,7 +222,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (!spend()) { return mlir::WalkResult::interrupt(); }
             if (store.getClosure() != body.getBody().front().getArgument(ctjs::arg_callee) ||
                 store.getIndex() < 0 || store.getIndex() >= body.getUpvalueCount() ||
-                store->getBlock() != &body.getBody().front()) {
+                !branchStateAccess(store, body)) {
                 return mlir::WalkResult::interrupt();
             }
             auto cell = closure.getUpvalues()[static_cast<unsigned>(store.getIndex())]
@@ -292,8 +303,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 auto key = get   ? ctjs::constantKey(get.getKey())
                            : set ? ctjs::constantKey(set.getKey())
                                  : llvm::StringRef{};
-                if (argument.getArgNumber() != ctjs::arg_receiver || user->getBlock() != &block ||
-                    !stateIndices.contains(key) ||
+                if (argument.getArgNumber() != ctjs::arg_receiver ||
+                    !branchStateAccess(user, body) || !stateIndices.contains(key) ||
                     (get ? get.getObject() != argument
                          : !set || set.getObject() != argument || set.getValue() == argument)) {
                     return error("DOM iterator receiver requires direct own state access");
@@ -352,7 +363,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             const auto reads = body.walk([&](ctjs::LoadUpvalueOp read) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
                 auto cell = closure.getUpvalues()[static_cast<unsigned>(read.getIndex())];
-                if (capturedState.contains(cell) && read->getBlock() != &block) {
+                if (capturedState.contains(cell) && !branchStateAccess(read, body)) {
                     return mlir::WalkResult::interrupt();
                 }
                 return mlir::WalkResult::advance();
@@ -460,32 +471,77 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         body.setFunctionTypeAttr(mlir::TypeAttr::get(
             mlir::FunctionType::get(candidate.getContext(), block.getArgumentTypes(),
                                     body.getFunctionType().getResults())));
-        for (mlir::Operation & operation : llvm::make_early_inc_range(block)) {
-            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-            auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
-            auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation);
-            auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation);
-            auto receiver = block.getArgument(ctjs::arg_receiver);
-            if (get && get.getObject() == receiver) {
-                get.getResult().replaceAllUsesWith(
-                    current[stateIndices.lookup(ctjs::constantKey(get.getKey()))]);
-                get.erase();
-            } else if (set && set.getObject() == receiver) {
-                current[stateIndices.lookup(ctjs::constantKey(set.getKey()))] = set.getValue();
-                set.erase();
-            } else if (load || write) {
-                auto index = static_cast<unsigned>(load ? load.getIndex() : write.getIndex());
-                auto found = capturedState.find(closure.getUpvalues()[index]);
-                if (found == capturedState.end()) { continue; }
-                if (load) {
-                    load.getResult().replaceAllUsesWith(current[found->second]);
-                    load.erase();
-                } else {
-                    current[found->second] = write.getValue();
-                    write.erase();
+        const auto scalarize = [&](auto && self, mlir::Block & source,
+                                   llvm::SmallVector<mlir::Value> & current,
+                                   unsigned depth) -> bool {
+            if (depth == 64) { return false; }
+            for (mlir::Operation & operation : llvm::make_early_inc_range(source)) {
+                if (!spend()) { return false; }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    mlir::OperationState built(branch.getLoc(), branch->getName());
+                    built.addOperands(branch->getOperands());
+                    built.addTypes(branch.getResultTypes());
+                    for (auto value : current) {
+                        if (!spend()) { return false; }
+                        built.addTypes(value.getType());
+                    }
+                    built.addAttributes(branch->getAttrs());
+                    for (auto & region : branch->getRegions()) {
+                        built.addRegion()->takeBody(region);
+                    }
+                    mlir::OpBuilder at(branch);
+                    auto * joined = at.create(built);
+                    for (auto & region : joined->getRegions()) {
+                        for (auto value : current) {
+                            (void)value;
+                            if (!spend()) { return false; }
+                        }
+                        auto armState = current;
+                        if (region.empty()) {
+                            auto & arm = region.emplaceBlock();
+                            mlir::OpBuilder inside(&arm, arm.end());
+                            mlir::scf::YieldOp::create(inside, branch.getLoc(), armState);
+                        } else {
+                            if (!self(self, region.front(), armState, depth + 1)) { return false; }
+                            auto * yield = region.front().getTerminator();
+                            yield->insertOperands(yield->getNumOperands(), armState);
+                        }
+                    }
+                    branch.replaceAllUsesWith(
+                        joined->getResults().take_front(branch.getNumResults()));
+                    llvm::copy(joined->getResults().take_back(current.size()), current.begin());
+                    branch.erase();
+                    continue;
+                }
+                auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
+                auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation);
+                auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation);
+                auto receiver = block.getArgument(ctjs::arg_receiver);
+                if (get && get.getObject() == receiver) {
+                    get.getResult().replaceAllUsesWith(
+                        current[stateIndices.lookup(ctjs::constantKey(get.getKey()))]);
+                    get.erase();
+                } else if (set && set.getObject() == receiver) {
+                    current[stateIndices.lookup(ctjs::constantKey(set.getKey()))] = set.getValue();
+                    set.erase();
+                } else if (load || write) {
+                    auto index = static_cast<unsigned>(load ? load.getIndex() : write.getIndex());
+                    auto found = capturedState.find(closure.getUpvalues()[index]);
+                    if (found == capturedState.end()) { continue; }
+                    if (load) {
+                        load.getResult().replaceAllUsesWith(current[found->second]);
+                        load.erase();
+                    } else {
+                        current[found->second] = write.getValue();
+                        write.erase();
+                    }
                 }
             }
+            return true;
+        };
+        if (!scalarize(scalarize, block, current, 0)) {
+            return error("DOM custom iterator state branch budget or depth exhausted");
         }
         llvm::SmallVector<mlir::Value> retained;
         llvm::SmallVector<unsigned> indices;

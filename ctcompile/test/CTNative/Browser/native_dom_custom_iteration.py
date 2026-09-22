@@ -58,6 +58,45 @@ RECEIVER_SOURCE = (
 CAPTURE_SOURCE = RECEIVER_SOURCE.replace(
     "  const values = {\n    emitted: 0,", "  let emitted = 0;\n  const values = {"
 ).replace("this.emitted", "emitted")
+CONDITIONAL_RECEIVER_SOURCE = RECEIVER_SOURCE.replace(
+    "this.emitted++;", "if (anchor.hasAttribute('advance')) this.emitted++;"
+)
+CONDITIONAL_CAPTURE_SOURCE = CAPTURE_SOURCE.replace(
+    "emitted++;", "if (anchor.hasAttribute('advance')) emitted++;"
+)
+BRANCH_RECEIVER_SOURCE = (
+    RECEIVER_SOURCE.replace("emitted: 0,", "emitted: 0,\n    closed: 1,")
+    .replace("this.emitted > 0", "this.closed === 5")
+    .replace(
+        "this.emitted++;",
+        """if (anchor.hasAttribute('advance')) {
+        this.emitted++;
+        if (anchor.hasAttribute('stop')) this.closed += this.emitted;
+        else this.closed += this.emitted + 3;
+      } else {
+        this.closed += 7;
+        this.emitted += this.closed;
+      }""",
+    )
+    .replace(
+        "anchor.setAttribute('data-closed', 'yes');",
+        """if (anchor.hasAttribute('advance')) {
+        this.closed += this.emitted;
+        anchor.setAttribute('data-closed', this.closed === 3);
+      } else {
+        this.emitted += this.closed;
+        anchor.setAttribute('data-closed', this.emitted === 16);
+      }""",
+    )
+)
+BRANCH_CAPTURE_SOURCE = (
+    BRANCH_RECEIVER_SOURCE.replace(
+        "  const values = {\n    emitted: 0,\n    closed: 1,",
+        "  let emitted = 0;\n  let closed = 1;\n  const values = {",
+    )
+    .replace("this.emitted", "emitted")
+    .replace("this.closed", "closed")
+)
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -147,6 +186,39 @@ POSITIVES = (
         True,
         "true",
     ),
+    (
+        "conditional-captured-store",
+        CONDITIONAL_CAPTURE_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "yes",
+    ),
+    (
+        "conditional-state-store",
+        CONDITIONAL_RECEIVER_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "yes",
+    ),
+    (
+        # Exhaustion observes the nested else join; close checks each update order.
+        "conditional-captured-ordered-close",
+        BRANCH_CAPTURE_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
+    ),
+    (
+        "conditional-receiver-ordered-close",
+        BRANCH_RECEIVER_SOURCE,
+        True,
+        ("1", "1", "1"),
+        True,
+        "true",
+    ),
 )
 
 
@@ -157,13 +229,21 @@ def oracles(args):
     for index, (_, text, breaking, results, resetting, closed) in enumerate(POSITIVES):
         function = f"customElementsCase{index}"
         script += text.replace("function customElements(", f"function {function}(")
-        for state, result in zip(("normal", "stop", "already-yielded"), results):
+        normal, stopped, exhausted = results
+        for state, result in (
+            ("normal", normal),
+            ("stop", stopped),
+            ("already-yielded", exhausted),
+            ("stop-without-advance", stopped),
+        ):
             name = f"customObservation{len(observations)}"
-            setup = ""
-            if state == "stop":
+            setup = "saved.advance = '';"
+            if state == "stop-without-advance":
                 setup = "saved.stop = '';"
+            elif state == "stop":
+                setup += "saved.stop = '';"
             elif state == "already-yielded":
-                setup = "saved['data-yielded'] = 'yes';"
+                setup += "saved['data-yielded'] = 'yes';"
             script += f"""
 var {name} = (function() {{
   const saved = {{}};
@@ -185,7 +265,7 @@ var {name} = (function() {{
                 expected = result + ":data-next=false;data-yielded=yes;data-visited=yes;"
                 expected += (
                     f"data-closed={closed};"
-                    if breaking and state == "stop"
+                    if breaking and state.startswith("stop")
                     else "data-next=true;data-yielded=yes;"
                 )
             observations.append((name, expected))
@@ -210,10 +290,10 @@ CHECKS = r"""
             auto & names = target.atoms();
             const auto next = names.intern("data-next"), yielded = names.intern("data-yielded");
             const auto visited = names.intern("data-visited"), closed = names.intern("data-closed");
-            const auto stop = names.intern("stop");
+            const auto stop = names.intern("stop"), advance = names.intern("advance");
             target.log_writes(true);
             const auto clear = [&] {
-                for (const auto name : {next, yielded, visited, closed, stop}) {
+                for (const auto name : {next, yielded, visited, closed, stop, advance}) {
                     assert(target.remove_attribute(id, name));
                 }
                 (void)target.take_writes();
@@ -227,8 +307,11 @@ CHECKS = r"""
                     ++at;
                 }
             };
-            for (const bool stopping : {false, true}) {
+            // No advance requires a break: the exact conditional source can repeat forever.
+            for (const unsigned mode : {0u, 1u, 2u}) {
+                const bool stopping = mode != 0;
                 clear();
+                if (mode != 2) { assert(target.set_attribute(id, advance, "")); }
                 if (stopping) { assert(target.set_attribute(id, stop, "")); }
                 (void)target.take_writes();
                 assert(@FIRST_RESULT@);
@@ -369,9 +452,6 @@ def refusals():
             "undeclared-state-store": RECEIVER_SOURCE.replace(
                 "this.emitted++;", "this.emitted++;\n      this.extra = 1;"
             ),
-            "conditional-state-store": RECEIVER_SOURCE.replace(
-                "this.emitted++;", "if (anchor.hasAttribute('advance')) this.emitted++;"
-            ),
             "external-state-read": RECEIVER_SOURCE.replace(
                 "return count;", "return count + values.emitted;"
             ),
@@ -402,13 +482,28 @@ def refusals():
                 "return count;", "emitted = 0;\n  return count;"
             ),
             "preloop-captured-store": CAPTURE_SOURCE.replace(loop, "  emitted = 0;\n" + loop),
-            "conditional-captured-store": CAPTURE_SOURCE.replace(
-                "emitted++;", "if (anchor.hasAttribute('advance')) emitted++;"
-            ),
             "nonnumber-captured-initializer": CAPTURE_SOURCE.replace(
                 "let emitted = 0;", "let emitted = anchor;"
             ),
             "nonnumber-captured-store": CAPTURE_SOURCE.replace("emitted++;", "emitted = anchor;"),
+            "conditional-nonnumber-captured-store": CONDITIONAL_CAPTURE_SOURCE.replace(
+                "emitted++;", "emitted++; else emitted = anchor;"
+            ),
+            "conditional-nonnumber-state-store": CONDITIONAL_RECEIVER_SOURCE.replace(
+                "this.emitted++;", "this.emitted++; else this.emitted = anchor;"
+            ),
+            "conditional-unknown-effect": CONDITIONAL_CAPTURE_SOURCE.replace(
+                "emitted++;", "{ emitted++; external(anchor); }"
+            ),
+            "conditional-receiver-escape": CONDITIONAL_RECEIVER_SOURCE.replace(
+                "this.emitted++;", "{ this.emitted++; anchor.saved = this; }"
+            ),
+            "conditional-nested-capture": CONDITIONAL_CAPTURE_SOURCE.replace(
+                "emitted++;", "{ emitted++; const change = () => { emitted++; }; change(); }"
+            ),
+            "loop-captured-store": CAPTURE_SOURCE.replace(
+                "emitted++;", "while (emitted < 1) emitted++;"
+            ),
         }
     )
     return variants

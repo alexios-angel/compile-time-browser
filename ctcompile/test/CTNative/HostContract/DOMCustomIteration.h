@@ -356,6 +356,89 @@ module {
     check(captured && twoCaptured && initializedCapture && reorderedCapture,
           "cell iterator witnesses with direct/deferred initialization and reordered slots parse");
     if (!captured || !twoCaptured || !initializedCapture || !reorderedCapture) { return; }
+    const auto conditionalCapturedSource =
+        replaced(capturedSource, "    ctjs.store_upvalue %callee[1], %advanced",
+                 "    %nestedFlag = arith.constant true\n"
+                 "    scf.if %nestedFlag {\n"
+                 "      ctjs.store_upvalue %callee[1], %advanced\n"
+                 "      scf.yield\n"
+                 "    }");
+    const auto conditionalReceiverSource =
+        replaced(receiverSource, "    ctjs.set_property %this[%emittedName], %advanced",
+                 "    %nestedFlag = arith.constant true\n"
+                 "    scf.if %nestedFlag {\n"
+                 "      ctjs.set_property %this[%emittedName], %advanced\n"
+                 "      scf.yield\n"
+                 "    }");
+    // Keep the original result prefix, read stores in source order, join an
+    // unwritten arm with its incoming state, then update the joined value.
+    std::string branchStores =
+        R"MLIR(    %branchSetName = ctjs.constant #ctjs.string<"setAttribute">
+    %branchSet = ctjs.get_property %element[%branchSetName]
+    %thenName = ctjs.constant #ctjs.string<"branch-then">
+    %innerName = ctjs.constant #ctjs.string<"branch-inner">
+    %elseName = ctjs.constant #ctjs.string<"branch-else">
+    %afterName = ctjs.constant #ctjs.string<"branch-after">
+    %yesBranch = ctjs.constant #ctjs.boolean<true>
+    %branchFlag = ctjs.truthy %done
+    %branchValue = scf.if %branchFlag -> !ctjs.value {
+      ctjs.store_upvalue %callee[1], %advanced
+      %afterEmitted = ctjs.load_upvalue %callee[1]
+      %nextExtra = ctjs.binary_static add %extra, %afterEmitted
+      ctjs.store_upvalue %callee[2], %nextExtra
+      %effect = ctjs.call %branchSet(%element, %thenName, %yesBranch)
+      scf.yield %emitted : !ctjs.value
+    } else {
+      %nestedValue = ctjs.call %has(%element, %yielded)
+      %nestedFlag = ctjs.truthy %nestedValue
+      %inner = scf.if %nestedFlag -> !ctjs.value {
+        ctjs.store_upvalue %callee[2], %extraAdvanced
+        %afterExtra = ctjs.load_upvalue %callee[2]
+        %nextEmitted = ctjs.binary_static add %advanced, %afterExtra
+        ctjs.store_upvalue %callee[1], %nextEmitted
+        %effect = ctjs.call %branchSet(%element, %innerName, %yesBranch)
+        scf.yield %extra : !ctjs.value
+      } else {
+        %effect = ctjs.call %branchSet(%element, %elseName, %yesBranch)
+        scf.yield %advanced : !ctjs.value
+      }
+      scf.yield %inner : !ctjs.value
+    }
+    %joined = ctjs.load_upvalue %callee[1]
+    %afterJoin = ctjs.binary_static add %joined, %one
+    ctjs.store_upvalue %callee[1], %afterJoin
+    %branchSeen = ctjs.compare strict_eq %branchValue, %afterJoin
+    %afterEffect = ctjs.call %branchSet(%element, %afterName, %branchSeen))MLIR";
+    const auto branchCapturedSource = replaced(twoCapturedSource,
+                                               "    ctjs.store_upvalue %callee[1], %advanced\n"
+                                               "    ctjs.store_upvalue %callee[2], %extraAdvanced",
+                                               branchStores);
+    for (auto [from, to] : {
+             std::pair{"ctjs.load_upvalue %callee[1]", "ctjs.get_property %this[%emittedName]"},
+             std::pair{"ctjs.load_upvalue %callee[2]", "ctjs.get_property %this[%extraName]"},
+             std::pair{"ctjs.store_upvalue %callee[1],", "ctjs.set_property %this[%emittedName],"},
+             std::pair{"ctjs.store_upvalue %callee[2],", "ctjs.set_property %this[%extraName],"},
+         }) {
+        while (branchStores.find(from) != std::string::npos) {
+            branchStores = replaced(branchStores, from, to);
+        }
+    }
+    const auto branchReceiverSource =
+        replaced(twoStateSource,
+                 "    ctjs.set_property %this[%emittedName], %advanced\n"
+                 "    ctjs.set_property %this[%extraName], %extraAdvanced",
+                 branchStores);
+    auto conditionalCaptured =
+        mlir::parseSourceString<mlir::ModuleOp>(conditionalCapturedSource, &context);
+    auto conditionalReceiver =
+        mlir::parseSourceString<mlir::ModuleOp>(conditionalReceiverSource, &context);
+    auto branchCaptured = mlir::parseSourceString<mlir::ModuleOp>(branchCapturedSource, &context);
+    auto branchReceiver = mlir::parseSourceString<mlir::ModuleOp>(branchReceiverSource, &context);
+    check(conditionalCaptured && conditionalReceiver && branchCaptured && branchReceiver,
+          "original conditional stores and ordered nested two-state joins parse");
+    if (!conditionalCaptured || !conditionalReceiver || !branchCaptured || !branchReceiver) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -374,7 +457,8 @@ module {
     constexpr unsigned completeBudget = 100000;
     for (auto fixture :
          {*original, *withoutReturn, *counted, *retagged, *crossed, *duplicated, *receiver,
-          *twoState, *captured, *twoCaptured, *initializedCapture, *reorderedCapture}) {
+          *twoState, *captured, *twoCaptured, *initializedCapture, *reorderedCapture,
+          *conditionalCaptured, *conditionalReceiver, *branchCaptured, *branchReceiver}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -422,6 +506,59 @@ module {
                 });
                 check(selected, "each projected result retains its original selected SSA value");
             }
+            if (fixture == *branchCaptured || fixture == *branchReceiver) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>("next$2");
+                mlir::scf::IfOp outer, inner;
+                mlir::Value finalCount, finalExtra;
+                llvm::SmallVector<llvm::StringRef> effects;
+                bool effectsLocal = true;
+                body.walk([&](mlir::scf::IfOp branch) {
+                    (branch->getBlock() == &body.getBody().front() ? outer : inner) = branch;
+                });
+                body.walk([&](ctjs::SetPropertyOp set) {
+                    const auto key = ctjs::constantKey(set.getKey());
+                    if (key == "__ctcompile_state_0") { finalCount = set.getValue(); }
+                    if (key == "__ctcompile_state_1") { finalExtra = set.getValue(); }
+                });
+                body.walk([&](ctjs::CallOp call) {
+                    if (call.getArgs().size() != 2) { return; }
+                    const auto key = ctjs::constantKey(call.getArgs()[0]);
+                    if (!key.starts_with("branch-")) { return; }
+                    effects.push_back(key);
+                    auto * region = call->getParentRegion();
+                    effectsLocal &= outer && inner &&
+                                    (key == "branch-then"    ? region == &outer.getThenRegion()
+                                     : key == "branch-inner" ? region == &inner.getThenRegion()
+                                     : key == "branch-else"  ? region == &inner.getElseRegion()
+                                                             : region == &body.getBody());
+                });
+                check(outer && inner && outer.getNumResults() == 3 && inner.getNumResults() == 3,
+                      "nested state joins retain each original result before two state slots");
+                if (outer && inner && outer.getNumResults() == 3 && inner.getNumResults() == 3) {
+                    const auto then = outer.getThenRegion().front().back().getOperands();
+                    const auto nested = inner.getThenRegion().front().back().getOperands();
+                    const auto otherwise = inner.getElseRegion().front().back().getOperands();
+                    auto count = finalCount ? finalCount.getDefiningOp<ctjs::BinaryStaticOp>()
+                                            : ctjs::BinaryStaticOp{};
+                    auto added = then[2].getDefiningOp<ctjs::BinaryStaticOp>();
+                    auto nestedAdded = nested[1].getDefiningOp<ctjs::BinaryStaticOp>();
+                    const auto args = body.getBody().front().getArguments();
+                    check(then[0] == args[3] && added && added.getLhs() == args[4] &&
+                              added.getRhs() == then[1] && otherwise[1] == args[3] &&
+                              otherwise[2] == args[4] && nested[0] == args[4] && nestedAdded &&
+                              nestedAdded.getLhs() == then[1] &&
+                              nestedAdded.getRhs() == nested[2] && count &&
+                              count.getLhs() == outer.getResult(1) &&
+                              finalExtra == outer.getResult(2),
+                          "source result, sequential reads, untouched arm and post-join update "
+                          "persist");
+                }
+                check(effectsLocal && effects == llvm::SmallVector<llvm::StringRef>{"branch-then",
+                                                                                    "branch-inner",
+                                                                                    "branch-else",
+                                                                                    "branch-after"},
+                      "state projection preserves all branch effects in source order");
+            }
             if (auto failure = expandDOMHelpers(*input, contract.entry, completeBudget)) {
                 check(false, "custom iterator methods expand without boxed protocol records");
                 std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
@@ -434,9 +571,12 @@ module {
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
             if (fixture == *receiver || fixture == *twoState || fixture == *captured ||
                 fixture == *twoCaptured || fixture == *initializedCapture ||
-                fixture == *reorderedCapture) {
-                const bool two =
-                    fixture == *twoState || fixture == *twoCaptured || fixture == *reorderedCapture;
+                fixture == *reorderedCapture || fixture == *conditionalCaptured ||
+                fixture == *conditionalReceiver || fixture == *branchCaptured ||
+                fixture == *branchReceiver) {
+                const bool two = fixture == *twoState || fixture == *twoCaptured ||
+                                 fixture == *reorderedCapture || fixture == *branchCaptured ||
+                                 fixture == *branchReceiver;
                 bool objects = false, stateProperties = false, cells = false;
                 mlir::Value closedCount, closedExtra;
                 llvm::SmallVector<llvm::StringRef> closeOrder;
@@ -548,12 +688,6 @@ module {
                       "    %record = ctjs.call %open(%undefined, %holder)"),
              replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
                       "ctjs.store_upvalue %callee[1], %callee"),
-             replaced(capturedSource, "    ctjs.store_upvalue %callee[1], %advanced",
-                      "    %nestedFlag = arith.constant true\n"
-                      "    scf.if %nestedFlag {\n"
-                      "      ctjs.store_upvalue %callee[1], %advanced\n"
-                      "      scf.yield\n"
-                      "    }"),
              otherCaptureSource,
          }) {
         auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
@@ -594,12 +728,6 @@ module {
              replaced(receiverSource, "    %advanced = ctjs.binary_static add %emitted, %one",
                       "    ctjs.store_global \"leaked\", %this\n"
                       "    %advanced = ctjs.binary_static add %emitted, %one"),
-             replaced(receiverSource, "    ctjs.set_property %this[%emittedName], %advanced",
-                      "    %nestedFlag = arith.constant true\n"
-                      "    scf.if %nestedFlag {\n"
-                      "      ctjs.set_property %this[%emittedName], %advanced\n"
-                      "      scf.yield\n"
-                      "    }"),
              replaced(receiverSource, "    %record = ctjs.call %open(%undefined, %holder)",
                       "    ctjs.store_global \"leaked\", %holder\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
@@ -631,10 +759,62 @@ module {
         }
     }
     for (const auto & invalid : {
+             replaced(conditionalCapturedSource, "      ctjs.store_upvalue %callee[1], %advanced",
+                      "      scf.while : () -> () {\n"
+                      "        ctjs.store_upvalue %callee[1], %advanced\n"
+                      "        %again = arith.constant false\n"
+                      "        scf.condition(%again)\n"
+                      "      } do {\n"
+                      "        scf.yield\n"
+                      "      }"),
+             replaced(conditionalReceiverSource,
+                      "      ctjs.set_property %this[%emittedName], %advanced",
+                      "      scf.while : () -> () {\n"
+                      "        ctjs.set_property %this[%emittedName], %advanced\n"
+                      "        %again = arith.constant false\n"
+                      "        scf.condition(%again)\n"
+                      "      } do {\n"
+                      "        scf.yield\n"
+                      "      }"),
+             replaced(branchCapturedSource, "%afterExtra = ctjs.load_upvalue %callee[2]",
+                      "%afterExtra = ctjs.load_upvalue %callee[9]"),
+             replaced(branchReceiverSource, "%afterExtra = ctjs.get_property %this[%extraName]",
+                      "%afterExtra = ctjs.get_property %this[%element]"),
+             replaced(branchCapturedSource, "      ctjs.store_upvalue %callee[1], %advanced",
+                      "      ctjs.store_global \"leaked\", %callee\n"
+                      "      ctjs.store_upvalue %callee[1], %advanced"),
+             replaced(branchReceiverSource,
+                      "      ctjs.set_property %this[%emittedName], %advanced",
+                      "      ctjs.store_global \"leaked\", %this\n"
+                      "      ctjs.set_property %this[%emittedName], %advanced"),
+         }) {
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "unsupported conditional-state witness parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure),
+                  "nested loops, invalid slots and branch escapes refuse");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                      noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "unsupported branch-state proof preserves source and publishes no evidence");
+        }
+    }
+    for (const auto & invalid : {
              replaced(receiverSource, "ctjs.set_property %this[%emittedName], %advanced",
                       "ctjs.set_property %this[%emittedName], %element"),
              replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
                       "ctjs.store_upvalue %callee[1], %element"),
+             replaced(branchCapturedSource, "ctjs.store_upvalue %callee[1], %advanced",
+                      "ctjs.store_upvalue %callee[1], %element"),
+             replaced(branchReceiverSource, "ctjs.set_property %this[%emittedName], %advanced",
+                      "ctjs.set_property %this[%emittedName], %element"),
          }) {
         auto nonScalar = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(nonScalar), "iterator-state category mutation parses");
@@ -779,7 +959,8 @@ module {
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
     for (auto fixture : {*original, *counted, *crossed, *receiver, *twoState, *captured,
-                         *twoCaptured, *initializedCapture, *reorderedCapture}) {
+                         *twoCaptured, *initializedCapture, *reorderedCapture, *conditionalCaptured,
+                         *conditionalReceiver, *branchCaptured, *branchReceiver}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
