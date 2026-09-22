@@ -13,13 +13,13 @@
 
 // DEFAULT: ctnative.precompute_summary = {branches = 1 : i64, budget_exhausted = false, expressions = 2 : i64
 // DEFAULT: ctnative.reachability_summary = {removed = 1 : i64, retained = 1 : i64
-// DEFAULT-LABEL: emitc.func @entry_0() -> f64
+// DEFAULT-LABEL: emitc.func @entry_0() -> !emitc.opaque<"ctnative::js_num">
 // DEFAULT-NOT: scf.if
 // DEFAULT-NOT: add
 // DEFAULT: value = 4.200000e+01 : f64
 // DEFAULT: return
 
-// BASELINE-LABEL: emitc.func @entry_0() -> f64
+// BASELINE-LABEL: emitc.func @entry_0() -> !emitc.opaque<"ctnative::js_num">
 // BASELINE: add
 // BASELINE: scf.if
 // BASELINE: emitc.call @dead_1
@@ -31,7 +31,7 @@
 // NO-PRECOMPUTE: emitc.func @dead_1
 
 // NO-PRUNE: ctnative.precompute_summary = {branches = 1 : i64
-// NO-PRUNE: emitc.func @entry_0() -> f64
+// NO-PRUNE: emitc.func @entry_0() -> !emitc.opaque<"ctnative::js_num">
 // NO-PRUNE: ctjs.func private @dead$1
 // NO-PRUNE-SAME: ctnative.not_native = "parameter 0 is
 
