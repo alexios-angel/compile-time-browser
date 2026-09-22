@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected iterator completion and primitive divisors, 2026-09-22 UTC
+
+Resumed clean **81999dbb** and unchanged `body-throw`, `f1b3f6b8`.
+**a78c1b80** carries an exact suppressed close through custom-iterator
+normalization. The done guard surrounds the invocation; its original return
+method remains protected. The saved throw stays in its non-returning SCF region.
+Completion proof replaces unreachable poison padding, retaining every
+reachable source effect and requiring a real normal return. Mutable exceptional
+state still refuses; invocation and typed C++ throw verifiers are unchanged.
+
+Parallel **530a8e4b** admits bounded primitive division factors through the
+existing conversion and exact-divisibility proof. Complete reload/store checks,
+actual-write replay and budgets remain. The historical String-divisor source
+and raw construction now admit unchanged; all 17 previous source bodies survive.
+
+Focused host and arrays CTests and the quotient-index lit case pass. Three
+selected native sources pass **48 executions, 82 refusals and 24 Node/VM
+observations**, with no nonexecuted admissions. Another **20 throw observations
+agree per engine**. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+Seven final hashes match the devbox; 24 generated C++ files have no Script/VM
+protocol. All 233 existing iterator source bodies and 86 positive metadata rows
+are unchanged. Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** original `f1b3f6b8` now passes custom protocol and
+completion normalization, but both policies refuse **DOM helper requires complete
+structured branches**. `DOMSource::checkBody` must prove the exact non-returning
+region and reconcile shadow-frame state with the reachable normal arm. Then
+expand the protected return method without losing suppression and prove its
+complete DOM effects, primitive throw payload and typed emission. Prefix/global/
+reentry proof remains required. Native execution of this throw source is not yet
+admitted. Mutable exceptional state, multiple protected regions, implicit cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver and
+full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-abrupt-protocol.md).
+
 ## Iterator terminal dispatch and primitive factors, 2026-09-22 UTC
 
 Resumed clean **3a77bcdd** and unchanged `body-throw`, `f1b3f6b8`.
