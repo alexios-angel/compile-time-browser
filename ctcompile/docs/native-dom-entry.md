@@ -540,10 +540,13 @@ lifetime.
 
 Mutable lexical Number cells may also supply iterator state. Each root-local
 cell has a literal Number initializer, either directly or through one assignment
-before every capturing method. Only the confined `next` and `return` closures
-may capture it; external reads, later assignments, other closures and forwarded
-captures refuse. Loads and stores may occur in each method's root block or nested
-`if` arms and `while` regions, and mutable capture methods must be leaves. The proof
+before every capturing method and read. Only the confined `next` and `return`
+closures may capture it; other closures and forwarded captures refuse. The
+enclosing entry may read and update cells mutated by those methods before,
+during and after iteration. Entry verification and initialization dominance cover
+structured branches, loops and importer completion selections. Loads and stores
+may occur in each method's root block or nested `if` arms and `while` regions,
+and mutable capture methods must be leaves. The proof
 follows cell identity across different capture orders, removes only those slots and
 reindexes remaining immutable captures. General helper capture admission still requires
 immutability.
@@ -566,7 +569,9 @@ without erasing their producers or changing ordered effects and live state.
 Existing helper expansion removes those result records. State
 resets for every iterator allocation; a close hook receives the latest values
 after `next`, including on a break. Numeric comparisons require independent
-Number evidence.
+Number evidence. The close branch returns its updated state to the entry;
+exhaustion retains the final `next` state. Ordered post-loop reads and writes
+therefore observe the same cells without retaining cell storage.
 The item must only be observed after a fresh false done test; done itself has
 truth-only observations. Exhaustion stops further next calls and skips return.
 A proved source `break` calls return once when it exists. Multiple live

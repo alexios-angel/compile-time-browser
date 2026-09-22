@@ -22,6 +22,47 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Enclosing iterator capture state and XOR complements, 2026-09-22 UTC
+
+Continued clean **e28b03b8** from the recorded
+`loop-break-external-captured-read` boundary. **35f59014** carries the
+iterator's captured Number cells through enclosing-entry reads and writes,
+including before, inside and after iteration. The existing scalar tuple and
+structured control-flow rewrite preserve shared identity and source order.
+Close joins retain `return` updates on break and final `next` state on exhaustion.
+The existing MLIR verifier and dominance analysis check entry shape and
+initialization before rewriting. Other capturing closures remain refused.
+
+Six original complete-source refusals now execute unchanged. A new two-cell
+source checks entry loops, conditional body updates, close-hook state and ordered
+post-loop observations. All 82 earlier source bodies remain. Generated C++ uses
+typed scalar state and public DOM calls without cell storage or Script.
+Parallel escape **c2254fc8** preserves full strides when XOR flips every proved
+varying input bit within one signed conversion band. Fifteen source witnesses
+extend the unchanged 108 OR/XOR sources. No browser/oracle semantics changed.
+
+Focused checks pass: exact host **1/1, 0.96 s total**; custom iteration lit
+**1/1, 745.61 s**, with **448 native executions, 790 refusals and
+224 Node/VM observations**; exact arrays **1/1, 1.68 s total**; AND and OR/XOR
+lit **2/2, 0.14 s**. All seven final code/test hashes match their gates.
+The initial raw assertion expected arithmetic outside the close branch;
+inspection confirmed existing completion normalization moves it into each arm.
+The new combined source also required dominance across imported switch regions.
+Required formatting retains **16 pre-existing diagnostics in four untouched
+files**; changed files pass scoped checks. Full suites, unchanged nested/dataset
+lit, broad replays, Windows and sanitizers were skipped. The devbox idle timer is
+active/enabled.
+
+**Next native boundary:** committed `entry-captured-sibling-reader` preserves
+the new entry-state source but reads `emitted` through a separate local closure
+after iteration. Both optimization policies refuse with
+`DOM iterator capture cell has an external reader or writer`. The next proof
+must preserve that closure's observation of the latest cell. Nested custom opens,
+body abrupt-close behavior, literal range-for printing, unguarded Bootstrap
+defaults and the application driver remain open. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-entry-state.md).
+
 ## Iterator method breaks and fixed-bit mask strides, 2026-09-22 UTC
 
 Continued **ccbdf5d6** and resumed iteration 52's interrupted edits.
