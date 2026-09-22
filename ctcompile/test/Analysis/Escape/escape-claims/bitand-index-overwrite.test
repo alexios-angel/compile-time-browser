@@ -29,8 +29,8 @@
 // CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
-// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
@@ -116,6 +116,18 @@
 // CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 111 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 112 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 113 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 114 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 115 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 116 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 117 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 118 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 119 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 120 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 121 {{[0-9]+}} obj confined
 
 //--- source.js
 function masked() {
@@ -751,3 +763,72 @@ fixedRoundedAndOverlappingReload();
 fixedRoundedAndLaterOverwrite();
 fixedRoundedAndUnitStride();
 fixedRoundedAndNearMask();
+function twoPointAnd() {
+    var child = {}, a = [child, child, 3, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[i & a[2]] = 0;
+    return a;
+}
+function twoPointAndCommuted() {
+    var child = {}, a = [child, child, 3, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[a[2] & i] = 0;
+    return a;
+}
+function twoPointAndNegative() {
+    var child = {}, a = [child, child, 3, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i - 8) & a[2])] = 0;
+    return a;
+}
+function twoPointAndRemainingChild() {
+    var child = {}, a = [child, child, 3, child, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[i & a[2]] = 0;
+    return a;
+}
+function twoPointAndSavedChild() {
+    var child = {}, a = [child, child, 3, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 5) a[i & a[2]] = 0;
+    return saved;
+}
+function twoPointAndHighCrossing() {
+    var child = {}, a = [3, 0, child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i + 2147483646) & a[0]) & 7] = 0;
+    return a;
+}
+function twoPointAndLowCrossing() {
+    var child = {}, a = [child, 0, 3, child, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i - 2147483649) & a[2]) & 7] = 0;
+    return a;
+}
+function twoPointAndOverlappingReload() {
+    var child = {}, a = [3, child, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[i & a[0]] = 0;
+    return a;
+}
+function twoPointAndLaterOverwrite() {
+    var child = {}, a = [child, child, 3, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) {
+        a[i & a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function twoPointAndInteriorWrite() {
+    var child = {}, a = [child, child, 3, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i & a[2]] = 0;
+    return a;
+}
+function twoPointAndCoincident() {
+    var child = {}, a = [child, 0, 2, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[i & a[2]] = 0;
+    return a;
+}
+twoPointAnd();
+twoPointAndCommuted();
+twoPointAndNegative();
+twoPointAndRemainingChild();
+twoPointAndSavedChild();
+twoPointAndHighCrossing();
+twoPointAndLowCrossing();
+twoPointAndOverlappingReload();
+twoPointAndLaterOverwrite();
+twoPointAndInteriorWrite();
+twoPointAndCoincident();

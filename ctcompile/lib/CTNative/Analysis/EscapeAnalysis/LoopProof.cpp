@@ -372,6 +372,16 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!positive && !negative) { return std::nullopt; }
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
+            const auto endpointNumber = [](const ContentsValue & endpoint) {
+                return endpoint.integerNumber
+                           ? static_cast<std::int64_t>(*endpoint.integerNumber)
+                           : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber);
+            };
+            // With no interior lattice point, both endpoint images enclose
+            // every visit even across a ToInt32 discontinuity. Magnitudes are
+            // bounded by 2^32-1, so their signed difference fits int64_t.
+            const bool twoPoints = endpointNumber(range->last) - endpointNumber(range->first) <=
+                                   static_cast<std::int64_t>(range->stride);
             const auto inputStride = std::size_t{1} << std::countr_zero(range->stride);
             const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
             const auto lower = numberBits(range->first);
@@ -387,13 +397,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto roundedBits = ((bitAnd ? ~mask : mask) & varying) | fixed;
             const bool rounding =
                 !bitXor && std::has_single_bit(static_cast<std::uint64_t>(roundedBits) + 1);
-            if (signedBand(range->first) == signedBand(range->last) && (affine || rounding)) {
+            if (twoPoints ||
+                (signedBand(range->first) == signedBand(range->last) && (affine || rounding))) {
                 // Changing only fixed input bits is a translation; flipping all
                 // varying bits reverses it. Both preserve the full stride within
                 // one ToInt32 band, including signed zero crossings.
                 // Clearing/setting a low suffix instead rounds monotonically;
                 // its endpoints stay exact, but only fixed low bits survive.
-                if (!affine) {
+                if (!affine && !twoPoints) {
                     range->stride =
                         std::max(inputStride, static_cast<std::size_t>(roundedBits) + 1);
                 }
@@ -409,7 +420,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     }
                     *endpoint = result;
                 }
-                if (complement) { std::swap(range->first, range->last); }
+                if (twoPoints) {
+                    if (endpointNumber(range->first) > endpointNumber(range->last)) {
+                        std::swap(range->first, range->last);
+                    }
+                    range->stride = static_cast<std::size_t>(std::max<std::int64_t>(
+                        1, endpointNumber(range->last) - endpointNumber(range->first)));
+                } else if (complement) {
+                    std::swap(range->first, range->last);
+                }
                 return range;
             }
             // Enclose the varying bits densely: endpoint bitwise results alone

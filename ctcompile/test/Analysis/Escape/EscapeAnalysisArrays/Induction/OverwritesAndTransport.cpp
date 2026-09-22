@@ -941,6 +941,140 @@ void InductionCases::overwritesAndTransport() {
                            std::string(isAnd ? "4617315517961601024" : "4621819117588971520") +
                            "> {storage_test_id = \"mask\"}"));
     }
+    for (const std::string kind : {"bitand", "bitor", "bitxor"}) {
+        const bool isAnd = kind == "bitand";
+        const bool isOr = kind == "bitor";
+        const std::string contents = isAnd
+                                         ? "[%x, %x, %pairMask, %zero, %zero, %zero]"
+                                         : "[%zero, %zero, %x, %zero, %pairMask, %zero, %zero, %x]";
+        const std::string guard = isAnd ? "%pairTwo" : "%pairFour";
+        const char * values = isAnd ? "a:[zero,zero,mask,zero,zero,zero]"
+                                    : "a:[zero,zero,zero,zero,mask,zero,zero,zero]";
+        const char * reads = isAnd ? "a[2]=mask; a[0]=zero; a[2]=mask; a[5]=zero"
+                                   : "a[4]=mask; a[0]=zero; a[4]=mask; a[5]=zero";
+        const auto pair =
+            replace(replace(replace(masked, "[%one, %x]", contents), "  %a =",
+                            "  %pairTwo = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                            "  %pairThree = ctjs.constant #ctjs.number<4613937818241073152>\n"
+                            "  %pairFour = ctjs.constant #ctjs.number<4616189618054758400>\n"
+                            "  %pairFive = ctjs.constant #ctjs.number<4617315517961601024>\n"
+                            "  %pairSeven = ctjs.constant #ctjs.number<4619567317775286272>\n"
+                            "  %pairEight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                            "  %pairHigh = ctjs.constant #ctjs.number<4746794007240114176>\n"
+                            "  %pairLow = ctjs.constant #ctjs.number<13970166044105375744>\n"
+                            "  %pairMask = ctjs.constant #ctjs.number<" +
+                                std::string(isAnd ? "4613937818241073152" : "4611686018427387904") +
+                                "> {storage_test_id = \"mask\"}\n  %a ="),
+                    "%position = ctjs.binary_static bitand %i, %one",
+                    "%pairReload = ctjs.get_property %base[" + guard +
+                        "]\n"
+                        "  %pairBits = ctjs.binary_static " +
+                        kind +
+                        " %i, %pairReload\n"
+                        "  %position = ctjs.unary plus %pairBits");
+        const auto twoPoints = replace(pair, "add %i, %one", "add %i, %pairFive");
+        for (const auto & operands : {"%i, %pairReload", "%pairReload, %i"}) {
+            run({.what = "two-point bitwise images retain exact bounds and gaps",
+                 .body = replace(twoPoints, kind + " %i, %pairReload", kind + " " + operands),
+                 .arrays = values,
+                 .reads = reads,
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "negative two-point bitwise images retain exact signed order",
+             .body = replace(
+                 replace(twoPoints, "%pairBits = ctjs.binary_static " + kind + " %i, %pairReload",
+                         "%pairInput = ctjs.binary sub %i, %pairEight\n"
+                         "  %pairBits = ctjs.binary_static " +
+                             kind + " %pairInput, %pairReload"),
+                 "ctjs.unary plus %pairBits",
+                 isAnd ? "ctjs.unary plus %pairBits" : "ctjs.binary add %pairBits, %pairEight"),
+             .arrays = values,
+             .reads = reads,
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "two-point gaps retain children outside actual writes",
+             .body = replace(twoPoints, contents,
+                             isAnd ? "[%x, %x, %pairMask, %x, %zero, %zero]"
+                                   : "[%zero, %x, %x, %zero, %pairMask, %zero, %zero, %x]"),
+             .arrays = isAnd ? "a:[zero,zero,mask,x,zero,zero]"
+                             : "a:[zero,x,zero,zero,mask,zero,zero,zero]",
+             .reads = reads,
+             .exit = "a -> {a,x}"});
+        const auto saved = replace(replace(twoPoints, "  cf.br ^header(%a,",
+                                           "  %pairSaved = ctjs.get_property %a[" +
+                                               std::string(isAnd ? "%zero" : "%pairTwo") +
+                                               "]\n"
+                                               "  cf.br ^header(%a,"),
+                                   "ctjs.return %a", "ctjs.return %pairSaved");
+        run({.what = "two-point writes preserve a previously saved child",
+             .body = saved,
+             .arrays = values,
+             .reads = isAnd ? "a[0]=x; a[2]=mask; a[0]=zero; a[2]=mask; a[5]=zero"
+                            : "a[2]=x; a[4]=mask; a[0]=zero; a[4]=mask; a[5]=zero",
+             .exit = "x -> {x}"});
+        reject("two-point bounds retain overlap checks at their exact endpoint",
+               replace(replace(twoPoints, contents,
+                               isAnd ? "[%pairMask, %x, %zero, %zero, %zero, %zero]"
+                                     : "[%zero, %zero, %pairMask, %zero, %zero, %zero, %zero, %x]"),
+                       "%base[" + guard + "]", isAnd ? "%base[%zero]" : "%base[%pairTwo]"));
+        reject("two-point bounds retain the complete later-store census",
+               replace(twoPoints,
+                       "  %step =", "  ctjs.set_property %base[" + guard + "], %zero\n  %step ="));
+        auto interior =
+            replace(pair, "add %i, %one", isAnd ? "add %i, %pairTwo" : "add %i, %pairThree");
+        if (!isAnd) {
+            interior =
+                replace(replace(interior, contents,
+                                isOr ? "[%zero, %zero, %x, %pairMask, %zero, %zero, %x, %zero]"
+                                     : "[%zero, %pairMask, %x, %zero, %x, %zero, %zero, %zero]"),
+                        "%base[%pairFour]", isOr ? "%base[%pairThree]" : "%base[%one]");
+        }
+        reject("three-point masks cannot omit a distinct interior write", interior);
+        for (const bool upper : {true, false}) {
+            const std::string crossedContents =
+                isAnd  ? (upper ? "[%pairMask, %zero, %x, %x, %zero, %zero]"
+                                : "[%x, %zero, %pairMask, %x, %zero, %zero]")
+                : isOr ? (upper ? "[%zero, %zero, %zero, %x, %pairMask, %zero, %x, %zero]"
+                                : "[%zero, %zero, %zero, %zero, %pairMask, %zero, %x, %x]")
+                       : (upper ? "[%zero, %x, %pairMask, %zero, %x, %zero, %zero, %zero]"
+                                : "[%zero, %zero, %zero, %zero, %pairMask, %x, %x, %zero]");
+            const std::string crossedGuard = isAnd ? (upper ? "%zero" : "%pairTwo")
+                                                   : (!isOr && upper ? "%pairTwo" : "%pairFour");
+            auto crossing = replace(replace(replace(twoPoints, contents, crossedContents),
+                                            "%base[" + guard + "]", "%base[" + crossedGuard + "]"),
+                                    "%pairBits = ctjs.binary_static " + kind + " %i, %pairReload",
+                                    "%pairInput = ctjs.binary add %i, " +
+                                        std::string(upper ? "%pairHigh" : "%pairLow") +
+                                        "\n  %pairBits = ctjs.binary_static " + kind +
+                                        " %pairInput, %pairReload");
+            crossing = replace(crossing, "ctjs.unary plus %pairBits",
+                               "ctjs.binary_static bitand %pairBits, %pairSeven");
+            run({.what = "two-point masks compose across either signed conversion jump",
+                 .body = crossing,
+                 .arrays = isAnd ? (upper ? "a:[mask,zero,zero,zero,zero,zero]"
+                                          : "a:[zero,zero,mask,zero,zero,zero]")
+                                 : (!isOr && upper ? "a:[zero,zero,mask,zero,zero,zero,zero,zero]"
+                                                   : "a:[zero,zero,zero,zero,mask,zero,zero,zero]"),
+                 .reads = isAnd ? (upper ? "a[0]=mask; a[0]=mask; a[0]=mask; a[5]=zero"
+                                         : "a[2]=mask; a[0]=x; a[2]=mask; a[5]=zero")
+                                : (!isOr && upper ? "a[2]=mask; a[0]=zero; a[2]=mask; a[5]=zero"
+                                                  : "a[4]=mask; a[0]=zero; a[4]=mask; a[5]=zero"),
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        if (isAnd) {
+            run({.what = "coincident two-point images keep a positive enclosing stride",
+                 .body = replace(
+                     replace(twoPoints, contents, "[%x, %zero, %pairMask, %zero, %zero, %zero]"),
+                     "#ctjs.number<4613937818241073152> {storage_test_id = \"mask\"}",
+                     "#ctjs.number<4611686018427387904> {storage_test_id = \"mask\"}"),
+                 .arrays = values,
+                 .reads = reads,
+                 .exit = "a -> {a}"},
+                "x");
+        }
+    }
     const auto signedBits = replace(masked, "  %a =",
                                     "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
                                     "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"
@@ -1177,14 +1311,21 @@ void InductionCases::overwritesAndTransport() {
                    "sub %bits, %one", "add %bits, %zero"));
     for (const auto & input :
          {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
-        reject("varying-bit complements still refuse signed conversion discontinuities",
-               replace(crossZeroComplement,
-                       "%part = ctjs.binary sub %i, %three\n"
-                       "  %bits = ctjs.binary_static bitxor %part, %mask\n"
-                       "  %position = ctjs.binary add %bits, %three",
-                       "%part = " + std::string(input) +
-                           "\n  %bits = ctjs.binary_static bitxor %part, %mask\n"
-                           "  %position = ctjs.binary_static bitand %bits, %one"));
+        run({.what = "two-point varying-bit complements preserve conversion-jump visits",
+             .body = replace(crossZeroComplement,
+                             "%part = ctjs.binary sub %i, %three\n"
+                             "  %bits = ctjs.binary_static bitxor %part, %mask\n"
+                             "  %position = ctjs.binary add %bits, %three",
+                             "%part = " + std::string(input) +
+                                 "\n  %bits = ctjs.binary_static bitxor %part, %mask\n"
+                                 "  %position = ctjs.binary_static bitand %bits, %one"),
+             .arrays = std::string(input) == "ctjs.binary add %maximum, %i"
+                           ? "a:[x,zero,mask,zero,zero,zero,x]"
+                           : "a:[zero,zero,mask,zero,zero,zero,x]",
+             .reads = std::string(input) == "ctjs.binary add %maximum, %i"
+                          ? "a[2]=mask; a[0]=x; a[2]=mask; a[6]=x"
+                          : "a[2]=mask; a[0]=zero; a[2]=mask; a[6]=x",
+             .exit = "a -> {a,x}"});
     }
     const auto complementBits = replace(signedBits, "%negativeOne = ctjs.unary neg %one",
                                         "%negativeOne = ctjs.unary neg %one "
@@ -1310,7 +1451,14 @@ void InductionCases::overwritesAndTransport() {
                  .exit = "a -> {a}"},
                 "x");
         } else {
-            reject("identity AND retains conversion guards through a final low mask", body);
+            run({.what = "two-point identity AND preserves both conversion-jump images",
+                 .body = body,
+                 .arrays = "a:[zero,zero]",
+                 .reads = std::string(input) == "ctjs.binary add %maximum, %i"
+                              ? "a[0]=one; a[1]=zero"
+                              : "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
         }
     }
     reject("a signed AND result must still become a nonnegative own key",
@@ -1403,12 +1551,18 @@ void InductionCases::overwritesAndTransport() {
         "x");
     for (const auto & input :
          {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
-        reject("a final mask cannot hide an inner OR/XOR conversion discontinuity",
-               replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
-                       "%part = " + std::string(input) +
-                           "\n"
-                           "  %bits = ctjs.binary_static bitxor %part, %maximum\n"
-                           "  %position = ctjs.binary_static bitand %bits, %one"));
+        run({.what = "two-point XOR composes exact images through a final mask",
+             .body = replace(signedBits, "%position = ctjs.binary_static bitand %i, %one",
+                             "%part = " + std::string(input) +
+                                 "\n"
+                                 "  %bits = ctjs.binary_static bitxor %part, %maximum\n"
+                                 "  %position = ctjs.binary_static bitand %bits, %one"),
+             .arrays = "a:[zero,zero]",
+             .reads = std::string(input) == "ctjs.binary sub %negativeSign, %i"
+                          ? "a[0]=one; a[1]=zero"
+                          : "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
     }
     const auto orReload = replace(replace(masked, "[%one, %x]", "[%one, %x, %zero, %zero]"),
                                   "%position = ctjs.binary_static bitand %i, %one",

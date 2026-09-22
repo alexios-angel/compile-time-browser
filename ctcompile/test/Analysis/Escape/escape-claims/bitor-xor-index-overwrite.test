@@ -26,8 +26,8 @@
 // CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
-// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj confined
@@ -167,6 +167,27 @@
 // CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 160 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 161 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 162 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 163 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 164 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 165 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 166 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 167 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 168 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 169 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 170 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 171 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 172 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 173 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 174 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 175 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 176 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 177 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 178 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 179 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function orWrites() {
@@ -1075,3 +1096,129 @@ fixedRoundedOrOverlappingReload();
 fixedRoundedOrLaterOverwrite();
 fixedRoundedOrUnitStride();
 fixedRoundedOrNearMask();
+function twoPointOr() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i | a[4]] = 0;
+    return a;
+}
+function twoPointOrCommuted() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[a[4] | i] = 0;
+    return a;
+}
+function twoPointOrNegative() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[((i - 8) | a[4]) + 8] = 0;
+    return a;
+}
+function twoPointOrRemainingChild() {
+    var child = {}, a = [0, child, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i | a[4]] = 0;
+    return a;
+}
+function twoPointOrSavedChild() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child], saved = a[2];
+    for (var i = 0; i < a.length; i += 5) a[i | a[4]] = 0;
+    return saved;
+}
+function twoPointOrHighCrossing() {
+    var child = {}, a = [0, 0, 0, child, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i + 2147483646) | a[4]) & 7] = 0;
+    return a;
+}
+function twoPointOrLowCrossing() {
+    var child = {}, a = [0, 0, 0, 0, 2, 0, child, child];
+    for (var i = 0; i < a.length; i += 5) a[((i - 2147483649) | a[4]) & 7] = 0;
+    return a;
+}
+function twoPointOrOverlappingReload() {
+    var child = {}, a = [0, 0, 2, 0, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i | a[2]] = 0;
+    return a;
+}
+function twoPointOrLaterOverwrite() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) {
+        a[i | a[4]] = 0;
+        a[4] = 0;
+    }
+    return a;
+}
+function twoPointOrInteriorWrite() {
+    var child = {}, a = [0, 0, child, 2, 0, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[i | a[3]] = 0;
+    return a;
+}
+function twoPointXor() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[4]] = 0;
+    return a;
+}
+function twoPointXorCommuted() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[a[4] ^ i] = 0;
+    return a;
+}
+function twoPointXorNegative() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[((i - 8) ^ a[4]) + 8] = 0;
+    return a;
+}
+function twoPointXorRemainingChild() {
+    var child = {}, a = [0, child, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[4]] = 0;
+    return a;
+}
+function twoPointXorSavedChild() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child], saved = a[2];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[4]] = 0;
+    return saved;
+}
+function twoPointXorHighCrossing() {
+    var child = {}, a = [0, child, 2, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i + 2147483646) ^ a[2]) & 7] = 0;
+    return a;
+}
+function twoPointXorLowCrossing() {
+    var child = {}, a = [0, 0, 0, 0, 2, child, child, 0];
+    for (var i = 0; i < a.length; i += 5) a[((i - 2147483649) ^ a[4]) & 7] = 0;
+    return a;
+}
+function twoPointXorOverlappingReload() {
+    var child = {}, a = [0, 0, 2, 0, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) a[i ^ a[2]] = 0;
+    return a;
+}
+function twoPointXorLaterOverwrite() {
+    var child = {}, a = [0, 0, child, 0, 2, 0, 0, child];
+    for (var i = 0; i < a.length; i += 5) {
+        a[i ^ a[4]] = 0;
+        a[4] = 0;
+    }
+    return a;
+}
+function twoPointXorInteriorWrite() {
+    var child = {}, a = [0, 2, child, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i ^ a[1]] = 0;
+    return a;
+}
+twoPointOr();
+twoPointOrCommuted();
+twoPointOrNegative();
+twoPointOrRemainingChild();
+twoPointOrSavedChild();
+twoPointOrHighCrossing();
+twoPointOrLowCrossing();
+twoPointOrOverlappingReload();
+twoPointOrLaterOverwrite();
+twoPointOrInteriorWrite();
+twoPointXor();
+twoPointXorCommuted();
+twoPointXorNegative();
+twoPointXorRemainingChild();
+twoPointXorSavedChild();
+twoPointXorHighCrossing();
+twoPointXorLowCrossing();
+twoPointXorOverlappingReload();
+twoPointXorLaterOverwrite();
+twoPointXorInteriorWrite();
