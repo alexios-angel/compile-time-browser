@@ -344,6 +344,24 @@ SIBLING_NESTED_SNAPSHOTS_SOURCE = (
     )
     .replace("    return rounds + before;", "    return rounds + before + observed;", 1)
 )
+SIBLING_CALLABLE_ARGUMENT_SOURCE = SIBLING_NESTED_WRITER_SOURCE.replace(
+    "  const read = () => {",
+    "  const relay = (writer) => writer();\n  const read = () => {",
+    1,
+).replace("rounds += advance();", "rounds += relay(advance);", 1)
+SIBLING_CALLABLE_SNAPSHOTS_SOURCE = SIBLING_NESTED_SNAPSHOTS_SOURCE.replace(
+    "  const read = () => {",
+    "  const relay = (amount, writer, prior) => writer(amount, prior);\n  const read = () => {",
+    1,
+).replace("advance(closed, closed += emitted)", "relay(closed, advance, closed += emitted)", 1)
+SIBLING_CALLABLE_SHARED_SOURCE = (
+    SIBLING_SHARED_WRITER_SOURCE.replace(
+        "const forward = () => advance();", "const forward = (writer) => writer();"
+    )
+    .replace("const relay = () => advance() + 1;", "const relay = (writer) => forward(writer) + 1;")
+    .replace("rounds += forward();", "rounds += forward(advance);")
+    .replace("rounds += relay();", "rounds += relay(advance);")
+)
 
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
@@ -740,6 +758,33 @@ POSITIVES = (
         SIBLING_NESTED_SNAPSHOTS_SOURCE,
         True,
         ("42651", "51971", "42651"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-callable-argument-writer",
+        SIBLING_CALLABLE_ARGUMENT_SOURCE,
+        True,
+        ("2724", "3598", "2724"),
+        True,
+        "false",
+    ),
+    (
+        # The callable separates two scalar arguments; the later argument writes
+        # the first one's cell before the forwarded call reads both snapshots.
+        "entry-captured-sibling-callable-argument-snapshots",
+        SIBLING_CALLABLE_SNAPSHOTS_SOURCE,
+        True,
+        ("42651", "51971", "42651"),
+        True,
+        "false",
+    ),
+    (
+        # Both branches pass the shared writer, one through another parameter.
+        "entry-captured-sibling-callable-argument-shared",
+        SIBLING_CALLABLE_SHARED_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
         True,
         "false",
     ),
@@ -1151,11 +1196,35 @@ def refusals():
             "entry-captured-sibling-nested-call-nonnumber": SIBLING_NESTED_WRITER_SOURCE.replace(
                 "emitted += closed; return before;", "emitted = true; return before;", 1
             ),
-            "entry-captured-sibling-callable-argument-writer": SIBLING_NESTED_WRITER_SOURCE.replace(
-                "  const read = () => {",
-                "  const relay = (writer) => writer();\n  const read = () => {",
+            "entry-captured-sibling-callable-argument-escaping": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+                "(writer) => writer();", "(writer) => { anchor.saved = writer; return writer(); };"
+            ),
+            "entry-captured-sibling-callable-argument-mutation": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+                "const advance =", "let advance =", 1
+            ).replace(
+                "  count += read();\n  closed += emitted;",
+                "  advance = () => emitted;\n  count += read();\n  closed += emitted;",
                 1,
-            ).replace("rounds += advance();", "rounds += relay(advance);", 1),
+            ),
+            "entry-captured-sibling-callable-argument-object": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+                "rounds += relay(advance);", "rounds += relay(anchor);", 1
+            ),
+            "entry-captured-sibling-callable-argument-missing": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+                "rounds += relay(advance);", "rounds += relay();", 1
+            ),
+            "entry-captured-sibling-callable-argument-recursive": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+                "(writer) => writer();", "(writer) => writer(writer);"
+            ).replace(
+                "rounds += relay(advance);", "rounds += relay(relay);", 1
+            ),
+            "entry-captured-sibling-callable-argument-nonnumber": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+                "emitted += closed; return before;", "emitted = true; return before;", 1
+            ),
+            "entry-captured-sibling-returned-callable-writer": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
+                "  const relay = (writer) => writer();",
+                "  const identity = (writer) => writer;\n"
+                "  const relay = (writer) => identity(writer)();",
+            ),
         }
     )
     return variants

@@ -377,6 +377,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if ((cell || write) && !callableCell(cell)) {
                     return error("DOM iterator sibling callable storage is mutable or escapes");
                 }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                if (call || direct) {
+                    auto callee = call ? call.getCallee() : direct.getCalleeValue();
+                    auto target = callee.getDefiningOp<ctjs::CreateClosureOp>();
+                    if (target && target->getBlock() == &entry.getBody().front()) {
+                        siblingHelpers.insert(target);
+                    }
+                }
             }
         }
     }
@@ -444,6 +453,94 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         helperIndices[helper.closure] = static_cast<unsigned>(index);
     }
+    auto callableValues = helperIndices;
+    llvm::SmallVector<mlir::Operation *> familyCalls;
+    const auto collectCalls = [&](ctjs::FuncOp body) {
+        return body.walk([&](mlir::Operation * operation) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation)) {
+                familyCalls.push_back(operation);
+            }
+            return mlir::WalkResult::advance();
+        });
+    };
+    if (collectCalls(entry).wasInterrupted()) {
+        return error("DOM custom iterator budget exhausted");
+    }
+    for (auto & helper : helpers) {
+        const auto captures = helper.body.walk([&](mlir::Operation * operation) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation);
+            auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation);
+            if (read || write) {
+                auto capture = helper.closure.getUpvalues()[static_cast<unsigned>(
+                    read ? read.getIndex() : write.getIndex())];
+                if (auto target = callableCells.lookup(capture)) {
+                    if (write) { return mlir::WalkResult::interrupt(); }
+                    callableValues[read.getResult()] = helperIndices.lookup(target);
+                }
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (captures.wasInterrupted() || collectCalls(helper.body).wasInterrupted()) {
+            return error("DOM iterator sibling callable capture is mutable or unproved");
+        }
+    }
+    // ponytail: one callable identity per formal; differing targets need a
+    // per-invocation proof. Rescan forwarding edges under the shared budget.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto * operation : familyCalls) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+            auto found = callableValues.find(call ? call.getCallee() : direct.getCalleeValue());
+            if (found == callableValues.end()) { continue; }
+            auto & body = helpers[found->second].body.getBody().front();
+            auto args = call ? call.getArgs() : direct.getArgs();
+            if (args.size() + ctjs::implicit_arguments != body.getNumArguments()) {
+                return error("DOM iterator sibling helper requires exact argument arity");
+            }
+            for (auto [index, actual] : llvm::enumerate(args)) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                auto target = callableValues.find(actual);
+                if (target == callableValues.end()) { continue; }
+                auto formal =
+                    body.getArgument(ctjs::implicit_arguments + static_cast<unsigned>(index));
+                const unsigned targetIndex = target->second;
+                auto [bound, inserted] = callableValues.try_emplace(formal, targetIndex);
+                if (!inserted && bound->second != targetIndex) {
+                    return error("DOM iterator callable argument requires one immutable target");
+                }
+                changed |= inserted;
+            }
+        }
+    }
+    for (auto * operation : familyCalls) {
+        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+        auto found = callableValues.find(call ? call.getCallee() : direct.getCalleeValue());
+        if (found == callableValues.end()) {
+            if (operation->getParentOfType<ctjs::FuncOp>() != entry) {
+                return error("DOM iterator sibling call requires an immutable local helper");
+            }
+            continue;
+        }
+        auto & body = helpers[found->second].body.getBody().front();
+        for (auto [index, actual] : llvm::enumerate(call ? call.getArgs() : direct.getArgs())) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto formal = callableValues.find(
+                body.getArgument(ctjs::implicit_arguments + static_cast<unsigned>(index)));
+            if (formal != callableValues.end()) {
+                auto target = callableValues.find(actual);
+                if (target == callableValues.end() || target->second != formal->second) {
+                    return error("DOM iterator callable argument has an unproved actual");
+                }
+            }
+        }
+    }
     const auto callsOf = [&](mlir::Value value, Helper & helper, ctjs::FuncOp caller) -> bool {
         for (mlir::OpOperand & use : value.getUses()) {
             if (!spend()) { return false; }
@@ -458,6 +555,20 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 caller == entry && cell && use.getOperandNumber() == 0 &&
                 callableCells.lookup(cell) == helper.closure) {
                 continue;
+            }
+            auto ordinary = llvm::dyn_cast<ctjs::CallOp>(user);
+            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+            if (ordinary || direct) {
+                auto args = ordinary ? ordinary.getArgs() : direct.getArgs();
+                const unsigned first = user->getNumOperands() - args.size();
+                if (use.getOperandNumber() >= first) {
+                    auto target = callableValues.find(ordinary ? ordinary.getCallee()
+                                                               : direct.getCalleeValue());
+                    if (target != callableValues.end() &&
+                        user->getParentOfType<ctjs::FuncOp>() == caller) {
+                        continue; // The complete actual/formal census above proved this edge.
+                    }
+                }
             }
             bool callable = false;
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
@@ -480,39 +591,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return true;
     };
-    for (auto & helper : helpers) {
-        if (!callsOf(helper.closure, helper, entry)) {
+    for (auto [value, index] : callableValues) {
+        auto * parent = value.getParentBlock()->getParentOp();
+        auto caller = llvm::dyn_cast<ctjs::FuncOp>(parent);
+        if (!caller) { caller = parent->getParentOfType<ctjs::FuncOp>(); }
+        if (!callsOf(value, helpers[index], caller)) {
             return error("DOM iterator sibling helper escapes or has an unsupported call");
-        }
-        const auto calls = helper.body.walk([&](mlir::Operation * operation) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
-            auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation);
-            auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation);
-            if (read || write) {
-                auto capture = helper.closure.getUpvalues()[static_cast<unsigned>(
-                    read ? read.getIndex() : write.getIndex())];
-                if (auto target = callableCells.lookup(capture)) {
-                    if (write || !callsOf(read.getResult(), helpers[helperIndices.lookup(target)],
-                                          helper.body)) {
-                        return mlir::WalkResult::interrupt();
-                    }
-                }
-            }
-            auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
-            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-            if (ordinary || direct) {
-                auto callee = ordinary ? ordinary.getCallee() : direct.getCalleeValue();
-                auto load = callee.getDefiningOp<ctjs::LoadUpvalueOp>();
-                if (!load ||
-                    !callableCells.contains(
-                        helper.closure.getUpvalues()[static_cast<unsigned>(load.getIndex())])) {
-                    return mlir::WalkResult::interrupt();
-                }
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (calls.wasInterrupted()) {
-            return error("DOM iterator sibling call requires an immutable local helper");
         }
     }
     for (auto & helper : helpers) {
