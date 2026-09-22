@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator terminal dispatch and primitive factors, 2026-09-22 UTC
+
+Resumed clean **3a77bcdd** and unchanged `body-throw`, `f1b3f6b8`.
+**fd97e48d** structures its mixed throw/return terminal dispatch after close
+suppression. Existing SCF regions retain the original throw, saved payload,
+protected close and normal-path effects. Only the real return supplies a result;
+the throwing arm's required yield remains unreachable. No new IR operation or
+runtime carrier was added, and typed C++ throw verification is unchanged.
+
+Parallel **c16ee82d** admits invariant multiplication by bounded primitive
+String, Boolean and null factors through the existing conversion. Endpoint
+bounds, complete reload/store census, replay and budgets remain. Historical
+String-factor source and raw constructions now admit unchanged; all 30 prior
+escape source bodies and 229 prior native source bodies are preserved.
+
+Focused host and arrays CTests and the scaled-index lit case pass. Three selected
+native sources pass **48 executions, 82 refusals and 24 Node/VM observations**,
+with zero nonexecuted admissions. Another **20 throw observations agree in Node
+and VM**. Full formatting passes **1126 C++, 157 Python, 114 web files**. All eight
+final hashes match the devbox; 24 generated C++ files have no Script/VM protocol.
+Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** `f1b3f6b8` now has one structured entry, but both
+policies refuse **DOM custom iterator abrupt completion needs a handler proof**.
+Prove the close invocation and exact throw-only region through custom iteration,
+completion normalization and typed DOM admission. Discharge its unreachable
+yield only from the non-returning throw proof, preserving the saved value and
+suppression. Native execution of this source is not yet admitted. Multiple
+protected regions, implicit cleanup, nested custom iterators, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-terminal-dispatch.md).
+
 ## Iterator close regions and singleton products, 2026-09-22 UTC
 
 Resumed clean **6d04e448** and unchanged `body-throw`, `f1b3f6b8`.
