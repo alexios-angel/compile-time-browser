@@ -74,6 +74,25 @@ POSITIVES = (
         True,
         ("11", "8", "7"),
     ),
+    (
+        "two-projected-break-exits",
+        SOURCE.replace("let count = 0;", "let count = 0;\n  let extra = 7;")
+        .replace("count++;", "count++;\n    extra += 3;")
+        .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;")
+        .replace("return count;", "return count + extra;"),
+        True,
+        ("11", "11", "7"),
+    ),
+    (
+        # Distinct updates and crossed result order expose reused or swapped exits.
+        "three-projected-ordered-exits",
+        SOURCE.replace("let count = 0;", "let count = 2;\n  let extra = 7;\n  let third = 40;")
+        .replace("count++;", "count++;\n    extra += 3;\n    third += 5;")
+        .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;")
+        .replace("return count;", "return third + count + count + extra + extra + extra;"),
+        True,
+        ("81", "81", "65"),
+    ),
 )
 
 
@@ -251,13 +270,6 @@ def refusals():
         # Keep both refused until that source completion boundary is proved.
         "body-return": text.replace(visited, "    return anchor.hasAttribute('data-visited');"),
         "body-throw": text.replace(visited, "    throw 1;"),
-        # Two live scalar projections at a break exit remain unproved.
-        "two-projected-break-exits": SOURCE.replace(
-            "let count = 0;", "let count = 0;\n  let extra = 7;"
-        )
-        .replace("count++;", "count++;\n    extra += 3;")
-        .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;")
-        .replace("return count;", "return count + extra;"),
     }
     for helper in SNAPSHOT_INTRINSICS[4:]:
         variants["replaced-" + helper] = text.replace(

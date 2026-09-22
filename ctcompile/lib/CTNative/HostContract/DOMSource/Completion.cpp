@@ -27,7 +27,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     struct ExitProjection {
         mlir::scf::IndexSwitchOp dispatch;
         mlir::arith::IndexCastUIOp cast;
-        unsigned selector = 0, output = 0;
+        unsigned selector = 0;
+        llvm::SmallVector<unsigned> outputs;
         llvm::SmallVector<bool> consumed;
     };
     struct Terminal {
@@ -147,9 +148,19 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                 selected = &dispatch.getCaseRegions()[index];
                             }
                         }
-                        auto projected = llvm::cast<mlir::OpResult>(
-                            selected->front().getTerminator()->getOperand(0));
-                        arguments[terminal.exit.output] = arguments[projected.getResultNumber()];
+                        // Read the entire selected tuple before replacing any
+                        // slots: one output may select another output's slot.
+                        llvm::SmallVector<mlir::Value> projected;
+                        for (mlir::Value operand :
+                             selected->front().getTerminator()->getOperands()) {
+                            if (!step()) { return {}; }
+                            auto source = llvm::cast<mlir::OpResult>(operand);
+                            projected.push_back(arguments[source.getResultNumber()]);
+                        }
+                        for (auto [output, value] : llvm::zip(terminal.exit.outputs, projected)) {
+                            if (!step()) { return {}; }
+                            arguments[output] = value;
+                        }
                     }
                 }
                 llvm::SmallVector<mlir::Value> result{predicate};
@@ -160,7 +171,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         const bool inactiveExit =
                             terminal.loop.getResult(static_cast<unsigned>(index)).use_empty() ||
                             (terminal.exit.dispatch && terminal.exit.consumed[index] &&
-                             index != terminal.exit.output);
+                             !llvm::is_contained(terminal.exit.outputs, index));
                         const bool inactive = integer && (integer.getValue().isZero()
                                                               ? inactiveExit
                                                               : terminal.inactiveAfter[index]);
@@ -243,8 +254,6 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 // A pure exit projection can join the live break/exhaustion
                 // values before they leave the loop. All other continuation
                 // effects, including IteratorClose, stay after the loop.
-                // ponytail: one projected result; multiple live exit values
-                // need distinct proved output slots before extending this.
                 const auto exitProjection = [&]() -> ExitProjection {
                     ExitProjection exit;
                     auto * next = loop->getNextNode();
@@ -253,7 +262,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (exit.cast) { next = next->getNextNode(); }
                     if (!next || !step()) { return {}; }
                     exit.dispatch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(next);
-                    if (!exit.dispatch || exit.dispatch.getNumResults() != 1 ||
+                    if (!exit.dispatch || exit.dispatch.getNumResults() == 0 ||
                         (exit.cast && (exit.dispatch.getArg() != exit.cast.getOut() ||
                                        !exit.cast->hasOneUse()))) {
                         return {};
@@ -273,16 +282,19 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             return {};
                         }
                         auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().front());
-                        if (!yield || yield.getNumOperands() != 1) { return {}; }
-                        auto value = llvm::dyn_cast<mlir::OpResult>(yield.getOperand(0));
-                        if (!value || value.getOwner() != loop ||
-                            value.getType() != exit.dispatch.getResult(0).getType() ||
-                            value.getResultNumber() == exit.selector ||
-                            !before.inactiveAfter[value.getResultNumber()]) {
+                        if (!yield || yield.getOperandTypes() != exit.dispatch.getResultTypes()) {
                             return {};
                         }
-                        exit.output = value.getResultNumber();
-                        exit.consumed[exit.output] = true;
+                        for (mlir::Value operand : yield.getOperands()) {
+                            if (!step()) { return {}; }
+                            auto value = llvm::dyn_cast<mlir::OpResult>(operand);
+                            if (!value || value.getOwner() != loop ||
+                                value.getResultNumber() == exit.selector ||
+                                !before.inactiveAfter[value.getResultNumber()]) {
+                                return {};
+                            }
+                            exit.consumed[value.getResultNumber()] = true;
+                        }
                     }
                     for (auto [index, result] : llvm::enumerate(loop.getResults())) {
                         if (!step()) { return {}; }
@@ -300,6 +312,23 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                 return {};
                             }
                         }
+                    }
+                    // Reuse only slots whose complete use census belongs to
+                    // this dispatch. Each output needs its own compatible slot.
+                    for (mlir::Type type : exit.dispatch.getResultTypes()) {
+                        if (!step()) { return {}; }
+                        std::optional<unsigned> output;
+                        for (auto [index, result] : llvm::enumerate(loop.getResults())) {
+                            if (!step()) { return {}; }
+                            if (exit.consumed[index] && index != exit.selector &&
+                                result.getType() == type &&
+                                !llvm::is_contained(exit.outputs, index)) {
+                                output = static_cast<unsigned>(index);
+                                break;
+                            }
+                        }
+                        if (!output) { return {}; }
+                        exit.outputs.push_back(*output);
                     }
                     return exit;
                 };
@@ -349,7 +378,11 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 values.map(loop.getResults(), copied.getResults());
                 if (before.exit.dispatch) {
                     auto dispatch = before.exit.dispatch;
-                    values.map(dispatch.getResult(0), copied.getResult(before.exit.output));
+                    for (auto [result, output] :
+                         llvm::zip(dispatch.getResults(), before.exit.outputs)) {
+                        if (!step()) { return {}; }
+                        values.map(result, copied.getResult(output));
+                    }
                     if (before.exit.cast) { visited.insert(before.exit.cast); }
                     visited.insert(dispatch);
                     for (auto & region : dispatch->getRegions()) {

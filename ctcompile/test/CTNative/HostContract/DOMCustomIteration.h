@@ -172,6 +172,66 @@ module {
     auto retagged = mlir::parseSourceString<mlir::ModuleOp>(retaggedSource, &context);
     check(counted && retagged, "independent counted break and renamed exit tags parse");
     if (!counted || !retagged) { return; }
+    // The exhaustion arm swaps two exit slots. Selecting and writing one
+    // result at a time would overwrite the second result's original value.
+    const std::string crossedLoop = R"MLIR(
+    %poison = ub.poison : !ctjs.value
+    %tagPoison = ub.poison : i32
+    %normalTag = arith.constant 7 : i32
+    %breakTag = arith.constant 11 : i32
+    %extraInitial = ctjs.constant #ctjs.number<4619567317775286272>
+    %extraStep = ctjs.constant #ctjs.number<4613937818241073152>
+    %hasName = ctjs.constant #ctjs.string<"hasAttribute">
+    %has = ctjs.get_property %element[%hasName]
+    %stopName = ctjs.constant #ctjs.string<"stop">
+    %loop:7 = scf.while (%count = %zero, %extra = %extraInitial, %normalCount = %poison, %normalExtra = %poison, %breakCount = %poison, %breakExtra = %poison, %tag = %tagPoison) : (!ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) -> (!ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+      %item = ctjs.call %next(%undefined, %record)
+      %done = ctjs.get_property %record[%doneName]
+      %test = ctjs.truthy %done
+      %selected:8 = scf.if %test -> (i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+        %stop = arith.constant false
+        scf.yield %stop, %poison, %poison, %count, %extra, %poison, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+      } else {
+        %attribute = ctjs.get_property %item[%attributeName]
+        %written = ctjs.call %attribute(%item, %visited, %yes)
+        %increment = ctjs.binary_static add %count, %one
+        %extraIncrement = ctjs.binary_static add %extra, %extraStep
+        %stopping = ctjs.call %has(%element, %stopName)
+        %breakTest = ctjs.truthy %stopping
+        %branch:8 = scf.if %breakTest -> (i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+          %stop = arith.constant false
+          scf.yield %stop, %poison, %poison, %poison, %poison, %increment, %extraIncrement, %breakTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+        } else {
+          %again = arith.constant true
+          scf.yield %again, %increment, %extraIncrement, %poison, %poison, %poison, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+        }
+        scf.yield %branch#0, %branch#1, %branch#2, %branch#3, %branch#4, %branch#5, %branch#6, %branch#7 : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+      }
+      scf.condition(%selected#0) %selected#1, %selected#2, %selected#3, %selected#4, %selected#5, %selected#6, %selected#7 : !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+    } do {
+    ^bb0(%count: !ctjs.value, %extra: !ctjs.value, %normalCount: !ctjs.value, %normalExtra: !ctjs.value, %breakCount: !ctjs.value, %breakExtra: !ctjs.value, %tag: i32):
+      scf.yield %count, %extra, %normalCount, %normalExtra, %breakCount, %breakExtra, %tag : !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+    }
+    %selector = arith.index_castui %loop#6 : i32 to index
+    %exits:2 = scf.index_switch %selector -> !ctjs.value, !ctjs.value
+    case 7 {
+      scf.yield %loop#3, %loop#2 : !ctjs.value, !ctjs.value
+    }
+    default {
+      scf.yield %loop#5, %loop#4 : !ctjs.value, !ctjs.value
+    }
+    %answer = ctjs.binary_static add %exits#0, %exits#1
+)MLIR";
+    const auto crossedSource =
+        replaced(source.substr(0, loopBegin) + crossedLoop + source.substr(loopEnd),
+                 "ctjs.return %loop", "ctjs.return %answer");
+    const auto duplicatedSource = replaced(
+        replaced(crossedSource, "scf.yield %loop#3, %loop#2", "scf.yield %loop#3, %loop#3"),
+        "scf.yield %loop#5, %loop#4", "scf.yield %loop#5, %loop#5");
+    auto crossed = mlir::parseSourceString<mlir::ModuleOp>(crossedSource, &context);
+    auto duplicated = mlir::parseSourceString<mlir::ModuleOp>(duplicatedSource, &context);
+    check(crossed && duplicated, "crossed and repeated two-result exit projections parse");
+    if (!crossed || !duplicated) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -188,7 +248,7 @@ module {
         return empty;
     };
     constexpr unsigned completeBudget = 100000;
-    for (auto fixture : {*original, *withoutReturn, *counted, *retagged}) {
+    for (auto fixture : {*original, *withoutReturn, *counted, *retagged, *crossed, *duplicated}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -207,6 +267,35 @@ module {
             });
             check(!protocolCall && !input->lookupSymbol<ctjs::FuncOp>("identity$1"),
                   "normalization retires protocol calls and the proved identity method");
+            if (fixture == *crossed || fixture == *duplicated) {
+                bool selected = false;
+                input->walk([&](ctjs::BinaryStaticOp sum) {
+                    if (sum.getKind() != ctjs::BinaryKind::Add) { return; }
+                    auto lhs = llvm::dyn_cast<mlir::OpResult>(sum.getLhs());
+                    auto rhs = llvm::dyn_cast<mlir::OpResult>(sum.getRhs());
+                    auto loop = lhs ? llvm::dyn_cast<mlir::scf::WhileOp>(lhs.getOwner())
+                                    : mlir::scf::WhileOp{};
+                    if (!loop || !rhs || rhs.getOwner() != loop ||
+                        loop.getBeforeArguments().size() < 2) {
+                        return;
+                    }
+                    auto condition =
+                        llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
+                    const auto normalValue = [&](mlir::OpResult result) -> mlir::Value {
+                        auto value = llvm::dyn_cast<mlir::OpResult>(
+                            condition.getArgs()[result.getResultNumber()]);
+                        auto branch = value ? llvm::dyn_cast<mlir::scf::IfOp>(value.getOwner())
+                                            : mlir::scf::IfOp{};
+                        if (!branch) { return {}; }
+                        return branch.getThenRegion().front().back().getOperand(
+                            value.getResultNumber());
+                    };
+                    selected = normalValue(lhs) == loop.getBeforeArguments()[1] &&
+                               normalValue(rhs) ==
+                                   loop.getBeforeArguments()[fixture == *duplicated ? 1 : 0];
+                });
+                check(selected, "each projected result retains its original selected SSA value");
+            }
             if (auto failure = expandDOMHelpers(*input, contract.entry, completeBudget)) {
                 check(false, "custom iterator methods expand without boxed protocol records");
                 std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
@@ -217,7 +306,7 @@ module {
             check(proof.proved(),
                   "projected custom iterator reproves element lifetime and effects");
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
-            if (fixture == *counted || fixture == *retagged) {
+            if (fixture != *original && fixture != *withoutReturn) {
                 unsigned loops = 0, calls = 0, poison = 0, switches = 0;
                 input->walk([&](mlir::scf::WhileOp) { ++loops; });
                 input->walk([&](ctjs::CallOp) { ++calls; });
@@ -248,6 +337,23 @@ module {
                       "      %effect = ctjs.call %method(%element, %visited, %yes)"),
              replaced(countedSource, "    %selector =",
                       "    %observedTag = arith.index_castui %loop#3 : i32 to index\n"
+                      "    %selector ="),
+             replaced(crossedSource, "scf.yield %loop#3, %loop#2", "scf.yield %loop#3, %loop#4"),
+             replaced(crossedSource,
+                      "    %selector =", "    %observed = ctjs.unary not %loop#2\n    %selector ="),
+             replaced(crossedSource, "      scf.yield %count, %extra, %normalCount",
+                      "      %observed = ctjs.unary not %normalCount\n"
+                      "      scf.yield %count, %extra, %normalCount"),
+             replaced(crossedSource, "%extra = %extraInitial", "%extra = %poison"),
+             replaced(crossedSource, "%normalTag = arith.constant 7 : i32",
+                      "%unknown = ctjs.truthy %element\n"
+                      "    %normalTag = arith.extui %unknown : i1 to i32"),
+             replaced(crossedSource, "    case 7 {",
+                      "    case 7 {\n"
+                      "      %method = ctjs.get_property %element[%attributeName]\n"
+                      "      %effect = ctjs.call %method(%element, %visited, %yes)"),
+             replaced(crossedSource, "    %selector =",
+                      "    %observedTag = arith.index_castui %loop#6 : i32 to index\n"
                       "    %selector ="),
          }) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
@@ -340,7 +446,7 @@ module {
     }
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
-    for (auto fixture : {*original, *counted}) {
+    for (auto fixture : {*original, *counted, *crossed}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
