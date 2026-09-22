@@ -21,7 +21,7 @@
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} arr escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
@@ -54,6 +54,17 @@
 // CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function quotientShift() {
@@ -342,3 +353,56 @@ function wrappedSaved() {
 positiveOutputWrap(); negativeOutputWrap(); positiveInputOutputWrap(); negativeInputOutputWrap();
 reversedOutputWrap(); wrappedCountReload(); widePositiveOutputWrap(); wideNegativeOutputWrap();
 wrappedRemaining(); wrappedLaterOverlap(); wrappedHiddenMiddle(); wrappedSaved();
+
+function pairUpper() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) << 0) & 2] = 0;
+    return a;
+}
+function pairLower() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 2147483649) << 0) & 2] = 0;
+    return a;
+}
+function pairOutputUpper() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 + 1073741823) << 1) & 2] = 0;
+    return a;
+}
+function pairOutputLower() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 - 1073741825) << 1) & 2] = 0;
+    return a;
+}
+function pairCountReload() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) << a[1]) & 2] = 0;
+    return a;
+}
+function pairOutputReload() {
+    var child = {}, a = [child, 1, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i / 2 + 1073741823) << a[1]) & 2] = 0;
+    return a;
+}
+function pairFourVisits() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(((i & 2) + 2147483647) << 0) & 2] = 0;
+    return a;
+}
+function pairRetained() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) << 0) & 2] = 0;
+    return a;
+}
+function pairSaved() {
+    var child = {}, a = [child, 0, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i + 2147483647) << 0) & 2] = 0;
+    return saved;
+}
+function pairCollapsed() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i << 31) & 2] = 0;
+    return a;
+}
+
+pairUpper(); pairLower(); pairOutputUpper(); pairOutputLower(); pairCountReload(); pairOutputReload(); pairFourVisits(); pairRetained(); pairSaved(); pairCollapsed();

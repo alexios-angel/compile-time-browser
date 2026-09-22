@@ -481,6 +481,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                  result.last);
             return result;
         }
+        // Two input points need no monotone conversion or output band. Their
+        // exact images also retain gaps lost by uneven right-shift rounding.
+        const bool twoPointShift =
+            shift && endpointNumber(range->last) - endpointNumber(range->first) <=
+                         static_cast<std::int64_t>(range->stride);
         bool descending = subtract && offsetOperand == 0;
         if (shift) {
             if (!spend()) {
@@ -496,9 +501,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const bool negativeBand = unsignedShift && range->first.negativeIntegerNumber &&
                                       range->last.negativeIntegerNumber;
             if ((!positive && !negative) ||
-                ((signedShift || leftShift) &&
+                (!twoPointShift && (signedShift || leftShift) &&
                  signedBand(range->first) != signedBand(range->last)) ||
-                (unsignedShift && !negativeBand &&
+                (!twoPointShift && unsignedShift && !negativeBand &&
                  (!range->first.integerNumber || !range->last.integerNumber ||
                   *range->last.integerNumber > 4294967295ULL))) {
                 return std::nullopt;
@@ -506,7 +511,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto count = positive ? static_cast<std::uint32_t>(*positive)
                                         : 0U - static_cast<std::uint32_t>(*negative);
             const auto factor = std::size_t{1} << (count & 31U);
-            if (leftShift) {
+            if (leftShift && !twoPointShift) {
                 // Within one input and output conversion band, left shift
                 // stays affine. The i32 endpoints times at most 2^31 fit i64.
                 const auto scale = static_cast<std::int64_t>(factor);
@@ -523,7 +528,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     return std::nullopt;
                 }
                 range->stride *= factor;
-            } else {
+            } else if (!twoPointShift) {
                 // Within one conversion band, floor division is monotone.
                 // ponytail: enclose uneven strides densely; proving their sparse
                 // gaps would admit more disjoint reloads. Replay keeps exact visits.
@@ -588,7 +593,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         // Keep the set of visited positions ordered even when the source
         // visits them backwards. The stride keeps its positive magnitude.
-        if (descending) { std::swap(range->first, range->last); }
+        if (twoPointShift) {
+            boundEndpointPair(*range);
+        } else if (descending) {
+            std::swap(range->first, range->last);
+        }
         return range;
     };
     for (mlir::Block * block : {header, body}) {

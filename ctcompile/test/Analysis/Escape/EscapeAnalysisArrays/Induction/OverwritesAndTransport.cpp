@@ -2197,8 +2197,12 @@ void InductionCases::overwritesAndTransport() {
                         "  %count = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
                 "[%x, %one, %x, %one]", "[%x]"),
         "shl %part, %one", "shl %i, %count");
-    reject("left-shift stride multiplication must remain within the bounded Number range",
-           hugeLeftShift);
+    run({.what = "a singleton left-shift image does not multiply an unvisited stride",
+         .body = hugeLeftShift,
+         .arrays = "a:[zero]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
     run({.what = "left-shift stride admits the exact high-bit factor for a single zero visit",
          .body = replace(hugeLeftShift, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
          .arrays = "a:[zero]",
@@ -2319,6 +2323,104 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero; a[2]=one",
          .exit = "a -> {a}"},
         "x");
+    const auto crossingShift = replace(crossingComplement, "ctjs.unary bitnot %part",
+                                       "ctjs.binary_static shr %part, %zero");
+    const auto lowerCrossingShift = replace(negativeCrossingComplement, "ctjs.unary bitnot %part",
+                                            "ctjs.binary_static shr %part, %zero");
+    const auto zeroCrossingShift =
+        replace(replace(crossingShift, "add %maximum, %i", "sub %i, %one"), "binary_static shr",
+                "binary_static ushr");
+    const auto outputCrossingShift =
+        replace(replace(crossingShift, "%part = ctjs.binary add %maximum, %i",
+                        "%half = ctjs.constant #ctjs.number<4742290407612743680>\n"
+                        "  %quotient = ctjs.binary div %i, %two\n"
+                        "  %part = ctjs.binary add %half, %quotient"),
+                "shr %part, %zero", "shl %part, %one");
+    for (const auto & body : {crossingShift, lowerCrossingShift, zeroCrossingShift,
+                              replace(crossingShift, "binary_static shr", "binary_static shl"),
+                              replace(lowerCrossingShift, "binary_static shr", "binary_static shl"),
+                              outputCrossingShift}) {
+        run({.what = "two-point shifts compose across input conversions and output wraps",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=x; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "two-point shift image gaps preserve reloaded masks",
+             .body = replace(replace(body, "[%x, %one, %x, %one]", "[%x, %two, %x, %one]"),
+                             "%position = ctjs.binary_static bitand %negative, %two",
+                             "%mask = ctjs.get_property %base[%one]\n"
+                             "  %position = ctjs.binary_static bitand %negative, %mask"),
+             .arrays = "a:[zero,two,zero,one]",
+             .reads = "a[1]=two; a[0]=x; a[1]=two; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("shift endpoint images cannot omit an interior conversion or wrap",
+               replace(body, "[%x, %one, %x, %one]", "[%x, %one, %x, %one, %x, %one]"));
+    }
+    const auto crossingShiftReload =
+        replace(replace(crossingShift, "[%x, %one, %x, %one]", "[%x, %zero, %x, %one]"),
+                "%negative = ctjs.binary_static shr %part, %zero",
+                "%count = ctjs.get_property %base[%one]\n"
+                "  %negative = ctjs.binary_static shr %part, %count");
+    run({.what = "two-point shifts preserve exact count reloads across conversion jumps",
+         .body = crossingShiftReload,
+         .arrays = "a:[zero,zero,zero,one]",
+         .reads = "a[1]=zero; a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("two-point shifts retain the full later-store count census",
+           replace(crossingShiftReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
+    reject("two-point shifts cannot reload a count at an actual endpoint",
+           replace(replace(crossingShiftReload, "[%x, %zero, %x, %one]", "[%zero, %one, %x, %one]"),
+                   "%base[%one]", "%base[%zero]"));
+    run({.what = "two-point shifts retain children outside their exact write lattice",
+         .body = replace(crossingShift, "[%x, %one, %x, %one]", "[%x, %x, %x, %one]"),
+         .arrays = "a:[zero,x,zero,one]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "two-point shifts preserve an earlier child snapshot",
+         .body = replace(replace(crossingShift, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=x; a[0]=x; a[2]=zero",
+         .exit = "x -> {x}"});
+    run({.what = "two-value shift inputs may arise from four loop visits",
+         .body = replace(replace(crossingShift, "%part = ctjs.binary add %maximum, %i",
+                                 "%bucket = ctjs.binary_static bitand %i, %two\n"
+                                 "  %part = ctjs.binary add %maximum, %bucket"),
+                         "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=x; a[1]=one; a[2]=zero; a[3]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto twoPointUnevenShift = replace(
+        replace(
+            replace(rightShiftIndex, "[%x, %x, %one, %one]", "[%x, %one, %x, %one, %one, %one]"),
+            "  %a =", "  %five = ctjs.constant #ctjs.number<4617315517961601024>\n  %a ="),
+        "add %i, %two\n  cf.br", "add %i, %five\n  cf.br");
+    const auto twoPointUnevenReload =
+        replace(twoPointUnevenShift, "%position = ctjs.binary_static shr %i, %one",
+                "%count = ctjs.get_property %base[%one]\n"
+                "  %position = ctjs.binary_static shr %i, %count");
+    for (const auto & kind : {"shr", "ushr"}) {
+        run({.what = "two-point right shifts retain gaps for uneven input strides",
+             .body = replace(twoPointUnevenReload, "binary_static shr",
+                             std::string{"binary_static "} + kind),
+             .arrays = "a:[zero,one,zero,one,one,one]",
+             .reads = "a[1]=one; a[0]=zero; a[1]=one; a[5]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    reject("two-point uneven shift gaps still require disjoint endpoint reads",
+           replace(replace(twoPointUnevenReload, "[%x, %one, %x, %one, %one, %one]",
+                           "[%one, %one, %x, %one, %one, %one]"),
+                   "%base[%one]", "%base[%zero]"));
+    reject("two-point uneven shifts retain the complete later-store census",
+           replace(twoPointUnevenReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
     const auto shiftReload =
         replace(rightShiftIndex, "  %position = ctjs.binary_static shr %i, %one",
                 "  %count = ctjs.get_property %base[%three]\n"
