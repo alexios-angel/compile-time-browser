@@ -1894,6 +1894,75 @@ void InductionCases::overwritesAndTransport() {
         reject("complement indices reject ToInt32 discontinuities and negative own positions",
                body);
     }
+    const auto crossingComplement =
+        replace(replace(signedBoundary, "sub %maximum, %i", "add %maximum, %i"),
+                "ctjs.binary add %negative, %minimumMagnitude",
+                "ctjs.binary_static bitand %negative, %two");
+    const auto negativeCrossingComplement =
+        replace(replace(negativeBand, "sub %below, %i", "add %below, %i"),
+                "ctjs.binary add %negative, %minimumMagnitude",
+                "ctjs.binary_static bitand %negative, %two");
+    for (const auto & body : {crossingComplement, negativeCrossingComplement}) {
+        run({.what = "two-point complements compose across either signed conversion jump",
+             .body = body,
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "two-point complement gaps preserve a reloaded mask",
+             .body = replace(replace(body, "[%x, %one, %x, %one]", "[%x, %two, %x, %one]"),
+                             "%position = ctjs.binary_static bitand %negative, %two",
+                             "%mask = ctjs.get_property %base[%one]\n"
+                             "  %position = ctjs.binary_static bitand %negative, %mask"),
+             .arrays = "a:[zero,two,zero,one]",
+             .reads = "a[1]=two; a[0]=zero; a[1]=two; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("complement endpoints cannot omit an interior conversion-jump visit",
+               replace(body, "[%x, %one, %x, %one]", "[%x, %one, %x, %one, %x, %one]"));
+    }
+    run({.what = "a second complement reverses the exact conversion-jump endpoint images",
+         .body =
+             replace(crossingComplement, "%position = ctjs.binary_static bitand %negative, %two",
+                     "%again = ctjs.unary bitnot %negative\n"
+                     "  %position = ctjs.binary_static bitand %again, %two"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a two-value intermediate can have more than two loop visits",
+         .body = replace(replace(crossingComplement, "%part = ctjs.binary add %maximum, %i",
+                                 "%bucket = ctjs.binary_static bitand %i, %two\n"
+                                 "  %part = ctjs.binary add %maximum, %bucket"),
+                         "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=zero; a[1]=one; a[2]=zero; a[3]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "two-point complement writes retain a child outside their exact lattice",
+         .body = replace(crossingComplement, "[%x, %one, %x, %one]", "[%x, %x, %x, %one]"),
+         .arrays = "a:[zero,x,zero,one]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "two-point complements preserve an earlier child snapshot",
+         .body = replace(replace(crossingComplement, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,one,zero,one]",
+         .reads = "a[0]=x; a[0]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto complementReload =
+        replace(replace(crossingComplement, "[%x, %one, %x, %one]", "[%x, %two, %x, %one]"),
+                "%position = ctjs.binary_static bitand %negative, %two",
+                "%mask = ctjs.get_property %base[%one]\n"
+                "  %position = ctjs.binary_static bitand %negative, %mask");
+    reject("two-point complements retain the exact endpoint reload overlap check",
+           replace(replace(complementReload, "[%x, %two, %x, %one]", "[%two, %one, %x, %one]"),
+                   "%mask = ctjs.get_property %base[%one]",
+                   "%mask = ctjs.get_property %base[%zero]"));
+    reject("two-point complement gaps retain the complete later-store census",
+           replace(complementReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
     run({.what = "subtracted Number offsets stay relative to a nonzero start",
          .body = previousIndex,
          .arrays = "a:[zero,one,zero,one]",

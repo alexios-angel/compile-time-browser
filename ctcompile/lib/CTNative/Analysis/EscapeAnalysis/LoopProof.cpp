@@ -210,6 +210,17 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // A positive lattice enclosing all visits; replay proves actual writes.
         std::size_t stride;
     };
+    const auto endpointNumber = [](const ContentsValue & endpoint) {
+        return endpoint.integerNumber ? static_cast<std::int64_t>(*endpoint.integerNumber)
+                                      : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber);
+    };
+    const auto boundEndpointPair = [&](IndexRange & range) {
+        if (endpointNumber(range.first) > endpointNumber(range.last)) {
+            std::swap(range.first, range.last);
+        }
+        range.stride = static_cast<std::size_t>(
+            std::max<std::int64_t>(1, endpointNumber(range.last) - endpointNumber(range.first)));
+    };
     const auto signedBand = [](const ContentsValue & endpoint) {
         if (endpoint.integerNumber && *endpoint.integerNumber > 2147483647ULL) { return 1; }
         return endpoint.negativeIntegerNumber && *endpoint.negativeIntegerNumber > 2147483648ULL
@@ -242,10 +253,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             auto range = self(self, unary.getOperand(), depth + 1);
             if (!range) { return std::nullopt; }
-            if (unary.getKind() == ctjs::UnaryKind::BitNot) {
-                // Magnitudes are already bounded by 2^32-1. Complement stays
-                // affine within each ToInt32 band, but jumps at its boundaries.
-                if (signedBand(range->first) != signedBand(range->last)) { return std::nullopt; }
+            const bool wrappingComplement = unary.getKind() == ctjs::UnaryKind::BitNot &&
+                                            signedBand(range->first) != signedBand(range->last);
+            // Complement is affine within one ToInt32 band. Across bands,
+            // endpoint images suffice only when the lattice has no interior point.
+            if (wrappingComplement && endpointNumber(range->last) - endpointNumber(range->first) >
+                                          static_cast<std::int64_t>(range->stride)) {
+                return std::nullopt;
             }
             // The recursive range already proves exact bounded Numbers. Negation
             // changes their sign and order; both signed zeros remain own key zero.
@@ -267,7 +281,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     std::swap(endpoint->integerNumber, endpoint->negativeIntegerNumber);
                 }
             }
-            if (unary.getKind() != ctjs::UnaryKind::Plus) { std::swap(range->first, range->last); }
+            if (wrappingComplement) {
+                boundEndpointPair(*range);
+            } else if (unary.getKind() != ctjs::UnaryKind::Plus) {
+                std::swap(range->first, range->last);
+            }
             return range;
         }
         auto addition = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(expression);
@@ -372,11 +390,6 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!positive && !negative) { return std::nullopt; }
             const auto mask = positive ? static_cast<std::uint32_t>(*positive)
                                        : 0U - static_cast<std::uint32_t>(*negative);
-            const auto endpointNumber = [](const ContentsValue & endpoint) {
-                return endpoint.integerNumber
-                           ? static_cast<std::int64_t>(*endpoint.integerNumber)
-                           : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber);
-            };
             // With no interior lattice point, both endpoint images enclose
             // every visit even across a ToInt32 discontinuity. Magnitudes are
             // bounded by 2^32-1, so their signed difference fits int64_t.
@@ -421,11 +434,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     *endpoint = result;
                 }
                 if (twoPoints) {
-                    if (endpointNumber(range->first) > endpointNumber(range->last)) {
-                        std::swap(range->first, range->last);
-                    }
-                    range->stride = static_cast<std::size_t>(std::max<std::int64_t>(
-                        1, endpointNumber(range->last) - endpointNumber(range->first)));
+                    boundEndpointPair(*range);
                 } else if (complement) {
                     std::swap(range->first, range->last);
                 }
