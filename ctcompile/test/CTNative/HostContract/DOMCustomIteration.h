@@ -907,6 +907,45 @@ module {
         mlir::parseSourceString<mlir::ModuleOp>(directBranchWriterSource, &context);
     check(branchWriter && directBranchWriter, "ordinary/direct helper branch join twins parse");
     if (!branchWriter || !directBranchWriter) { return; }
+    // Evaluate both arguments before changing a captured cell. The helper's
+    // later return must keep that snapshot while its loads see the new state.
+    auto argumentWriterSource = replaced(
+        siblingWriterSource,
+        "ctjs.func @readCount$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
+        "ctjs.func @readCount$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+        "%step: !ctjs.value, %snapshot: !ctjs.value)");
+    argumentWriterSource = replaced(
+        argumentWriterSource, "    %step = ctjs.constant #ctjs.number<4607182418800017408>\n", "");
+    argumentWriterSource =
+        replaced(argumentWriterSource, "ctjs.return %observed", "ctjs.return %snapshot");
+    for (const auto & [value, suffix] :
+         {std::pair{"entryBefore", "before"}, std::pair{"bodyEmitted", "body"},
+          std::pair{"preCloseCount", "close"}, std::pair{"finalCount", "final"},
+          std::pair{"againCount", "again"}}) {
+        const auto count = std::string("%argumentCount_") + suffix;
+        const auto extra = std::string("%argumentExtra_") + suffix;
+        const auto step = std::string("%argumentStep_") + suffix;
+        const auto current = std::string("%argumentCurrent_") + suffix;
+        argumentWriterSource = replaced(
+            argumentWriterSource, std::string("%") + value + " = ctjs.call %readCount(%undefined)",
+            count + " = ctjs.cell_get %emittedCell\n    " + extra +
+                " = ctjs.cell_get %extraCell\n    " + step + " = ctjs.binary_static add " + extra +
+                ", %one\n    " + current + " = ctjs.binary_static add " + count +
+                ", %one\n    ctjs.cell_set %emittedCell, " + current + "\n    %" + value +
+                " = ctjs.call %readCount(%undefined, " + step + ", " + count + ")");
+    }
+    auto directArgumentWriterSource = argumentWriterSource;
+    for (unsigned i = 0; i != 5; ++i) {
+        directArgumentWriterSource =
+            replaced(directArgumentWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+    }
+    auto argumentWriter = mlir::parseSourceString<mlir::ModuleOp>(argumentWriterSource, &context);
+    auto directArgumentWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directArgumentWriterSource, &context);
+    check(argumentWriter && directArgumentWriter,
+          "ordinary/direct helper arguments retain snapshots across intervening state writes");
+    if (!argumentWriter || !directArgumentWriter) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -962,7 +1001,9 @@ module {
                          *zeroSiblingWriter,
                          *zeroDirectSiblingWriter,
                          *branchWriter,
-                         *directBranchWriter}) {
+                         *directBranchWriter,
+                         *argumentWriter,
+                         *directArgumentWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -971,6 +1012,7 @@ module {
                                    fixture == *zeroSiblingWriter ||
                                    fixture == *zeroDirectSiblingWriter;
         const bool branchWrites = fixture == *branchWriter || fixture == *directBranchWriter;
+        const bool argumentWrites = fixture == *argumentWriter || fixture == *directArgumentWriter;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -1372,6 +1414,62 @@ module {
                           "repeated sibling readers retire after all call positions expand");
                 }
             }
+            if (argumentWrites) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                llvm::SmallVector<llvm::StringRef> effects;
+                mlir::Value finalSnapshot, finalCount, finalExtra;
+                bool ordered = true, boxed = false;
+                body.walk([&](mlir::Operation * operation) {
+                    boxed |=
+                        llvm::isa<ctjs::CreateObjectOp, ctjs::CreateCellOp, ctjs::CreateClosureOp,
+                                  ctjs::CellGetOp, ctjs::CellSetOp, ctjs::LoadUpvalueOp,
+                                  ctjs::StoreUpvalueOp, ctjs::CallDirectOp>(operation);
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                    if (!call || call.getArgs().size() != 2) { return; }
+                    const auto name = ctjs::constantKey(call.getArgs()[0]);
+                    if (!name.starts_with("writer-")) { return; }
+                    effects.push_back(name);
+                    auto seen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    auto extra = seen ? seen.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                      : ctjs::BinaryStaticOp{};
+                    auto count = extra ? extra.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                       : ctjs::BinaryStaticOp{};
+                    auto current = count ? count.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                         : ctjs::BinaryStaticOp{};
+                    auto step = count ? count.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                      : ctjs::BinaryStaticOp{};
+                    const bool mapped = extra && count && current && step &&
+                                        extra.getKind() == ctjs::BinaryKind::Add &&
+                                        count.getKind() == ctjs::BinaryKind::Add &&
+                                        current.getKind() == ctjs::BinaryKind::Add &&
+                                        step.getKind() == ctjs::BinaryKind::Add &&
+                                        current.getLhs() == seen.getLhs() &&
+                                        current.getResult() != seen.getLhs() &&
+                                        step.getLhs() == extra.getLhs();
+                    ordered &= mapped;
+                    if (!mapped) { return; }
+                    if (name == "writer-final") {
+                        finalSnapshot = seen.getLhs();
+                        finalCount = count;
+                        finalExtra = extra;
+                    } else if (name == "writer-again") {
+                        ordered &= seen.getLhs() == finalCount && step.getLhs() == finalExtra;
+                    }
+                });
+                auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back());
+                auto answer = returned.getValue().getDefiningOp<ctjs::BinaryStaticOp>();
+                auto total = answer ? answer.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+                check(ordered && finalSnapshot && total && total.getLhs() == finalSnapshot &&
+                          effects ==
+                              llvm::SmallVector<llvm::StringRef>{"writer-before", "writer-body",
+                                                                 "writer-close", "writer-final",
+                                                                 "writer-again"},
+                      "each argument keeps its evaluated SSA value beside the latest shared state");
+                check(!boxed && !input->lookupSymbol<ctjs::FuncOp>("readCount$4") &&
+                          !input->lookupSymbol<ctjs::FuncOp>("readExtra$5"),
+                      "argument-taking helpers retire without closures or boxed state");
+            }
             if (siblingWrites) {
                 auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
                 llvm::SmallVector<llvm::StringRef> effects;
@@ -1496,7 +1594,8 @@ module {
                                     extra.getResultNumber() == count.getResultNumber() + 1 &&
                                     closeOrder.back() == "data-closed-extra")),
                       "close reads distinct current scalar loop results without boxed state");
-            } else if (!branchWrites && fixture != *original && fixture != *withoutReturn) {
+            } else if (!branchWrites && !argumentWrites && fixture != *original &&
+                       fixture != *withoutReturn) {
                 unsigned loops = 0, calls = 0, poison = 0, switches = 0;
                 input->walk([&](mlir::scf::WhileOp) { ++loops; });
                 input->walk([&](ctjs::CallOp) { ++calls; });
@@ -1509,6 +1608,57 @@ module {
     }
     contract.moduleSha256 = hostContractFingerprint(*original);
 
+    for (auto fixture : {*argumentWriter, *directArgumentWriter}) {
+        for (unsigned malformed = 0; malformed != 4; ++malformed) {
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+                auto helper = input->lookupSymbol<ctjs::FuncOp>("readCount$4");
+                auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                if (malformed == 0) {
+                    helper.getBody()
+                        .front()
+                        .getArgument(ctjs::implicit_arguments)
+                        .setType(mlir::IntegerType::get(&context, 32));
+                } else if (malformed == 1) {
+                    const auto type = helper.getFunctionType();
+                    helper.setFunctionTypeAttr(mlir::TypeAttr::get(mlir::FunctionType::get(
+                        &context, type.getInputs().drop_back(), type.getResults())));
+                } else if (malformed == 2) {
+                    mlir::Operation * invocation = nullptr;
+                    body.walk([&](mlir::Operation * operation) {
+                        if (invocation) { return; }
+                        if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+                            auto closure = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+                            if (closure && closure.getFunction() == 4) { invocation = call; }
+                        } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                                   call && call.getTarget() == helper) {
+                            invocation = call;
+                        }
+                    });
+                    check(invocation != nullptr, "argument fixture has a helper invocation");
+                    if (!invocation) { continue; }
+                    mlir::OpBuilder at(invocation);
+                    auto wrong =
+                        mlir::arith::ConstantIntOp::create(at, invocation->getLoc(), 7, 32);
+                    invocation->setOperand(invocation->getNumOperands() - 2, wrong);
+                } else {
+                    body->setAttr("observer",
+                                  mlir::FlatSymbolRefAttr::get(&context, "readCount$4"));
+                }
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "malformed helper arguments, signatures and symbolic observers refuse");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "malformed argument helpers preserve source and publish no evidence");
+            }
+        }
+    }
     for (auto fixture : {*branchWriter, *directBranchWriter}) {
         for (unsigned malformed = 0; malformed != 2; ++malformed) {
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
@@ -1568,6 +1718,50 @@ module {
         replaced(uninitializedSiblingSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                  "%entryBefore = ctjs.call %readCount(%undefined)\n"
                  "    ctjs.cell_set %emittedCell, %emittedInitial");
+    for (const auto & source : {argumentWriterSource, directArgumentWriterSource}) {
+        unsigned index = 0;
+        for (const auto & invalid : {
+                 replaced(source, "%argumentStep_before, %argumentCount_before)",
+                          "%argumentStep_before)"),
+                 replaced(source, "%argumentStep_before, %argumentCount_before)",
+                          "%argumentStep_before, %argumentCount_before, %one)"),
+                 replaced(source, "%argumentStep_before, %argumentCount_before)",
+                          "%readCount, %argumentCount_before)"),
+                 replaced(source, "%argumentStep_before, %argumentCount_before)",
+                          "%emittedCell, %argumentCount_before)"),
+                 replaced(source, "    %argumentCount_before = ctjs.cell_get %emittedCell",
+                          "    ctjs.store_global \"argument-helper-leaked\", %readCount\n"
+                          "    %argumentCount_before = ctjs.cell_get %emittedCell"),
+                 replaced(source, "    %argumentCount_before = ctjs.cell_get %emittedCell",
+                          "    %symbolOnly = ctjs.call_direct @readCount$4(%undefined, "
+                          "%undefined, %undefined, %one, %one)\n"
+                          "    %argumentCount_before = ctjs.cell_get %emittedCell"),
+             }) {
+            const bool directArity = source == directArgumentWriterSource && index < 2;
+            ++index;
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            if (directArity) {
+                check(!fixture, "direct helper argument-count mismatches refuse during parsing");
+                continue;
+            }
+            check(static_cast<bool>(fixture), "hostile argument-taking helper witness parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "helper argument counts, escaping values and unknown call sites refuse");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "refused argument helpers preserve source and publish no evidence");
+            }
+        }
+    }
     for (const auto & invalid : {
              replaced(siblingReaderSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                       "%entryBefore = ctjs.call %readCount(%element)"),
@@ -1985,6 +2179,10 @@ module {
                       "%observedExtra = ctjs.load_upvalue %callee[0]\n"
                       "    %wrong = ctjs.constant #ctjs.undefined\n"
                       "    ctjs.store_upvalue %callee[0], %wrong"),
+             replaced(argumentWriterSource, "%argumentStep_before, %argumentCount_before)",
+                      "%element, %argumentCount_before)"),
+             replaced(directArgumentWriterSource, "%argumentStep_before, %argumentCount_before)",
+                      "%element, %argumentCount_before)"),
              replaced(loopCapturedSource, "      %effectAfter =",
                       "      %unknown = ctjs.load_global \"unknown\"\n"
                       "      %effect = ctjs.call %unknown(%element, %afterEmitted)\n"
@@ -2168,7 +2366,9 @@ module {
                          *zeroSiblingWriter,
                          *zeroDirectSiblingWriter,
                          *branchWriter,
-                         *directBranchWriter}) {
+                         *directBranchWriter,
+                         *argumentWriter,
+                         *directArgumentWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

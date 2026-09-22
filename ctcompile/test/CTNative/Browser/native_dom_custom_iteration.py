@@ -265,6 +265,33 @@ SIBLING_BRANCH_RESULT_SOURCE = SIBLING_BRANCH_WRITER_SOURCE.replace(
     }
     return result;""",
 )
+SIBLING_ARGUMENT_WRITER_SOURCE = (
+    SIBLING_LOOP_WRITER_SOURCE.replace("const read = () => {", "const read = (amount) => {")
+    .replace("const before = emitted;", "const before = emitted + amount;")
+    .replace("read()", "read(closed)")
+)
+SIBLING_ARGUMENT_SNAPSHOTS_SOURCE = (
+    SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+        "const read = (amount) => {", "const read = (amount, prior) => {"
+    )
+    .replace(
+        "return rounds + before;",
+        "return rounds + before + amount + prior + prior + emitted + closed;",
+    )
+    .replace("read(closed)", "read(emitted, emitted += closed)")
+    .replace("closed === 541", "closed === 1829")
+)
+SIBLING_ARGUMENT_CONTROL_SOURCE = (
+    SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+        "const read = (amount) => {", "const read = (amount, limit) => {"
+    )
+    .replace("while (rounds < 2)", "while (rounds < limit)")
+    .replace(
+        "return rounds + before;",
+        "if (amount > 1) return rounds + before + amount;\n    return rounds + before;",
+    )
+    .replace("read(closed)", "read(closed, 2)")
+)
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -573,6 +600,33 @@ POSITIVES = (
         .replace("\n    return result;", ""),
         True,
         ("54153", "57846", "54153"),
+        True,
+        "true",
+    ),
+    (
+        "entry-captured-sibling-argument-writer",
+        SIBLING_ARGUMENT_WRITER_SOURCE,
+        True,
+        ("99520", "111033", "99520"),
+        True,
+        "true",
+    ),
+    (
+        # The first argument snapshots emitted before the second argument writes
+        # it; both survive the helper's writes beside its current captured cells.
+        "entry-captured-sibling-argument-snapshots",
+        SIBLING_ARGUMENT_SNAPSHOTS_SOURCE,
+        True,
+        ("10248857", "13305421", "10248857"),
+        True,
+        "true",
+    ),
+    (
+        # Explicit arguments feed the loop limit and both ordinary return arms.
+        "entry-captured-sibling-argument-control",
+        SIBLING_ARGUMENT_CONTROL_SOURCE,
+        True,
+        ("137562", "153682", "137562"),
         True,
         "true",
     ),
@@ -930,16 +984,35 @@ def refusals():
             "entry-captured-sibling-branch-nonnumber-writer": SIBLING_BRANCH_WRITER_SOURCE.replace(
                 "else closed++;", "else closed = true;"
             ),
-            "entry-captured-sibling-argument-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
-                "const read = () => {", "const read = (amount) => {"
-            )
-            .replace("const before = emitted;", "const before = emitted + amount;")
-            .replace("read()", "read(closed)"),
+            "entry-captured-sibling-argument-missing": SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+                "read(closed)", "read()"
+            ),
+            "entry-captured-sibling-argument-extra": SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+                "read(closed)", "read(closed, emitted)"
+            ),
+            "entry-captured-sibling-argument-unknown": SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+                "read(closed)", "read(external(closed))"
+            ),
+            "entry-captured-sibling-argument-object": SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+                "read(closed)", "read(anchor)"
+            ).replace("      closed += emitted;", "      closed = amount;"),
+            "entry-captured-sibling-argument-coercing": SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+                "read(closed)", "read('1')"
+            ).replace("      closed += emitted;", "      closed += amount;"),
+            "entry-captured-sibling-argument-escaping": SIBLING_ARGUMENT_WRITER_SOURCE.replace(
+                "const before = emitted + amount;",
+                "anchor.saved = () => amount;\n    const before = emitted + amount;",
+            ),
             "entry-captured-sibling-loop-break-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
                 "      rounds++;", "      rounds++;\n      if (rounds === 1) break;"
             ),
         }
     )
+    # The original zero initialization cannot progress after its early break.
+    # Keep that complete source and a finite counterpart for later execution.
+    variants["entry-captured-sibling-loop-break-finite-writer"] = variants[
+        "entry-captured-sibling-loop-break-writer"
+    ].replace("let closed = 0;", "let closed = 1;")
     return variants
 
 

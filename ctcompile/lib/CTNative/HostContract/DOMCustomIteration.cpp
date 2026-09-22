@@ -324,7 +324,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto indices = closure.getEnclosingIndicesAttr();
         if (!body || body == entry || body->hasAttr("ctjs.skipped") ||
             !body.getBody().hasOneBlock() || body.getBody().front().empty() ||
-            body.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
+            body.getBody().front().getNumArguments() < ctjs::implicit_arguments ||
             body.getUpvalueCount() != closure.getUpvalues().size() ||
             (!undefined(closure.getEnclosingThis()) &&
              closure.getEnclosingThis() !=
@@ -377,12 +377,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             bool callable = false;
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
-                callable = use.getOperandNumber() == 0 && call.getArgs().empty() &&
+                callable = use.getOperandNumber() == 0 &&
+                           call.getArgs().size() + ctjs::implicit_arguments ==
+                               body.getBody().front().getNumArguments() &&
                            undefined(call.getReceiver());
             } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
                 callable = use.getOperandNumber() == 2 && call.getTarget() == body &&
-                           call.getArgs().empty() && undefined(call.getReceiver()) &&
-                           undefined(call.getNewTarget());
+                           call.getArgs().size() + ctjs::implicit_arguments ==
+                               body.getBody().front().getNumArguments() &&
+                           undefined(call.getReceiver()) && undefined(call.getNewTarget());
             }
             if (!callable || user->getParentOfType<ctjs::FuncOp>() != entry ||
                 !entryDominance.properlyDominates(closure.getOperation(), user)) {
@@ -442,7 +445,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto ordinary = llvm::dyn_cast<ctjs::CallOp>(call);
             auto receiver = ordinary ? ordinary.getReceiver()
                                      : llvm::cast<ctjs::CallDirectOp>(call).getReceiver();
-            if (!work.inlineCall(entry, helper.body, call, helper.closure.getUpvalues(), receiver,
+            // Keep each already-evaluated argument's snapshot before appending
+            // the cell identities. Later state writes cannot change that value.
+            llvm::SmallVector<mlir::Value> actuals(
+                ordinary ? ordinary.getArgs() : llvm::cast<ctjs::CallDirectOp>(call).getArgs());
+            for (auto cell : helper.closure.getUpvalues()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                actuals.push_back(cell);
+            }
+            if (!work.inlineCall(entry, helper.body, call, actuals, receiver,
                                  entry.getBody().front().getArgument(ctjs::arg_callee), {}, 0)) {
                 return error(work.reason);
             }
