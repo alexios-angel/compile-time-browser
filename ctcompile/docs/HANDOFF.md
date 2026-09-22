@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional iterator state and XOR complements, 2026-09-22 UTC
+
+Continued clean **f1eb9201** from the recorded `conditional-captured-store`
+boundary. **a4c2d5d2** admits conditional updates to confined iterator Number
+cells and receiver fields. Each `if` arm retains its original results and effects,
+then yields its current scalar state. Unwritten arms preserve incoming values;
+nested joins and close-hook updates retain source order. Initialization, capture
+identity, confinement, type, lifetime and budget proofs remain required.
+
+Both original conditional sources execute unchanged. Two-state source and raw
+controls check nested branches, sequential reads, exhaustion and latest close
+values. Generated C++ uses typed scalars and public DOM calls without boxed
+iterator state or Script. Parallel escape work **5805be25** preserves odd strides
+through all-one XOR complements within one signed conversion band, reversing
+endpoints through the existing bitwise evaluator. Original 84 source witnesses
+remain unchanged; twelve were added. No browser/oracle semantics changed.
+
+Focused checks pass: exact host **1/1, 0.89 s total**; custom iteration lit
+**1/1, 404.35 s**, completing **240 native executions, 460 refusals and 120
+Node/VM observations**; exact arrays **1/1, 1.64 s total**; OR/XOR and AND lit
+**2/2, 0.12 s**. All seven final code/test hashes match their gates. The initial
+arrays run found one malformed new near-mask fixture; an exact `-2` literal
+fixed its definition order without changing production. Required formatting
+retains **16 pre-existing diagnostics in four untouched files**; changed files
+pass scoped checks. Full suites, unchanged nested/dataset lit, broad replays,
+Windows and sanitizers were skipped. The devbox idle timer is active/enabled.
+
+**Next native boundary:** the committed `loop-captured-store` source needs state
+transport through an iterator method's `while` recurrence. Its finite loop
+increments the captured cell until one; it remains refused under both optimization
+policies. External cell observations, nested custom opens, body abrupt-close
+behavior, literal range-for printing, unguarded Bootstrap defaults and the
+application driver remain open. Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-conditional-state.md).
+
 ## Confined iterator captures and identity masks, 2026-09-22 UTC
 
 Continued clean **830181ec** from the recorded captured-counter boundary.
