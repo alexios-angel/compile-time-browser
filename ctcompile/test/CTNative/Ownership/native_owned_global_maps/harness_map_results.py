@@ -213,6 +213,13 @@ def check_result_calls(cpp, name, mode):
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
+    if name == "result_missing_return":
+        observed = re.search(
+            r"\b(\w+)\s*=\s*ctnative::to_nullable\(" + re.escape(calls[-1][0]) + r"\);",
+            entry[1],
+        )
+        if not observed or f"g_trace = {observed[1]};" not in entry[1]:
+            raise RuntimeError(f"{name}/{mode}: trace lost the final size result")
     seeded = {
         **seeded_result_sources(),
         **key_fact_sources(),

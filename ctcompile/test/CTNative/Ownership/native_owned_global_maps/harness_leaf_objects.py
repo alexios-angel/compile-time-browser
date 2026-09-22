@@ -167,8 +167,9 @@ def check_leaf_object_calls(cpp, name, mode):
         )
 
 
-def check_leaf_readback_calls(cpp, name, mode):
-    source = leaf_readback_sources()[name][0]
+def check_leaf_readback_calls(cpp, name, mode, *, source=None):
+    if source is None:
+        source = leaf_readback_sources()[name][0]
     body = source.split("set(key", 1)[1].split("\n", 1)[0]
     allocations = body.count("{") - 1
     params = (

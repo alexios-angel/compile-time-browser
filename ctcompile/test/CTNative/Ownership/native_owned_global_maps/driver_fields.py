@@ -19,6 +19,7 @@ from .driver_common import (
     string_field_observer_source,
     subprocess,
 )
+from .harness_leaf_objects import check_leaf_readback_calls
 
 STRING_FIELD_OBSERVERS = (
     "leaf_object_string_field",
@@ -409,6 +410,7 @@ def check_historical_string_field_carriers(args, positives, node, reference, com
                 expected_cpp = comparable_provenance(
                     host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir
                 )
+                check_leaf_readback_calls(expected_cpp, name, mode, source=source)
             repaired = owned.lower(
                 args, restored, label + "-restored", restored_config, options=options
             )
