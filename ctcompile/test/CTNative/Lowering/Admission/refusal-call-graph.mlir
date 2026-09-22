@@ -21,7 +21,7 @@
 // the entire subject here - so the two directions cannot share a module.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-calledby.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unsupported-calledby.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CALLEDBY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calls.js 2>/dev/null \
@@ -33,6 +33,14 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/absent-calledby.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ABSENT
+
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-calledby.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
+// RUN:   | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+
+// MIXED: emitc.global static @g_t : !emitc.opaque<"ctnative::nullable_number_string">
+// MIXED: emitc.func @main
+// MIXED: emitc.func @helper_1
 
 // --- FORWARDS: a refused callee refuses its caller --------------------------
 //
@@ -52,7 +60,7 @@
 // CALLS-SAME: ctnative.not_native = "calls `bad$1`, which is not native"
 
 // A nullable caller no longer excludes its otherwise native callee. Preserve
-// this original source as a positive; the separate unsupported String/Number
+// this original source as a positive; the separate unsupported BigInt
 // global below still checks backwards refusal through the same helper call.
 // ABSENT-NOT: ctnative.not_native
 // ABSENT: emitc.func @main
@@ -90,4 +98,10 @@ var r = helper(3);
 function helper(x) { return x * 2; }
 var t = "text";
 t = 1;
+var r = helper(3);
+
+//--- unsupported-calledby.js
+function helper(x) { return x * 2; }
+var t = "text";
+t = 1n;
 var r = helper(3);

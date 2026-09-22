@@ -1,7 +1,7 @@
 // Global observations preserve each proved scalar alternative's actual tag.
 // Every source store contributes to the census; a constant last write or an
 // observation request cannot erase earlier Number/Boolean or absent alternatives.
-// Unsupported String/Number and String/Boolean joins still refuse.
+// String/Number and String/Boolean joins retain their owning tagged carriers.
 //
 // ONE PROGRAM PER FILE, VIA split-file, for the reason divergence-refusals.mlir
 // gives: admission reports the FIRST refusal per function and every global
@@ -215,9 +215,18 @@ overwrite();
 // STRING_OPTIONAL: emitc.global static @g_result : !emitc.opaque<"ctnative::nullable_string">
 // STRING_OPTIONAL: call_opaque "ctnative::print_scalar"
 // STRING_OPTIONAL-NOT: ctnative.not_native
-// STRING_MIXED: ctnative.not_native = "store to global `result` is {{.*}}; native global observations require a supported scalar type"
-// STRING_WRITES: ctnative.not_native = "store to global `result` has inconsistent global observation types"
-// STRING_CALLEE: ctnative.not_native = "store to global `result` has inconsistent global observation types"
+// STRING_MIXED-NOT: ctnative.not_native
+// STRING_MIXED: emitc.global static @g_result : !emitc.opaque<"ctnative::nullable_boolean_string">
+// STRING_MIXED: call_opaque "ctnative::print_boolean_string"
+// STRING_MIXED-NOT: ctnative.not_native
+// STRING_WRITES-NOT: ctnative.not_native
+// STRING_WRITES: emitc.global static @g_result : !emitc.opaque<"ctnative::nullable_number_string">
+// STRING_WRITES: call_opaque "ctnative::print_number_string"
+// STRING_WRITES-NOT: ctnative.not_native
+// STRING_CALLEE-NOT: ctnative.not_native
+// STRING_CALLEE: emitc.global static @g_result : !emitc.opaque<"ctnative::nullable_boolean_string">
+// STRING_CALLEE: call_opaque "ctnative::print_boolean_string"
+// STRING_CALLEE-NOT: ctnative.not_native
 // STRING_OVERWRITE-NOT: ctnative.not_native
 // STRING_OVERWRITE: emitc.global static @g_result : !emitc.opaque<"ctnative::nullable_string">
 // STRING_OVERWRITE: call_opaque "ctnative::global_string"

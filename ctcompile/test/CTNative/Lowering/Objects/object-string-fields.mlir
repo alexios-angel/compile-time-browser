@@ -43,7 +43,8 @@
 // Both objects enter the same Map field group, so this source's final read
 // already contains both types. The separate function cases isolate the later
 // emitted-member census with independently narrow Number and String results.
-// READ-UNION: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `ctjs.call_direct`"
+// READ-UNION: ctjs.func private @distinct$1
+// READ-UNION-SAME: ctnative.not_native = "an owning field read has an unsupported scalar schema"
 
 //--- saved.js
 function saved() {
