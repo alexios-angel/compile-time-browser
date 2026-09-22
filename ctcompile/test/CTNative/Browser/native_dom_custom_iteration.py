@@ -511,6 +511,25 @@ SIBLING_RETURNED_LOOP_FORWARDED_ZERO_SOURCE = SIBLING_RETURNED_LOOP_FORWARDED_SO
     "const forward = (writer) => { closed += emitted; return writer; };",
     1,
 ).replace("while (rounds < 2)", "while (rounds < 0)", 1)
+SIBLING_RETURNED_LOOP_BRANCH_SOURCE = SIBLING_RETURNED_LOOP_FORWARDED_SOURCE.replace(
+    "const forward = (writer) => writer;",
+    "const forward = (writer) => { let selected = writer;\n"
+    "    if (emitted > 0) selected = other; return selected; };",
+    1,
+)
+SIBLING_RETURNED_LOOP_BRANCH_SNAPSHOTS_SOURCE = (
+    SIBLING_RETURNED_LOOP_FORWARDED_SNAPSHOTS_SOURCE.replace(
+        "const forward = (writer, prior) => { closed += prior; return writer; };",
+        "const forward = (writer, alternate, prior) => { let selected = writer;\n"
+        "    if (prior > 0) selected = alternate; closed += prior; return selected; };",
+        1,
+    ).replace("forward(writer, prior);", "forward(writer, advance, prior);", 1)
+)
+SIBLING_RETURNED_LOOP_BRANCH_ZERO_SOURCE = SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+    "if (emitted > 0) selected = other; return selected;",
+    "if (emitted > 0) selected = other; closed += emitted; return selected;",
+    1,
+).replace("while (rounds < 2)", "while (rounds < 0)", 1)
 
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
@@ -1091,6 +1110,33 @@ POSITIVES = (
         True,
         "false",
     ),
+    (
+        "entry-captured-sibling-returned-loop-forwarded-branch",
+        SIBLING_RETURNED_LOOP_BRANCH_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        # The inner branch restores advance after the outer branch chose other;
+        # the earlier scalar arguments and the nested state write both survive.
+        "entry-captured-sibling-returned-loop-branch-snapshots",
+        SIBLING_RETURNED_LOOP_BRANCH_SNAPSHOTS_SOURCE,
+        True,
+        ("494861", "547651", "494861"),
+        True,
+        "false",
+    ),
+    (
+        # Neither nested branch selection nor its state write runs on zero trips.
+        "entry-captured-sibling-returned-loop-branch-zero",
+        SIBLING_RETURNED_LOOP_BRANCH_ZERO_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
 )
 
 
@@ -1663,11 +1709,40 @@ def refusals():
                 "const forward = (writer) => { closed += forward(writer)(); return writer; };",
                 1,
             ),
-            "entry-captured-sibling-returned-loop-forwarded-branch": SIBLING_RETURNED_LOOP_FORWARDED_SOURCE.replace(
-                "const forward = (writer) => writer;",
-                "const forward = (writer) => { let selected = writer;\n"
-                "    if (emitted > 0) selected = other; return selected; };",
+            "entry-captured-sibling-returned-loop-branch-unknown-arm": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+                "if (emitted > 0) selected = other; return selected;",
+                "if (emitted > 0) selected = unknownWriter; return selected;",
                 1,
+            ),
+            "entry-captured-sibling-returned-loop-branch-scalar-arm": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+                "const forward = (writer) => { let selected = writer;",
+                "const forward = (writer) => { let selected = 0;",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-branch-missing": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+                "forward(writer);", "forward();", 1
+            ),
+            "entry-captured-sibling-returned-loop-branch-escaping": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+                "selected = other; return selected;",
+                "selected = other; anchor.saved = selected; return selected;",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-branch-observed": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+                "selected = other; return selected;",
+                "selected = other; closed += selected === other; return selected;",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-branch-recursive-effect": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+                "selected = other; return selected;",
+                "selected = other; closed += forward(writer)(); return selected;",
+                1,
+            ),
+            "entry-captured-sibling-returned-loop-branch-formal-callee": SIBLING_RETURNED_LOOP_BRANCH_SOURCE.replace(
+                "const keep = (writer) => forward(writer);",
+                "const keep = (writer, chooser) => chooser(writer);",
+                1,
+            ).replace(
+                "selected = keep(selected);", "selected = keep(selected, forward);", 1
             ),
         }
     )

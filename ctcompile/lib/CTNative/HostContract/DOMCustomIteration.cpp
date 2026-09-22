@@ -394,11 +394,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // Prove the complete family before changing bodies. Inline its cell
     // accesses at each call, then let the entry rewrite below carry their state
     // through source branches and loops alongside the ordinary return value.
+    using Targets = llvm::SmallVector<unsigned, 2>;
+    struct ReturnDependencies {
+        Targets arguments;
+        Targets callables;
+    };
     struct Helper {
         ctjs::CreateClosureOp closure;
         ctjs::FuncOp body;
         llvm::SmallVector<mlir::Operation *> calls;
-        std::optional<unsigned> returnedArgument;
+        std::optional<ReturnDependencies> returned;
     };
     llvm::SmallVector<Helper> helpers;
     for (auto closure : entry.getBody().front().getOps<ctjs::CreateClosureOp>()) {
@@ -448,14 +453,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator sibling helper must be a scalar leaf");
         }
         if (!work.checkBody(body, false, false, true)) { return error(work.reason); }
-        auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().getTerminator());
-        auto argument = llvm::dyn_cast<mlir::BlockArgument>(returned.getValue());
-        std::optional<unsigned> returnedArgument;
-        if (argument && argument.getOwner() == &body.getBody().front() &&
-            argument.getArgNumber() >= ctjs::implicit_arguments) {
-            returnedArgument = argument.getArgNumber() - ctjs::implicit_arguments;
-        }
-        helpers.push_back({closure, body, {}, returnedArgument});
+        helpers.push_back({closure, body, {}, std::nullopt});
     }
     llvm::DenseMap<mlir::Value, unsigned> helperIndices;
     llvm::DenseMap<mlir::Operation *, unsigned> helperBodies;
@@ -502,46 +500,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator sibling callable capture is mutable or unproved");
         }
     }
-    // Compose immutable argument-return dependencies through known helpers.
-    // Only a proved formal supplies a summary; cycles cannot invent one. The
-    // complete invocation/effect/observer proof below still precedes expansion.
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        for (auto & helper : helpers) {
-            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            if (helper.returnedArgument) { continue; }
-            auto & block = helper.body.getBody().front();
-            mlir::Value value = llvm::cast<ctjs::ReturnOp>(block.getTerminator()).getValue();
-            while (true) {
-                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-                if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-                    if (argument.getOwner() == &block &&
-                        argument.getArgNumber() >= ctjs::implicit_arguments) {
-                        helper.returnedArgument =
-                            argument.getArgNumber() - ctjs::implicit_arguments;
-                        changed = true;
-                    }
-                    break;
-                }
-                auto call = value.getDefiningOp<ctjs::CallOp>();
-                auto direct = value.getDefiningOp<ctjs::CallDirectOp>();
-                if (!call && !direct) { break; }
-                auto found = fixedCallables.find(call ? call.getCallee() : direct.getCalleeValue());
-                if (found == fixedCallables.end()) { break; }
-                auto argument = helpers[found->second].returnedArgument;
-                auto args = call ? call.getArgs() : direct.getArgs();
-                if (!argument || *argument >= args.size()) { break; }
-                value = args[*argument];
-            }
-        }
-    }
-    // Bind each invocation separately before changing any body. The aggregate
-    // identities below only enumerate observers; they never select a callee.
-    using Targets = llvm::SmallVector<unsigned, 2>;
-    using CallableValues = llvm::DenseMap<mlir::Value, Targets>;
-    CallableValues callableValues, initialCallables;
-    for (auto [value, index] : fixedCallables) { initialCallables[value] = {index}; }
     const auto mergeTargets = [&](Targets & into, llvm::ArrayRef<unsigned> from) {
         for (auto index : from) {
             if (!spend()) { return false; }
@@ -585,6 +543,77 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return false;
     };
+    // Summarize every return leaf as an immutable formal or fixed helper.
+    // Complete transport edges include branch arms and loop initializers;
+    // only grounded summaries compose, so cycles cannot invent a target.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto & helper : helpers) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (helper.returned) { continue; }
+            auto & block = helper.body.getBody().front();
+            llvm::SmallVector<mlir::Value> pending{
+                llvm::cast<ctjs::ReturnOp>(block.getTerminator()).getValue()};
+            llvm::DenseSet<mlir::Value> visited;
+            ReturnDependencies dependencies;
+            bool complete = true;
+            while (!pending.empty()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                auto value = pending.pop_back_val();
+                if (!visited.insert(value).second) { continue; }
+                if (auto found = fixedCallables.find(value); found != fixedCallables.end()) {
+                    if (!mergeTargets(dependencies.callables, {found->second})) {
+                        return error("DOM custom iterator budget exhausted");
+                    }
+                    continue;
+                }
+                if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+                    argument && argument.getOwner() == &block &&
+                    argument.getArgNumber() >= ctjs::implicit_arguments) {
+                    if (!mergeTargets(dependencies.arguments,
+                                      {argument.getArgNumber() - ctjs::implicit_arguments})) {
+                        return error("DOM custom iterator budget exhausted");
+                    }
+                    continue;
+                }
+                if (transportInputs(value, pending)) { continue; }
+                auto call = value.getDefiningOp<ctjs::CallOp>();
+                auto direct = value.getDefiningOp<ctjs::CallDirectOp>();
+                if (!call && !direct) {
+                    complete = false;
+                    continue;
+                }
+                auto found = fixedCallables.find(call ? call.getCallee() : direct.getCalleeValue());
+                if (found == fixedCallables.end() || !helpers[found->second].returned) {
+                    complete = false;
+                    continue;
+                }
+                const auto & returned = *helpers[found->second].returned;
+                if (!mergeTargets(dependencies.callables, returned.callables)) {
+                    return error("DOM custom iterator budget exhausted");
+                }
+                auto args = call ? call.getArgs() : direct.getArgs();
+                for (auto argument : returned.arguments) {
+                    if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                    if (argument < args.size()) {
+                        pending.push_back(args[argument]);
+                    } else {
+                        complete = false;
+                    }
+                }
+            }
+            if (complete && (!dependencies.arguments.empty() || !dependencies.callables.empty())) {
+                helper.returned = std::move(dependencies);
+                changed = true;
+            }
+        }
+    }
+    // Bind each invocation separately before changing any body. The aggregate
+    // identities below only enumerate observers; they never select a callee.
+    using CallableValues = llvm::DenseMap<mlir::Value, Targets>;
+    CallableValues callableValues, initialCallables;
+    for (auto [value, index] : fixedCallables) { initialCallables[value] = {index}; }
     const auto resolveTargets = [&](mlir::Value value, const CallableValues & known,
                                     Targets & targets) {
         llvm::SmallVector<mlir::Value> pending{value};
@@ -609,18 +638,25 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     complete = false;
                     continue;
                 }
-                // An explicit argument is an immutable snapshot even when the
-                // helper has effects. Follow that return dependency around the
-                // loop; the full call/observer proof below still checks every
-                // invocation before any helper is expanded.
+                // Arguments remain snapshots and fixed helpers retain identity.
+                // The summary only enumerates possibilities; source branches
+                // and effects still execute once when the proved call expands.
                 auto args = call ? call.getArgs() : direct.getArgs();
                 for (auto index : found->second) {
                     if (!spend()) { return false; }
-                    auto argument = helpers[index].returnedArgument;
-                    if (argument && *argument < args.size()) {
-                        pending.push_back(args[*argument]);
-                    } else {
+                    const auto & returned = helpers[index].returned;
+                    if (!returned) {
                         complete = false;
+                        continue;
+                    }
+                    if (!mergeTargets(targets, returned->callables)) { return false; }
+                    for (auto argument : returned->arguments) {
+                        if (!spend()) { return false; }
+                        if (argument < args.size()) {
+                            pending.push_back(args[argument]);
+                        } else {
+                            complete = false;
+                        }
                     }
                 }
             }
@@ -1561,13 +1597,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     }
                     if (!from.hasOneBlock()) { return false; }
                     auto & block = to.emplaceBlock();
-                    for (unsigned i = 0;
-                         i < values.getValueMap().size() + values.getOperationMap().size(); ++i) {
-                        if (!spend()) { return false; }
-                    }
-                    mlir::IRMapping nested(values);
+                    // Each source SSA definition is cloned once. Share its
+                    // mapping across regions; only mutable state needs a copy.
                     for (auto argument : from.front().getArguments()) {
-                        nested.map(argument,
+                        if (!spend()) { return false; }
+                        values.map(argument,
                                    block.addArgument(argument.getType(), argument.getLoc()));
                     }
                     for (auto value : state) {
@@ -1579,7 +1613,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         for (auto & value : innerState) { value = block.addArgument(type, where); }
                     }
                     mlir::OpBuilder inside(&block, block.end());
-                    if (!self(self, from.front(), inside, nested, innerState, depth + 1, true)) {
+                    if (!self(self, from.front(), inside, values, innerState, depth + 1, true)) {
                         return false;
                     }
                 }

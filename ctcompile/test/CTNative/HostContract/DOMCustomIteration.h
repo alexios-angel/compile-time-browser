@@ -1450,6 +1450,66 @@ module {
         !zeroDirectNestedLoopCallWriter) {
         return;
     }
+    // Move the original selection into the nested return helper. Both formal
+    // dependencies cross keep's return and the loop backedge, preserving the
+    // existing state, scalar-argument and zero-trip assertions unchanged.
+    const auto branchLoopSource = [&](const std::string & source) {
+        auto text = replaced(source,
+                             "      %selectPositive = ctjs.compare gt %selectedState, %selectZero\n"
+                             "      %selectCondition = ctjs.truthy %selectPositive\n"
+                             "      %selectedWriter = scf.if %selectCondition -> (!ctjs.value) {\n"
+                             "        scf.yield %alternateWriter : !ctjs.value\n"
+                             "      } else {\n"
+                             "        scf.yield %carriedWriter : !ctjs.value\n"
+                             "      }\n",
+                             "");
+        text = replaced(text, "%selectedWriter)\n      scf.yield %keptWriter",
+                        "%carriedWriter, %alternateWriter, %selectedState)\n"
+                        "      scf.yield %keptWriter");
+        text = replaced(text, "%keptWriter: !ctjs.value) -> !ctjs.value attributes",
+                        "%keptWriter: !ctjs.value, %keptAlternate: !ctjs.value, "
+                        "%keptState: !ctjs.value) -> !ctjs.value attributes");
+        text = replaced(text, "%keptWriter)\n    ctjs.return %forwardResult",
+                        "%keptWriter, %keptAlternate, %keptState)\n"
+                        "    ctjs.return %forwardResult");
+        text = replaced(text, "%forwardedWriter: !ctjs.value) -> !ctjs.value attributes",
+                        "%forwardedWriter: !ctjs.value, %forwardedAlternate: !ctjs.value, "
+                        "%forwardedState: !ctjs.value) -> !ctjs.value attributes");
+        return replaced(text, "    ctjs.return %forwardedWriter",
+                        R"MLIR(    %selectZero = ctjs.constant #ctjs.number<0>
+    %selectPositive = ctjs.compare gt %forwardedState, %selectZero
+    %selectCondition = ctjs.truthy %selectPositive
+    %selectedWriter = scf.if %selectCondition -> (!ctjs.value) {
+      scf.yield %forwardedAlternate : !ctjs.value
+    } else {
+      scf.yield %forwardedWriter : !ctjs.value
+    }
+    ctjs.return %selectedWriter)MLIR");
+    };
+    const auto branchLoopCallWriterSource = branchLoopSource(nestedLoopCallWriterSource);
+    const auto directBranchLoopCallWriterSource =
+        branchLoopSource(directNestedLoopCallWriterSource);
+    auto branchLoopCallWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(branchLoopCallWriterSource, &context);
+    auto directBranchLoopCallWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directBranchLoopCallWriterSource, &context);
+    auto zeroBranchLoopCallWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(branchLoopCallWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    auto zeroDirectBranchLoopCallWriter = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(directBranchLoopCallWriterSource,
+                 "%selectLimit = ctjs.constant #ctjs.number<4611686018427387904>",
+                 "%selectLimit = ctjs.constant #ctjs.number<0>"),
+        &context);
+    check(branchLoopCallWriter && directBranchLoopCallWriter && zeroBranchLoopCallWriter &&
+              zeroDirectBranchLoopCallWriter,
+          "ordinary/direct branch return dependencies and zero-trip snapshots parse");
+    if (!branchLoopCallWriter || !directBranchLoopCallWriter || !zeroBranchLoopCallWriter ||
+        !zeroDirectBranchLoopCallWriter) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1533,7 +1593,11 @@ module {
                          *nestedLoopCallWriter,
                          *directNestedLoopCallWriter,
                          *zeroNestedLoopCallWriter,
-                         *zeroDirectNestedLoopCallWriter}) {
+                         *zeroDirectNestedLoopCallWriter,
+                         *branchLoopCallWriter,
+                         *directBranchLoopCallWriter,
+                         *zeroBranchLoopCallWriter,
+                         *zeroDirectBranchLoopCallWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1551,12 +1615,14 @@ module {
         const bool zeroLoopWrites =
             fixture == *zeroLoopJoinedWriter || fixture == *zeroDirectLoopJoinedWriter ||
             fixture == *zeroLoopCallWriter || fixture == *zeroDirectLoopCallWriter ||
-            fixture == *zeroNestedLoopCallWriter || fixture == *zeroDirectNestedLoopCallWriter;
-        const bool loopWrites = fixture == *loopJoinedWriter ||
-                                fixture == *directLoopJoinedWriter || fixture == *loopCallWriter ||
-                                fixture == *directLoopCallWriter ||
-                                fixture == *nestedLoopCallWriter ||
-                                fixture == *directNestedLoopCallWriter || zeroLoopWrites;
+            fixture == *zeroNestedLoopCallWriter || fixture == *zeroDirectNestedLoopCallWriter ||
+            fixture == *zeroBranchLoopCallWriter || fixture == *zeroDirectBranchLoopCallWriter;
+        const bool loopWrites =
+            fixture == *loopJoinedWriter || fixture == *directLoopJoinedWriter ||
+            fixture == *loopCallWriter || fixture == *directLoopCallWriter ||
+            fixture == *nestedLoopCallWriter || fixture == *directNestedLoopCallWriter ||
+            fixture == *branchLoopCallWriter || fixture == *directBranchLoopCallWriter ||
+            zeroLoopWrites;
         const bool joinedWrites =
             fixture == *joinedWriter || fixture == *directJoinedWriter || loopWrites;
         const bool callableWrites =
@@ -2731,6 +2797,65 @@ module {
             }
         }
     }
+    for (const auto & source : {branchLoopCallWriterSource, directBranchLoopCallWriterSource}) {
+        const auto unknown = replaced(source, "    %selectPositive =",
+                                      "    %unknownWriter = ctjs.load_global \"unknownWriter\"\n"
+                                      "    %selectPositive =");
+        for (const auto & invalid : {
+                 replaced(unknown, "scf.yield %forwardedWriter :", "scf.yield %unknownWriter :"),
+                 replaced(unknown, "scf.yield %forwardedAlternate :", "scf.yield %unknownWriter :"),
+                 replaced(source, "scf.yield %forwardedWriter :", "scf.yield %selectZero :"),
+                 replaced(source, "scf.yield %forwardedAlternate :", "scf.yield %selectZero :"),
+                 // A direct missing actual is padded with undefined by resolution.
+                 replaced(source,
+                          "%keptWriter, %keptAlternate, %keptState)\n"
+                          "    ctjs.return %forwardResult",
+                          source == branchLoopCallWriterSource
+                              ? "%keptWriter)\n    ctjs.return %forwardResult"
+                              : "%keptWriter, %forwardUndefined, %keptState)\n"
+                                "    ctjs.return %forwardResult"),
+                 replaced(source, "    ctjs.return %selectedWriter",
+                          "    ctjs.store_global \"leaked\", %selectedWriter\n"
+                          "    ctjs.return %selectedWriter"),
+                 replaced(
+                     source, "    ctjs.return %selectedWriter",
+                     "    %observedWriter = ctjs.compare eq %selectedWriter, %forwardedWriter\n"
+                     "    ctjs.return %selectedWriter"),
+                 replaced(source, "    ctjs.return %selectedWriter",
+                          "    %undefined = ctjs.constant #ctjs.undefined\n"
+                          "    %recursiveEffect = ctjs.call %callee(%undefined, %forwardedWriter, "
+                          "%forwardedAlternate, %forwardedState)\n"
+                          "    ctjs.return %selectedWriter"),
+                 source == branchLoopCallWriterSource
+                     ? replaced(
+                           source, "ctjs.call %forwardWriter(%forwardUndefined, ",
+                           "ctjs.call_direct @keepWriter$8(%forwardUndefined, %forwardUndefined, "
+                           "%forwardWriter, ")
+                     : replaced(source, "ctjs.call_direct @forwardWriter$9(",
+                                "ctjs.call_direct @keepWriter$8("),
+             }) {
+            check(!invalid.empty() && invalid != source,
+                  "branch loop call-result control changes its source");
+            if (invalid.empty() || invalid == source) { continue; }
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "hostile branch loop return dependency parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "every branch return arm, actual, observer and direct target must be proved");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "refused branch return preserves source and publishes no evidence");
+            }
+        }
+    }
     for (const auto & source : {breakWriterSource, directBreakWriterSource}) {
         const auto poisoned =
             replaced(source, "    %helperPoison =",
@@ -3546,7 +3671,11 @@ module {
                          *nestedLoopCallWriter,
                          *directNestedLoopCallWriter,
                          *zeroNestedLoopCallWriter,
-                         *zeroDirectNestedLoopCallWriter}) {
+                         *zeroDirectNestedLoopCallWriter,
+                         *branchLoopCallWriter,
+                         *directBranchLoopCallWriter,
+                         *zeroBranchLoopCallWriter,
+                         *zeroDirectBranchLoopCallWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
