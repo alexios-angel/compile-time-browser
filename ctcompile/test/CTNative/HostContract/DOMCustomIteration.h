@@ -1816,6 +1816,18 @@ module {
                         auto choice = predicate
                                           ? predicate.getValue().getDefiningOp<ctjs::CompareOp>()
                                           : ctjs::CompareOp{};
+                        if (selector) {
+                            for (auto [index, region] : llvm::enumerate(selector->getRegions())) {
+                                auto tag = region.front()
+                                               .back()
+                                               .getOperand(selected.getResultNumber())
+                                               .getDefiningOp<ctjs::ConstantOp>();
+                                auto number = tag ? llvm::dyn_cast<ctjs::NumberAttr>(tag.getValue())
+                                                  : ctjs::NumberAttr{};
+                                ordered &=
+                                    number && number.getDouble() == static_cast<double>(index);
+                            }
+                        }
                         llvm::SmallVector<mlir::Value> counts, snapshots;
                         unsigned doubled = 0;
                         for (auto & region : join->getRegions()) {

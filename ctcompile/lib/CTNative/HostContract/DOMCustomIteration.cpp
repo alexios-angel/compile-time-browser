@@ -1,6 +1,8 @@
 #include "DOMSource/Proof.hpp"
 #include "mlir/IR/Verifier.h"
 
+#include <bit>
+
 namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostContract & contract,
@@ -765,7 +767,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         mlir::OpBuilder at(helper.closure);
         auto tag = ctjs::ConstantOp::create(
             at, helper.closure.getLoc(),
-            ctjs::NumberAttr::get(candidate.getContext(), static_cast<double>(index)));
+            ctjs::NumberAttr::get(candidate.getContext(),
+                                  std::bit_cast<uint64_t>(static_cast<double>(index))));
         helper.closure.getResult().replaceAllUsesWith(tag);
         helperIndices[tag] = static_cast<unsigned>(index);
         tags.push_back(tag);
