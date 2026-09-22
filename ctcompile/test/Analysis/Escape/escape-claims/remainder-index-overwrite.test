@@ -15,7 +15,7 @@
 // CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
@@ -34,7 +34,7 @@
 // CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
@@ -71,6 +71,13 @@
 // CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function wrapped() {
@@ -449,3 +456,44 @@ function directRemainderLaterWrite() {
 directWrapGap(); directNegativeDivisorGap(); directNegativeDividendGap();
 directRemainderRemainingGap(); directRemainderSavedChild();
 directRemainderHit(); directRemainderLaterWrite();
+
+function booleanRemainder() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % true] = 0;
+    return a;
+}
+function stringRemainderReload() {
+    var child = {}, a = [child, "4", child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i % a[1]] = 0;
+    return a;
+}
+function stringRemainderGap() {
+    var child = {}, a = [child, "4", child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i % a[1]] = 0;
+    return a;
+}
+function stringRemainderSavedChild() {
+    var child = {}, a = [child, "4", child, 0, 0], saved = a[2];
+    for (var i = 0; i < a.length; i += 2) a[i % a[1]] = 0;
+    return saved;
+}
+function stringRemainderLaterWrite() {
+    var child = {}, a = [child, "4", child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i % a[1]] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function stringRemainderHit() {
+    var child = {}, a = [child, 0, "4", child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i % a[2]] = 0;
+    return a;
+}
+function falseRemainder() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i % false] = 0;
+    return a;
+}
+booleanRemainder(); stringRemainderReload(); stringRemainderGap(); stringRemainderSavedChild();
+stringRemainderLaterWrite(); stringRemainderHit(); falseRemainder();

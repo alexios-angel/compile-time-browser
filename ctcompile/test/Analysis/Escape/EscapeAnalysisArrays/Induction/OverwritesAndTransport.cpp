@@ -299,16 +299,66 @@ void InductionCases::overwritesAndTransport() {
             replace(remainder,
                     "  %a =", "  %divisor = ctjs.constant " + std::string(value) + "\n  %a ="),
             "mod %i, %two", "mod %i, %divisor");
-        if (std::string(value) == "#ctjs.number<13835058055282163712>") {
-            run({.what = "negative literal divisors preserve positive remainder indices",
+        if (std::string(value) == "#ctjs.number<13835058055282163712>" ||
+            std::string(value) == "#ctjs.string<\"2\">") {
+            run({.what = "bounded literal divisors preserve historical remainder constructions",
                  .body = body,
                  .arrays = "a:[zero,zero]",
                  .reads = "a[0]=zero; a[1]=zero",
                  .exit = "a -> {a}"},
                 "x");
+        } else if (std::string(value) == "#ctjs.boolean<true>") {
+            run({.what = "Boolean remainder preserves the historical unvisited child",
+                 .body = body,
+                 .arrays = "a:[zero,x]",
+                 .reads = "a[0]=zero; a[1]=x",
+                 .exit = "a -> {a,x}"});
         } else {
-            reject("remainder index divisors require nonzero integer Numbers", body);
+            reject("remainder index divisors require bounded nonzero primitive conversion", body);
         }
+    }
+    run({.what = "negative String divisors preserve the dividend's sign",
+         .body = replace(replace(signedRemainder,
+                                 "  %a =", "  %text = ctjs.constant #ctjs.string<\"-2\">\n  %a ="),
+                         "mod %negative, %two", "mod %negative, %text"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto stringRemainderReload =
+        replace(remainderWrapReload, "#ctjs.number<4616189618054758400>", "#ctjs.string<\"4\">");
+    run({.what = "String remainder reloads retain primitive identity across wraps",
+         .body = stringRemainderReload,
+         .arrays = "a:[zero,four,zero,zero,zero]",
+         .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "primitive remainder replay retains children outside actual writes",
+         .body = replace(stringRemainderReload, "[%x, %four, %x, %zero, %zero]",
+                         "[%x, %four, %x, %x, %zero]"),
+         .arrays = "a:[zero,four,zero,x,zero]",
+         .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "primitive remainder overwrites preserve saved children",
+         .body = replace(replace(stringRemainderReload, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%two]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,four,zero,zero,zero]",
+         .reads = "a[2]=x; a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero",
+         .exit = "x -> {x}"});
+    reject("String remainder reloads cannot conceal an overlapping write",
+           replace(replace(stringRemainderReload, "[%x, %four, %x, %zero, %zero]",
+                           "[%x, %zero, %four, %zero, %zero]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%two]"));
+    reject("String remainder reloads retain the complete later-store census",
+           replace(stringRemainderReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    for (const std::string literal :
+         {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
+          "#ctjs.string<\"04\">", "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"4\">"}) {
+        reject("primitive remainders require bounded nonzero side-effect-free conversion",
+               replace(stringRemainderReload, "#ctjs.string<\"4\">", literal));
     }
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i",

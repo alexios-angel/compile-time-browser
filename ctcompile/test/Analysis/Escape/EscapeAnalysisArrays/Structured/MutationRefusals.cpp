@@ -33,6 +33,68 @@ void StructuredCases::mutationRefusals() {
                                              "    ctjs.set_property %base[%position], %zero\n"
                                              "    %read ="),
                                      "ctjs.return %result", "ctjs.return %a");
+    const auto stringRemainder = replace(
+        replace(scaledIndex, "  %a =",
+                "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n  %a ="),
+        "mul %i, %one", "mod %i, %text");
+    for (const auto & literal : {"#ctjs.string<\"2\">", "#ctjs.string<\"-2\">"}) {
+        rows.push_back({.what = "structured primitive remainders preserve exact own positions",
+                        .body = replace(stringRemainder, "#ctjs.string<\"2\">", literal),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=zero; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    rows.push_back({.what = "structured Boolean remainder preserves an unvisited child",
+                    .body = replace(stringRemainder, "#ctjs.string<\"2\">", "#ctjs.boolean<true>"),
+                    .arrays = "a:[zero,y]",
+                    .reads = "a[0]=zero; a[1]=y",
+                    .exit = "a -> {a,y}"});
+    const auto stringRemainderReload = replace(
+        replace(
+            replace(replace(replace(stringRemainder, "#ctjs.string<\"2\">", "#ctjs.string<\"4\">"),
+                            "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                    "create_array [%x]", "create_array [%x, %text, %y, %zero]"),
+            "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+        "add %i, %one", "add %i, %two");
+    const auto reloadedRemainder =
+        replace(stringRemainderReload, "%position = ctjs.binary mod %i, %text",
+                "%divisor = ctjs.get_property %base[%one]\n"
+                "    %position = ctjs.binary mod %i, %divisor");
+    rows.push_back({.what = "structured String remainder reloads preserve wrap gaps",
+                    .body = reloadedRemainder,
+                    .arrays = "a:[zero,text,zero,zero,zero]",
+                    .reads = "a[1]=text; a[0]=zero; a[1]=text; a[2]=zero; a[1]=text; a[4]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured primitive remainder replay retains unvisited children",
+                    .body = replace(reloadedRemainder, "create_array [%x, %text, %y, %zero]",
+                                    "create_array [%x, %text, %y, %x]"),
+                    .arrays = "a:[zero,text,zero,x,zero]",
+                    .reads = "a[1]=text; a[0]=zero; a[1]=text; a[2]=zero; a[1]=text; a[4]=zero",
+                    .exit = "a -> {a,x}"});
+    rows.push_back(
+        {.what = "structured primitive remainder preserves children saved before overwrites",
+         .body = replace(replace(reloadedRemainder, "  %finalIndex,",
+                                 "  %savedChild = ctjs.get_property %a[%two]\n  %finalIndex,"),
+                         "ctjs.return %a", "ctjs.return %savedChild"),
+         .arrays = "a:[zero,text,zero,zero,zero]",
+         .reads = "a[2]=y; a[1]=text; a[0]=zero; a[1]=text; a[2]=zero; a[1]=text; a[4]=zero",
+         .exit = "y -> {y}"});
+    reject("structured String remainder reloads cannot conceal an actual write",
+           replace(replace(reloadedRemainder, "create_array [%x, %text, %y, %zero]",
+                           "create_array [%x, %zero, %text, %zero]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%two]"));
+    reject("structured String remainder reloads retain the complete later-store census",
+           replace(reloadedRemainder,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    for (const std::string literal :
+         {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
+          "#ctjs.string<\"02\">", "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"2\">"}) {
+        reject("structured primitive remainders require bounded nonzero conversion",
+               replace(stringRemainder, "#ctjs.string<\"2\">", literal));
+    }
+    reject("structured remainder cannot borrow an object's conversion",
+           replace(stringRemainder, "mod %i, %text", "mod %i, %x"));
     for (const auto & expression :
          {"%position = ctjs.binary mul %i, %one", "%position = ctjs.binary mul %one, %i",
           "%position = ctjs.unary plus %i",
