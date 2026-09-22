@@ -35,7 +35,8 @@ struct classInitialization {
     llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
     llvm::MapVector<mlir::Operation *, CallableObject> localHolders;
     llvm::SmallVector<ctjs::CallOp> calls;
-    llvm::DenseMap<mlir::Value, ctjs::CallOp> heritage;
+    // Publication scans may stop early; charge work in source order, not pointer order.
+    llvm::MapVector<mlir::Value, ctjs::CallOp> heritage;
     llvm::DenseSet<mlir::Value> baseClasses;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::SetPropertyOp>> inheritedMethods;
     llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::DefineAccessorOp>> inheritedGetters;
