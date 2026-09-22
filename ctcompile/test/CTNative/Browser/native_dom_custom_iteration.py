@@ -292,6 +292,24 @@ SIBLING_ARGUMENT_CONTROL_SOURCE = (
     )
     .replace("read(closed)", "read(closed, 2)")
 )
+SIBLING_BREAK_WRITER_SOURCE = SIBLING_LOOP_WRITER_SOURCE.replace(
+    "      rounds++;", "      rounds++;\n      if (rounds === 1) break;"
+)
+SIBLING_BREAK_FINITE_SOURCE = SIBLING_BREAK_WRITER_SOURCE.replace(
+    "let closed = 0;", "let closed = 1;"
+)
+SIBLING_BREAK_ARGUMENT_SOURCE = (
+    SIBLING_ARGUMENT_SNAPSHOTS_SOURCE.replace("let closed = 0;", "let closed = 1;")
+    .replace("read(emitted, emitted += closed)", "read(closed, closed += emitted)")
+    .replace("      rounds++;", "      rounds++;\n      if (rounds === 1) break;", 1)
+)
+SIBLING_BREAK_CONTROL_SOURCE = SIBLING_ARGUMENT_CONTROL_SOURCE.replace(
+    "let closed = 0;", "let closed = 1;"
+).replace("      rounds++;", "      rounds++;\n      if (rounds === amount) break;", 1)
+
+# The original zero-state source cannot progress after its early break. Preserve
+# its native admission without executing it; the finite counterpart runs below.
+COMPILE_ONLY = {"entry-captured-sibling-loop-break-writer": SIBLING_BREAK_WRITER_SOURCE}
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -629,6 +647,35 @@ POSITIVES = (
         ("137562", "153682", "137562"),
         True,
         "true",
+    ),
+    (
+        # The exact saved source breaks in both the helper and next method.
+        "entry-captured-sibling-loop-break-finite-writer",
+        SIBLING_BREAK_FINITE_SOURCE,
+        True,
+        ("1258", "1651", "1258"),
+        True,
+        "false",
+    ),
+    (
+        # The second argument changes the first argument's cell before the
+        # helper writes both cells; break skips the suffix, retaining all results.
+        "entry-captured-sibling-loop-break-argument-snapshots",
+        SIBLING_BREAK_ARGUMENT_SOURCE,
+        True,
+        ("50788", "50856", "50788"),
+        True,
+        "false",
+    ),
+    (
+        # The first call breaks on its explicit argument; later calls reach the
+        # suffix and ordinary return branch with their latest shared state.
+        "entry-captured-sibling-loop-break-argument-control",
+        SIBLING_BREAK_CONTROL_SOURCE,
+        True,
+        ("127960", "139790", "127960"),
+        True,
+        "false",
     ),
 )
 
@@ -1003,16 +1050,33 @@ def refusals():
                 "const before = emitted + amount;",
                 "anchor.saved = () => amount;\n    const before = emitted + amount;",
             ),
-            "entry-captured-sibling-loop-break-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
-                "      rounds++;", "      rounds++;\n      if (rounds === 1) break;"
+            "entry-captured-sibling-loop-break-nonnumber": SIBLING_BREAK_FINITE_SOURCE.replace(
+                "if (rounds === 1) break;",
+                "if (rounds === 1) { closed = true; break; }",
+                1,
+            ),
+            "entry-captured-sibling-loop-break-unknown": SIBLING_BREAK_FINITE_SOURCE.replace(
+                "if (rounds === 1) break;",
+                "if (rounds === 1) { external(emitted); break; }",
+                1,
+            ),
+            "entry-captured-sibling-loop-break-nested": SIBLING_BREAK_FINITE_SOURCE.replace(
+                "if (rounds === 1) break;",
+                "if (rounds === 1) { const read = () => emitted; read(); break; }",
+                1,
+            ),
+            "entry-captured-sibling-nested-call-writer": SIBLING_BREAK_FINITE_SOURCE.replace(
+                "  const read = () => {",
+                "  const advance = () => { const before = emitted; closed += emitted;\n"
+                "    emitted += closed; return before; };\n  const read = () => {",
+                1,
+            ).replace(
+                "      closed += emitted;\n      emitted += closed;",
+                "      rounds += advance();",
+                1,
             ),
         }
     )
-    # The original zero initialization cannot progress after its early break.
-    # Keep that complete source and a finite counterpart for later execution.
-    variants["entry-captured-sibling-loop-break-finite-writer"] = variants[
-        "entry-captured-sibling-loop-break-writer"
-    ].replace("let closed = 0;", "let closed = 1;")
     return variants
 
 
@@ -1030,7 +1094,7 @@ def main():
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
-    executions = refused = 0
+    executions = refused = admitted = 0
     for label, text, breaking, results, resetting, closed in POSITIVES:
         ir, contract = dom.prepare(args, f"custom-{label}", text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -1104,6 +1168,12 @@ def main():
                         success=False,
                     )
                     refused += 1
+    for name, text in COMPILE_ONLY.items():
+        ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
+        contract.update(initial_intrinsics=INTRINSICS)
+        for optimize in (False, True):
+            dom.lower(args, ir, contract, f"compile-only-{name}-{optimize}", optimize=optimize)
+            admitted += 1
     for name, text in refusals().items():
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -1114,6 +1184,7 @@ def main():
             refused += 1
     print(
         f"Closed custom DOM iteration: {executions} native executions, {refused} refusals; "
+        f"{admitted} nonexecuted source admissions; "
         f"{observations} Node/VM source-double observations; DOM/Core only"
     )
 

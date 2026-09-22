@@ -946,6 +946,71 @@ module {
     check(argumentWriter && directArgumentWriter,
           "ordinary/direct helper arguments retain snapshots across intervening state writes");
     if (!argumentWriter || !directArgumentWriter) { return; }
+    // The same argument snapshots cross a helper-local break. Its empty exit
+    // dispatch is removable, but both ordered cell writes remain on each edge.
+    const auto breakWriterSource =
+        replaced(argumentWriterSource,
+                 "    %updated = ctjs.binary_static add %observed, %step\n"
+                 "    ctjs.store_upvalue %callee[0], %updated\n"
+                 "    %current = ctjs.load_upvalue %callee[0]\n"
+                 "    %updatedExtra = ctjs.binary_static add %oldExtra, %current\n"
+                 "    ctjs.store_upvalue %callee[1], %updatedExtra",
+                 R"MLIR(    %helperZero = ctjs.constant #ctjs.number<0>
+    %helperOne = ctjs.constant #ctjs.number<4607182418800017408>
+    %helperLimit = ctjs.constant #ctjs.number<4611686018427387904>
+    %helperPoison = ub.poison : i32
+    %helperNormal = arith.constant 7 : i32
+    %helperBreak = arith.constant 11 : i32
+    %helperLoop:2 = scf.while (%trip = %helperZero, %tag = %helperPoison) : (!ctjs.value, i32) -> (!ctjs.value, i32) {
+      %within = ctjs.compare lt %trip, %helperLimit
+      %active = ctjs.truthy %within
+      %selected:3 = scf.if %active -> (i1, !ctjs.value, i32) {
+        %beforeCount = ctjs.load_upvalue %callee[0]
+        %beforeExtra = ctjs.load_upvalue %callee[1]
+        %updated = ctjs.binary_static add %beforeCount, %step
+        ctjs.store_upvalue %callee[0], %updated
+        %current = ctjs.load_upvalue %callee[0]
+        %updatedExtra = ctjs.binary_static add %beforeExtra, %current
+        ctjs.store_upvalue %callee[1], %updatedExtra
+        %stopping = ctjs.compare strict_eq %trip, %snapshot
+        %breaking = ctjs.truthy %stopping
+        %nextTrip = ctjs.binary_static add %trip, %helperOne
+        %branch:3 = scf.if %breaking -> (i1, !ctjs.value, i32) {
+          %stop = arith.constant false
+          scf.yield %stop, %nextTrip, %helperBreak : i1, !ctjs.value, i32
+        } else {
+          %again = arith.constant true
+          scf.yield %again, %nextTrip, %helperNormal : i1, !ctjs.value, i32
+        }
+        scf.yield %branch#0, %branch#1, %branch#2 : i1, !ctjs.value, i32
+      } else {
+        %stop = arith.constant false
+        scf.yield %stop, %trip, %helperNormal : i1, !ctjs.value, i32
+      }
+      scf.condition(%selected#0) %selected#1, %selected#2 : !ctjs.value, i32
+    } do {
+    ^bb0(%carried: !ctjs.value, %inactiveTag: i32):
+      scf.yield %carried, %inactiveTag : !ctjs.value, i32
+    }
+    %helperSelector = arith.index_castui %helperLoop#1 : i32 to index
+    scf.index_switch %helperSelector
+    case 7 {
+      scf.yield
+    }
+    default {
+      scf.yield
+    })MLIR");
+    auto directBreakWriterSource = breakWriterSource;
+    for (unsigned i = 0; i != 5; ++i) {
+        directBreakWriterSource =
+            replaced(directBreakWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+    }
+    auto breakWriter = mlir::parseSourceString<mlir::ModuleOp>(breakWriterSource, &context);
+    auto directBreakWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directBreakWriterSource, &context);
+    check(breakWriter && directBreakWriter, "ordinary/direct argument-taking helper breaks parse");
+    if (!breakWriter || !directBreakWriter) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1003,7 +1068,9 @@ module {
                          *branchWriter,
                          *directBranchWriter,
                          *argumentWriter,
-                         *directArgumentWriter}) {
+                         *directArgumentWriter,
+                         *breakWriter,
+                         *directBreakWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1013,6 +1080,7 @@ module {
                                    fixture == *zeroDirectSiblingWriter;
         const bool branchWrites = fixture == *branchWriter || fixture == *directBranchWriter;
         const bool argumentWrites = fixture == *argumentWriter || fixture == *directArgumentWriter;
+        const bool breakWrites = fixture == *breakWriter || fixture == *directBreakWriter;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -1031,7 +1099,7 @@ module {
             });
             check(!protocolCall && !input->lookupSymbol<ctjs::FuncOp>("identity$1"),
                   "normalization retires protocol calls and the proved identity method");
-            if (branchWrites) {
+            if (branchWrites || breakWrites) {
                 auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
                 unsigned nextCalls = 0;
                 body.walk([&](ctjs::CallOp call) {
@@ -1414,7 +1482,7 @@ module {
                           "repeated sibling readers retire after all call positions expand");
                 }
             }
-            if (argumentWrites) {
+            if (argumentWrites || breakWrites) {
                 auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
                 llvm::SmallVector<llvm::StringRef> effects;
                 mlir::Value finalSnapshot, finalCount, finalExtra;
@@ -1424,12 +1492,78 @@ module {
                         llvm::isa<ctjs::CreateObjectOp, ctjs::CreateCellOp, ctjs::CreateClosureOp,
                                   ctjs::CellGetOp, ctjs::CellSetOp, ctjs::LoadUpvalueOp,
                                   ctjs::StoreUpvalueOp, ctjs::CallDirectOp>(operation);
+                    if (breakWrites) {
+                        boxed |= llvm::isa<mlir::ub::PoisonOp, mlir::scf::IndexSwitchOp,
+                                           mlir::arith::IndexCastUIOp>(operation);
+                    }
                     auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
                     if (!call || call.getArgs().size() != 2) { return; }
                     const auto name = ctjs::constantKey(call.getArgs()[0]);
                     if (!name.starts_with("writer-")) { return; }
                     effects.push_back(name);
                     auto seen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    if (breakWrites) {
+                        auto extra =
+                            seen ? llvm::dyn_cast<mlir::OpResult>(seen.getRhs()) : mlir::OpResult{};
+                        auto loop = extra ? llvm::dyn_cast<mlir::scf::WhileOp>(extra.getOwner())
+                                          : mlir::scf::WhileOp{};
+                        mlir::scf::IfOp outer, branch;
+                        if (loop) {
+                            for (auto found : loop.getBefore().front().getOps<mlir::scf::IfOp>()) {
+                                outer = found;
+                            }
+                        }
+                        if (outer) {
+                            for (auto found :
+                                 outer.getThenRegion().front().getOps<mlir::scf::IfOp>()) {
+                                branch = found;
+                            }
+                        }
+                        if (!loop || !outer || !branch || loop.getNumResults() < 3 ||
+                            loop.getNumResults() > 4 ||
+                            extra.getResultNumber() != loop.getNumResults() - 1) {
+                            ordered = false;
+                            return;
+                        }
+                        const auto before = loop.getBeforeArguments();
+                        const auto initial = loop.getInits().take_back(2);
+                        const auto then = branch.getThenRegion().front().back().getOperands();
+                        const auto otherwise = branch.getElseRegion().front().back().getOperands();
+                        const auto exhausted = outer.getElseRegion().front().back().getOperands();
+                        if (then.size() != before.size() + 1 || otherwise.size() != then.size() ||
+                            exhausted.size() != then.size()) {
+                            ordered = false;
+                            return;
+                        }
+                        const auto state = then.take_back(2);
+                        auto current = initial[0].getDefiningOp<ctjs::BinaryStaticOp>();
+                        auto count = state[0].getDefiningOp<ctjs::BinaryStaticOp>();
+                        auto nextExtra = state[1].getDefiningOp<ctjs::BinaryStaticOp>();
+                        auto step = count ? count.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                          : ctjs::BinaryStaticOp{};
+                        auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        auto stopping = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
+                                              : ctjs::CompareOp{};
+                        ordered &= current && count && nextExtra && step && stopping &&
+                                   current.getLhs() == seen.getLhs() &&
+                                   count.getLhs() == before[before.size() - 2] &&
+                                   nextExtra.getLhs() == before.back() &&
+                                   nextExtra.getRhs() == state[0] && step.getLhs() == initial[1] &&
+                                   stopping.getLhs() == before[0] &&
+                                   stopping.getRhs() == seen.getLhs() &&
+                                   llvm::equal(then.drop_front(), otherwise.drop_front()) &&
+                                   llvm::equal(exhausted.drop_front(), before) &&
+                                   llvm::equal(loop.getAfter().front().back().getOperands(),
+                                               loop.getAfterArguments());
+                        if (name == "writer-final") {
+                            finalSnapshot = seen.getLhs();
+                            finalCount = loop.getResults()[loop.getNumResults() - 2];
+                            finalExtra = extra;
+                        } else if (name == "writer-again") {
+                            ordered &= seen.getLhs() == finalCount && initial[1] == finalExtra;
+                        }
+                        return;
+                    }
                     auto extra = seen ? seen.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
                                       : ctjs::BinaryStaticOp{};
                     auto count = extra ? extra.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
@@ -1594,7 +1728,7 @@ module {
                                     extra.getResultNumber() == count.getResultNumber() + 1 &&
                                     closeOrder.back() == "data-closed-extra")),
                       "close reads distinct current scalar loop results without boxed state");
-            } else if (!branchWrites && !argumentWrites && fixture != *original &&
+            } else if (!branchWrites && !argumentWrites && !breakWrites && fixture != *original &&
                        fixture != *withoutReturn) {
                 unsigned loops = 0, calls = 0, poison = 0, switches = 0;
                 input->walk([&](mlir::scf::WhileOp) { ++loops; });
@@ -1608,6 +1742,35 @@ module {
     }
     contract.moduleSha256 = hostContractFingerprint(*original);
 
+    for (const auto & source : {breakWriterSource, directBreakWriterSource}) {
+        const auto poisoned =
+            replaced(source, "    %helperPoison =",
+                     "    %helperValuePoison = ub.poison : !ctjs.value\n    %helperPoison =");
+        for (const auto & invalid : {
+                 replaced(source, "    %helperSelector =",
+                          "    %observedTag = arith.index_castui %helperLoop#1 : i32 to index\n"
+                          "    %helperSelector ="),
+                 replaced(poisoned, "%trip = %helperZero", "%trip = %helperValuePoison"),
+             }) {
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "invalid sibling break completion parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "sibling break with an observed tag or live poisoned counter refuses");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                          noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "refused sibling completion preserves source and publishes no evidence");
+            }
+        }
+    }
     for (auto fixture : {*argumentWriter, *directArgumentWriter}) {
         for (unsigned malformed = 0; malformed != 4; ++malformed) {
             for (auto provider : {HostContract::Provider::ctbrowserDOM,
@@ -2368,7 +2531,9 @@ module {
                          *branchWriter,
                          *directBranchWriter,
                          *argumentWriter,
-                         *directArgumentWriter}) {
+                         *directArgumentWriter,
+                         *breakWriter,
+                         *directBreakWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

@@ -349,6 +349,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (unique.wasInterrupted() || count != 1 || mlir::failed(mlir::verify(body))) {
             return error("DOM iterator sibling helper is shared or malformed");
         }
+        // Prove loop-break continuations before the scalar leaf census, as for
+        // iterator methods. Argument snapshots and ordered state writes survive.
+        if (!work.normalizeCompletion(body)) { return error(work.reason); }
         const auto leaf = body.walk([&](mlir::Operation * operation) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
             if (operation == body.getOperation() ||
