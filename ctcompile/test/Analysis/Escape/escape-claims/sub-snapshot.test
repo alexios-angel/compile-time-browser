@@ -4,7 +4,8 @@
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-sub-snapshot.claims
 
 // Exact Number subtraction preserves its negative result through Plus/Neg
-// and source-array mutation. A coercible operand grants no signed snapshot.
+// and source-array mutation. Proved primitive String operands also preserve
+// the Number result; the source object never escapes through their conversion.
 // IMPORT-LABEL: ctjs.func @subReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.unary plus
@@ -39,10 +40,10 @@
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
 // CLAIM: escape {{[0-9a-f]+}} 4 {{[0-9]+}} arr confined
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr escapes:passed
-// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
-// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr escapes:passed
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 5 {{[0-9]+}} arr confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CLAIM: escape {{[0-9a-f]+}} 6 {{[0-9]+}} arr confined
 
 //--- source.js
 function subReleased() {

@@ -11,7 +11,7 @@
 // CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
-// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
 
 // CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 
