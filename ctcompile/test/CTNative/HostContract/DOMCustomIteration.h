@@ -1011,6 +1011,47 @@ module {
         mlir::parseSourceString<mlir::ModuleOp>(directBreakWriterSource, &context);
     check(breakWriter && directBreakWriter, "ordinary/direct argument-taking helper breaks parse");
     if (!breakWriter || !directBreakWriter) { return; }
+    // The same writer is reached through a captured helper and directly from
+    // the entry. Both paths must keep the old argument beside current cells.
+    const auto writerBegin = argumentWriterSource.find("  ctjs.func @readCount$4");
+    const auto writerEnd = argumentWriterSource.find("  ctjs.func @readExtra$5", writerBegin);
+    const auto writerBody = argumentWriterSource.substr(writerBegin, writerEnd - writerBegin);
+    auto nestedWriterSource = replaced(
+        argumentWriterSource, writerBody,
+        R"MLIR(  ctjs.func @readCount$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %step: !ctjs.value, %snapshot: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %nestedWriter = ctjs.load_upvalue %callee[0]
+    %nestedUndefined = ctjs.constant #ctjs.undefined
+    %nestedResult = ctjs.call %nestedWriter(%nestedUndefined, %step, %snapshot)
+    ctjs.return %nestedResult
+  }
+)MLIR" + replaced(writerBody, "@readCount$4", "@writeState$6"));
+    nestedWriterSource = replaced(
+        nestedWriterSource,
+        "    %readCount = ctjs.create_closure %callee[4] this %undefined captures %emittedCell, "
+        "%extraCell",
+        "    %writeState = ctjs.create_closure %callee[6] this %undefined captures %emittedCell, "
+        "%extraCell\n"
+        "    %writerCell = ctjs.create_cell %writeState\n"
+        "    %readCount = ctjs.create_closure %callee[4] this %undefined captures %writerCell");
+    nestedWriterSource = replaced(nestedWriterSource, "%againCount = ctjs.call %readCount(",
+                                  "%againCount = ctjs.call %writeState(");
+    auto directNestedWriterSource = nestedWriterSource;
+    for (unsigned i = 0; i != 4; ++i) {
+        directNestedWriterSource =
+            replaced(directNestedWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+    }
+    directNestedWriterSource =
+        replaced(directNestedWriterSource, "ctjs.call %writeState(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %writeState, ");
+    directNestedWriterSource = replaced(
+        directNestedWriterSource, "ctjs.call %nestedWriter(%nestedUndefined, ",
+        "ctjs.call_direct @writeState$6(%nestedUndefined, %nestedUndefined, %nestedWriter, ");
+    auto nestedWriter = mlir::parseSourceString<mlir::ModuleOp>(nestedWriterSource, &context);
+    auto directNestedWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directNestedWriterSource, &context);
+    check(nestedWriter && directNestedWriter, "ordinary/direct shared nested writer twins parse");
+    if (!nestedWriter || !directNestedWriter) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1070,7 +1111,9 @@ module {
                          *argumentWriter,
                          *directArgumentWriter,
                          *breakWriter,
-                         *directBreakWriter}) {
+                         *directBreakWriter,
+                         *nestedWriter,
+                         *directNestedWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1081,6 +1124,7 @@ module {
         const bool branchWrites = fixture == *branchWriter || fixture == *directBranchWriter;
         const bool argumentWrites = fixture == *argumentWriter || fixture == *directArgumentWriter;
         const bool breakWrites = fixture == *breakWriter || fixture == *directBreakWriter;
+        const bool nestedWrites = fixture == *nestedWriter || fixture == *directNestedWriter;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -1099,7 +1143,7 @@ module {
             });
             check(!protocolCall && !input->lookupSymbol<ctjs::FuncOp>("identity$1"),
                   "normalization retires protocol calls and the proved identity method");
-            if (branchWrites || breakWrites) {
+            if (branchWrites || breakWrites || nestedWrites) {
                 auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
                 unsigned nextCalls = 0;
                 body.walk([&](ctjs::CallOp call) {
@@ -1482,7 +1526,7 @@ module {
                           "repeated sibling readers retire after all call positions expand");
                 }
             }
-            if (argumentWrites || breakWrites) {
+            if (argumentWrites || breakWrites || nestedWrites) {
                 auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
                 llvm::SmallVector<llvm::StringRef> effects;
                 mlir::Value finalSnapshot, finalCount, finalExtra;
@@ -1601,7 +1645,8 @@ module {
                                                                  "writer-again"},
                       "each argument keeps its evaluated SSA value beside the latest shared state");
                 check(!boxed && !input->lookupSymbol<ctjs::FuncOp>("readCount$4") &&
-                          !input->lookupSymbol<ctjs::FuncOp>("readExtra$5"),
+                          !input->lookupSymbol<ctjs::FuncOp>("readExtra$5") &&
+                          (!nestedWrites || !input->lookupSymbol<ctjs::FuncOp>("writeState$6")),
                       "argument-taking helpers retire without closures or boxed state");
             }
             if (siblingWrites) {
@@ -1728,8 +1773,8 @@ module {
                                     extra.getResultNumber() == count.getResultNumber() + 1 &&
                                     closeOrder.back() == "data-closed-extra")),
                       "close reads distinct current scalar loop results without boxed state");
-            } else if (!branchWrites && !argumentWrites && !breakWrites && fixture != *original &&
-                       fixture != *withoutReturn) {
+            } else if (!branchWrites && !argumentWrites && !breakWrites && !nestedWrites &&
+                       fixture != *original && fixture != *withoutReturn) {
                 unsigned loops = 0, calls = 0, poison = 0, switches = 0;
                 input->walk([&](mlir::scf::WhileOp) { ++loops; });
                 input->walk([&](ctjs::CallOp) { ++calls; });
@@ -1742,6 +1787,46 @@ module {
     }
     contract.moduleSha256 = hostContractFingerprint(*original);
 
+    for (const auto & invalid : {
+             replaced(nestedWriterSource, "    ctjs.return %snapshot",
+                      "    %recursiveUndefined = ctjs.constant #ctjs.undefined\n"
+                      "    %recursive = ctjs.call %callee(%recursiveUndefined, %step, %snapshot)\n"
+                      "    ctjs.return %snapshot"),
+             replaced(nestedWriterSource, "ctjs.return %nestedResult", "ctjs.return %nestedWriter"),
+             replaced(nestedWriterSource, "    %entrySet =",
+                      "    ctjs.cell_set %writerCell, %undefined\n    %entrySet ="),
+             replaced(directNestedWriterSource, "    %nestedUndefined =",
+                      "    ctjs.store_upvalue %callee[0], %nestedWriter\n"
+                      "    %nestedUndefined ="),
+             replaced(nestedWriterSource,
+                      "%writeState = ctjs.create_closure %callee[6] this %undefined captures "
+                      "%emittedCell, %extraCell",
+                      "%writeState = ctjs.create_closure %callee[6] this %undefined captures "
+                      "%emittedCell, %capture"),
+             replaced(directNestedWriterSource,
+                      "ctjs.call_direct @writeState$6(%nestedUndefined, %nestedUndefined, "
+                      "%nestedWriter, ",
+                      "ctjs.call_direct @readCount$4(%nestedUndefined, %nestedUndefined, "
+                      "%nestedWriter, "),
+         }) {
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "hostile nested helper witness parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure),
+                  "nested recursion, escaped or mutable callables and unproved targets refuse");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            check(hostContractFingerprint(*input) == request.moduleSha256 &&
+                      noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "refused nested helpers preserve source and publish no evidence");
+        }
+    }
     for (const auto & source : {breakWriterSource, directBreakWriterSource}) {
         const auto poisoned =
             replaced(source, "    %helperPoison =",
@@ -2533,7 +2618,9 @@ module {
                          *argumentWriter,
                          *directArgumentWriter,
                          *breakWriter,
-                         *directBreakWriter}) {
+                         *directBreakWriter,
+                         *nestedWriter,
+                         *directNestedWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;

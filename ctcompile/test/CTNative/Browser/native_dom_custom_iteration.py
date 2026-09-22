@@ -307,6 +307,44 @@ SIBLING_BREAK_CONTROL_SOURCE = SIBLING_ARGUMENT_CONTROL_SOURCE.replace(
     "let closed = 0;", "let closed = 1;"
 ).replace("      rounds++;", "      rounds++;\n      if (rounds === amount) break;", 1)
 
+SIBLING_NESTED_WRITER_SOURCE = SIBLING_BREAK_FINITE_SOURCE.replace(
+    "  const read = () => {",
+    "  const advance = () => { const before = emitted; closed += emitted;\n"
+    "    emitted += closed; return before; };\n  const read = () => {",
+    1,
+).replace(
+    "      closed += emitted;\n      emitted += closed;",
+    "      rounds += advance();",
+    1,
+)
+SIBLING_SHARED_WRITER_SOURCE = SIBLING_NESTED_WRITER_SOURCE.replace(
+    "  const read = () => {",
+    "  const forward = () => advance();\n  const relay = () => advance() + 1;\n"
+    "  const read = () => {",
+    1,
+).replace(
+    "      rounds += advance();",
+    "      if (emitted === 0) rounds += forward();\n      else rounds += relay();",
+    1,
+)
+SIBLING_NESTED_SNAPSHOTS_SOURCE = (
+    SIBLING_NESTED_WRITER_SOURCE.replace(
+        "const advance = () => { const before = emitted;",
+        "const advance = (amount, prior) => { const before = emitted;",
+        1,
+    )
+    .replace(
+        "emitted += closed; return before;",
+        "emitted += closed; return before + amount + prior + prior + emitted + closed;",
+        1,
+    )
+    .replace("    let rounds = 0;", "    let observed = 0;\n    let rounds = 0;", 1)
+    .replace(
+        "      rounds += advance();", "      observed += advance(closed, closed += emitted);", 1
+    )
+    .replace("    return rounds + before;", "    return rounds + before + observed;", 1)
+)
+
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
 COMPILE_ONLY = {"entry-captured-sibling-loop-break-writer": SIBLING_BREAK_WRITER_SOURCE}
@@ -674,6 +712,34 @@ POSITIVES = (
         SIBLING_BREAK_CONTROL_SOURCE,
         True,
         ("127960", "139790", "127960"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-nested-call-writer",
+        SIBLING_NESTED_WRITER_SOURCE,
+        True,
+        ("2724", "3598", "2724"),
+        True,
+        "false",
+    ),
+    (
+        # Both callable-only wrappers reach the same writer; both branches and
+        # distinct ordinary results survive their three-level call paths.
+        "entry-captured-sibling-shared-call-writer",
+        SIBLING_SHARED_WRITER_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        # A later inner argument changes the first argument's captured cell.
+        # Keep both snapshots, the ordinary result and ordered current state.
+        "entry-captured-sibling-nested-call-snapshots",
+        SIBLING_NESTED_SNAPSHOTS_SOURCE,
+        True,
+        ("42651", "51971", "42651"),
         True,
         "false",
     ),
@@ -1065,16 +1131,31 @@ def refusals():
                 "if (rounds === 1) { const read = () => emitted; read(); break; }",
                 1,
             ),
-            "entry-captured-sibling-nested-call-writer": SIBLING_BREAK_FINITE_SOURCE.replace(
-                "  const read = () => {",
-                "  const advance = () => { const before = emitted; closed += emitted;\n"
-                "    emitted += closed; return before; };\n  const read = () => {",
-                1,
-            ).replace(
-                "      closed += emitted;\n      emitted += closed;",
-                "      rounds += advance();",
+            "entry-captured-sibling-nested-call-recursive": SIBLING_NESTED_WRITER_SOURCE.replace(
+                "emitted += closed; return before;",
+                "emitted += closed; return before + advance();",
                 1,
             ),
+            "entry-captured-sibling-nested-call-mutual": SIBLING_SHARED_WRITER_SOURCE.replace(
+                "const forward = () => advance();", "const forward = () => relay();"
+            ).replace("const relay = () => advance() + 1;", "const relay = () => forward() + 1;"),
+            "entry-captured-sibling-nested-call-escaping": SIBLING_NESTED_WRITER_SOURCE.replace(
+                "  let count = read();", "  anchor.saved = advance;\n  let count = read();"
+            ),
+            "entry-captured-sibling-nested-call-receiver": SIBLING_NESTED_WRITER_SOURCE.replace(
+                "rounds += advance();", "rounds += advance.call(anchor);", 1
+            ),
+            "entry-captured-sibling-nested-call-mutation": SIBLING_NESTED_WRITER_SOURCE.replace(
+                "const advance =", "let advance =", 1
+            ).replace("  let count = read();", "  advance = () => emitted;\n  let count = read();"),
+            "entry-captured-sibling-nested-call-nonnumber": SIBLING_NESTED_WRITER_SOURCE.replace(
+                "emitted += closed; return before;", "emitted = true; return before;", 1
+            ),
+            "entry-captured-sibling-callable-argument-writer": SIBLING_NESTED_WRITER_SOURCE.replace(
+                "  const read = () => {",
+                "  const relay = (writer) => writer();\n  const read = () => {",
+                1,
+            ).replace("rounds += advance();", "rounds += relay(advance);", 1),
         }
     )
     return variants
