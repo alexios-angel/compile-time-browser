@@ -393,24 +393,31 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     continue;
                 }
             }
-            if (auto dispatch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(operation);
-                dispatch && dispatch.getNumResults() == 0) {
-                // An effect-only break can leave an empty exit dispatch.
-                // Its selector producers stay; no path observes the selector.
-                bool empty = true;
+            if (auto dispatch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(operation)) {
+                bool projection = true;
                 for (auto & region : dispatch->getRegions()) {
                     if (!spend()) { return false; }
-                    if (!region.hasOneBlock()) {
-                        empty = false;
+                    if (!region.hasOneBlock() || region.front().getNumArguments() ||
+                        !llvm::hasSingleElement(region.front())) {
+                        projection = false;
                         continue;
                     }
                     for (mlir::Operation & nested : region.front()) {
                         if (!spend()) { return false; }
                         auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(nested);
-                        empty &= yield && yield.getNumOperands() == 0;
+                        projection &= yield && yield.getOperandTypes() == dispatch.getResultTypes();
+                        for (mlir::Value operand : nested.getOperands()) {
+                            if (!spend()) { return false; }
+                            projection &= values.contains(operand);
+                        }
                     }
                 }
-                if (empty) { continue; }
+                if (projection) {
+                    // A pure selection cannot change the current done state.
+                    // Keep its source tuple for the loop-exit continuation proof.
+                    if (dispatch.getNumResults()) { at.clone(operation, values); }
+                    continue;
+                }
             }
             if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
                     operation)) {

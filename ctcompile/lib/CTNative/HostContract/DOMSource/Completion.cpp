@@ -24,6 +24,12 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         mlir::ValueRange results;
         const Continuation * outer;
     };
+    struct ExitProjection {
+        mlir::scf::IndexSwitchOp dispatch;
+        mlir::arith::IndexCastUIOp cast;
+        unsigned selector = 0, output = 0;
+        llvm::SmallVector<bool> consumed;
+    };
     struct Terminal {
         enum Kind {
             returned,
@@ -34,6 +40,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         mlir::scf::WhileOp loop;
         llvm::SmallVector<unsigned> carried;
         llvm::SmallVector<bool> inactiveAfter;
+        ExitProjection exit;
     };
     using Results = std::optional<llvm::SmallVector<mlir::Value>>;
     mlir::Region normalized;
@@ -112,29 +119,83 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     refuse("DOM helper completion observes an inactive value");
                     return {};
                 }
-                llvm::SmallVector<mlir::Value> result{predicate};
-                for (auto [index, argument] : llvm::enumerate(condition.getArgs())) {
+                llvm::SmallVector<mlir::Value> arguments;
+                for (mlir::Value argument : condition.getArgs()) {
                     if (!step()) { return {}; }
-                    auto value = values.lookup(argument);
+                    arguments.push_back(values.lookup(argument));
+                }
+                if (terminal.exit.dispatch) {
+                    if (!integer || !integer.getType().isInteger(1)) {
+                        refuse("DOM helper loop exit predicate is not an exact constant");
+                        return {};
+                    }
+                    if (integer.getValue().isZero()) {
+                        auto selector = arguments[terminal.exit.selector];
+                        auto tag = selector.getDefiningOp<mlir::arith::ConstantOp>();
+                        auto key = tag ? llvm::dyn_cast<mlir::IntegerAttr>(tag.getValue())
+                                       : mlir::IntegerAttr{};
+                        if (!key || key.getValue().isNegative() ||
+                            key.getValue().getActiveBits() > 63) {
+                            refuse("DOM helper loop exit selector is not an exact constant");
+                            return {};
+                        }
+                        auto dispatch = terminal.exit.dispatch;
+                        auto * selected = &dispatch.getDefaultRegion();
+                        for (auto [index, value] : llvm::enumerate(dispatch.getCases())) {
+                            if (!step()) { return {}; }
+                            if (value == key.getInt()) {
+                                selected = &dispatch.getCaseRegions()[index];
+                            }
+                        }
+                        auto projected = llvm::cast<mlir::OpResult>(
+                            selected->front().getTerminator()->getOperand(0));
+                        arguments[terminal.exit.output] = arguments[projected.getResultNumber()];
+                    }
+                }
+                llvm::SmallVector<mlir::Value> result{predicate};
+                for (auto [index, argument] : llvm::enumerate(arguments)) {
+                    if (!step()) { return {}; }
+                    auto value = argument;
                     if (value.getDefiningOp<mlir::ub::PoisonOp>()) {
-                        const bool inactive =
-                            integer &&
-                            (integer.getValue().isZero()
-                                 ? terminal.loop.getResult(static_cast<unsigned>(index)).use_empty()
-                                 : terminal.inactiveAfter[index]);
-                        if (!inactive || index >= terminal.loop.getBeforeArguments().size()) {
+                        const bool inactiveExit =
+                            terminal.loop.getResult(static_cast<unsigned>(index)).use_empty() ||
+                            (terminal.exit.dispatch && terminal.exit.consumed[index] &&
+                             index != terminal.exit.output);
+                        const bool inactive = integer && (integer.getValue().isZero()
+                                                              ? inactiveExit
+                                                              : terminal.inactiveAfter[index]);
+                        if (!inactive) {
                             refuse("DOM helper completion observes an inactive value");
                             return {};
                         }
-                        auto state = terminal.loop.getBeforeArguments()[index];
-                        if (!values.contains(state) || state.getType() != value.getType()) {
+                        mlir::Value replacement;
+                        if (index < terminal.loop.getBeforeArguments().size()) {
+                            replacement =
+                                values.lookupOrNull(terminal.loop.getBeforeArguments()[index]);
+                        }
+                        if (terminal.exit.dispatch && !replacement) {
+                            // The selected destination cannot observe this slot.
+                            // A dropped exit-only before argument has no mapping;
+                            // borrow a defined initial value of the same type.
+                            for (mlir::Value initial : terminal.loop.getInits()) {
+                                if (!step()) { return {}; }
+                                auto mapped = values.lookupOrNull(initial);
+                                if (mapped && mapped.getType() == value.getType() &&
+                                    !mapped.getDefiningOp<mlir::ub::PoisonOp>()) {
+                                    replacement = mapped;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!replacement || replacement.getType() != value.getType() ||
+                            replacement.getDefiningOp<mlir::ub::PoisonOp>()) {
                             refuse("DOM helper completion observes an inactive value");
                             return {};
                         }
                         // The predicate selects a destination with no use of
                         // this slot. Its existing state keeps the SCF tuple
                         // defined and preserves the carried representation.
-                        value = values.lookup(state);
+                        value = replacement;
                     }
                     result.push_back(value);
                 }
@@ -179,6 +240,71 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     }
                     before.inactiveAfter.push_back(inactive);
                 }
+                // A pure exit projection can join the live break/exhaustion
+                // values before they leave the loop. All other continuation
+                // effects, including IteratorClose, stay after the loop.
+                // ponytail: one projected result; multiple live exit values
+                // need distinct proved output slots before extending this.
+                const auto exitProjection = [&]() -> ExitProjection {
+                    ExitProjection exit;
+                    auto * next = loop->getNextNode();
+                    if (!next || !step()) { return {}; }
+                    exit.cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(next);
+                    if (exit.cast) { next = next->getNextNode(); }
+                    if (!next || !step()) { return {}; }
+                    exit.dispatch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(next);
+                    if (!exit.dispatch || exit.dispatch.getNumResults() != 1 ||
+                        (exit.cast && (exit.dispatch.getArg() != exit.cast.getOut() ||
+                                       !exit.cast->hasOneUse()))) {
+                        return {};
+                    }
+                    auto selector = llvm::dyn_cast<mlir::OpResult>(
+                        exit.cast ? exit.cast.getIn() : exit.dispatch.getArg());
+                    if (!selector || selector.getOwner() != loop ||
+                        !before.inactiveAfter[selector.getResultNumber()]) {
+                        return {};
+                    }
+                    exit.selector = selector.getResultNumber();
+                    exit.consumed.resize(loop.getNumResults(), false);
+                    exit.consumed[exit.selector] = true;
+                    for (auto & region : exit.dispatch->getRegions()) {
+                        if (!step()) { return {}; }
+                        if (!region.hasOneBlock() || !llvm::hasSingleElement(region.front())) {
+                            return {};
+                        }
+                        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().front());
+                        if (!yield || yield.getNumOperands() != 1) { return {}; }
+                        auto value = llvm::dyn_cast<mlir::OpResult>(yield.getOperand(0));
+                        if (!value || value.getOwner() != loop ||
+                            value.getType() != exit.dispatch.getResult(0).getType() ||
+                            value.getResultNumber() == exit.selector ||
+                            !before.inactiveAfter[value.getResultNumber()]) {
+                            return {};
+                        }
+                        exit.output = value.getResultNumber();
+                        exit.consumed[exit.output] = true;
+                    }
+                    for (auto [index, result] : llvm::enumerate(loop.getResults())) {
+                        if (!step()) { return {}; }
+                        if (!exit.consumed[index]) { continue; }
+                        for (mlir::OpOperand & use : result.getUses()) {
+                            if (!step()) { return {}; }
+                            auto * owner = use.getOwner();
+                            if (index == exit.selector) {
+                                if (owner != (exit.cast ? exit.cast.getOperation()
+                                                        : exit.dispatch.getOperation())) {
+                                    return {};
+                                }
+                            } else if (!llvm::isa<mlir::scf::YieldOp>(owner) ||
+                                       owner->getParentOp() != exit.dispatch) {
+                                return {};
+                            }
+                        }
+                    }
+                    return exit;
+                };
+                before.exit = exitProjection();
+                if (!remaining) { return {}; }
                 auto copied =
                     mlir::scf::WhileOp::create(at, loop.getLoc(), loop.getResultTypes(), initial);
                 ++operationCount;
@@ -221,6 +347,17 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     ++operationCount;
                 }
                 values.map(loop.getResults(), copied.getResults());
+                if (before.exit.dispatch) {
+                    auto dispatch = before.exit.dispatch;
+                    values.map(dispatch.getResult(0), copied.getResult(before.exit.output));
+                    if (before.exit.cast) { visited.insert(before.exit.cast); }
+                    visited.insert(dispatch);
+                    for (auto & region : dispatch->getRegions()) {
+                        if (!step()) { return {}; }
+                        visited.insert(region.front().getTerminator());
+                    }
+                    cursor = dispatch->getIterator();
+                }
                 continue;
             }
             for (mlir::Value operand : operation.getOperands()) {

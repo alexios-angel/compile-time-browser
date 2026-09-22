@@ -114,6 +114,64 @@ module {
     auto withoutReturn = mlir::parseSourceString<mlir::ModuleOp>(withoutReturnSource, &context);
     check(static_cast<bool>(withoutReturn), "custom iterator with no return hook parses");
     if (!withoutReturn) { return; }
+    // Independent break/exhaustion mux: each exit defines only its own count.
+    // The other slot is poison, so retaining a prior count cannot prove it.
+    const std::string countedLoop = R"MLIR(
+    %poison = ub.poison : !ctjs.value
+    %tagPoison = ub.poison : i32
+    %normalTag = arith.constant 7 : i32
+    %breakTag = arith.constant 11 : i32
+    %hasName = ctjs.constant #ctjs.string<"hasAttribute">
+    %has = ctjs.get_property %element[%hasName]
+    %stopName = ctjs.constant #ctjs.string<"stop">
+    %loop:4 = scf.while (%count = %zero, %normalCount = %poison, %breakCount = %poison, %tag = %tagPoison) : (!ctjs.value, !ctjs.value, !ctjs.value, i32) -> (!ctjs.value, !ctjs.value, !ctjs.value, i32) {
+      %item = ctjs.call %next(%undefined, %record)
+      %done = ctjs.get_property %record[%doneName]
+      %test = ctjs.truthy %done
+      %selected:5 = scf.if %test -> (i1, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+        %stop = arith.constant false
+        scf.yield %stop, %poison, %count, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+      } else {
+        %attribute = ctjs.get_property %item[%attributeName]
+        %written = ctjs.call %attribute(%item, %visited, %yes)
+        %increment = ctjs.binary_static add %count, %one
+        %stopping = ctjs.call %has(%element, %stopName)
+        %breakTest = ctjs.truthy %stopping
+        %branch:5 = scf.if %breakTest -> (i1, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+          %stop = arith.constant false
+          scf.yield %stop, %poison, %poison, %increment, %breakTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+        } else {
+          %again = arith.constant true
+          scf.yield %again, %increment, %poison, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+        }
+        scf.yield %branch#0, %branch#1, %branch#2, %branch#3, %branch#4 : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+      }
+      scf.condition(%selected#0) %selected#1, %selected#2, %selected#3, %selected#4 : !ctjs.value, !ctjs.value, !ctjs.value, i32
+    } do {
+    ^bb0(%count: !ctjs.value, %normalCount: !ctjs.value, %breakCount: !ctjs.value, %tag: i32):
+      scf.yield %count, %normalCount, %breakCount, %tag : !ctjs.value, !ctjs.value, !ctjs.value, i32
+    }
+    %selector = arith.index_castui %loop#3 : i32 to index
+    %answer = scf.index_switch %selector -> !ctjs.value
+    case 7 {
+      scf.yield %loop#1 : !ctjs.value
+    }
+    default {
+      scf.yield %loop#2 : !ctjs.value
+    }
+)MLIR";
+    const auto loopBegin = source.find("    %loop =");
+    const auto loopEnd = source.find("    %closed =");
+    const auto countedSource =
+        replaced(source.substr(0, loopBegin) + countedLoop + source.substr(loopEnd),
+                 "ctjs.return %loop", "ctjs.return %answer");
+    const auto retaggedSource = replaced(
+        replaced(countedSource, "%normalTag = arith.constant 7", "%normalTag = arith.constant 19"),
+        "case 7 {", "case 19 {");
+    auto counted = mlir::parseSourceString<mlir::ModuleOp>(countedSource, &context);
+    auto retagged = mlir::parseSourceString<mlir::ModuleOp>(retaggedSource, &context);
+    check(counted && retagged, "independent counted break and renamed exit tags parse");
+    if (!counted || !retagged) { return; }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -130,7 +188,7 @@ module {
         return empty;
     };
     constexpr unsigned completeBudget = 100000;
-    for (auto fixture : {*original, *withoutReturn}) {
+    for (auto fixture : {*original, *withoutReturn, *counted, *retagged}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -159,10 +217,52 @@ module {
             check(proof.proved(),
                   "projected custom iterator reproves element lifetime and effects");
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+            if (fixture == *counted || fixture == *retagged) {
+                unsigned loops = 0, calls = 0, poison = 0, switches = 0;
+                input->walk([&](mlir::scf::WhileOp) { ++loops; });
+                input->walk([&](ctjs::CallOp) { ++calls; });
+                input->walk([&](mlir::ub::PoisonOp) { ++poison; });
+                input->walk([&](mlir::scf::IndexSwitchOp) { ++switches; });
+                check(loops == 1 && calls == 4 && !poison && !switches,
+                      "counted exit preserves all source calls without inactive values or muxes");
+            }
         }
     }
     contract.moduleSha256 = hostContractFingerprint(*original);
 
+    for (const auto & invalid : {
+             replaced(countedSource, "scf.yield %loop#1 : !ctjs.value",
+                      "scf.yield %loop#2 : !ctjs.value"),
+             replaced(countedSource,
+                      "    %selector =", "    %observed = ctjs.unary not %loop#2\n    %selector ="),
+             replaced(countedSource, "      scf.yield %count, %normalCount, %breakCount, %tag",
+                      "      %observed = ctjs.unary not %normalCount\n"
+                      "      scf.yield %count, %normalCount, %breakCount, %tag"),
+             replaced(countedSource, "%count = %zero", "%count = %poison"),
+             replaced(countedSource, "%normalTag = arith.constant 7 : i32",
+                      "%unknown = ctjs.truthy %element\n"
+                      "    %normalTag = arith.extui %unknown : i1 to i32"),
+             replaced(countedSource, "    case 7 {",
+                      "    case 7 {\n"
+                      "      %method = ctjs.get_property %element[%attributeName]\n"
+                      "      %effect = ctjs.call %method(%element, %visited, %yes)"),
+             replaced(countedSource, "    %selector =",
+                      "    %observedTag = arith.index_castui %loop#3 : i32 to index\n"
+                      "    %selector ="),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "invalid counted break continuation parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(static_cast<bool>(failure),
+              "poison observations, unknown tags and non-projecting exits refuse");
+        if (failure) { llvm::consumeError(std::move(failure)); }
+        request.moduleSha256 = hostContractFingerprint(*input);
+        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+              "invalid counted exits publish no DOM evidence");
+    }
     const std::string close = "    %closed = ctjs.call %close(%undefined, %record, %normal)\n";
     const std::string identityHeader =
         "ctjs.func @identity$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) "
@@ -240,32 +340,37 @@ module {
     }
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
-    unsigned low = 0, high = completeBudget;
-    while (low < high) {
-        const unsigned middle = low + (high - low) / 2;
-        mlir::OwningOpRef<mlir::ModuleOp> input(original->clone());
-        if (auto failure = normalizeDOMCustomIteration(*input, contract, middle)) {
-            llvm::consumeError(std::move(failure));
-            low = middle + 1;
-        } else {
-            high = middle;
-        }
-    }
-    check(low > 0 && low < completeBudget,
-          "custom iterator has a finite charged completion budget");
-    if (!low || low == completeBudget) { return; }
-    for (unsigned budget : {0U, low / 2, low - 1}) {
-        mlir::OwningOpRef<mlir::ModuleOp> input(original->clone());
-        const auto reason = llvm::toString(normalizeDOMCustomIteration(*input, contract, budget));
-        check(reason.find("budget") != std::string::npos,
-              "sampled incomplete custom normalization cuts refuse");
+    for (auto fixture : {*original, *counted}) {
         auto request = contract;
-        request.moduleSha256 = hostContractFingerprint(*input);
-        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
-              "incomplete custom normalization cannot publish DOM evidence");
-        if (!budget) {
-            check(request.moduleSha256 == contract.moduleSha256,
-                  "zero custom normalization budget leaves its input untouched");
+        request.moduleSha256 = hostContractFingerprint(fixture);
+        unsigned low = 0, high = completeBudget;
+        while (low < high) {
+            const unsigned middle = low + (high - low) / 2;
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+            if (auto failure = normalizeDOMCustomIteration(*input, request, middle)) {
+                llvm::consumeError(std::move(failure));
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        check(low > 64 && low < completeBudget,
+              "ordinary and counted iterators have finite charged completion budgets");
+        if (low <= 64 || low == completeBudget) { continue; }
+        for (unsigned budget : {0U, 64U, low / 2, low - 1}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+            const auto reason =
+                llvm::toString(normalizeDOMCustomIteration(*input, request, budget));
+            check(reason.find("budget") != std::string::npos,
+                  "sampled incomplete custom normalization cuts refuse");
+            auto observed = request;
+            observed.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, observed)),
+                  "incomplete custom normalization cannot publish DOM evidence");
+            if (budget <= 64) {
+                check(observed.moduleSha256 == request.moduleSha256,
+                      "early custom normalization budgets leave the input untouched");
+            }
         }
     }
 }

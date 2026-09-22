@@ -47,14 +47,44 @@ def source(breaking):
     return text
 
 
+# Results for normal, stopping, and already-yielded receiver states.
+POSITIVES = (
+    ("normal", source(False), False, ("1", "1", "0")),
+    ("effect-only-break", source(True), True, ("true", "true", "false")),
+    (
+        "counted-break-exit",
+        SOURCE.replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;"),
+        True,
+        ("1", "1", "0"),
+    ),
+    (
+        # The break must carry the incoming counter, not the continuation's update.
+        "counted-after-break",
+        SOURCE.replace("let count = 0;", "let count = 7;")
+        .replace("    count++;\n", "")
+        .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;\n    count += 3;"),
+        True,
+        ("10", "7", "7"),
+    ),
+    (
+        "counted-two-live",
+        SOURCE.replace("let count = 0;", "let count = 0;\n  let extra = 7;")
+        .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;\n    extra += 3;")
+        .replace("return count;", "return count + extra;"),
+        True,
+        ("11", "8", "7"),
+    ),
+)
+
+
 def oracles(args):
     # These receivers record the same source calls. The native clients below
     # separately check those calls against public DOM and document ownership.
     script, observations = "", []
-    for breaking in (False, True):
-        function = "customElementsBreaking" if breaking else "customElementsNormal"
-        script += source(breaking).replace("function customElements(", f"function {function}(")
-        for state in ("normal", "stop", "already-yielded"):
+    for index, (_, text, breaking, results) in enumerate(POSITIVES):
+        function = f"customElementsCase{index}"
+        script += text.replace("function customElements(", f"function {function}(")
+        for state, result in zip(("normal", "stop", "already-yielded"), results):
             name = f"customObservation{len(observations)}"
             setup = ""
             if state == "stop":
@@ -77,16 +107,14 @@ var {name} = (function() {{
   return result + ':' + writes;
 }})();
 """
-            expected = "0:data-next=true;data-yielded=yes;"
+            expected = result + ":data-next=true;data-yielded=yes;"
             if state != "already-yielded":
-                expected = "1:data-next=false;data-yielded=yes;data-visited=yes;"
+                expected = result + ":data-next=false;data-yielded=yes;data-visited=yes;"
                 expected += (
                     "data-closed=yes;"
                     if breaking and state == "stop"
                     else "data-next=true;data-yielded=yes;"
                 )
-            if breaking:
-                expected = ("false" if state == "already-yielded" else "true") + expected[1:]
             observations.append((name, expected))
     node = args.work / "custom-iteration-node.js"
     node.write_text(script + "".join(f"console.log({name});\n" for name, _ in observations))
@@ -97,7 +125,7 @@ var {name} = (function() {{
     vm = args.work / "custom-iteration-vm.js"
     vm.write_text(script)
     actual = dom.run([args.reference, str(vm)]).stdout
-    expected_vm = "".join(f'{name}="{quote(value)}"\n' for name, value in observations)
+    expected_vm = "".join(f'{name}="{quote(value)}"\n' for name, value in sorted(observations))
     if actual != expected_vm:
         raise RuntimeError(f"VM custom iterator effects differ: {actual!r}")
     return 2 * len(observations)
@@ -223,9 +251,13 @@ def refusals():
         # Keep both refused until that source completion boundary is proved.
         "body-return": text.replace(visited, "    return anchor.hasAttribute('data-visited');"),
         "body-throw": text.replace(visited, "    throw 1;"),
-        # Preserve the original counted break source: completion lowering still
-        # refuses its live accumulator crossing the importer's break exit.
-        "counted-break-exit": SOURCE.replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;"),
+        # Two live scalar projections at a break exit remain unproved.
+        "two-projected-break-exits": SOURCE.replace(
+            "let count = 0;", "let count = 0;\n  let extra = 7;"
+        )
+        .replace("count++;", "count++;\n    extra += 3;")
+        .replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;")
+        .replace("return count;", "return count + extra;"),
     }
     for helper in SNAPSHOT_INTRINSICS[4:]:
         variants["replaced-" + helper] = text.replace(
@@ -249,29 +281,29 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     executions = refused = 0
-    for breaking in (False, True):
-        ir, contract = dom.prepare(
-            args, f"custom-{breaking}", source(breaking), 1, entry_name="customElements"
-        )
+    for label, text, breaking, results in POSITIVES:
+        ir, contract = dom.prepare(args, f"custom-{label}", text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         for owned in (False, True):
             manifest = dict(
                 contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
             )
             for optimize in (False, True):
-                name = f"custom-iteration-{breaking}-{owned}-{optimize}"
+                name = f"custom-iteration-{label}-{owned}-{optimize}"
                 native = dom.lower(args, ir, manifest, name, optimize=optimize)
                 cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
                 if any(helper in cpp for helper in SNAPSHOT_INTRINSICS[4:]):
                     raise RuntimeError(f"{name}: custom iteration retained the VM protocol")
                 checks = CHECKS + (OWNED_CHECKS if owned else "")
                 checks = checks.replace("@BREAKING@", "true" if breaking else "false")
+                normal, stopped, exhausted = results
+                value = "static_cast<bool>(call())" if normal == "true" else "call().value()"
                 checks = checks.replace(
                     "@FIRST_RESULT@",
-                    "static_cast<bool>(call())" if breaking else "call().value() == 1",
+                    f"{value} == (stopping ? {stopped} : {normal})",
                 ).replace(
                     "@SECOND_RESULT@",
-                    "!static_cast<bool>(call())" if breaking else "call().value() == 0",
+                    f"{value} == {exhausted}",
                 )
                 dom.standalone(args, native, name, checks, compilers, includes, libraries)
                 executions += 2 * len(compilers)
