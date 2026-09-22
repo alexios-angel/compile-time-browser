@@ -2423,6 +2423,53 @@ void InductionCases::overwritesAndTransport() {
         reject("mixed rounded shifts retain the complete later-store census",
                replace(mixed, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
     }
+    const auto composedShift =
+        replace(replace(roundedShift, "4621256167635550208", "4621819117588971520"),
+                "[%x, %three, %x, %one, %x, %one]", "[%x, %three, %x, %one, %one, %x]");
+    for (const std::string operation : {"binary mod", "binary_static bitand"}) {
+        const bool modulo = operation == "binary mod";
+        const auto reduced = replace(
+            replace(composedShift,
+                    "  %a =", "  %five = ctjs.constant #ctjs.number<4617315517961601024>\n  %a ="),
+            "%position = ctjs.binary_static shr %scaled, %count",
+            "%rounded = ctjs.binary_static shr %scaled, %count\n"
+            "  %position = ctjs." +
+                operation + " %rounded, %five");
+        const auto cleared = replace(reduced, "[%x, %three, %x, %one, %one, %x]",
+                                     modulo ? "[%x, %three, %x, %one, %one, %one]"
+                                            : "[%x, %three, %one, %one, %one, %x]");
+        run({.what = "composed mixed-shift enclosures retain exact gaps and clear written children",
+             .body = cleared,
+             .arrays =
+                 modulo ? "a:[zero,three,zero,one,one,one]" : "a:[zero,three,one,one,one,zero]",
+             .reads = modulo ? "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=one"
+                             : "a[1]=three; a[0]=zero; a[1]=three; a[2]=one; a[1]=three; a[4]=one",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "composed mixed-shift replay preserves children outside actual writes",
+             .body = reduced,
+             .arrays = modulo ? "a:[zero,three,zero,one,one,x]" : "a:[zero,three,x,one,one,zero]",
+             .reads = modulo ? "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=one"
+                             : "a[1]=three; a[0]=zero; a[1]=three; a[2]=x; a[1]=three; a[4]=one",
+             .exit = "a -> {a,x}"});
+        run({.what = "composed mixed-shift gaps preserve pre-loop child snapshots",
+             .body =
+                 replace(replace(cleared, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+             .arrays =
+                 modulo ? "a:[zero,three,zero,one,one,one]" : "a:[zero,three,one,one,one,zero]",
+             .reads =
+                 modulo
+                     ? "a[0]=x; a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=one"
+                     : "a[0]=x; a[1]=three; a[0]=zero; a[1]=three; a[2]=one; a[1]=three; a[4]=one",
+             .exit = "x -> {x}"});
+        reject("composed mixed shifts reject exact count overwrites",
+               replace(replace(cleared, "[%x, %three,", "[%three, %three,"), "%base[%one]",
+                       "%base[%zero]"));
+        reject("composed mixed shifts retain the complete later-store census",
+               replace(cleared, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
+    }
     const auto crossingShift = replace(crossingComplement, "ctjs.unary bitnot %part",
                                        "ctjs.binary_static shr %part, %zero");
     const auto lowerCrossingShift = replace(negativeCrossingComplement, "ctjs.unary bitnot %part",

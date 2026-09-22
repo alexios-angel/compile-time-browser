@@ -210,6 +210,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         ContentsValue first, last;
         // A positive lattice enclosing all visits; replay proves actual writes.
         std::size_t stride;
+        // Preserve eligibility for exact whole-key refinement through composition.
         bool mixedShift = false;
     };
     const auto endpointNumber = [](const ContentsValue & endpoint) {
@@ -410,7 +411,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 }
                 return result;
             };
-            return IndexRange{endpoint(first), endpoint(last), static_cast<std::size_t>(period)};
+            return IndexRange{endpoint(first), endpoint(last), static_cast<std::size_t>(period),
+                              range->mixedShift};
         }
         if (bitAnd || bitOr || bitXor) {
             if (!spend()) {
@@ -504,7 +506,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // records only the actual writes.
             IndexRange result{{operand, ContentsKind::NonBigInt},
                               {operand, ContentsKind::NonBigInt},
-                              writeStride};
+                              writeStride,
+                              range->mixedShift};
             boundedNumberBitwise({operand, ContentsKind::NonBigInt, first},
                                  {operand, ContentsKind::NonBigInt, 0}, ctjs::BinaryKind::BitOr,
                                  result.first);
