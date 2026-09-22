@@ -137,6 +137,7 @@ def check_result_calls(cpp, name, mode):
         "result_alias": ["get", "set", "get"],
         "result_argument_order": ["get", "get", "set", "get"],
         "result_bool": ["get", "set", "get", "set", "size"],
+        "result_missing_return": ["get", "set", "get", "set", "size"],
         "result_delete": ["get", "set", "get", "set", "get", "set", "size"],
         "result_string": ["get", "set", "size"],
         "result_formal": ["get", "set", "size"],

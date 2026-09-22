@@ -1,6 +1,7 @@
 """Execute checked published Map methods and live primitive results without the VM."""
 
 from .driver_execution import *
+from .harness_map_results import check_result_calls
 
 
 def main(group=None):
@@ -704,9 +705,8 @@ def main(group=None):
                     admitted=0,
                 )
                 check_call_preservation(forged_text, rerun.read_text(), forged_name + "-rerun")
-    # An implicit undefined return has an exact primitive tag, but that alone
-    # does not supply an implemented native Map key. The separate size method
-    # keeps the observation numeric so that it cannot cause this refusal.
+    # Preserve the original implicit Undefined result and both live uses as
+    # Map keys. The final size distinguishes one shared key from fresh values.
     js, missing, count = boundary.prepare(
         args,
         "result_missing_return",
@@ -714,7 +714,11 @@ def main(group=None):
             "get() { return state.has(false); }", "get() { state.size; }"
         ),
     )
-    if count != 6:
+    if (
+        count != 6
+        or len(source_calls((args.work / "result_missing_return.raw.mlir").read_text())) != 8
+        or len(source_calls(missing.read_text())) != 8
+    ):
         raise RuntimeError("result_missing_return: changed source denominator")
     if (
         host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
@@ -722,35 +726,20 @@ def main(group=None):
     ):
         raise RuntimeError("result_missing_return: Node/interpreter observation mismatch")
     missing_config = contract(args, missing, "result_missing_return")
-    missing_output = owned.lower(
-        args, missing, "result_missing_return", missing_config, cleanup=False
-    )
-    text = methods.census(missing_output, 6, "result_missing_return", admitted=0)
-    if (
-        "ctnative.host_owner_proved = true" not in text
-        or "native Map needs supported keys" not in text
-        or "!ctnative.map<!ctnative.opt<!ctnative.bottom>" not in text
-    ):
-        raise RuntimeError("result_missing_return: missing unsupported-result diagnostic")
-    # Ownership succeeded, so the established preparation may resolve calls
-    # and insert their environment arguments before carrier admission refuses.
-    # Check those runtime calls and result edges, not the old source spelling.
-    prepared_calls = re.findall(
-        r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
-        r"\{ctnative\.stored_call = 1 : i32\}",
-        text,
-        re.M,
-    )
-    actuals = [arguments.split(", ") for _, _, arguments in prepared_calls]
-    if (
-        len(source_calls(text)) != len(source_calls(missing.read_text()))
-        or [target for _, target, _ in prepared_calls] != ["fn$4", "fn$5", "fn$4", "fn$5", "fn$3"]
-        or [len(arguments) for arguments in actuals] != [4, 5, 4, 5, 4]
-        or actuals[1][-1] != prepared_calls[0][0]
-        or actuals[3][-1] != prepared_calls[2][0]
-        or f'ctjs.store_global "trace", {prepared_calls[4][0]}' not in text
-    ):
-        raise RuntimeError("result_missing_return: prepared calls lost live result order/operands")
+    for mode, options in (("default", ""), ("disabled", "optimize=false")):
+        label = "result_missing_return-" + mode
+        missing_output = owned.lower(args, missing, label, missing_config, options=options)
+        text = methods.census(missing_output, 6, label, admitted=6)
+        if "ctnative.host_owner_proved = true" not in text:
+            raise RuntimeError(f"{label}: lost the implicit Undefined result owner")
+        cpp = host.run([args.translate, "--mlir-to-cpp", str(missing_output)]).stdout
+        if (
+            "std::function<ctnative::nullable_scalar()>" not in cpp
+            or "std::function<ctnative::js_num(ctnative::nullable_scalar)>" not in cpp
+        ):
+            raise RuntimeError(f"{label}: lost the typed Undefined result/key carriers")
+        check_result_calls(cpp, "result_missing_return", mode)
+        standalone(args, missing_output, label, 1, compilers, nm)
     boundary.native(args, shared_ir, "shared-no-manifest", 5)
     methods.refused(
         args,

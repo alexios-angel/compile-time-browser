@@ -358,7 +358,7 @@ def report(positives, shared_refusals, rollback):
         f"{len(parameter_refusals())} argument refusals preserve current call operands; "
         "typed parameterized setters 5/5 with changing source and saved-callable keys; "
         f"{len(result_sources())} live result programs preserve call order and operands; "
-        f"{len(result_refusals())} result-proof refusals and missing-return carrier refusal; "
+        f"{len(result_refusals())} result-proof refusals and native implicit Undefined result keys; "
         f"{len(seeded_result_sources())} seeded result programs and growing lifetime pass; "
         f"{len(key_fact_sources())} per-key result programs; "
         f"{len(joined_result_sources())} type-joined result programs; "
