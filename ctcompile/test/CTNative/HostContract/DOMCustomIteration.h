@@ -1953,6 +1953,194 @@ module {
                   "saved-payload refusal publishes no partial DOM evidence");
         }
     }
+    // A numeric counter precedes two element slots: an inactive element must
+    // keep a compatible alias, and each selected arm observes its own owner.
+    const std::string elementLoop = R"MLIR(
+    %poison = ub.poison : !ctjs.value
+    %tagPoison = ub.poison : i32
+    %normalTag = arith.constant 7 : i32
+    %breakTag = arith.constant 11 : i32
+    %hasName = ctjs.constant #ctjs.string<"hasAttribute">
+    %has = ctjs.get_property %element[%hasName]
+    %stopName = ctjs.constant #ctjs.string<"stop">
+    %advanceName = ctjs.constant #ctjs.string<"advance">
+    %closedName = ctjs.constant #ctjs.string<"data-closed">
+    %loop:5 = scf.while (%count = %zero, %owner = %element, %normalOwner = %poison, %returnOwner = %poison, %tag = %tagPoison) : (!ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) -> (!ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+      %item = ctjs.call %next(%undefined, %record)
+      %done = ctjs.get_property %record[%doneName]
+      %test = ctjs.truthy %done
+      %selected:6 = scf.if %test -> (i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+        %stop = arith.constant false
+        scf.yield %stop, %count, %owner, %owner, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+      } else {
+        %attribute = ctjs.get_property %item[%attributeName]
+        %written = ctjs.call %attribute(%item, %visited, %yes)
+        %increment = ctjs.binary_static add %count, %one
+        %advancing = ctjs.call %has(%element, %advanceName)
+        %advanceTest = ctjs.truthy %advancing
+        %chosen = scf.if %advanceTest -> !ctjs.value {
+          scf.yield %other : !ctjs.value
+        } else {
+          scf.yield %owner : !ctjs.value
+        }
+        %stopping = ctjs.call %has(%element, %stopName)
+        %breakTest = ctjs.truthy %stopping
+        %branch:6 = scf.if %breakTest -> (i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+          %stop = arith.constant false
+          scf.yield %stop, %increment, %owner, %poison, %chosen, %breakTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+        } else {
+          %again = arith.constant true
+          scf.yield %again, %increment, %owner, %poison, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+        }
+        scf.yield %branch#0, %branch#1, %branch#2, %branch#3, %branch#4, %branch#5 : i1, !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+      }
+      scf.condition(%selected#0) %selected#1, %selected#2, %selected#3, %selected#4, %selected#5 : !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+    } do {
+    ^bb0(%count: !ctjs.value, %owner: !ctjs.value, %normalOwner: !ctjs.value, %returnOwner: !ctjs.value, %tag: i32):
+      scf.yield %count, %owner, %normalOwner, %returnOwner, %tag : !ctjs.value, !ctjs.value, !ctjs.value, !ctjs.value, i32
+    }
+    %selector = arith.index_castui %loop#4 : i32 to index
+    %answer = scf.index_switch %selector -> !ctjs.value
+    case 7 {
+      %normalMethod = ctjs.get_property %loop#2[%hasName]
+      %normalRead = ctjs.call %normalMethod(%loop#2, %visited)
+      %normalClose = ctjs.call %close(%undefined, %record, %normal)
+      scf.yield %normalRead : !ctjs.value
+    }
+    default {
+      %returnMethod = ctjs.get_property %loop#3[%hasName]
+      %returnRead = ctjs.call %returnMethod(%loop#3, %closedName)
+      %returnClose = ctjs.call %close(%undefined, %record, %normal)
+      scf.yield %returnRead : !ctjs.value
+    }
+)MLIR";
+    auto elementSource = replaced(countedSource, countedLoop, elementLoop);
+    elementSource = replaced(elementSource, "%element: !ctjs.value) -> !ctjs.value",
+                             "%element: !ctjs.value, %other: !ctjs.value) -> !ctjs.value");
+    elementSource = replaced(elementSource,
+                             "    %closed = ctjs.call %close(%undefined, %record, %normal)\n", "");
+    auto elementCompletion = mlir::parseSourceString<mlir::ModuleOp>(elementSource, &context);
+    auto zeroElementCompletion = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(elementSource, "%done = ctjs.call %has(%element, %yielded)",
+                 "%done = ctjs.constant #ctjs.boolean<true>"),
+        &context);
+    check(elementCompletion && zeroElementCompletion,
+          "distinct saved elements and first-exit exhaustion parse");
+    if (!elementCompletion || !zeroElementCompletion) { return; }
+    for (auto fixture : {*elementCompletion, *zeroElementCompletion}) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.elementParameters = {0, 1};
+            request.moduleSha256 = hostContractFingerprint(fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+            std::vector<mlir::Value> inactiveFillers;
+            auto failure =
+                normalizeDOMCustomIteration(*input, request, completeBudget, &inactiveFillers);
+            check(!failure, "saved element aliases normalize alongside numeric state");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            auto body = input->lookupSymbol<ctjs::FuncOp>(request.entry);
+            auto join = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back())
+                            .getValue()
+                            .getDefiningOp<mlir::scf::IfOp>();
+            check(static_cast<bool>(join), "saved element completion keeps its selected arm");
+            if (join) {
+                for (auto [index, arm] : llvm::enumerate(join->getRegions())) {
+                    llvm::SmallVector<llvm::StringRef> order;
+                    mlir::Value receiver;
+                    arm.walk([&](ctjs::CallOp call) {
+                        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                        if (!method) { return; }
+                        const auto name = ctjs::constantKey(method.getKey());
+                        if (name == "return") { order.push_back("close"); }
+                        if (name == "hasAttribute") {
+                            order.push_back("read");
+                            receiver = call.getReceiver();
+                            check(receiver == method.getObject(),
+                                  "saved element method and receiver retain the same identity");
+                        }
+                    });
+                    auto payload = llvm::dyn_cast<mlir::OpResult>(receiver);
+                    check(payload && llvm::isa<mlir::scf::WhileOp>(payload.getOwner()) &&
+                              payload.getResultNumber() == index + 2 &&
+                              order == llvm::SmallVector<llvm::StringRef>{"read", "close"},
+                          "each completion reads its own saved element before close");
+                }
+            }
+            failure =
+                expandDOMHelpers(*input, request.entry, completeBudget, nullptr, inactiveFillers);
+            check(!failure, "saved element aliases expand to public DOM calls");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            const DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "saved elements retain document lifetime and homogeneous kinds");
+            if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+        }
+    }
+    for (const auto & invalid : {
+             replaced(elementSource, "scf.yield %other : !ctjs.value",
+                      "scf.yield %zero : !ctjs.value"),
+             replaced(elementSource, "scf.yield %other : !ctjs.value",
+                      "scf.yield %undefined : !ctjs.value"),
+             replaced(elementSource, "scf.yield %other : !ctjs.value",
+                      "scf.yield %has : !ctjs.value"),
+             replaced(replaced(elementSource, "    %advanceName =",
+                               "    %nothing = ctjs.constant #ctjs.null\n    %advanceName ="),
+                      "scf.yield %other : !ctjs.value", "scf.yield %nothing : !ctjs.value"),
+             replaced(replaced(elementSource, "    %advanceName =",
+                               "    %document = ctjs.load_global \"document\"\n    %advanceName ="),
+                      "scf.yield %other : !ctjs.value", "scf.yield %document : !ctjs.value"),
+             replaced(elementSource, "      %returnMethod = ctjs.get_property %loop#3[%hasName]",
+                      "      %matchesName = ctjs.constant #ctjs.string<\"matches\">\n"
+                      "      %returnMethod = ctjs.get_property %loop#3[%matchesName]"),
+             replaced(elementSource, "      %normalMethod =",
+                      "      %observed = ctjs.truthy %loop#3\n      %normalMethod ="),
+             replaced(elementSource, "      %returnMethod =",
+                      "      %observed = ctjs.truthy %loop#2\n      %returnMethod ="),
+             replaced(elementSource, "        %stopping =",
+                      "        ctjs.set_property %element[%visited], %chosen\n        %stopping ="),
+             replaced(elementSource, "        %stopping =",
+                      "        %removeName = ctjs.constant #ctjs.string<\"remove\">\n        "
+                      "%remove = ctjs.get_property %chosen[%removeName]\n        %removed = "
+                      "ctjs.call %remove(%chosen)\n        %stopping ="),
+             replaced(elementSource, "        %stopping =",
+                      "        %external = ctjs.load_global \"external\"\n        %reentered = "
+                      "ctjs.call %external(%undefined, %chosen)\n        %stopping ="),
+         }) {
+        check(!invalid.empty() && invalid != elementSource,
+              "hostile element payload changes the complete fixture");
+        if (invalid.empty()) { continue; }
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "hostile saved element fixture parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.elementParameters = {0, 1};
+            request.currentDocumentParameter = 0;
+            request.moduleSha256 = hostContractFingerprint(*fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            std::vector<mlir::Value> inactiveFillers;
+            auto failure =
+                normalizeDOMCustomIteration(*input, request, completeBudget, &inactiveFillers);
+            if (!failure) {
+                failure = expandDOMHelpers(*input, request.entry, completeBudget, nullptr,
+                                           inactiveFillers);
+            }
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "mixed, observed, escaping or invalidated saved elements publish no proof");
+        }
+    }
     for (auto fixture : {*original,
                          *withoutReturn,
                          *counted,
@@ -4203,6 +4391,8 @@ module {
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,
+                         *elementCompletion,
+                         *zeroElementCompletion,
                          *counted,
                          *crossed,
                          *receiver,
@@ -4277,11 +4467,16 @@ module {
                          *zeroDirectFormalCalleeWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
+        const bool elementFixture =
+            fixture == *elementCompletion || fixture == *zeroElementCompletion;
+        if (elementFixture) { request.elementParameters = {0, 1}; }
         unsigned low = 0, high = completeBudget;
         while (low < high) {
             const unsigned middle = low + (high - low) / 2;
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
-            if (auto failure = normalizeDOMCustomIteration(*input, request, middle)) {
+            std::vector<mlir::Value> inactiveFillers;
+            if (auto failure = normalizeDOMCustomIteration(
+                    *input, request, middle, elementFixture ? &inactiveFillers : nullptr)) {
                 llvm::consumeError(std::move(failure));
                 low = middle + 1;
             } else {
@@ -4293,8 +4488,9 @@ module {
         if (low <= 64 || low == completeBudget) { continue; }
         for (unsigned budget : {0U, 64U, low / 2, low - 1}) {
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
-            const auto reason =
-                llvm::toString(normalizeDOMCustomIteration(*input, request, budget));
+            std::vector<mlir::Value> inactiveFillers;
+            const auto reason = llvm::toString(normalizeDOMCustomIteration(
+                *input, request, budget, elementFixture ? &inactiveFillers : nullptr));
             check(reason.find("budget") != std::string::npos,
                   "sampled incomplete custom normalization cuts refuse");
             auto observed = request;

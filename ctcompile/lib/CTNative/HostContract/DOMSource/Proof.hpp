@@ -36,6 +36,7 @@ struct DOMSource {
     llvm::DenseMap<mlir::Value, Capture> cells;
     llvm::DenseMap<mlir::Operation *, unsigned> callDepth;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::StringAttr>> stringInputs;
+    llvm::DenseSet<mlir::Value> inactiveFillers;
 
     bool refuse(llvm::StringRef message);
     bool step();
@@ -69,6 +70,7 @@ struct DOMSource {
     bool initializeEntry(ctjs::FuncOp wrapper, ctjs::FuncOp target);
 
     bool normalizeCompletion(ctjs::FuncOp function);
+    bool repairInactiveCompletion(ctjs::FuncOp function);
 
     bool checkBody(ctjs::FuncOp function, bool entry, bool directReceiver = false,
                    bool beforeReplacement = false);

@@ -130,15 +130,19 @@ void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
 // Only on a private, fingerprint-checked clone. The caller must reprove its
 // complete typed DOM or intrinsic entry after this bounded local-call normalization.
 llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps,
-                             unsigned * workSteps = nullptr);
+                             unsigned * workSteps = nullptr,
+                             llvm::ArrayRef<mlir::Value> inactiveFillers = {});
 llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
                                       unsigned maxSteps);
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps);
 // Confined custom protocols become ordinary calls and scalar completion state.
 // Only a private candidate may change; complete helper and DOM proofs follow.
+// Optional filler provenance belongs to this exact candidate, never source
+// attributes. Pass it directly to helper expansion without cloning the module.
 llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostContract & contract,
-                                        unsigned maxSteps);
+                                        unsigned maxSteps,
+                                        std::vector<mlir::Value> * inactiveFillers = nullptr);
 // Replace confined query-result spread/empty-concat observations.
 // Reprove on a private clone; refusal leaves the original module unchanged.
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
@@ -313,6 +317,7 @@ private:
     std::vector<ctjs::FuncOp> checkedCallbacks;
     std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> callbackClosures;
     std::vector<mlir::BlockArgument> elements;
+    llvm::DenseSet<mlir::Value> elementIdentities;
     llvm::DenseMap<mlir::Value, HostIntrinsicParameter> intrinsicParameters;
     std::vector<ctjs::GetPropertyOp> tokenLists, datasets;
     std::vector<ctjs::GetPropertyOp> stringVectorLengths;

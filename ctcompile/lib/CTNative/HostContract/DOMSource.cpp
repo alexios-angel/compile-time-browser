@@ -59,11 +59,15 @@ bool host_detail::isLowercaseReplacement(ctjs::FuncOp function, llvm::function_r
 }
 
 llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps,
-                             unsigned * workSteps) {
+                             unsigned * workSteps, llvm::ArrayRef<mlir::Value> inactiveFillers) {
     DOMSource source(maxSteps);
     const llvm::scope_exit recordSteps([&] {
         if (workSteps) { *workSteps = maxSteps - source.remaining; }
     });
+    for (mlir::Value filler : inactiveFillers) {
+        if (!source.step()) { break; }
+        source.inactiveFillers.insert(filler);
+    }
     candidate.walk([&](mlir::Operation * operation) {
         if (!source.step()) { return mlir::WalkResult::interrupt(); }
         ++source.operationCount;

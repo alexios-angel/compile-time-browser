@@ -228,6 +228,13 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                 if (mapped && mapped.getType() == value.getType() &&
                                     !mapped.getDefiningOp<mlir::ub::PoisonOp>()) {
                                     replacement = mapped;
+                                    if (auto literal = mapped.getDefiningOp<ctjs::ConstantOp>()) {
+                                        if (!step()) { return {}; }
+                                        replacement = ctjs::ConstantOp::create(
+                                            at, condition.getLoc(), literal.getValue());
+                                        inactiveFillers.insert(replacement);
+                                        ++operationCount;
+                                    }
                                     break;
                                 }
                             }
@@ -633,6 +640,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 }
             }
             auto * copied = at.clone(operation, values);
+            for (auto [from, to] : llvm::zip(operation.getResults(), copied->getResults())) {
+                if (!step()) { return {}; }
+                if (inactiveFillers.contains(from)) { inactiveFillers.insert(to); }
+            }
             if (llvm::isa<mlir::arith::IndexCastUIOp, mlir::arith::CmpIOp>(operation)) {
                 // Two-way completion switches lower to index casts and
                 // integer comparisons. Reuse MLIR's exact arithmetic folds.
@@ -659,6 +670,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         if (operation != function && !visited.contains(operation)) {
             refuse("DOM helper completion contains unvisited source operations");
             return mlir::WalkResult::interrupt();
+        }
+        for (mlir::Value value : operation->getResults()) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            inactiveFillers.erase(value);
         }
         return mlir::WalkResult::advance();
     });
@@ -688,6 +703,59 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         stringInputs[mapping.lookup(argument)] = std::move(inputs);
     }
     function.getBody().takeBody(normalized);
+    return true;
+}
+
+bool DOMSource::repairInactiveCompletion(ctjs::FuncOp function) {
+    if (inactiveFillers.empty()) { return true; }
+    llvm::SmallVector<ctjs::ConstantOp> fillers;
+    const auto collected = function.walk([&](ctjs::ConstantOp literal) {
+        if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (inactiveFillers.contains(literal.getResult())) { fillers.push_back(literal); }
+        return mlir::WalkResult::advance();
+    });
+    if (collected.wasInterrupted()) { return false; }
+    mlir::DominanceInfo dominance(function);
+    for (auto filler : fillers) {
+        // Expansion can reveal an existing element behind an iterator call.
+        // Change only our privately recorded, proved-unobserved padding. Follow
+        // the same SCF slot to an available value; never hoist its producer.
+        llvm::SmallVector<mlir::Value> pending{filler.getResult()};
+        llvm::DenseSet<mlir::Value> seen;
+        while (!pending.empty()) {
+            if (!step()) { return false; }
+            const auto value = pending.pop_back_val();
+            if (!seen.insert(value).second) { continue; }
+            if (!inactiveFillers.contains(value) && value.getType() == filler.getType() &&
+                dominance.properlyDominates(value, filler.getOperation())) {
+                filler.getResult().replaceAllUsesWith(value);
+                inactiveFillers.erase(filler.getResult());
+                filler.erase();
+                break;
+            }
+            for (mlir::OpOperand & use : value.getUses()) {
+                if (!step()) { return false; }
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
+                auto branch = yield ? llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp())
+                                    : mlir::scf::IfOp{};
+                if (branch && use.getOperandNumber() < branch.getNumResults()) {
+                    pending.push_back(branch.getResult(use.getOperandNumber()));
+                }
+            }
+            auto result = llvm::dyn_cast<mlir::OpResult>(value);
+            auto branch =
+                result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+            if (!branch) { continue; }
+            for (auto & region : branch->getRegions()) {
+                if (!step()) { return false; }
+                if (!region.hasOneBlock()) { continue; }
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                if (yield && result.getResultNumber() < yield.getNumOperands()) {
+                    pending.push_back(yield.getOperand(result.getResultNumber()));
+                }
+            }
+        }
+    }
     return true;
 }
 

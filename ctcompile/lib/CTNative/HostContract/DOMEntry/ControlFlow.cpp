@@ -24,7 +24,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if (!spend()) { return false; }
             if (!hasKind(initial, Kind::number) && !hasKind(initial, Kind::string) &&
                 !hasKind(initial, Kind::boolean) && !hasKind(initial, Kind::symbol) &&
-                !hasKind(initial, Kind::undefinedString)) {
+                !hasKind(initial, Kind::undefinedString) && !hasKind(initial, Kind::element)) {
                 refusal = "DOM loop cannot carry borrowed or unknown values";
                 return false;
             }
@@ -99,7 +99,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if (!spend()) { return false; }
             if (!hasKind(value, Kind::number) && !hasKind(value, Kind::string) &&
                 !hasKind(value, Kind::boolean) && !hasKind(value, Kind::symbol) &&
-                !hasKind(value, Kind::undefinedString)) {
+                !hasKind(value, Kind::undefinedString) && !hasKind(value, Kind::element)) {
                 refusal = "DOM loop result is not an invariant scalar";
                 return false;
             }
@@ -217,7 +217,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 if (kind != Kind::boolean && kind != Kind::number && kind != Kind::string &&
                     kind != Kind::null && kind != Kind::optionalString && kind != Kind::undefined &&
                     kind != Kind::json && kind != Kind::jsonAggregate && kind != Kind::symbol &&
-                    kind != Kind::undefinedString) {
+                    kind != Kind::undefinedString && kind != Kind::element) {
                     refusal = "DOM entry branch cannot carry a borrowed or callable value";
                     return false;
                 }

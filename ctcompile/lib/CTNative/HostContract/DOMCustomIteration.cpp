@@ -6,7 +6,9 @@
 namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostContract & contract,
-                                        unsigned maxSteps) {
+                                        unsigned maxSteps,
+                                        std::vector<mlir::Value> * inactiveFillers) {
+    if (inactiveFillers) { inactiveFillers->clear(); }
     dom_source_detail::DOMSource work(maxSteps);
     const auto spend = [&] { return work.step(); };
     const auto error = [&](llvm::StringRef reason) {
@@ -1751,6 +1753,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     entry.getBody().takeBody(rewritten);
     // Only after selecting the custom arm can completion normalization discard
     // inactive eager-array state. A live record marker is poison and refuses.
+    // Earlier helper bodies may have been retired; their SSA identities cannot
+    // authorize padding in this new body, even if the allocator reuses storage.
+    work.inactiveFillers.clear();
     if (!work.normalizeCompletion(entry)) { return error(work.reason); }
     // Drop unused completion tuple positions without erasing their producers.
     // Parent-first order exposes dead nested branch results in the same pass.
@@ -1903,6 +1908,18 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (cleanup.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
     for (auto load : unusedHelpers) { load.erase(); }
     identityBody.erase();
+    if (inactiveFillers) {
+        std::vector<mlir::Value> live;
+        const auto scanned = candidate.walk([&](ctjs::ConstantOp literal) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            if (work.inactiveFillers.contains(literal.getResult())) {
+                live.push_back(literal.getResult());
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (scanned.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+        *inactiveFillers = std::move(live);
+    }
     return llvm::Error::success();
 }
 

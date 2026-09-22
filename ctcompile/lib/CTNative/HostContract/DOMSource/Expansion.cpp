@@ -73,6 +73,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 mapping.map(operation.getResults(), cloned->getResults());
             } else {
                 auto * cloned = at.clone(operation, mapping);
+                for (auto [from, to] : llvm::zip(operation.getResults(), cloned->getResults())) {
+                    if (!step()) { return false; }
+                    if (inactiveFillers.contains(from)) { inactiveFillers.insert(to); }
+                }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
                     closure &&
                     (confinedFilterCallback(
@@ -410,7 +414,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
     }
     // Calls may return fresh own-field records in a loop body. Project only
     // their confined reads, retaining every source value producer and effect.
-    if (!forwardFields(function)) { return false; }
+    if (!forwardFields(function) || !repairInactiveCompletion(function)) { return false; }
     active.erase(function);
     expanded.insert(function);
     return true;

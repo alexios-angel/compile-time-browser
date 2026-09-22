@@ -142,6 +142,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         return;
     }
     std::vector<mlir::BlockArgument> provedElements;
+    llvm::DenseSet<mlir::Value> provedElementIdentities;
     for (const auto [position, index] : llvm::enumerate(contract.elementParameters)) {
         if (!spend()) { return; }
         if (position != index) {
@@ -299,8 +300,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                                 : Kind::element;
         }
 
-        // Both arms are checked. Loop-carried values have invariant scalar
-        // kinds; indexed snapshots additionally require the exact 0/+1 proof.
+        // Both arms are checked. Transport preserves invariant kinds and
+        // element owner/id pairs. Every admitted effect preserves node lifetime;
+        // escaping handles, structural mutation and script reentry still refuse.
         dom_entry_detail::Body visitor{refusal,
                                        budgetExhausted,
                                        block,
@@ -378,6 +380,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        emptyString};
         mlir::Value frame;
         if (!visitor.visit(block, 0, frame)) { return; }
+        for (auto [value, kind] : values) {
+            if (!spend()) { return; }
+            if (kind == Kind::element || kind == Kind::nullableElement) {
+                provedElementIdentities.insert(value);
+            }
+        }
         if (callbackBody) {
             if (!spend()) { return; }
             auto returned = llvm::cast<ctjs::ReturnOp>(block.getTerminator());
@@ -387,6 +395,17 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     if (usedCallbacks.size() != callbackFunctions.size()) {
         refusal = "DOM entry contains an uninvoked callback function";
         return;
+    }
+    for (const auto & call : provedCalls) {
+        if (!spend()) { return; }
+        if (!call.usesStyle()) { continue; }
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(call.element);
+        if ((argument && argument.getOwner() != &targetBlock) ||
+            llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(
+                call.element.getDefiningOp())) {
+            refusal = "DOM selector on a carried element needs its Style association";
+            return;
+        }
     }
     if (intrinsicEntry &&
         (!provedJSONObjects.empty() || llvm::any_of(provedCalls, [](const HostDOMCall & call) {
@@ -470,6 +489,7 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     undefinedReturn = provedUndefinedReturn;
     checkedWrapper = declaration;
     elements = std::move(provedElements);
+    elementIdentities = std::move(provedElementIdentities);
     if (!provedDocumentLoads.empty()) { documentAnchor = documentParameter; }
     documentLoads = std::move(provedDocumentLoads);
     documentRoots = std::move(provedDocumentRoots);
@@ -531,8 +551,8 @@ bool DOMEntryAnalysis::isElement(mlir::Value value) const {
 bool DOMEntryAnalysis::isElementIdentity(mlir::Value value) const {
     if (!value) { return false; }
     auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
-    return isElement(value) || (read && isDocumentElement(read)) ||
-           llvm::any_of(calls, [&](const HostDOMCall & call) {
+    return elementIdentities.contains(value) || isElement(value) ||
+           (read && isDocumentElement(read)) || llvm::any_of(calls, [&](const HostDOMCall & call) {
                return call.returnsElement() && call.operation->getResult(0) == value;
            });
 }

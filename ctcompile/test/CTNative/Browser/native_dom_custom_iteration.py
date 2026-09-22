@@ -79,6 +79,10 @@ BODY_RETURN_BRANCH_EXPRESSION_SNAPSHOT_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SO
     "anchor.hasAttribute('data-closed'));",
     "anchor.hasAttribute('data-closed') === anchor.hasAttribute('data-visited'));",
 )
+BODY_RETURN_ELEMENT_IDENTITY_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
+    "anchor.hasAttribute('data-closed'));",
+    "node === anchor && !anchor.hasAttribute('data-closed'));",
+)
 BODY_RETURN_BRANCH_NUMBER_SOURCE = (
     BODY_RETURN_BRANCH_SOURCE.replace(
         "  const values = {", "  let count = 0;\n  const values = {", 1
@@ -1270,6 +1274,38 @@ POSITIVES = (
         "true",
     ),
     (
+        "body-return-branch-expression",
+        BODY_RETURN_BRANCH_EXPRESSION_SOURCE,
+        True,
+        ("true", "false", "false"),
+        False,
+        "true",
+    ),
+    (
+        "body-return-branch-expression-snapshot",
+        BODY_RETURN_BRANCH_EXPRESSION_SNAPSHOT_SOURCE,
+        True,
+        ("true", "false", "false"),
+        False,
+        "true",
+    ),
+    (
+        "body-return-element-identity",
+        BODY_RETURN_ELEMENT_IDENTITY_SOURCE,
+        True,
+        ("true", "true", "false"),
+        False,
+        "true",
+    ),
+    (
+        "body-return-multiple",
+        BODY_RETURN_MULTIPLE_SOURCE,
+        True,
+        ("false", "false", "false"),
+        False,
+        "true",
+    ),
+    (
         # The return saves 3 before close changes the captured count to 13.
         # The already-yielded state never enters the body or closes its iterator.
         "body-return-branch-number",
@@ -1298,16 +1334,21 @@ def oracles(args):
         function = f"customElementsCase{index}"
         script += text.replace("function customElements(", f"function {function}(")
         normal, stopped, exhausted = results
-        for state, result in (
+        states = (
             ("normal", normal),
             ("stop", stopped),
             ("already-yielded", exhausted),
             ("stop-without-advance", stopped),
-        ):
+        )
+        if label == "body-return-multiple":
+            states += (("without-advance", "true"),)
+        for state, result in states:
             name = f"customObservation{len(observations)}"
             setup = "saved.advance = '';"
             if state == "stop-without-advance":
                 setup = "saved.stop = '';"
+            elif state == "without-advance":
+                setup = ""
             elif state == "stop":
                 setup += "saved.stop = '';"
             elif state == "already-yielded":
@@ -1335,7 +1376,9 @@ var {name} = (function() {{
                     f"data-closed={closed};"
                     if breaking
                     and (
-                        state.startswith("stop") or label in ("body-return", "body-return-ordered")
+                        state.startswith("stop")
+                        or label in ("body-return", "body-return-ordered")
+                        or (label == "body-return-multiple" and state != "without-advance")
                     )
                     else "data-next=true;data-yielded=yes;"
                 )
@@ -1492,9 +1535,6 @@ def refusals():
         ),
         "escaping-value": text.replace(visited, "    anchor.saved=node;"),
         # A return-expression snapshot across the loop and throw completion remain unproved.
-        "body-return-branch-expression": BODY_RETURN_BRANCH_EXPRESSION_SOURCE,
-        "body-return-branch-expression-snapshot": BODY_RETURN_BRANCH_EXPRESSION_SNAPSHOT_SOURCE,
-        "body-return-multiple": BODY_RETURN_MULTIPLE_SOURCE,
         "body-throw": text.replace(visited, "    throw 1;"),
     }
     for helper in SNAPSHOT_INTRINSICS[4:]:
@@ -1955,6 +1995,13 @@ def main():
                 checks = CHECKS + (OWNED_CHECKS if owned else "")
                 if label in ("body-return", "body-return-ordered"):
                     checks = checks.replace("@BREAKING@ && stopping", "true")
+                if label == "body-return-multiple":
+                    checks = (
+                        checks.replace("{0u, 1u, 2u}", "{0u, 1u, 2u, 3u}")
+                        .replace("mode != 0", "mode == 1 || mode == 2")
+                        .replace("mode != 2", "mode < 2")
+                        .replace("@BREAKING@ && stopping", "stopping || mode == 0")
+                    )
                 if label == "body-return":
                     checks = checks.replace(
                         "check_writes({next, yielded, visited,", "check_writes({next, yielded,"
@@ -1985,6 +2032,8 @@ def main():
                 value = (
                     "static_cast<bool>(call())" if normal in ("true", "false") else "call().value()"
                 )
+                if label == "body-return-multiple":
+                    checks = checks.replace("@FIRST_RESULT@", f"{value} == (mode == 3)")
                 checks = checks.replace(
                     "@FIRST_RESULT@",
                     f"{value} == (stopping ? {stopped} : {normal})",
