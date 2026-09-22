@@ -457,8 +457,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // Clearing/setting a low suffix instead rounds monotonically;
                 // its endpoints stay exact, but only fixed low bits survive.
                 if (!affine && !twoPoints) {
-                    range->stride =
+                    const auto roundedStride =
                         std::max(inputStride, static_cast<std::size_t>(roundedBits) + 1);
+                    range->mixedShift |= range->stride % roundedStride != 0;
+                    range->stride = roundedStride;
                 }
                 for (ContentsValue * endpoint : {&range->first, &range->last}) {
                     if (!spend()) {

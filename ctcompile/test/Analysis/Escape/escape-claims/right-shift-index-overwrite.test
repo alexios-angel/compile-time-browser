@@ -141,6 +141,13 @@
 // CHECK: escape {{[0-9a-f]+}} 127 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 128 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 129 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 130 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function signedShift() {
     var child = {}, a = [child, child, 0, 0];
@@ -857,3 +864,38 @@ function convertedMixedLaterStore() {
 }
 convertedMixedComplement(); convertedMixedLeftShift(); convertedMixedSignedShift(); convertedMixedUnsignedShift();
 convertedMixedRetained(); convertedMixedSaved(); convertedMixedOverlap(); convertedMixedLaterStore();
+
+function lowSuffixAnd() {
+    var child = {}, a = [child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[4]] = 0;
+    return a;
+}
+function lowSuffixOr() {
+    var child = {}, a = [0, 0, 0, child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child];
+    for (var i = 0; i < a.length; i += 10) a[i | a[7]] = 0;
+    return a;
+}
+function lowSuffixRetained() {
+    var child = {}, a = [child, child, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[4]] = 0;
+    return a;
+}
+function lowSuffixSaved() {
+    var child = {}, a = [child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[4]] = 0;
+    return saved;
+}
+function lowSuffixOverlap() {
+    var child = {}, a = [child, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) a[i & ~a[8]] = 0;
+    return a;
+}
+function lowSuffixLaterStore() {
+    var child = {}, a = [child, 0, 0, 0, 3, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0, 0, 0, 0, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 10) {
+        a[i & ~a[4]] = 0;
+        a[4] = 1;
+    }
+    return a;
+}
+lowSuffixAnd(); lowSuffixOr(); lowSuffixRetained(); lowSuffixSaved(); lowSuffixOverlap(); lowSuffixLaterStore();
