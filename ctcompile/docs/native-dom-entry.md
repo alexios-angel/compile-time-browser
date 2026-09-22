@@ -540,9 +540,9 @@ lifetime.
 
 Mutable lexical Number cells may also supply iterator state. Each root-local
 cell has a literal Number initializer, either directly or through one assignment
-before every capturing method and read. Only the confined `next` and `return`
-closures may capture it; other closures and forwarded captures refuse. The
-enclosing entry may read and update cells mutated by those methods before,
+before every capturing method and read. Confined `next` and `return` methods
+may capture it, along with the local scalar readers described below. Forwarded
+captures remain refused. The enclosing entry may read and update cells mutated by those methods before,
 during and after iteration. Entry verification and initialization dominance cover
 structured branches, loops and importer completion selections. Loads and stores
 may occur in each method's root block or nested `if` arms and `while` regions,
@@ -550,6 +550,16 @@ and mutable capture methods must be leaves. The proof
 follows cell identity across different capture orders, removes only those slots and
 reindexes remaining immutable captures. General helper capture admission still requires
 immutability.
+
+A unique local sibling closure may read those state cells through zero-argument
+ordinary or direct calls in the enclosing entry. Every capture must identify
+proved iterator state; the complete body must be a scalar leaf without writes,
+calls or nested closures. Exact closure, call and symbolic-use checks precede
+rewriting. An arrow's lexical receiver may be retained only when its body does
+not observe it. Each invocation supplies the current scalar values to the
+existing helper inliner, preserving reads before, during and after iteration,
+including `return` updates on close. The retired reader leaves no closure or cell
+storage in native output. Escaping, recursive and mutating readers remain refused.
 
 Private normalization selects the custom protocol before source completion
 expansion, substitutes ordinary method calls and carries scalar done, receiver

@@ -22,6 +22,50 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Sibling iterator state readers and combined mask periods, 2026-09-22 UTC
+
+Continued clean **fca25a05** from the committed
+`entry-captured-sibling-reader` boundary. **c18dd782** admits unique local
+scalar reader closures over iterator Number cells. The complete family, call
+sites, initialization and symbolic uses are proved before expansion. Each
+invocation passes its current state to the existing helper inliner, preserving
+before/body/after reads and latest close state without closure or cell storage.
+Ordinary calls and exact direct targets are supported; unused lexical receivers
+retain their source identity during proof. Mutation and escaping readers refuse.
+
+Two original complete sources now execute unchanged. A two-cell reader source
+checks repeated calls and ordered state updates; four raw twins cover ordinary
+and direct calls with normal and zero-body traversal. All 87 earlier source
+bodies remain. Parallel **76b6f909** composes fixed input and AND/OR mask
+bits to tighten the existing output stride. Twenty-six source witnesses extend
+the unchanged 199 earlier bodies. No browser/oracle semantics changed.
+
+Focused validation covers **496 native executions** across two runs. The main
+custom lit completed 480 executions, then stopped on the old
+`extra-captured-closure` refusal after **749.19 s**. That now-supported source
+was promoted unchanged; its focused follow-up passes **16 native executions,
+146 refusals and 8 Node/VM observations**. The main run had already completed
+240 Node/VM observations. The complete custom case was not replayed after this
+test correction. Exact host **1/1, 1.02 s total**, exact arrays **1/1, 1.78 s total**
+and AND/OR-XOR lit **2/2, 0.14 s** pass. Final source hashes match their checks.
+
+The first combined build caught string-valued test expectations where existing
+rows require literal pointers; corrected tests retain their sources and ownership
+checks. Required formatting retains **16 pre-existing diagnostics in four
+untouched files**; changed scopes pass. Full suites, unchanged nested/dataset lit,
+broad replays, Windows and additional sanitizers were skipped. The devbox idle
+timer is active/enabled.
+
+**Next native boundary:** `entry-captured-sibling-writer` retains the reader
+source but changes the helper to `emitted += closed; return emitted`. Both
+optimization policies refuse the read-only scalar leaf requirement. The next
+proof must return the helper's updated shared state as well as its ordinary
+result. Nested custom opens, abrupt close, literal range-for printing, unguarded
+Bootstrap defaults and the application driver remain open. Full Bootstrap is
+not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-sibling-readers.md).
+
 ## Enclosing iterator capture state and XOR complements, 2026-09-22 UTC
 
 Continued clean **e28b03b8** from the recorded
