@@ -535,12 +535,21 @@ external holder observations and conditional writes remain unproved.
 `next` returns a fresh record with exactly own `done` and `value` fields; `return`,
 when present, returns an empty fresh object. Complete helper and DOM proofs still
 check every field producer, scalar recurrence, effect and borrowed element
-lifetime. Mutable lexical cells remain a separate boundary.
+lifetime.
+
+Mutable lexical Number cells may also supply iterator state. Each root-local
+cell has a literal Number initializer, either directly or through one assignment
+before every capturing method. Only the confined `next` and `return` closures
+may capture it; external reads, later assignments, other closures and forwarded
+captures refuse. Loads and stores stay in each method's root block, and mutable
+capture methods must be leaves. The proof follows cell identity across different
+capture orders, removes only those slots and reindexes remaining immutable
+captures. General helper capture admission still requires immutability.
 
 Private normalization selects the custom protocol before source completion
-expansion, substitutes ordinary method calls and carries scalar done and receiver
-state. Field reads become explicit scalar arguments, writes update the current
-scalar, and fresh private result fields carry the latest values back. Existing
+expansion, substitutes ordinary method calls and carries scalar done, receiver
+and captured state. Reads become explicit scalar arguments, writes update the
+current scalar, and fresh private result fields carry the latest values back. Existing
 helper expansion removes those result records. State resets for every iterator
 allocation; a close hook receives the latest values after `next`, including on a
 break. Numeric comparisons require independent Number evidence.

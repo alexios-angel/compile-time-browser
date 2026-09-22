@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Confined iterator captures and identity masks, 2026-09-22 UTC
+
+Continued clean **830181ec** from the recorded captured-counter boundary.
+**76a7933e** admits initialized Number cells shared only by a confined iterator's
+unique `next` and `return` methods. Complete cell/capture checks precede rewriting;
+ordered scalar transport preserves shared identity, fresh invocation state and
+latest close values. Remaining immutable capture slots are reindexed. Generic
+helper capture admission stays immutable. Conditional writes, external cell
+observations and nested closures remain refused.
+
+The original captured-counter source executes unchanged. A two-cell source and
+raw reordered-capture controls check update order and close state. Generated C++
+uses typed scalar loops and public DOM calls, without boxed state or Script.
+Parallel escape work **d66f0bc0** preserves odd strides through identity bitwise
+masks within one signed conversion band, including zero crossings. Original OR
+and AND zero-crossing sources are preserved and now admitted. Complete reload,
+store and budget checks remain. No browser/oracle semantics changed.
+
+Focused checks pass: exact host **1/1, 0.82 s total**; custom/nested/dataset lit
+**3/3, 315.89 s**; exact arrays **1/1, 1.79 s total**; OR/XOR and AND lit
+**2/2, 0.14 s**. Custom iteration completed **176 native executions, 356 refusals
+and 66 Node/VM observations**. Nested iteration completed **48 native/two
+previous-source checks/94 refusals**; dataset completed **112 Node/VM observations,
+eight binaries, lifetime sanitizer and 432 refusals**. All nine final code/test
+hashes match their gates. An initial stale OR refusal was corrected with its
+source unchanged. Formatting retains **16 pre-existing diagnostics in four
+untouched files**; changed files pass scoped checks. Full suites and broad
+replays were skipped. The devbox idle timer is active/enabled.
+
+**Next native boundary:** the committed `conditional-captured-store` source needs
+branch-local state updates and scalar joins that preserve effects and close
+values. Conditional receiver writes are its sibling boundary. External cell
+observations, nested custom opens, body abrupt-close behavior, literal range-for
+printing, unguarded Bootstrap defaults and the application driver remain open.
+Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-captured-state.md).
+
 ## Confined iterator receiver state and signed OR ranges, 2026-09-22 UTC
 
 Continued clean **0bbb961f** from the receiver-counter boundary recorded in
