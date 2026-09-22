@@ -563,10 +563,12 @@ The ordinary result keeps its own observation point even when later writes
 change the shared state. Repeated calls see the latest values, including
 `return` updates on close. Complete DOM reproof checks every scalar producer.
 Retired helpers leave no closure or cell storage in native output. Escaping,
-recursive, argument-taking and method-local-break helpers remain refused. A
-pre-traversal helper branch that duplicates the later custom protocol during
-completion normalization also remains refused; loop-local branches join within
-their loop before its continuation.
+recursive, argument-taking and method-local-break helpers remain refused.
+Fully defined JavaScript branch results join their ordered scalar state before
+one common continuation, including a helper conditional after its local loop.
+The existing importer also normalizes early helper returns into this form.
+Completion tags, switches and inactive poison slots retain the bounded path
+proof; they cannot authorize an ordinary join.
 
 Private normalization selects the custom protocol before source completion
 expansion, substitutes ordinary method calls and carries scalar done, receiver

@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator branch joins and fixed-bit rounding, 2026-09-22 UTC
+
+Continued clean **6f7ee572** and its saved
+`entry-captured-sibling-preloop-branch-writer` boundary. **63b36a15** joins
+fully defined JavaScript branch results and scalar state before one common
+continuation. Completion tags, switches and inactive values retain the existing
+bounded path proof. The exact saved source now executes unchanged; additional
+sources check branch-dependent results and early helper returns. Post-close
+observations execute once after the selected state joins. No runtime storage or
+browser semantics changed.
+
+Parallel **45658831** recognizes monotone AND/OR rounding through fixed input
+bits, reusing exact endpoints, signed-conversion guards and the existing lattice.
+Eighteen new source witnesses extend all 251 previous bodies; complete
+reload/store census and budget checks remain.
+
+Focused checks pass: exact host **1/1, 1.15 s total**; seven custom sources
+**112 native executions, 304 refusals and 56 Node/VM observations**, including
+all 68 refusal programs; nested iteration lit **1/1, 132.99 s**, with **48 native
+executions, two previous-source checks and 94 refusals**; exact arrays **1/1,
+1.83 s total**; AND/OR-XOR lit **2/2, 0.14 s**. All eight final code/test hashes
+match local files and the devbox. Required formatting retains **16 pre-existing
+diagnostics in four untouched files**; changed scopes pass. Full suites and the
+complete custom case were skipped. The devbox idle timer is active/enabled.
+
+**Next native boundary:** the unchanged
+`entry-captured-sibling-argument-writer` passes `closed` to its sibling helper
+and observes `emitted + amount` before ordered writes. Both policies refuse
+`DOM iterator sibling helper requires an exact local leaf`. Prove explicit
+arguments at each call while retaining that argument snapshot, ordinary return
+and current state. Sibling method breaks, nested custom opens, abrupt close,
+unguarded Bootstrap defaults and the application driver also remain open.
+Full Bootstrap is not admitted.
+
+[Exact checks and next boundary](handoff/2026-09-22-iterator-branch-joins.md).
+
 ## Sibling iterator writers and low-bit rounding, 2026-09-22 UTC
 
 Continued clean **8c04990c** from the recorded
