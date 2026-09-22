@@ -1,14 +1,21 @@
+// Keep every reaching path in refusal controls; default specialization can
+// prove the single closed call even when a different argument would fail.
 // RUN: split-file %s %t
+// The sole closed flag selects a safe path under the default pipeline.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_one_clearing_arm.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/selected.mlir
+// RUN: FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/selected.mlir
+// RUN: %compilation_unit --module %t/selected.mlir --js %t/zero_one_clearing_arm.js --work %t/selected --name zero_one_clearing_arm
+// RUN: %node -e "const vm = require('node:vm'), fs = require('node:fs'); const cx = vm.createContext({}); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), cx); if (cx.result !== 1) process.exit(1);" %t/zero_one_clearing_arm.js
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_saved_before_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_signed_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_both_clearing_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_selected_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_size_before_clear.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_size_after_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_one_clearing_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_empty_entry_intersection.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_selected_nonzero_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_size_before_clear.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_size_after_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_one_clearing_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_empty_entry_intersection.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_selected_nonzero_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_exact_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_duplicate_literal_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_saved_before_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
@@ -17,15 +24,15 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_fluent_alias.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_two_exact_keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_two_selected_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_before_insertion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_after_second_insertion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_startup_lower_bound.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_conditional_second_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_before_insertion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_after_second_insertion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_startup_lower_bound.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_conditional_second_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_different_singleton_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_selected_two_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_fluent_clear_invalidates.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_unknown_key_equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_selected_two_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_fluent_clear_invalidates.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_unknown_key_equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_last.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_one_of_two.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_absent.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
@@ -34,16 +41,16 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_both_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_selected_zero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_fluent_alias.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_before_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_after_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_one_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_before_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_after_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_one_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_different_survivors.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_selected_nonzero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_selected_nonzero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_signed_zero.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_alias_after_store.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_same_schema_other_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_alias_after_store.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_same_schema_other_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_same_schema_disjoint_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DELETE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_possibly_equal_keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/delete_possibly_equal_keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 
 // MUTATION: emitc.func
 // MUTATION-DAG: call_opaque "ctnative::map_size"

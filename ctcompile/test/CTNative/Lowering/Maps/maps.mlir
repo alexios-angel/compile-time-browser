@@ -13,7 +13,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OBJECT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=OPTIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=OPTIONAL --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EQUALITY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=KEYS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/snapshot-write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
@@ -64,8 +64,11 @@
 // STRING: call_opaque "ctnative::map_set"([[STRING_MAP]],
 // STRING: [[STRING_SIZE:%[^ ]+]] = call_opaque "ctnative::map_size"([[STRING_MAP]])
 // STRING: return [[STRING_SIZE]] : !emitc.opaque<"ctnative::js_num">
-// OPTIONAL: ctjs.func private @probe$1
-// OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
+// OPTIONAL: emitc.func @probe_1({{.*}}) -> !emitc.opaque<"ctnative::js_num">
+// OPTIONAL: [[OPTIONAL_MAP:%[^ ]+]] = call_opaque "ctnative::make_map<double, ctnative::nullable_scalar>"
+// OPTIONAL: call_opaque "ctnative::map_set"([[OPTIONAL_MAP]],
+// OPTIONAL-SAME: !emitc.opaque<"ctnative::nullable_scalar">
+// OPTIONAL: call_opaque "ctnative::map_size"([[OPTIONAL_MAP]])
 // EQUALITY: emitc.func @probe_1() -> !emitc.opaque<"ctnative::js_boolean_t">
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native
