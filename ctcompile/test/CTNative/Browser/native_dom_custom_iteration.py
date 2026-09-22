@@ -96,6 +96,10 @@ BODY_RETURN_BRANCH_NUMBER_SOURCE = (
     .replace("return anchor.hasAttribute('data-closed');", "return (count += 2, count);", 1)
     .replace("return anchor.hasAttribute('data-visited');", "return count;", 1)
 )
+BODY_RETURN_LOOP_LOCAL_NUMBER_SOURCE = BODY_RETURN_BRANCH_NUMBER_SOURCE.replace(
+    "    if (anchor.hasAttribute('stop')) return (count += 2, count);",
+    "    const snapshot = count + 2;\n    if (anchor.hasAttribute('stop')) return snapshot;",
+)
 BODY_RETURN_MULTIPLE_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
     "    node.setAttribute('data-visited', 'yes');",
     "    if (anchor.hasAttribute('advance'))\n"
@@ -1270,6 +1274,14 @@ POSITIVES = (
         # The already-yielded state never enters the body or closes its iterator.
         "body-return-branch-number",
         BODY_RETURN_BRANCH_NUMBER_SOURCE,
+        True,
+        ("1", "3", "0"),
+        False,
+        "yes",
+    ),
+    (
+        "body-return-loop-local-number",
+        BODY_RETURN_LOOP_LOCAL_NUMBER_SOURCE,
         True,
         ("1", "3", "0"),
         False,
