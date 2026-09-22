@@ -216,6 +216,43 @@ SIBLING_ORDERED_CAPTURE_SOURCE = (
     )
     .replace("return count + emitted + closed;", "return count + read() + read();")
 )
+SIBLING_WRITER_SOURCE = SIBLING_CAPTURE_SOURCE.replace(
+    "  const read = () => emitted;",
+    "  const read = () => { emitted += closed; return emitted; };",
+)
+SIBLING_ORDERED_WRITER_SOURCE = (
+    SIBLING_ORDERED_CAPTURE_SOURCE.replace(
+        "const read = () => emitted + closed;",
+        "const read = () => { const before = emitted; closed += emitted; "
+        "emitted += closed; return before; };",
+    )
+    .replace("  count += read();\n  for (const node of values)", "  for (const node of values)")
+    .replace("closed === 21", "closed === 74")
+)
+SIBLING_BRANCH_WRITER_SOURCE = (
+    SIBLING_ORDERED_WRITER_SOURCE.replace("let closed = 1;", "let closed = 0;")
+    .replace("closed === 74", "closed === 458")
+    .replace(
+        "const read = () => { const before = emitted; closed += emitted; "
+        "emitted += closed; return before; };",
+        """const read = () => {
+    const before = emitted;
+    let rounds = 0;
+    while (rounds < 2) {
+      closed += emitted;
+      emitted += closed;
+      rounds++;
+    }
+    if (closed > 1) emitted++;
+    else closed++;
+    return rounds + before;
+  };""",
+    )
+)
+SIBLING_LOOP_WRITER_SOURCE = SIBLING_BRANCH_WRITER_SOURCE.replace(
+    "    }\n    if (closed > 1) emitted++;\n    else closed++;",
+    "      if (closed > 1) emitted++;\n      else closed++;\n    }",
+).replace("closed === 458", "closed === 541")
 
 # Results for normal, stopping, and already-yielded DOM states, followed by
 # whether each invocation resets its iterator state and the close-hook value.
@@ -469,6 +506,32 @@ POSITIVES = (
         ("1", "1", "1"),
         True,
         "yes",
+    ),
+    (
+        "entry-captured-sibling-writer",
+        SIBLING_WRITER_SOURCE,
+        True,
+        ("77", "95", "77"),
+        True,
+        "true",
+    ),
+    (
+        # Each result precedes the next call's writes; close sees both cells
+        # after the body calls, and both final calls observe the close update.
+        "entry-captured-sibling-ordered-writer",
+        SIBLING_ORDERED_WRITER_SOURCE,
+        True,
+        ("1582", "1645", "1582"),
+        True,
+        "true",
+    ),
+    (
+        "entry-captured-sibling-loop-writer",
+        SIBLING_LOOP_WRITER_SOURCE,
+        True,
+        ("61478", "68384", "61478"),
+        True,
+        "true",
     ),
 )
 
@@ -802,9 +865,34 @@ def refusals():
                 "  const read = () => emitted;",
                 "  const read = () => anchor.hasAttribute('stop') ? read() : emitted;",
             ),
-            "entry-captured-sibling-writer": SIBLING_CAPTURE_SOURCE.replace(
-                "  const read = () => emitted;",
-                "  const read = () => { emitted += closed; return emitted; };",
+            "entry-captured-sibling-escaping-writer": SIBLING_WRITER_SOURCE.replace(
+                "  return count + read() + closed;",
+                "  anchor.saved = read;\n  return count + read() + closed;",
+            ),
+            "entry-captured-sibling-indirect-writer": SIBLING_WRITER_SOURCE.replace(
+                "  return count + read() + closed;",
+                "  const writers = {read: read};\n"
+                "  return count + writers[anchor.getAttribute('data-writer')]() + closed;",
+            ),
+            "entry-captured-sibling-recursive-writer": SIBLING_WRITER_SOURCE.replace(
+                "emitted += closed; return emitted;",
+                "emitted += closed; return emitted > closed ? read() : emitted;",
+            ),
+            "entry-captured-sibling-nonnumber-writer": SIBLING_WRITER_SOURCE.replace(
+                "emitted += closed; return emitted;", "emitted = true; return emitted;"
+            ),
+            "entry-captured-sibling-loop-nonnumber-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
+                "      closed += emitted;", "      closed = true;"
+            ),
+            # A preloop helper branch currently duplicates the iterator continuation.
+            "entry-captured-sibling-preloop-branch-writer": SIBLING_BRANCH_WRITER_SOURCE,
+            "entry-captured-sibling-argument-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
+                "const read = () => {", "const read = (amount) => {"
+            )
+            .replace("const before = emitted;", "const before = emitted + amount;")
+            .replace("read()", "read(closed)"),
+            "entry-captured-sibling-loop-break-writer": SIBLING_LOOP_WRITER_SOURCE.replace(
+                "      rounds++;", "      rounds++;\n      if (rounds === 1) break;"
             ),
         }
     )

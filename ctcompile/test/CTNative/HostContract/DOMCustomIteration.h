@@ -746,6 +746,90 @@ module {
     check(directSiblingReader && zeroDirectSiblingReader,
           "direct sibling readers with unobserved lexical receivers parse");
     if (!directSiblingReader || !zeroDirectSiblingReader) { return; }
+    // Keep both former self-store refusals byte-identical as positive witnesses.
+    const auto siblingCountStoreSource =
+        replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
+                 "%observed = ctjs.load_upvalue %callee[0]\n"
+                 "    ctjs.store_upvalue %callee[0], %observed");
+    const auto siblingExtraStoreSource =
+        replaced(siblingReaderSource, "%observedExtra = ctjs.load_upvalue %callee[0]",
+                 "%observedExtra = ctjs.load_upvalue %callee[0]\n"
+                 "    ctjs.store_upvalue %callee[0], %observedExtra");
+    auto siblingCountStore =
+        mlir::parseSourceString<mlir::ModuleOp>(siblingCountStoreSource, &context);
+    auto siblingExtraStore =
+        mlir::parseSourceString<mlir::ModuleOp>(siblingExtraStoreSource, &context);
+    // The ordinary result is the OLD count, while both captures receive new
+    // values. The second write reads the first; repeated calls must see both.
+    auto siblingWriterSource = replaced(
+        siblingReaderSource,
+        "%readCount = ctjs.create_closure %callee[4] this %undefined captures %emittedCell",
+        "%readCount = ctjs.create_closure %callee[4] this %undefined captures %emittedCell, "
+        "%extraCell");
+    siblingWriterSource = replaced(
+        siblingWriterSource,
+        "ctjs.func @readCount$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> "
+        "!ctjs.value attributes {upvalue_count = 1 : i32}",
+        "ctjs.func @readCount$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> "
+        "!ctjs.value attributes {upvalue_count = 2 : i32}");
+    siblingWriterSource = replaced(siblingWriterSource,
+                                   "    %observed = ctjs.load_upvalue %callee[0]\n"
+                                   "    ctjs.return %observed",
+                                   R"MLIR(    %observed = ctjs.load_upvalue %callee[0]
+    %oldExtra = ctjs.load_upvalue %callee[1]
+    %step = ctjs.constant #ctjs.number<4607182418800017408>
+    %updated = ctjs.binary_static add %observed, %step
+    ctjs.store_upvalue %callee[0], %updated
+    %current = ctjs.load_upvalue %callee[0]
+    %updatedExtra = ctjs.binary_static add %oldExtra, %current
+    ctjs.store_upvalue %callee[1], %updatedExtra
+    ctjs.return %observed)MLIR");
+    for (const auto & [value, suffix] :
+         {std::pair{"entryBefore", "before"}, std::pair{"bodyEmitted", "body"},
+          std::pair{"preCloseCount", "close"}, std::pair{"finalCount", "final"}}) {
+        const auto call = std::string("%") + value + " = ctjs.call %readCount(%undefined)";
+        siblingWriterSource =
+            replaced(siblingWriterSource, call,
+                     call + "\n    %writerExtra_" + suffix + " = ctjs.cell_get %extraCell\n" +
+                         "    %writerSeen_" + suffix + " = ctjs.compare strict_eq %" + value +
+                         ", %writerExtra_" + suffix + "\n" + "    %writerName_" + suffix +
+                         " = ctjs.constant #ctjs.string<\"writer-" + suffix + "\">\n" +
+                         "    %writerEffect_" + suffix + " = ctjs.call %entrySet(%element, " +
+                         "%writerName_" + suffix + ", %writerSeen_" + suffix + ")");
+    }
+    siblingWriterSource =
+        replaced(siblingWriterSource, "    %finalExtra = ctjs.call %readExtra(%undefined)",
+                 R"MLIR(    %againCount = ctjs.call %readCount(%undefined)
+    %finalExtra = ctjs.call %readExtra(%undefined)
+    %againSeen = ctjs.compare strict_eq %againCount, %finalExtra
+    %againName = ctjs.constant #ctjs.string<"writer-again">
+    %againEffect = ctjs.call %entrySet(%element, %againName, %againSeen))MLIR");
+    auto directSiblingWriterSource = siblingWriterSource;
+    for (unsigned i = 0; i != 5; ++i) {
+        directSiblingWriterSource =
+            replaced(directSiblingWriterSource, "ctjs.call %readCount(%undefined)",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)");
+    }
+    const auto zeroSiblingWriterSource =
+        replaced(siblingWriterSource, "%emittedInitial = ctjs.constant #ctjs.number<0>",
+                 "%emittedInitial = ctjs.constant #ctjs.number<4607182418800017408>");
+    const auto zeroDirectSiblingWriterSource =
+        replaced(directSiblingWriterSource, "%emittedInitial = ctjs.constant #ctjs.number<0>",
+                 "%emittedInitial = ctjs.constant #ctjs.number<4607182418800017408>");
+    auto siblingWriter = mlir::parseSourceString<mlir::ModuleOp>(siblingWriterSource, &context);
+    auto directSiblingWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directSiblingWriterSource, &context);
+    auto zeroSiblingWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(zeroSiblingWriterSource, &context);
+    auto zeroDirectSiblingWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(zeroDirectSiblingWriterSource, &context);
+    check(siblingCountStore && siblingExtraStore && siblingWriter && directSiblingWriter &&
+              zeroSiblingWriter && zeroDirectSiblingWriter,
+          "self-store and ordinary/direct two-cell writer witnesses parse");
+    if (!siblingCountStore || !siblingExtraStore || !siblingWriter || !directSiblingWriter ||
+        !zeroSiblingWriter || !zeroDirectSiblingWriter) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -793,7 +877,20 @@ module {
                          *siblingReader,
                          *zeroSiblingReader,
                          *directSiblingReader,
-                         *zeroDirectSiblingReader}) {
+                         *zeroDirectSiblingReader,
+                         *siblingCountStore,
+                         *siblingExtraStore,
+                         *siblingWriter,
+                         *directSiblingWriter,
+                         *zeroSiblingWriter,
+                         *zeroDirectSiblingWriter}) {
+        const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
+                                  fixture == *directSiblingReader ||
+                                  fixture == *zeroDirectSiblingReader ||
+                                  fixture == *siblingCountStore || fixture == *siblingExtraStore;
+        const bool siblingWrites = fixture == *siblingWriter || fixture == *directSiblingWriter ||
+                                   fixture == *zeroSiblingWriter ||
+                                   fixture == *zeroDirectSiblingWriter;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -1057,9 +1154,7 @@ module {
             check(proof.proved(),
                   "projected custom iterator reproves element lifetime and effects");
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
-            if (fixture == *entryCaptured || fixture == *zeroEntryCaptured ||
-                fixture == *siblingReader || fixture == *zeroSiblingReader ||
-                fixture == *directSiblingReader || fixture == *zeroDirectSiblingReader) {
+            if (fixture == *entryCaptured || fixture == *zeroEntryCaptured || siblingReads) {
                 auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
                 auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back());
                 auto close = returned.getValue().getDefiningOp<mlir::scf::IfOp>();
@@ -1118,34 +1213,91 @@ module {
                                                                         "entry-body",
                                                                         "entry-before-close"},
                       "entry body reload sees its preceding write without moving observations");
-                if (fixture == *siblingReader || fixture == *zeroSiblingReader ||
-                    fixture == *directSiblingReader || fixture == *zeroDirectSiblingReader) {
+                if (siblingReads) {
                     check(!input->lookupSymbol<ctjs::FuncOp>("readCount$4") &&
                               !input->lookupSymbol<ctjs::FuncOp>("readExtra$5"),
                           "repeated sibling readers retire after all call positions expand");
                 }
             }
-            if (fixture == *receiver || fixture == *twoState || fixture == *captured ||
-                fixture == *twoCaptured || fixture == *initializedCapture ||
-                fixture == *reorderedCapture || fixture == *conditionalCaptured ||
-                fixture == *conditionalReceiver || fixture == *branchCaptured ||
-                fixture == *branchReceiver || fixture == *zeroCaptured ||
-                fixture == *zeroReceiver || fixture == *loopCaptured || fixture == *loopReceiver ||
-                fixture == *zeroTwoState || fixture == *methodBreakCaptured ||
-                fixture == *methodBreakReceiver || fixture == *reinitializedCapture ||
-                fixture == *externalWrite || fixture == *externalRead ||
-                fixture == *entryCaptured || fixture == *zeroEntryCaptured ||
-                fixture == *siblingReader || fixture == *zeroSiblingReader ||
-                fixture == *directSiblingReader || fixture == *zeroDirectSiblingReader) {
+            if (siblingWrites) {
+                auto body = input->lookupSymbol<ctjs::FuncOp>(contract.entry);
+                llvm::SmallVector<llvm::StringRef> effects;
+                bool ordered = true, boxed = false;
+                body.walk([&](mlir::Operation * operation) {
+                    boxed |=
+                        llvm::isa<ctjs::CreateObjectOp, ctjs::CreateCellOp, ctjs::CreateClosureOp,
+                                  ctjs::CellGetOp, ctjs::CellSetOp, ctjs::LoadUpvalueOp,
+                                  ctjs::StoreUpvalueOp, ctjs::CallDirectOp>(operation);
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+                    if (!call || call.getArgs().size() != 2) { return; }
+                    const auto name = ctjs::constantKey(call.getArgs()[0]);
+                    if (!name.starts_with("writer-")) { return; }
+                    effects.push_back(name);
+                    auto seen = call.getArgs()[1].getDefiningOp<ctjs::CompareOp>();
+                    auto extra = seen ? seen.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                      : ctjs::BinaryStaticOp{};
+                    auto count = extra ? extra.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                       : ctjs::BinaryStaticOp{};
+                    ordered &= extra && count && extra.getKind() == ctjs::BinaryKind::Add &&
+                               count.getKind() == ctjs::BinaryKind::Add &&
+                               count.getLhs() == seen.getLhs() &&
+                               count.getResult() != seen.getLhs();
+                });
+                check(ordered &&
+                          effects ==
+                              llvm::SmallVector<llvm::StringRef>{
+                                  "writer-before", "writer-body", "writer-close", "writer-final",
+                                  "writer-again", "writer-final", "writer-again"},
+                      "each sibling call returns its old snapshot and publishes ordered writes");
+                auto returned = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back());
+                auto close = returned.getValue().getDefiningOp<mlir::scf::IfOp>();
+                check(close && close.getNumResults() == 1,
+                      "sibling writes preserve both complete close paths");
+                if (close && close.getNumResults() == 1) {
+                    for (auto * region : {&close.getThenRegion(), &close.getElseRegion()}) {
+                        auto answer = region->front()
+                                          .back()
+                                          .getOperand(0)
+                                          .getDefiningOp<ctjs::BinaryStaticOp>();
+                        auto total = answer ? answer.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                            : ctjs::BinaryStaticOp{};
+                        auto extra = total ? total.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                           : ctjs::BinaryStaticOp{};
+                        auto count = extra ? extra.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                           : ctjs::BinaryStaticOp{};
+                        auto firstExtra = extra
+                                              ? extra.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                              : ctjs::BinaryStaticOp{};
+                        auto firstCount = count
+                                              ? count.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                              : ctjs::BinaryStaticOp{};
+                        check(total && firstExtra && firstCount &&
+                                  firstExtra.getRhs() == firstCount.getResult() &&
+                                  firstCount.getLhs() == total.getLhs(),
+                              "repeated final calls retain both latest cells and the first result");
+                    }
+                }
+                check(!boxed && !input->lookupSymbol<ctjs::FuncOp>("readCount$4") &&
+                          !input->lookupSymbol<ctjs::FuncOp>("readExtra$5"),
+                      "mutable siblings retire without boxed state, closures or direct calls");
+            } else if (fixture == *receiver || fixture == *twoState || fixture == *captured ||
+                       fixture == *twoCaptured || fixture == *initializedCapture ||
+                       fixture == *reorderedCapture || fixture == *conditionalCaptured ||
+                       fixture == *conditionalReceiver || fixture == *branchCaptured ||
+                       fixture == *branchReceiver || fixture == *zeroCaptured ||
+                       fixture == *zeroReceiver || fixture == *loopCaptured ||
+                       fixture == *loopReceiver || fixture == *zeroTwoState ||
+                       fixture == *methodBreakCaptured || fixture == *methodBreakReceiver ||
+                       fixture == *reinitializedCapture || fixture == *externalWrite ||
+                       fixture == *externalRead || fixture == *entryCaptured ||
+                       fixture == *zeroEntryCaptured || siblingReads) {
                 const bool two = fixture == *twoState || fixture == *twoCaptured ||
                                  fixture == *reorderedCapture || fixture == *branchCaptured ||
                                  fixture == *branchReceiver || fixture == *loopCaptured ||
                                  fixture == *loopReceiver || fixture == *zeroTwoState ||
                                  fixture == *methodBreakCaptured ||
                                  fixture == *methodBreakReceiver || fixture == *entryCaptured ||
-                                 fixture == *zeroEntryCaptured || fixture == *siblingReader ||
-                                 fixture == *zeroSiblingReader || fixture == *directSiblingReader ||
-                                 fixture == *zeroDirectSiblingReader;
+                                 fixture == *zeroEntryCaptured || siblingReads;
                 bool objects = false, stateProperties = false, cells = false;
                 mlir::Value closedCount, closedExtra;
                 llvm::SmallVector<llvm::StringRef> closeOrder;
@@ -1231,12 +1383,6 @@ module {
                       "%observed = ctjs.load_upvalue %callee[-1]"),
              replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
                       "%observed = ctjs.load_upvalue %this[0]"),
-             replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
-                      "%observed = ctjs.load_upvalue %callee[0]\n"
-                      "    ctjs.store_upvalue %callee[0], %observed"),
-             replaced(siblingReaderSource, "%observedExtra = ctjs.load_upvalue %callee[0]",
-                      "%observedExtra = ctjs.load_upvalue %callee[0]\n"
-                      "    ctjs.store_upvalue %callee[0], %observedExtra"),
              replaced(siblingReaderSource,
                       "%readExtra = ctjs.create_closure %callee[5] this %undefined captures "
                       "%extraCell",
@@ -1270,9 +1416,35 @@ module {
              replaced(directSiblingReaderSource,
                       "%readCount = ctjs.create_closure %callee[4] this %this",
                       "%readCount = ctjs.create_closure %callee[4] this %element"),
+             replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
+                      "ctjs.store_upvalue %callee[-1], %updated"),
+             replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
+                      "ctjs.store_upvalue %callee[2], %updated"),
+             replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
+                      "ctjs.store_upvalue %this[0], %updated"),
+             replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
+                      "ctjs.store_upvalue %callee[0], %callee"),
+             replaced(siblingWriterSource, "%observedExtra = ctjs.load_upvalue %callee[0]",
+                      "%observedExtra = ctjs.load_upvalue %callee[0]\n"
+                      "    ctjs.store_upvalue %callee[-1], %observedExtra"),
+             replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
+                      "ctjs.store_upvalue %callee[0], %updated\n"
+                      "    %nestedUndefined = ctjs.constant #ctjs.undefined\n"
+                      "    %nested = ctjs.call %callee(%nestedUndefined)"),
+             replaced(directSiblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
+                      "ctjs.store_upvalue %callee[0], %updated\n"
+                      "    %nestedUndefined = ctjs.constant #ctjs.undefined\n"
+                      "    %nested = ctjs.call_direct @readExtra$5(%nestedUndefined, "
+                      "%nestedUndefined, %callee)"),
+             replaced(siblingWriterSource, "%entryBefore = ctjs.call %readCount(%undefined)",
+                      "ctjs.store_global \"writer-leaked\", %readCount\n"
+                      "    %entryBefore = ctjs.call %readCount(%undefined)"),
+             replaced(siblingWriterSource, "%emittedCell = ctjs.create_cell %emittedInitial",
+                      "%uninitialized = ctjs.constant #ctjs.undefined\n"
+                      "    %emittedCell = ctjs.create_cell %uninitialized"),
          }) {
         auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "hostile sibling reader witness parses");
+        check(static_cast<bool>(fixture), "hostile sibling helper witness parses");
         if (!fixture) { continue; }
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -1286,7 +1458,7 @@ module {
             if (failure) { llvm::consumeError(std::move(failure)); }
             check(hostContractFingerprint(*input) == request.moduleSha256 &&
                       noEvidence(*input, DOMEntryAnalysis(*input, request)),
-                  "refused sibling reader preserves source and publishes no DOM evidence");
+                  "refused sibling helper preserves source and publishes no DOM evidence");
         }
     }
 
@@ -1598,6 +1770,13 @@ module {
                       "ctjs.cell_set %extraCell, %element"),
              replaced(entryCapturedSource, "ctjs.cell_set %emittedCell, %entryStart",
                       "ctjs.cell_set %emittedCell, %yes"),
+             replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
+                      "%wrong = ctjs.constant #ctjs.boolean<false>\n"
+                      "    ctjs.store_upvalue %callee[0], %wrong"),
+             replaced(siblingWriterSource, "%observedExtra = ctjs.load_upvalue %callee[0]",
+                      "%observedExtra = ctjs.load_upvalue %callee[0]\n"
+                      "    %wrong = ctjs.constant #ctjs.undefined\n"
+                      "    ctjs.store_upvalue %callee[0], %wrong"),
              replaced(loopCapturedSource, "      %effectAfter =",
                       "      %unknown = ctjs.load_global \"unknown\"\n"
                       "      %effect = ctjs.call %unknown(%element, %afterEmitted)\n"
@@ -1773,7 +1952,13 @@ module {
                          *siblingReader,
                          *zeroSiblingReader,
                          *directSiblingReader,
-                         *zeroDirectSiblingReader}) {
+                         *zeroDirectSiblingReader,
+                         *siblingCountStore,
+                         *siblingExtraStore,
+                         *siblingWriter,
+                         *directSiblingWriter,
+                         *zeroSiblingWriter,
+                         *zeroDirectSiblingWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
