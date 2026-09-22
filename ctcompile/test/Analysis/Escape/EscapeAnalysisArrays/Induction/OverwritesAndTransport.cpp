@@ -3388,10 +3388,63 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero",
          .exit = "a -> {a}"},
         "x");
+    const auto zeroVisit = replace(scaledVisit, "mul %i, %two", "mul %i, %zero");
+    run({.what = "zero scaling preserves the historical single own-index visit",
+         .body = zeroVisit,
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto zeroIndex = replace(zeroVisit, "add %i, %two", "add %i, %one");
+    for (const auto & expression :
+         {"%position = ctjs.binary mul %i, %zero", "%position = ctjs.binary mul %zero, %i",
+          "%part = ctjs.binary sub %i, %two\n"
+          "  %position = ctjs.binary mul %part, %zero"}) {
+        run({.what = "zero products enclose every repeated signed own-zero visit",
+             .body = replace(zeroIndex, "%position = ctjs.binary mul %i, %zero", expression),
+             .arrays = "a:[zero,one]",
+             .reads = "a[0]=zero; a[1]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "zero-product translation preserves a single own position",
+         .body = replace(replace(zeroIndex, "[%x, %one]", "[%one, %x]"),
+                         "%position = ctjs.binary mul %i, %zero",
+                         "%part = ctjs.binary mul %i, %zero\n"
+                         "  %position = ctjs.binary add %part, %one"),
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "zero-product replay retains unvisited children",
+         .body = replace(zeroIndex, "[%x, %one]", "[%x, %x]"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero; a[1]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "zero products preserve a child saved before its overwrite",
+         .body = replace(replace(zeroIndex, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=one",
+         .exit = "x -> {x}"});
+    const auto zeroReload = replace(replace(reloadedFactor, "[%x, %two]", "[%x, %zero]"),
+                                    "add %i, %two", "add %i, %one");
+    run({.what = "zero factors reload outside the singleton overwrite range",
+         .body = zeroReload,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[1]=zero; a[0]=zero; a[1]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("zero factors cannot reload the overwritten own element",
+           replace(replace(zeroReload, "[%x, %zero]", "[%zero, %x]"),
+                   "%factor = ctjs.get_property %base[%one]",
+                   "%factor = ctjs.get_property %base[%zero]"));
+    reject("later writes still invalidate an earlier zero-factor reload",
+           replace(zeroReload, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
     for (const auto & body :
          {replace(scaledVisit, "add %i, %two", "add %i, %one"),
           replace(scaledStart, "[%one, %one, %x]", "[%one, %x]"),
-          replace(scaledVisit, "mul %i, %two", "mul %i, %zero"),
           replace(scaledVisit, "mul %i, %two", "mul %i, %s"),
           replace(
               replace(scaledVisit, "  %a =", "  %text = ctjs.constant #ctjs.string<\"2\">\n  %a ="),
@@ -3468,13 +3521,17 @@ void InductionCases::overwritesAndTransport() {
                          "^header(%a, %zero, %zero", "^header(%a, %two, %zero"),
          .arrays = "a:[one,x]",
          .exit = "a -> {a,x}"});
+    run({.what = "composed zero products retain children outside their translated own key",
+         .body = replace(composedIndex, "div %i, %two", "mul %i, %zero"),
+         .arrays = "a:[one,zero,x,one]",
+         .reads = "a[0]=one; a[2]=x",
+         .exit = "a -> {a,x}"});
     for (const auto & body :
          {replace(composedIndex, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
           replace(composedIndex, "div %i, %two", "div %i, %zero"),
           replace(composedIndex, "add %part, %one", "add %part, %i"),
           replace(composedIndex, "add %part, %one", "add %part, %s"),
           replace(composedIndex, "add %part, %one", "add %part, %three"),
-          replace(composedIndex, "div %i, %two", "mul %i, %zero"),
           replace(replace(composedIndex,
                           "  %a =", "  %text = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
                   "add %part, %one", "add %part, %text"),

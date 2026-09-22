@@ -627,8 +627,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             boundedNumberProduct({index, ContentsKind::NonBigInt, range->stride}, *offset, product);
             const auto magnitude =
                 product.integerNumber ? product.integerNumber : product.negativeIntegerNumber;
-            if (!magnitude || *magnitude == 0) { return std::nullopt; }
-            range->stride = *magnitude;
+            if (!magnitude) { return std::nullopt; }
+            // A zero factor collapses every visit to one key; the lattice stays positive.
+            range->stride = std::max<std::size_t>(1, *magnitude);
             descending = product.negativeIntegerNumber.has_value();
         }
         // Preserve each source operation: reassociating (i + large) - large

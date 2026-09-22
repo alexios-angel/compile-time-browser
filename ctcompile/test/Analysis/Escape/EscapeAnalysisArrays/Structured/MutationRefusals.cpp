@@ -93,10 +93,66 @@ void StructuredCases::mutationRefusals() {
                     .body = replace(scaledVisit, "%index = %zero", "%index = %two"),
                     .arrays = "a:[x,one]",
                     .exit = "a -> {a,x}"});
+    const auto zeroVisit = replace(scaledVisit, "mul %i, %two", "mul %i, %zero");
+    rows.push_back({.what = "structured zero scaling preserves the historical single visit",
+                    .body = zeroVisit,
+                    .arrays = "a:[zero,one]",
+                    .reads = "a[0]=zero",
+                    .exit = "a -> {a}"});
+    const auto zeroIndex = replace(zeroVisit, "add %i, %two", "add %i, %one");
+    for (const auto & expression :
+         {"%position = ctjs.binary mul %i, %zero", "%position = ctjs.binary mul %zero, %i",
+          "%part = ctjs.binary sub %i, %two\n"
+          "    %position = ctjs.binary mul %part, %zero"}) {
+        rows.push_back(
+            {.what = "structured zero products preserve repeated signed own-zero visits",
+             .body = replace(zeroIndex, "%position = ctjs.binary mul %i, %zero", expression),
+             .arrays = "a:[zero,one]",
+             .reads = "a[0]=zero; a[1]=one",
+             .exit = "a -> {a}"});
+    }
+    rows.push_back(
+        {.what = "structured zero-product translation preserves a single own position",
+         .body = replace(replace(replace(zeroIndex, "create_array [%x]", "create_array [%one]"),
+                                 "ctjs.append %one to %a", "ctjs.append %x to %a"),
+                         "%position = ctjs.binary mul %i, %zero",
+                         "%part = ctjs.binary mul %i, %zero\n"
+                         "    %position = ctjs.binary add %part, %one"),
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "a -> {a}"});
+    rows.push_back({.what = "structured zero products retain unvisited children",
+                    .body = replace(zeroIndex, "ctjs.append %one to %a", "ctjs.append %x to %a"),
+                    .arrays = "a:[zero,x]",
+                    .reads = "a[0]=zero; a[1]=x",
+                    .exit = "a -> {a,x}"});
+    rows.push_back({.what = "structured zero products preserve earlier child snapshots",
+                    .body = replace(replace(zeroIndex, "  %finalIndex,",
+                                            "  %savedChild = ctjs.get_property %a[%zero]\n"
+                                            "  %finalIndex,"),
+                                    "ctjs.return %a", "ctjs.return %savedChild"),
+                    .arrays = "a:[zero,one]",
+                    .reads = "a[0]=x; a[0]=zero; a[1]=one",
+                    .exit = "x -> {x}"});
+    const auto zeroReload =
+        replace(replace(reloadedFactor, "ctjs.append %two to %a", "ctjs.append %zero to %a"),
+                "add %i, %two", "add %i, %one");
+    rows.push_back({.what = "structured zero factors reload outside their singleton write",
+                    .body = zeroReload,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[1]=zero; a[0]=zero; a[1]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured zero factors cannot reload the overwritten element",
+           replace(replace(replace(zeroReload, "create_array [%x]", "create_array [%zero]"),
+                           "ctjs.append %zero to %a", "ctjs.append %x to %a"),
+                   "%factor = ctjs.get_property %base[%one]",
+                   "%factor = ctjs.get_property %base[%zero]"));
+    reject(
+        "structured later stores invalidate earlier zero-factor reloads",
+        replace(zeroReload, "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="));
     for (const auto & body :
          {replace(scaledVisit, "add %i, %two", "add %i, %one"),
           replace(scaledStart, "create_array [%one, %one]", "create_array [%one]"),
-          replace(scaledVisit, "mul %i, %two", "mul %i, %zero"),
           replace(scaledVisit, "mul %i, %two", "mul %i, %last"),
           replace(reloadedFactor,
                   "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="),
