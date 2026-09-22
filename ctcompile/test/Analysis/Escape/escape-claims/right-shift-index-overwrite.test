@@ -51,7 +51,7 @@
 
 // CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj confined
@@ -109,6 +109,11 @@
 // CHECK: escape {{[0-9a-f]+}} 99 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function signedShift() {
@@ -671,3 +676,25 @@ function unsignedResidueJumpErased() {
 unsignedResidueJumpReversed(); unsignedResidueJumpMaskedCount(); unsignedResidueJumpNegativeCount();
 unsignedResidueJumpRetained(); unsignedResidueJumpSaved(); unsignedResidueJumpOverlap();
 unsignedResidueJumpLaterStore(); unsignedResidueJumpErased();
+
+function mixedRoundedSigned() {
+    var child = {}, a = [child, 3, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(i * 10) >> a[1]] = 0;
+    return a;
+}
+function mixedRoundedUnsigned() {
+    var child = {}, a = [child, 3, child, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(i * 10) >>> a[1]] = 0;
+    return a;
+}
+function mixedRoundedOverlap() {
+    var child = {}, a = [child, 3, 3, 0, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[((i * 10) >> a[2]) % a.length] = 0;
+    return a;
+}
+function mixedRoundedSaved() {
+    var child = {}, a = [child, 3, child, 0, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[(i * 10) >> a[1]] = 0;
+    return saved;
+}
+mixedRoundedSigned(); mixedRoundedUnsigned(); mixedRoundedOverlap(); mixedRoundedSaved();

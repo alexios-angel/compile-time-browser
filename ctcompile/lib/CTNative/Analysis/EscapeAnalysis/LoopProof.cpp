@@ -203,12 +203,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     llvm::SmallDenseSet<std::size_t, 4> guardStores;
     struct StoreRange {
         std::size_t first, last, stride;
+        mlir::Value mixedShiftKey;
     };
     llvm::SmallVector<StoreRange, 4> guardStoreRanges;
     struct IndexRange {
         ContentsValue first, last;
         // A positive lattice enclosing all visits; replay proves actual writes.
         std::size_t stride;
+        bool mixedShift = false;
     };
     const auto endpointNumber = [](const ContentsValue & endpoint) {
         return endpoint.integerNumber ? static_cast<std::int64_t>(*endpoint.integerNumber)
@@ -258,6 +260,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         return range;
     };
+    std::optional<std::size_t> exactIndex;
     const auto indexRange = [&](auto && self, mlir::Value operand,
                                 unsigned depth) -> std::optional<IndexRange> {
         if (!spend()) {
@@ -265,8 +268,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return std::nullopt;
         }
         if (fromHeader(operand) == index) {
-            return IndexRange{{index, ContentsKind::NonBigInt, *start},
-                              {index, ContentsKind::NonBigInt, last},
+            return IndexRange{{index, ContentsKind::NonBigInt, exactIndex.value_or(*start)},
+                              {index, ContentsKind::NonBigInt, exactIndex.value_or(last)},
                               *stride};
         }
         if (depth == 64) { return std::nullopt; }
@@ -650,6 +653,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (span % roundedIntervals == 0) {
                 range->stride =
                     static_cast<std::size_t>(std::max<std::int64_t>(1, span / roundedIntervals));
+            } else {
+                range->mixedShift = true;
             }
         } else if (descending) {
             std::swap(range->first, range->last);
@@ -669,8 +674,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                             *range->last.integerNumber >= size) {
                             return unsupported;
                         }
-                        guardStoreRanges.push_back({*range->first.integerNumber,
-                                                    *range->last.integerNumber, range->stride});
+                        guardStoreRanges.push_back(
+                            {*range->first.integerNumber, *range->last.integerNumber, range->stride,
+                             range->mixedShift ? store.getKey() : mlir::Value{}});
                     }
                 } else {
                     if (invariantFailure == ArrayContentsFailure::WorkLimit) {
@@ -702,10 +708,28 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     for (const auto position : guardReloads) {
         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
         if (guardStores.contains(position)) { return unsupported; }
-        for (const auto & [first, last, writeStride] : guardStoreRanges) {
+        for (const auto & [first, storeLast, writeStride, mixedShiftKey] : guardStoreRanges) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
-            if (position >= first && position <= last && (position - first) % writeStride == 0) {
-                return unsupported;
+            if (position >= first && position <= storeLast &&
+                (position - first) % writeStride == 0) {
+                if (!mixedShiftKey) { return unsupported; }
+                // Mixed rounded increments lose gaps in one enclosing lattice.
+                // Refine only that overlap through the same Number transfers.
+                // ponytail: enumerate visits under the shared budget; an inverse
+                // shift transfer can replace this if large loops need the precision.
+                const auto reloadCount = guardReloads.size();
+                for (std::size_t visit = *start;; visit += *stride) {
+                    exactIndex = visit;
+                    const auto actual = indexRange(indexRange, mixedShiftKey, 0);
+                    if (!actual) { return invariantFailure; }
+                    if (guardReloads.size() != reloadCount || !actual->first.integerNumber ||
+                        actual->first.integerNumber != actual->last.integerNumber ||
+                        *actual->first.integerNumber == position) {
+                        return unsupported;
+                    }
+                    if (visit == last) { break; }
+                }
+                exactIndex.reset();
             }
         }
     }

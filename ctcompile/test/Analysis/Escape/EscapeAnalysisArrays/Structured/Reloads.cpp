@@ -2007,8 +2007,35 @@ void StructuredCases::reloads() {
         reject(
             "rounded sparse shifts retain the complete later-store census",
             replace(body, "    %step =", "    ctjs.set_property %base[%one], %two\n    %step ="));
-        reject("mixed rounded increments cannot claim one sparse output stride",
-               replace(body, "4621256167635550208", "4621819117588971520"));
+        rows.push_back({.what = "mixed rounded increments retain children outside actual writes",
+                        .body = replace(body, "4621256167635550208", "4621819117588971520"),
+                        .arrays = "a:[zero,three,zero,one,y,zero]",
+                        .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=y",
+                        .exit = "a -> {a,y}"});
+        const auto mixed =
+            replace(replace(body, "4621256167635550208", "4621819117588971520"),
+                    "[%y, %three, %y, %one, %y, %one]", "[%y, %three, %y, %one, %one, %y]");
+        rows.push_back(
+            {.what = "mixed rounded shift gaps preserve disjoint count reloads",
+             .body = mixed,
+             .arrays = "a:[zero,three,zero,one,one,zero]",
+             .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=one",
+             .exit = "a -> {a}"});
+        rows.push_back(
+            {.what = "mixed rounded shifts preserve a pre-loop child snapshot",
+             .body = replace(replace(mixed, "  %finalIndex,",
+                                     "  %before = ctjs.get_property %a[%zero]\n  %finalIndex,"),
+                             "ctjs.return %a", "ctjs.return %before"),
+             .arrays = "a:[zero,three,zero,one,one,zero]",
+             .reads = "a[0]=y; a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=one",
+             .exit = "y -> {y}"});
+        reject("mixed rounded shifts reject every actual count overwrite",
+               replace(replace(mixed, "[%y, %three, %y, %one, %one, %y]",
+                               "[%y, %three, %three, %one, %one, %y]"),
+                       "%base[%one]", "%base[%two]"));
+        reject(
+            "mixed rounded shifts retain the complete later-store census",
+            replace(mixed, "    %step =", "    ctjs.set_property %base[%one], %two\n    %step ="));
     }
     const auto crossingShift = replace(replace(crossingComplement, "ctjs.unary bitnot %part",
                                                "ctjs.binary_static shr %part, %zero"),
@@ -2489,12 +2516,16 @@ void StructuredCases::reloads() {
                     .arrays = "a:[zero,y,zero,zero,one,one,one]",
                     .reads = "a[0]=y; a[3]=zero; a[6]=one",
                     .exit = "a -> {a,y}"});
-    reject("structured dense shift footprints refuse reloads in unproved sparse gaps",
-           replace(replace(unevenShift, "[%y, %y, %y, %y, %one, %one, %one]",
-                           "[%y, %y, %one, %y, %one, %one, %one]"),
-                   "%position = ctjs.binary_static shr %i, %one",
-                   "%count = ctjs.get_property %base[%two]\n"
-                   "    %position = ctjs.binary_static shr %i, %count"));
+    rows.push_back(
+        {.what = "structured uneven shift gaps preserve count reloads and clear children",
+         .body = replace(replace(unevenShift, "[%y, %y, %y, %y, %one, %one, %one]",
+                                 "[%y, %y, %one, %y, %one, %one, %one]"),
+                         "%position = ctjs.binary_static shr %i, %one",
+                         "%count = ctjs.get_property %base[%two]\n"
+                         "    %position = ctjs.binary_static shr %i, %count"),
+         .arrays = "a:[zero,zero,one,zero,one,one,one]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[3]=y; a[2]=one; a[6]=one",
+         .exit = "a -> {a}"});
     reject("structured dense shift endpoints cannot prove integral quotients",
            replace(unevenShift, "%position = ctjs.binary_static shr %i, %one",
                    "%part = ctjs.binary_static shr %i, %one\n"

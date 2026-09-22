@@ -2394,8 +2394,34 @@ void InductionCases::overwritesAndTransport() {
                replace(body, "%base[%one]", "%base[%two]"));
         reject("rounded sparse shifts retain the complete later-store census",
                replace(body, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
-        reject("mixed rounded increments cannot claim one sparse output stride",
-               replace(body, "4621256167635550208", "4621819117588971520"));
+        run({.what = "mixed rounded increments retain children outside actual writes",
+             .body = replace(body, "4621256167635550208", "4621819117588971520"),
+             .arrays = "a:[zero,three,zero,one,x,zero]",
+             .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=x",
+             .exit = "a -> {a,x}"});
+        const auto mixed =
+            replace(replace(body, "4621256167635550208", "4621819117588971520"),
+                    "[%x, %three, %x, %one, %x, %one]", "[%x, %three, %x, %one, %one, %x]");
+        run({.what = "mixed rounded shift gaps preserve disjoint count reloads",
+             .body = mixed,
+             .arrays = "a:[zero,three,zero,one,one,zero]",
+             .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=one",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "mixed rounded shifts preserve a pre-loop child snapshot",
+             .body =
+                 replace(replace(mixed, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+             .arrays = "a:[zero,three,zero,one,one,zero]",
+             .reads = "a[0]=x; a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=one",
+             .exit = "x -> {x}"});
+        reject("mixed rounded shifts reject every actual count overwrite",
+               replace(replace(mixed, "[%x, %three, %x, %one, %one, %x]",
+                               "[%x, %three, %three, %one, %one, %x]"),
+                       "%base[%one]", "%base[%two]"));
+        reject("mixed rounded shifts retain the complete later-store census",
+               replace(mixed, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
     }
     const auto crossingShift = replace(crossingComplement, "ctjs.unary bitnot %part",
                                        "ctjs.binary_static shr %part, %zero");
@@ -2922,8 +2948,12 @@ void InductionCases::overwritesAndTransport() {
                                       "%position = ctjs.binary_static shr %i, %one",
                                       "%count = ctjs.get_property %base[%two]\n"
                                       "  %position = ctjs.binary_static shr %i, %count");
-    reject("an uneven shift footprint cannot claim its unproved sparse gap for a reload",
-           unevenReload);
+    run({.what = "uneven shift gaps preserve count reloads and clear every stored child",
+         .body = unevenReload,
+         .arrays = "a:[zero,zero,one,zero,one,one,one]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[3]=x; a[2]=one; a[6]=one",
+         .exit = "a -> {a}"},
+        "x");
     reject("dense shift enclosures reject overlapping scaled reloads",
            replace(replace(scaledShift, "[%x, %one, %x, %one, %x, %one, %x]",
                            "[%x, %one, %one, %one, %x, %one, %x]"),
