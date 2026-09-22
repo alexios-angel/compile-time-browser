@@ -148,6 +148,14 @@
 // CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 138 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 139 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function signedShift() {
     var child = {}, a = [child, child, 0, 0];
@@ -899,3 +907,44 @@ function lowSuffixLaterStore() {
     return a;
 }
 lowSuffixAnd(); lowSuffixOr(); lowSuffixRetained(); lowSuffixSaved(); lowSuffixOverlap(); lowSuffixLaterStore();
+
+function directMaskAnd() {
+    var child = {}, a = [child, child, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[2]] = 0;
+    return a;
+}
+function directMaskOr() {
+    var child = {}, a = [0, 0, child, child, 2, 0, child, 0];
+    for (var i = 0; i < a.length; i += 3) a[i | a[4]] = 0;
+    return a;
+}
+function directMaskXor() {
+    var child = {}, a = [0, child, child, 2, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i ^ a[3]] = 0;
+    return a;
+}
+function directMaskRetained() {
+    var child = {}, a = [child, child, 5, child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[2]] = 0;
+    return a;
+}
+function directMaskSaved() {
+    var child = {}, a = [child, child, 5, 0, child, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[2]] = 0;
+    return saved;
+}
+function directMaskOverlap() {
+    var child = {}, a = [child, 5, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[i & a[1]] = 0;
+    return a;
+}
+function directMaskLaterStore() {
+    var child = {}, a = [child, child, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[i & a[2]] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+directMaskAnd(); directMaskOr(); directMaskXor(); directMaskRetained();
+directMaskSaved(); directMaskOverlap(); directMaskLaterStore();

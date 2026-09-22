@@ -698,8 +698,17 @@ void InductionCases::overwritesAndTransport() {
         reject("combined mask periods still census later writes to a reload slot",
                replace(combinedBits,
                        "  %step =", "  ctjs.set_property %base[" + guard + "], %zero\n  %step ="));
-        reject("unit input strides cannot borrow a fixed low bit for a mask period",
-               replace(combinedBits, "add %i, %periodTwo", "add %i, %one"));
+        run({.what = "unit input strides refine holes left by non-affine masks",
+             .body = replace(combinedBits, "add %i, %periodTwo", "add %i, %one"),
+             .arrays = values,
+             .reads = isAnd ? "a[2]=mask; a[0]=zero; a[2]=mask; a[1]=zero; a[2]=mask; a[2]=mask; "
+                              "a[2]=mask; a[3]=zero; a[2]=mask; a[4]=zero; a[2]=mask; a[5]=zero; "
+                              "a[2]=mask; a[6]=zero; a[2]=mask; a[7]=zero"
+                            : "a[4]=mask; a[0]=zero; a[4]=mask; a[1]=zero; a[4]=mask; a[2]=zero; "
+                              "a[4]=mask; a[3]=zero; a[4]=mask; a[4]=mask; a[4]=mask; a[5]=zero; "
+                              "a[4]=mask; a[6]=zero; a[4]=mask; a[7]=zero",
+             .exit = "a -> {a}"},
+            "x");
         reject("changing a required mask bit invalidates the combined period",
                replace(combinedBits,
                        "#ctjs.number<" +
@@ -3976,6 +3985,63 @@ void InductionCases::overwritesAndTransport() {
                            "  ctjs.set_property %a[%zero], %a\n  cf.br ^header"),
                    "%alias = ctjs.get_property %box[%zero]",
                    "%alias = ctjs.get_property %base[%zero]"));
+    const auto directMask =
+        replace(replace(replace(replace(roundedShift, "[%x, %three, %x, %one, %x, %one]",
+                                        "[%x, %x, %five, %one, %x, %one, %one, %one]"),
+                                "  %a =",
+                                "  %four = ctjs.constant #ctjs.number<4616189618054758400>\n"
+                                "  %five = ctjs.constant #ctjs.number<4617315517961601024> "
+                                "{storage_test_id = \"five\"}\n  %a ="),
+                        "add %i, %two", "add %i, %three"),
+                "%scaled = ctjs.binary mul %i, %nine\n"
+                "  %count = ctjs.get_property %base[%one]\n"
+                "  %position = ctjs.binary_static shr %scaled, %count",
+                "%count = ctjs.get_property %base[%two]\n"
+                "  %position = ctjs.binary_static bitand %i, %count");
+    run({.what = "direct sparse AND masks preserve reload gaps without an earlier shift",
+         .body = directMask,
+         .arrays = "a:[zero,zero,five,one,zero,one,one,one]",
+         .reads = "a[2]=five; a[0]=zero; a[2]=five; a[3]=one; a[2]=five; a[6]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "direct sparse OR masks preserve reload gaps without an earlier shift",
+         .body = replace(replace(replace(directMask, "[%x, %x, %five, %one, %x, %one, %one, %one]",
+                                         "[%one, %one, %x, %x, %two, %one, %x, %one]"),
+                                 "%count = ctjs.get_property %base[%two]",
+                                 "%count = ctjs.get_property %base[%four]"),
+                         "binary_static bitand", "binary_static bitor"),
+         .arrays = "a:[one,one,zero,zero,two,one,zero,one]",
+         .reads = "a[4]=two; a[0]=one; a[4]=two; a[3]=zero; a[4]=two; a[6]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "direct sparse XOR masks preserve reload gaps without an earlier shift",
+         .body = replace(replace(replace(directMask, "[%x, %x, %five, %one, %x, %one, %one, %one]",
+                                         "[%one, %x, %x, %two, %x, %one, %one, %one]"),
+                                 "%count = ctjs.get_property %base[%two]",
+                                 "%count = ctjs.get_property %base[%three]"),
+                         "binary_static bitand", "binary_static bitxor"),
+         .arrays = "a:[one,zero,zero,two,zero,one,one,one]",
+         .reads = "a[3]=two; a[0]=one; a[3]=two; a[3]=two; a[3]=two; a[6]=one",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "direct mask replay retains an unwritten child",
+         .body = replace(directMask, "[%x, %x, %five, %one, %x,", "[%x, %x, %five, %x, %x,"),
+         .arrays = "a:[zero,zero,five,x,zero,one,one,one]",
+         .reads = "a[2]=five; a[0]=zero; a[2]=five; a[3]=x; a[2]=five; a[6]=one",
+         .exit = "a -> {a,x}"});
+    run({.what = "direct mask replay retains a saved child after its slot is cleared",
+         .body = replace(replace(directMask, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,five,one,zero,one,one,one]",
+         .reads = "a[0]=x; a[2]=five; a[0]=zero; a[2]=five; a[3]=one; a[2]=five; a[6]=one",
+         .exit = "x -> {x}"});
+    reject("direct mask gap proof rejects an actual mask overwrite",
+           replace(replace(directMask, "[%x, %x, %five,", "[%x, %five, %five,"),
+                   "%count = ctjs.get_property %base[%two]",
+                   "%count = ctjs.get_property %base[%one]"));
+    reject("direct mask gap proof retains the complete later-store census",
+           replace(directMask, "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
 }
 
 } // namespace ctcompile::test::escape::arrays::induction_detail

@@ -509,12 +509,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // Clearing the sign bit bounds every ToInt32 input, including
             // conversions across a signed boundary for a low-bit AND mask.
             // AND preserves the mask's low zero bits, including signed results.
-            // ponytail: higher mask gaps need a union of lattices; replay still
-            // records only the actual writes.
+            // This enclosure can introduce gaps even without an earlier shift.
+            // Keep bounded whole-key refinement available; replay records writes.
             IndexRange result{{operand, ContentsKind::NonBigInt},
                               {operand, ContentsKind::NonBigInt},
                               writeStride,
-                              range->mixedShift};
+                              true};
             boundedNumberBitwise({operand, ContentsKind::NonBigInt, first},
                                  {operand, ContentsKind::NonBigInt, 0}, ctjs::BinaryKind::BitOr,
                                  result.first);
