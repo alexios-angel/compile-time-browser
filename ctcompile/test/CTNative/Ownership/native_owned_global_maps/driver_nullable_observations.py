@@ -223,10 +223,11 @@ int main() {
     auto size = table->m_size;
     static_assert(std::is_same_v<decltype(get), std::function<Key(ctnative::js_boolean_t)>>);
     static_assert(std::is_same_v<decltype(set), std::function<Result(Key)>>);
+    static_assert(std::is_same_v<decltype(size), std::function<ctnative::js_num()>>);
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset(); owner.reset(); table.reset();
-    if (!owner_lifetime.expired() || !table_lifetime.expired() || size() != 2) { return 286; }
+    if (!owner_lifetime.expired() || !table_lifetime.expired() || size().value() != 2) { return 286; }
     auto state = std::const_pointer_cast<Map>(
         std::static_pointer_cast<const Map>(ctn_test_maps[0].lock()));
     if (!state) { return 287; }
@@ -238,29 +239,29 @@ int main() {
         const auto stored = std::get<Key>(state->at(key));
         if (stored.tag != key.tag || stored.value != key.value) { return 289; }
     }
-    if (size() != 6) { return 290; }
+    if (size().value() != 6) { return 290; }
     for (int index = 0; index < 128; ++index) {
-        const auto before = size();
+        const auto before = size().value();
         const auto allocations = ctn_test_maps.size();
         const std::string text = "caller-" + std::to_string(index);
         auto key = Key{text};
         const auto saved = set(key);
         key.value.assign(text.size(), 'x');
         if (!undefined(saved) || !undefined(set(ctnative::to_nullable_string(saved))) ||
-            size() != before + 1 || std::get<Key>(state->at(Key{text})).value != text ||
+            size().value() != before + 1 || std::get<Key>(state->at(Key{text})).value != text ||
             get(ctnative::js_boolean_t{false}).value != "future" || get(ctnative::js_boolean_t{true}).tag != Key::kind::null_value ||
             ctn_test_maps.size() != allocations + 2 || !ctn_test_maps.back().expired()) {
             return 291;
         }
     }
-    if (size() != 134) { return 292; }
+    if (size().value() != 134) { return 292; }
     for (std::size_t index = 1; index < ctn_test_maps.size(); ++index) {
         if (!ctn_test_maps[index].expired()) { return 293; }
     }
     const auto fresh = ctn_test_maps.size();
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != fresh + 4 ||
         ctn_test_maps[0].lock() == ctn_test_maps[fresh].lock() ||
-        size() != 134 || g_host->slot->m_size() != 2) { return 294; }
+        size().value() != 134 || g_host->slot->m_size().value() != 2) { return 294; }
     state.reset(); get = {}; set = {};
     if (ctn_test_maps[0].expired()) { return 295; }
     size = {};
@@ -510,9 +511,9 @@ def check_nullable_host_result_refusals(
 
 
 def check_shortcircuit_nullable_refusal(args, node, reference):
-    # Host truthiness now proves this historical result is String/Null. Its
-    # earlier &&/|| temporary still needs an unsupported optional Bool/String
-    # carrier, independently of the complete owner and published result proof.
+    # Host truthiness proves this historical result is String/Null. The wider
+    # optional Bool/String temporary now has a scalar carrier, but its Map
+    # write still lacks an independently proved owning alternative.
     name = "shortcircuit_nullable"
     source, value, old, replacement, restored_value = shortcircuit_refusals()[name]
     js, rejected, count = boundary.prepare(args, name, source)
@@ -546,15 +547,15 @@ def check_shortcircuit_nullable_refusal(args, node, reference):
     def check_prepared(output, original, label):
         text = methods.census(output, 6, label, admitted=0)
         diagnostic = (
-            "a value of type !ctnative.opt<!ctnative.variant<!ctnative.bool, "
-            "!ctnative.str<utf8>>> from `scf.if`"
+            "nullable native Map write needs a proved scalar, String or absent "
+            "alternative with an owning carrier"
         )
         if (
             "ctnative.host_owner_proved = true" not in text
             or diagnostic not in text
             or re.search(r"\bemitc\.func @main\(", text)
         ):
-            raise RuntimeError(f"{label}: missing complete owner or optional intermediate refusal")
+            raise RuntimeError(f"{label}: missing complete owner or nullable Map write refusal")
         calls = re.findall(
             r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
             r"\{ctnative\.stored_call = 1 : i32\}",
