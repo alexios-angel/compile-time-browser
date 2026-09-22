@@ -129,6 +129,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (!step()) { return {}; }
                     arguments.push_back(values.lookup(argument));
                 }
+                mlir::Region * selectedExit = nullptr;
                 if (terminal.exit.dispatch) {
                     if (!integer || !integer.getType().isInteger(1)) {
                         refuse("DOM helper loop exit predicate is not an exact constant");
@@ -152,6 +153,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                 selected = &dispatch.getCaseRegions()[index];
                             }
                         }
+                        selectedExit = selected;
                         if (terminal.exit.effectful) {
                             arguments[terminal.exit.selector] = ctjs::ConstantOp::create(
                                 at, condition.getLoc(),
@@ -187,10 +189,23 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (!step()) { return {}; }
                     auto value = argument;
                     if (value.getDefiningOp<mlir::ub::PoisonOp>()) {
-                        const bool inactiveExit =
+                        bool inactiveExit =
                             terminal.loop.getResult(static_cast<unsigned>(index)).use_empty() ||
                             (terminal.exit.dispatch && terminal.exit.consumed[index] &&
                              !llvm::is_contained(terminal.exit.outputs, index));
+                        if (selectedExit && terminal.exit.effectful) {
+                            // A saved payload may be absent only on exits whose
+                            // selected arm cannot observe it. Check every use,
+                            // including nested arms and observers after dispatch.
+                            inactiveExit = true;
+                            for (mlir::OpOperand & use :
+                                 terminal.loop.getResult(static_cast<unsigned>(index)).getUses()) {
+                                if (!step()) { return {}; }
+                                auto * owner = use.getOwner();
+                                inactiveExit &= terminal.exit.dispatch->isProperAncestor(owner) &&
+                                                !selectedExit->isAncestor(owner->getParentRegion());
+                            }
+                        }
                         const bool inactive = integer && (integer.getValue().isZero()
                                                               ? inactiveExit
                                                               : terminal.inactiveAfter[index]);

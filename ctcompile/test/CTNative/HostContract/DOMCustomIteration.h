@@ -1818,6 +1818,141 @@ module {
                   "refused private effectful completion publishes no DOM evidence");
         }
     }
+    // Each exit saves a different DOM observation. Its sibling slot remains
+    // poison, including on the first exhausted next; close cannot move the read.
+    auto savedCompletionSource =
+        replaced(countedSource, "    %stopName =",
+                 "    %closedName = ctjs.constant #ctjs.string<\"data-closed\">\n    %stopName =");
+    savedCompletionSource = replaced(
+        savedCompletionSource, "        scf.yield %stop, %poison, %count, %poison, %normalTag",
+        "        %normalRead = ctjs.call %has(%element, %visited)\n"
+        "        %normalTest = ctjs.truthy %normalRead\n"
+        "        %normalValue = scf.if %normalTest -> !ctjs.value {\n"
+        "          scf.yield %one : !ctjs.value\n"
+        "        } else {\n          scf.yield %zero : !ctjs.value\n        }\n"
+        "        scf.yield %stop, %poison, %normalValue, %poison, %normalTag");
+    savedCompletionSource = replaced(
+        savedCompletionSource, "          scf.yield %stop, %poison, %poison, %increment, %breakTag",
+        "          %returnRead = ctjs.call %has(%element, %closedName)\n"
+        "          %returnTest = ctjs.truthy %returnRead\n"
+        "          %returnValue = scf.if %returnTest -> !ctjs.value {\n"
+        "            scf.yield %one : !ctjs.value\n"
+        "          } else {\n            scf.yield %zero : !ctjs.value\n          }\n"
+        "          scf.yield %stop, %poison, %poison, %returnValue, %breakTag");
+    savedCompletionSource = replaced(
+        savedCompletionSource, "    case 7 {\n",
+        "    case 7 {\n      %normalClose = ctjs.call %close(%undefined, %record, %normal)\n");
+    savedCompletionSource = replaced(
+        savedCompletionSource, "    default {\n",
+        "    default {\n      %returnClose = ctjs.call %close(%undefined, %record, %normal)\n");
+    savedCompletionSource =
+        replaced(savedCompletionSource,
+                 "    %closed = ctjs.call %close(%undefined, %record, %normal)\n", "");
+    const auto zeroSavedCompletionSource =
+        replaced(savedCompletionSource, "%done = ctjs.call %has(%element, %yielded)",
+                 "%done = ctjs.constant #ctjs.boolean<true>");
+    auto savedCompletion = mlir::parseSourceString<mlir::ModuleOp>(savedCompletionSource, &context);
+    auto zeroSavedCompletion =
+        mlir::parseSourceString<mlir::ModuleOp>(zeroSavedCompletionSource, &context);
+    check(savedCompletion && zeroSavedCompletion,
+          "saved completion payloads and a first-exit exhaustion parse");
+    if (!savedCompletion || !zeroSavedCompletion) { return; }
+    for (auto fixture : {*savedCompletion, *zeroSavedCompletion}) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(!failure, "selected saved payloads normalize for both providers");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            auto body = input->lookupSymbol<ctjs::FuncOp>(request.entry);
+            auto join = llvm::cast<ctjs::ReturnOp>(body.getBody().front().back())
+                            .getValue()
+                            .getDefiningOp<mlir::scf::IfOp>();
+            check(static_cast<bool>(join), "saved completion retains a post-loop branch");
+            if (join) {
+                for (auto [index, arm] : llvm::enumerate(join->getRegions())) {
+                    auto yielded = llvm::cast<mlir::scf::YieldOp>(arm.front().back());
+                    auto payload = llvm::dyn_cast<mlir::OpResult>(yielded.getOperand(0));
+                    auto loop = payload ? llvm::dyn_cast<mlir::scf::WhileOp>(payload.getOwner())
+                                        : mlir::scf::WhileOp{};
+                    check(loop && payload.getResultNumber() == index + 1 &&
+                              loop->getBlock() == join->getBlock() && loop->isBeforeInBlock(join),
+                          "each close arm yields its own value saved before the loop exit");
+                    unsigned closes = 0, reads = 0;
+                    arm.walk([&](ctjs::CallOp call) {
+                        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                        if (!method) { return; }
+                        closes += ctjs::constantKey(method.getKey()) == "return";
+                        reads += ctjs::constantKey(method.getKey()) == "hasAttribute";
+                    });
+                    check(closes == 1 && reads == 0,
+                          "post-loop close cannot re-evaluate the saved DOM observation");
+                }
+            }
+            failure = expandDOMHelpers(*input, request.entry, completeBudget);
+            check(!failure, "saved completion payloads expand to public DOM calls");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            const DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "saved payloads preserve complete DOM proof");
+            if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+        }
+    }
+    for (const auto & invalid : {
+             replaced(savedCompletionSource, "%poison, %normalValue, %poison, %normalTag",
+                      "%poison, %poison, %poison, %normalTag"),
+             replaced(savedCompletionSource, "%poison, %poison, %returnValue, %breakTag",
+                      "%poison, %poison, %poison, %breakTag"),
+             replaced(savedCompletionSource, "      scf.yield %loop#1 : !ctjs.value",
+                      "      scf.yield %loop#2 : !ctjs.value"),
+             replaced(savedCompletionSource, "      scf.yield %loop#2 : !ctjs.value",
+                      "      scf.yield %loop#1 : !ctjs.value"),
+             replaced(savedCompletionSource, "    ctjs.frame_exit %frame",
+                      "    %observer = ctjs.truthy %loop#1\n    ctjs.frame_exit %frame"),
+             replaced(savedCompletionSource, "    ctjs.frame_exit %frame",
+                      "    %observer = ctjs.truthy %loop#2\n    ctjs.frame_exit %frame"),
+             replaced(savedCompletionSource, "    case 7 {\n",
+                      "    case 7 {\n      %nestedTest = ctjs.truthy %normal\n"
+                      "      scf.if %nestedTest {\n"
+                      "        %observer = ctjs.truthy %loop#2\n        scf.yield\n      }\n"),
+             replaced(savedCompletionSource, "      scf.yield %count, %normalCount, %breakCount",
+                      "      %observer = ctjs.truthy %normalCount\n"
+                      "      scf.yield %count, %normalCount, %breakCount"),
+             replaced(savedCompletionSource, "      scf.yield %count, %normalCount, %breakCount",
+                      "      %observer = ctjs.truthy %breakCount\n"
+                      "      scf.yield %count, %normalCount, %breakCount"),
+         }) {
+        check(!invalid.empty() && invalid != savedCompletionSource,
+              "hostile saved payload changes the complete source");
+        if (invalid.empty()) { continue; }
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(fixture), "hostile selected payload parses");
+        if (!fixture) { continue; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure), "selected or externally observed poison refuses");
+            if (failure) { llvm::consumeError(std::move(failure)); }
+            check(hostContractFingerprint(*fixture) == request.moduleSha256,
+                  "saved-payload refusal preserves the caller's original source");
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "saved-payload refusal publishes no partial DOM evidence");
+        }
+    }
     for (auto fixture : {*original,
                          *withoutReturn,
                          *counted,
@@ -3947,6 +4082,39 @@ module {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
         auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        if (invalid.find("%effect = ctjs.call") != std::string::npos) {
+            // These two historical constructions add an effect only in the
+            // selected arm; neither arm observes the other exit's poison.
+            check(!failure, "historical counted effectful exits normalize unchanged");
+            if (failure) {
+                llvm::consumeError(std::move(failure));
+                continue;
+            }
+            unsigned effects = 0, selectedEffects = 0;
+            input->walk([&](ctjs::CallOp call) {
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (method && ctjs::constantKey(method.getKey()) == "setAttribute" &&
+                    call.getArgs().size() == 2 &&
+                    ctjs::constantKey(call.getArgs()[0]) == "data-visited") {
+                    ++effects;
+                    selectedEffects += !call->getParentOfType<mlir::scf::WhileOp>() &&
+                                       static_cast<bool>(call->getParentOfType<mlir::scf::IfOp>());
+                }
+            });
+            check(effects == 2 && selectedEffects == 1,
+                  "counted exit preserves the loop and selected-arm writes");
+            failure = expandDOMHelpers(*input, request.entry, completeBudget);
+            check(!failure, "historical counted effectful exits expand");
+            if (failure) {
+                llvm::consumeError(std::move(failure));
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            const DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "historical counted effectful exits retain full DOM proof");
+            if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+            continue;
+        }
         check(static_cast<bool>(failure),
               "poison observations, unknown tags and non-projecting exits refuse");
         if (failure) { llvm::consumeError(std::move(failure)); }
@@ -4033,6 +4201,8 @@ module {
     // Sample early, middle and last incomplete budgets on fresh private clones.
     for (auto fixture : {*original,
                          *effectful,
+                         *savedCompletion,
+                         *zeroSavedCompletion,
                          *counted,
                          *crossed,
                          *receiver,

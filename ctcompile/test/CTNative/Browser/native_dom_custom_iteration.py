@@ -75,6 +75,34 @@ BODY_RETURN_BRANCH_EXPRESSION_SOURCE = BODY_RETURN_BRANCH_SOURCE.replace(
     "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
 )
 
+BODY_RETURN_BRANCH_EXPRESSION_SNAPSHOT_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
+    "anchor.hasAttribute('data-closed'));",
+    "anchor.hasAttribute('data-closed') === anchor.hasAttribute('data-visited'));",
+)
+BODY_RETURN_BRANCH_NUMBER_SOURCE = (
+    BODY_RETURN_BRANCH_SOURCE.replace(
+        "  const values = {", "  let count = 0;\n  const values = {", 1
+    )
+    .replace(
+        "anchor.setAttribute('data-closed', 'yes');",
+        "count += 10;\n      anchor.setAttribute('data-closed', 'yes');",
+        1,
+    )
+    .replace(
+        "    node.setAttribute('data-visited', 'yes');",
+        "    node.setAttribute('data-visited', 'yes');\n    count++;",
+        1,
+    )
+    .replace("return anchor.hasAttribute('data-closed');", "return (count += 2, count);", 1)
+    .replace("return anchor.hasAttribute('data-visited');", "return count;", 1)
+)
+BODY_RETURN_MULTIPLE_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
+    "    node.setAttribute('data-visited', 'yes');",
+    "    if (anchor.hasAttribute('advance'))\n"
+    "      return (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));\n"
+    "    node.setAttribute('data-visited', 'yes');",
+)
+
 
 RECEIVER_SOURCE = (
     SOURCE.replace("  const values = {", "  const values = {\n    emitted: 0,")
@@ -1237,6 +1265,16 @@ POSITIVES = (
         False,
         "true",
     ),
+    (
+        # The return saves 3 before close changes the captured count to 13.
+        # The already-yielded state never enters the body or closes its iterator.
+        "body-return-branch-number",
+        BODY_RETURN_BRANCH_NUMBER_SOURCE,
+        True,
+        ("1", "3", "0"),
+        False,
+        "yes",
+    ),
 )
 
 
@@ -1443,6 +1481,8 @@ def refusals():
         "escaping-value": text.replace(visited, "    anchor.saved=node;"),
         # A return-expression snapshot across the loop and throw completion remain unproved.
         "body-return-branch-expression": BODY_RETURN_BRANCH_EXPRESSION_SOURCE,
+        "body-return-branch-expression-snapshot": BODY_RETURN_BRANCH_EXPRESSION_SNAPSHOT_SOURCE,
+        "body-return-multiple": BODY_RETURN_MULTIPLE_SOURCE,
         "body-throw": text.replace(visited, "    throw 1;"),
     }
     for helper in SNAPSHOT_INTRINSICS[4:]:
