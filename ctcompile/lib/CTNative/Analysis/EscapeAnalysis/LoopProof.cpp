@@ -401,14 +401,6 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 if (complement) { std::swap(range->first, range->last); }
                 return range;
             }
-            const auto changingMask = bitOr ? ~mask : mask;
-            // AND fixes trailing zeros; OR fixes trailing ones. Both combine
-            // with the input's power-of-two lattice by taking its larger period.
-            // Zero/all-one constant results need no extra period or width-sized shift.
-            const auto writeStride =
-                (bitAnd || bitOr) && changingMask != 0
-                    ? std::max(inputStride, std::size_t{1} << std::countr_zero(changingMask))
-                    : inputStride;
             // Enclose the varying bits densely: endpoint bitwise results alone
             // miss interior extrema when the mask modifies a varying bit.
             if (signedBand(range->first) != signedBand(range->last) || varying > 2147483647U) {
@@ -423,6 +415,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // An input lattice fixes its low bits. Every bitwise operation
             // preserves their transformed residue, even when higher bits vary.
             varying &= ~fixed;
+            // Input and mask bits can interleave: stride two and AND five
+            // fix both low bits. Use the first bit that can actually vary.
+            // Constant results need no width-sized shift.
+            const auto outputVarying = bitAnd ? varying & mask : bitOr ? varying & ~mask : varying;
+            const auto writeStride = outputVarying != 0
+                                         ? std::size_t{1} << std::countr_zero(outputVarying)
+                                         : inputStride;
             const auto first = bitAnd  ? (lower & ~varying) & mask
                                : bitOr ? (lower & ~varying) | mask
                                        : (lower ^ mask) & ~varying;

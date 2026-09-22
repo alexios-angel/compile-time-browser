@@ -356,6 +356,134 @@ void StructuredCases::reloads() {
         reject("structured OR/XOR require an invariant mask",
                replace(bitwise, "%i, %one", "%i, %i"));
     }
+    for (const std::string kind : {"bitand", "bitor"}) {
+        const bool isAnd = kind == "bitand";
+        const std::string contents =
+            isAnd ? "[%x, %zero, %periodMask, %zero, %x, %zero, %zero, %zero]"
+                  : "[%zero, %zero, %x, %zero, %periodMask, %zero, %x, %zero]";
+        const std::string guard = isAnd ? "%periodTwo" : "%periodFour";
+        const char * values = isAnd ? "a:[zero,zero,mask,zero,zero,zero,zero,zero]"
+                                    : "a:[zero,zero,zero,zero,mask,zero,zero,zero]";
+        const char * reads = isAnd ? "a[2]=mask; a[0]=zero; a[2]=mask; a[2]=mask; a[2]=mask; "
+                                     "a[4]=zero; a[2]=mask; a[6]=zero"
+                                   : "a[4]=mask; a[0]=zero; a[4]=mask; a[2]=zero; a[4]=mask; "
+                                     "a[4]=mask; a[4]=mask; a[6]=zero";
+        const auto combinedBits = replace(
+            replace(
+                replace(replace(replace(masked, "  ctjs.append %y to %a\n", ""), "[%x]", contents),
+                        "  %a =",
+                        "  %periodTwo = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                        "  %periodFour = ctjs.constant #ctjs.number<4616189618054758400>\n"
+                        "  %periodSix = ctjs.constant #ctjs.number<4618441417868443648>\n"
+                        "  %periodEight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                        "  %periodSign = ctjs.constant #ctjs.number<4746794007248502784>\n"
+                        "  %periodMask = ctjs.constant #ctjs.number<" +
+                            std::string(isAnd ? "4617315517961601024" : "4611686018427387904") +
+                            "> {storage_test_id = \"mask\"}\n  %a ="),
+                "add %i, %one", "add %i, %periodTwo"),
+            "%position = ctjs.binary_static bitand %i, %one",
+            "%mask = ctjs.get_property %base[" + guard +
+                "]\n"
+                "    %bits = ctjs.binary_static " +
+                kind +
+                " %i, %mask\n"
+                "    %position = ctjs.unary plus %bits");
+        for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
+            rows.push_back(
+                {.what = "interleaved fixed input and mask bits widen the output period",
+                 .body = replace(combinedBits, kind + " %i, %mask", kind + " " + operands),
+                 .arrays = values,
+                 .reads = reads,
+                 .exit = "a -> {a}"});
+        }
+        rows.push_back({.what = "a composed mask period retains an odd factor in the input stride",
+                        .body = replace(combinedBits, "add %i, %periodTwo", "add %i, %periodSix"),
+                        .arrays = values,
+                        .reads = isAnd ? "a[2]=mask; a[0]=zero; a[2]=mask; a[6]=zero"
+                                       : "a[4]=mask; a[0]=zero; a[4]=mask; a[6]=zero",
+                        .exit = "a -> {a}"});
+        for (const auto & bias : {"%periodEight", "%periodSign"}) {
+            auto body = replace(combinedBits, "%bits = ctjs.binary_static " + kind + " %i, %mask",
+                                "%biased = ctjs.binary sub %i, " + std::string(bias) +
+                                    "\n"
+                                    "    %bits = ctjs.binary_static " +
+                                    kind + " %biased, %mask");
+            if (!isAnd) {
+                body = replace(body, "ctjs.unary plus %bits",
+                               "ctjs.binary add %bits, " + std::string(bias));
+            }
+            rows.push_back({.what = "combined mask periods survive signed input conversion",
+                            .body = body,
+                            .arrays = values,
+                            .reads = reads,
+                            .exit = "a -> {a}"});
+        }
+        rows.push_back(
+            {.what = "combined mask periods preserve unvisited child identities",
+             .body = replace(combinedBits, contents,
+                             isAnd ? "[%x, %x, %periodMask, %zero, %x, %zero, %zero, %zero]"
+                                   : "[%x, %zero, %x, %zero, %periodMask, %zero, %x, %zero]"),
+             .arrays = isAnd ? "a:[zero,x,mask,zero,zero,zero,zero,zero]"
+                             : "a:[x,zero,zero,zero,mask,zero,zero,zero]",
+             .reads = isAnd ? reads
+                            : "a[4]=mask; a[0]=x; a[4]=mask; a[2]=zero; a[4]=mask; "
+                              "a[4]=mask; a[4]=mask; a[6]=zero",
+             .exit = "a -> {a,x}"});
+        auto phased =
+            replace(replace(combinedBits, contents,
+                            isAnd ? "[%zero, %x, %zero, %periodMask, %zero, %x, %zero, %zero]"
+                                  : "[%zero, %zero, %zero, %x, %zero, %periodMask, %zero, %x]"),
+                    "  %a =",
+                    "  %periodThree = ctjs.binary add %periodTwo, %one\n"
+                    "  %periodFive = ctjs.binary add %periodFour, %one\n  %a =");
+        phased = replace(phased, "%base[" + guard + "]",
+                         isAnd ? "%base[%periodThree]" : "%base[%periodFive]");
+        phased = replace(phased, "%bits = ctjs.binary_static " + kind + " %i, %mask",
+                         "%biased = ctjs.binary add %i, %one\n"
+                         "    %bits = ctjs.binary_static " +
+                             kind + " %biased, %mask");
+        rows.push_back({.what = "combined mask periods retain the exact nonzero low-bit residue",
+                        .body = phased,
+                        .arrays = isAnd ? "a:[zero,zero,zero,mask,zero,zero,zero,zero]"
+                                        : "a:[zero,zero,zero,zero,zero,mask,zero,zero]",
+                        .reads = isAnd ? "a[3]=mask; a[0]=zero; a[3]=mask; a[2]=zero; a[3]=mask; "
+                                         "a[4]=zero; a[3]=mask; a[6]=zero"
+                                       : "a[5]=mask; a[0]=zero; a[5]=mask; a[2]=zero; a[5]=mask; "
+                                         "a[4]=zero; a[5]=mask; a[6]=zero",
+                        .exit = "a -> {a}"});
+        const auto saved =
+            replace(replace(combinedBits, "  %finalIndex,",
+                            "  %periodSaved = ctjs.get_property %a[" +
+                                std::string(isAnd ? "%zero" : "%periodTwo") + "]\n  %finalIndex,"),
+                    "ctjs.return %a", "ctjs.return %periodSaved");
+        rows.push_back(
+            {.what = "combined periods retain snapshots read before masked writes",
+             .body = saved,
+             .arrays = values,
+             .reads = isAnd ? "a[0]=x; a[2]=mask; a[0]=zero; a[2]=mask; a[2]=mask; a[2]=mask; "
+                              "a[4]=zero; a[2]=mask; a[6]=zero"
+                            : "a[2]=x; a[4]=mask; a[0]=zero; a[4]=mask; a[2]=zero; a[4]=mask; "
+                              "a[4]=mask; a[4]=mask; a[6]=zero",
+             .exit = "x -> {x}"});
+        reject(
+            "combined input and mask periods cannot hide an actual mask overwrite",
+            replace(replace(combinedBits, contents,
+                            isAnd ? "[%x, %zero, %zero, %zero, %periodMask, %zero, %zero, %zero]"
+                                  : "[%zero, %zero, %x, %zero, %zero, %zero, %periodMask, %zero]"),
+                    "%base[" + guard + "]", isAnd ? "%base[%periodFour]" : "%base[%periodSix]"));
+        reject("combined mask periods still census later writes to a reload slot",
+               replace(combinedBits, "    %step =",
+                       "    ctjs.set_property %base[" + guard + "], %zero\n    %step ="));
+        reject("unit input strides cannot borrow a fixed low bit for a mask period",
+               replace(combinedBits, "add %i, %periodTwo", "add %i, %one"));
+        reject("changing a required mask bit invalidates the combined period",
+               replace(combinedBits,
+                       "#ctjs.number<" +
+                           std::string(isAnd ? "4617315517961601024" : "4611686018427387904") +
+                           "> {storage_test_id = \"mask\"}",
+                       "#ctjs.number<" + std::string(isAnd ? "4619567317775286272" : "0") +
+                           "> {storage_test_id = \"mask\"}"));
+    }
     const auto signedBits = replace(masked, "  %a =",
                                     "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
                                     "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"

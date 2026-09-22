@@ -80,6 +80,19 @@
 // CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function masked() {
     var child = {}, a = [child, child, 0, 0];
@@ -501,3 +514,78 @@ function fixedAndNearMask() {
 fixedAndStride(); fixedAndCommuted(); fixedAndNegative();
 fixedAndHighBand(); fixedAndLowBand(); fixedAndRemainingChild();
 fixedAndOverlappingReload(); fixedAndLaterOverwrite(); fixedAndNearMask();
+function combinedAndStride() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i & a[2]] = 0;
+    return a;
+}
+function combinedAndCommuted() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[a[2] & i] = 0;
+    return a;
+}
+function combinedAndSixStride() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 6) a[i & a[2]] = 0;
+    return a;
+}
+function combinedAndNegative() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 8) & a[2]] = 0;
+    return a;
+}
+function combinedAndSignedBand() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 2147483648) & a[2]] = 0;
+    return a;
+}
+function combinedAndPhase() {
+    var child = {}, a = [0, child, 0, 5, 0, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i + 1) & a[3]] = 0;
+    return a;
+}
+function combinedAndRemainingChild() {
+    var child = {}, a = [child, child, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i & a[2]] = 0;
+    return a;
+}
+function combinedAndSavedChild() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[i & a[2]] = 0;
+    return saved;
+}
+function combinedAndOverlappingReload() {
+    var child = {}, a = [child, 0, 0, 0, 5, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i & a[4]] = 0;
+    return a;
+}
+function combinedAndLaterOverwrite() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i & a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function combinedAndUnitStride() {
+    var child = {}, a = [child, 0, 5, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 1) a[i & a[2]] = 0;
+    return a;
+}
+function combinedAndNearMask() {
+    var child = {}, a = [child, 0, 7, 0, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i & a[2]] = 0;
+    return a;
+}
+combinedAndStride();
+combinedAndCommuted();
+combinedAndSixStride();
+combinedAndNegative();
+combinedAndSignedBand();
+combinedAndPhase();
+combinedAndRemainingChild();
+combinedAndSavedChild();
+combinedAndOverlappingReload();
+combinedAndLaterOverwrite();
+combinedAndUnitStride();
+combinedAndNearMask();
