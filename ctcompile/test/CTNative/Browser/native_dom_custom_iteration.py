@@ -397,6 +397,34 @@ SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE = (
         "      if (emitted === 0) rounds += relay(advance);\n" "      else rounds += alternate();",
     )
 )
+SIBLING_RETURNED_DIFFERENT_SNAPSHOTS_SOURCE = SIBLING_RETURNED_SNAPSHOTS_SOURCE.replace(
+    "  const identity = (writer) =>",
+    "  const other = (amount, prior) => { const before = closed; emitted += closed;\n"
+    "    closed += emitted; return before + amount + prior + prior + emitted + closed + 1; };\n"
+    "  const identity = (writer) =>",
+    1,
+).replace(
+    "      observed += relay(closed, advance, closed += emitted);",
+    "      if (emitted === 0) observed += relay(closed, advance, closed += emitted);\n"
+    "      else observed += relay(closed, other, closed += emitted);",
+    1,
+)
+SIBLING_RETURNED_DIFFERENT_FORWARDED_SOURCE = SIBLING_RETURNED_FORWARDED_SOURCE.replace(
+    "  const identity = (writer) => writer;",
+    "  const other = () => { const before = emitted; closed += emitted;\n"
+    "    emitted += closed; return before + 1; };\n"
+    "  const identity = (writer) => writer;",
+    1,
+).replace("rounds += relay(advance);", "rounds += relay(other);", 1)
+SIBLING_RETURNED_BRANCH_JOIN_SOURCE = SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.replace(
+    "  const identity = (writer) => writer;",
+    "  const identity = (writer) => {\n"
+    "    let selected = writer;\n"
+    "    if (emitted > 0) selected = other;\n"
+    "    return selected;\n"
+    "  };",
+    1,
+)
 
 # The original zero-state source cannot progress after its early break. Preserve
 # its native admission without executing it; the finite counterpart runs below.
@@ -847,6 +875,33 @@ POSITIVES = (
         SIBLING_RETURNED_FORWARDED_SOURCE,
         True,
         ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        "entry-captured-sibling-returned-callable-different-targets",
+        SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE,
+        True,
+        ("2729", "3603", "2729"),
+        True,
+        "false",
+    ),
+    (
+        # Distinct returned writers retain the earlier scalar arguments beside
+        # current cells, with opposite write order and different ordinary results.
+        "entry-captured-sibling-returned-different-snapshots",
+        SIBLING_RETURNED_DIFFERENT_SNAPSHOTS_SOURCE,
+        True,
+        ("166142", "192687", "166142"),
+        True,
+        "false",
+    ),
+    (
+        # Each invocation selects its own writer through two returned helpers.
+        "entry-captured-sibling-returned-different-forwarded",
+        SIBLING_RETURNED_DIFFERENT_FORWARDED_SOURCE,
+        True,
+        ("2734", "3608", "2734"),
         True,
         "false",
     ),
@@ -1303,7 +1358,35 @@ def refusals():
             "entry-captured-sibling-returned-callable-nonnumber": SIBLING_RETURNED_CALLABLE_SOURCE.replace(
                 "(writer) => writer;", "(writer) => { emitted = true; return writer; };"
             ),
-            "entry-captured-sibling-returned-callable-different-targets": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE,
+            "entry-captured-sibling-returned-different-unknown": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.replace(
+                "const alternate = () => identity(other)();",
+                "const alternate = () => identity(unknownWriter)();",
+            ),
+            "entry-captured-sibling-returned-different-mutation": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.replace(
+                "const other =", "let other =", 1
+            ).replace(
+                "  count += read();\n  closed += emitted;",
+                "  other = advance;\n  count += read();\n  closed += emitted;",
+                1,
+            ),
+            "entry-captured-sibling-returned-different-escaping": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.replace(
+                "const alternate = () => identity(other)();",
+                "const alternate = () => { const returned = identity(other);\n"
+                "    anchor.saved = returned; return returned(); };",
+            ),
+            "entry-captured-sibling-returned-different-observed": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.replace(
+                "const alternate = () => identity(other)();",
+                "const alternate = () => identity(other) === other;",
+            ),
+            "entry-captured-sibling-returned-different-missing": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.replace(
+                "const alternate = () => identity(other)();",
+                "const alternate = () => identity()();",
+            ),
+            "entry-captured-sibling-returned-different-recursive": SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE.replace(
+                "const identity = (writer) => writer;",
+                "const identity = (writer) => identity(writer);",
+            ),
+            "entry-captured-sibling-returned-callable-branch-join": SIBLING_RETURNED_BRANCH_JOIN_SOURCE,
         }
     )
     return variants

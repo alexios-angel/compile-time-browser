@@ -1133,6 +1133,103 @@ module {
     check(returnedWriter && directReturnedWriter,
           "ordinary/direct returned callable and scalar snapshot twins parse");
     if (!returnedWriter || !directReturnedWriter) { return; }
+    // One helper formal receives distinct writers at different source calls.
+    // A doubled step at body/final makes reusing the first identity observable.
+    const auto otherWriterBody =
+        replaced(replaced(writerBody, "@readCount$4", "@otherWriter$7"),
+                 "%updated = ctjs.binary_static add %observed, %step",
+                 "%doubleStep = ctjs.binary_static add %step, %step\n"
+                 "    %updated = ctjs.binary_static add %observed, %doubleStep");
+    auto differentCallableWriterSource = replaced(
+        callableWriterSource, "    %readCount = ctjs.create_closure",
+        "    %otherWriter = ctjs.create_closure %callee[7] this %undefined captures %emittedCell, "
+        "%extraCell\n"
+        "    %readCount = ctjs.create_closure");
+    differentCallableWriterSource =
+        replaced(differentCallableWriterSource, "\n}\n", "\n" + otherWriterBody + "}\n");
+    for (const auto * suffix : {"body", "final"}) {
+        differentCallableWriterSource = replaced(
+            differentCallableWriterSource, std::string("%writeState, %argumentStep_") + suffix,
+            std::string("%otherWriter, %argumentStep_") + suffix);
+    }
+    auto directDifferentCallableWriterSource = differentCallableWriterSource;
+    for (unsigned i = 0; i != 4; ++i) {
+        directDifferentCallableWriterSource =
+            replaced(directDifferentCallableWriterSource, "ctjs.call %readCount(%undefined, ",
+                     "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount, ");
+    }
+    directDifferentCallableWriterSource =
+        replaced(directDifferentCallableWriterSource, "ctjs.call %writeState(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %writeState, ");
+    // The forwarding helper returns the identity helper's result. Each call
+    // must resolve both returns with its own argument, including after close.
+    auto differentReturnedWriterSource = replaced(
+        returnedWriterSource, "    %readCount = ctjs.create_closure",
+        "    %otherWriter = ctjs.create_closure %callee[7] this %undefined captures %emittedCell, "
+        "%extraCell\n"
+        "    %readCount = ctjs.create_closure");
+    differentReturnedWriterSource =
+        replaced(differentReturnedWriterSource, "    %readExtra = ctjs.create_closure",
+                 "    %returnerCell = ctjs.create_cell %readCount\n"
+                 "    %forwardWriter = ctjs.create_closure %callee[8] this %undefined captures "
+                 "%returnerCell\n"
+                 "    %readExtra = ctjs.create_closure");
+    differentReturnedWriterSource = replaced(
+        differentReturnedWriterSource, "\n}\n",
+        "\n" + otherWriterBody +
+            R"MLIR(  ctjs.func @forwardWriter$8(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %writer: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %returner = ctjs.load_upvalue %callee[0]
+    %forwardUndefined = ctjs.constant #ctjs.undefined
+    %forwardResult = ctjs.call %returner(%forwardUndefined, %writer)
+    ctjs.return %forwardResult
+  }
+}
+)MLIR");
+    for (const auto * suffix : {"before", "body", "close", "final"}) {
+        const auto result = std::string("%returnedWriter_") + suffix;
+        const auto target = llvm::StringRef(suffix) == "body" || llvm::StringRef(suffix) == "final"
+                                ? "%otherWriter"
+                                : "%writeState";
+        differentReturnedWriterSource =
+            replaced(differentReturnedWriterSource,
+                     result + " = ctjs.call %readCount(%undefined, %writeState)",
+                     result + " = ctjs.call %forwardWriter(%undefined, " + target + ")");
+    }
+    auto directDifferentReturnedWriterSource = differentReturnedWriterSource;
+    for (const auto * suffix : {"before", "body", "close", "final"}) {
+        directDifferentReturnedWriterSource =
+            replaced(directDifferentReturnedWriterSource, "ctjs.call %forwardWriter(%undefined, ",
+                     "ctjs.call_direct @forwardWriter$8(%undefined, %undefined, %forwardWriter, ");
+        const auto result = std::string("%returnedWriter_") + suffix;
+        const auto target = llvm::StringRef(suffix) == "body" || llvm::StringRef(suffix) == "final"
+                                ? "@otherWriter$7"
+                                : "@writeState$6";
+        directDifferentReturnedWriterSource =
+            replaced(directDifferentReturnedWriterSource, "ctjs.call " + result + "(%undefined, ",
+                     std::string("ctjs.call_direct ") + target + "(%undefined, %undefined, " +
+                         result + ", ");
+    }
+    directDifferentReturnedWriterSource =
+        replaced(directDifferentReturnedWriterSource, "ctjs.call %writeState(%undefined, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %writeState, ");
+    directDifferentReturnedWriterSource =
+        replaced(directDifferentReturnedWriterSource, "ctjs.call %returner(%forwardUndefined, ",
+                 "ctjs.call_direct @readCount$4(%forwardUndefined, %forwardUndefined, %returner, ");
+    auto differentCallableWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(differentCallableWriterSource, &context);
+    auto directDifferentCallableWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directDifferentCallableWriterSource, &context);
+    auto differentReturnedWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(differentReturnedWriterSource, &context);
+    auto directDifferentReturnedWriter =
+        mlir::parseSourceString<mlir::ModuleOp>(directDifferentReturnedWriterSource, &context);
+    check(differentCallableWriter && directDifferentCallableWriter && differentReturnedWriter &&
+              directDifferentReturnedWriter,
+          "ordinary/direct distinct callable arguments and forwarded returns parse");
+    if (!differentCallableWriter || !directDifferentCallableWriter || !differentReturnedWriter ||
+        !directDifferentReturnedWriter) {
+        return;
+    }
     HostContract contract;
     contract.entry = "custom$0";
     contract.elementParameters = {0};
@@ -1198,7 +1295,11 @@ module {
                          *callableWriter,
                          *directCallableWriter,
                          *returnedWriter,
-                         *directReturnedWriter}) {
+                         *directReturnedWriter,
+                         *differentCallableWriter,
+                         *directDifferentCallableWriter,
+                         *differentReturnedWriter,
+                         *directDifferentReturnedWriter}) {
         const bool siblingReads = fixture == *siblingReader || fixture == *zeroSiblingReader ||
                                   fixture == *directSiblingReader ||
                                   fixture == *zeroDirectSiblingReader ||
@@ -1210,9 +1311,12 @@ module {
         const bool argumentWrites = fixture == *argumentWriter || fixture == *directArgumentWriter;
         const bool breakWrites = fixture == *breakWriter || fixture == *directBreakWriter;
         const bool nestedWrites = fixture == *nestedWriter || fixture == *directNestedWriter;
-        const bool callableWrites = fixture == *callableWriter ||
-                                    fixture == *directCallableWriter ||
-                                    fixture == *returnedWriter || fixture == *directReturnedWriter;
+        const bool differentWrites =
+            fixture == *differentCallableWriter || fixture == *directDifferentCallableWriter ||
+            fixture == *differentReturnedWriter || fixture == *directDifferentReturnedWriter;
+        const bool callableWrites =
+            fixture == *callableWriter || fixture == *directCallableWriter ||
+            fixture == *returnedWriter || fixture == *directReturnedWriter || differentWrites;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             contract.provider = provider;
@@ -1704,6 +1808,12 @@ module {
                                          : ctjs::BinaryStaticOp{};
                     auto step = count ? count.getRhs().getDefiningOp<ctjs::BinaryStaticOp>()
                                       : ctjs::BinaryStaticOp{};
+                    if (differentWrites && (name == "writer-body" || name == "writer-final")) {
+                        ordered &= step && step.getKind() == ctjs::BinaryKind::Add &&
+                                   step.getLhs() == step.getRhs();
+                        step = step ? step.getLhs().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+                    }
                     const bool mapped = extra && count && current && step &&
                                         extra.getKind() == ctjs::BinaryKind::Add &&
                                         count.getKind() == ctjs::BinaryKind::Add &&
@@ -1735,7 +1845,10 @@ module {
                 check(!boxed && !input->lookupSymbol<ctjs::FuncOp>("readCount$4") &&
                           !input->lookupSymbol<ctjs::FuncOp>("readExtra$5") &&
                           (!(nestedWrites || callableWrites) ||
-                           !input->lookupSymbol<ctjs::FuncOp>("writeState$6")),
+                           !input->lookupSymbol<ctjs::FuncOp>("writeState$6")) &&
+                          (!differentWrites ||
+                           (!input->lookupSymbol<ctjs::FuncOp>("otherWriter$7") &&
+                            !input->lookupSymbol<ctjs::FuncOp>("forwardWriter$8"))),
                       "argument-taking helpers retire without closures or boxed state");
             }
             if (siblingWrites) {
@@ -1946,6 +2059,31 @@ module {
                           "\n" + replaced(writerBody, "@readCount$4", "@otherWriter$7") + "}\n"),
                  "ctjs.call_direct @writeState$6(%undefined, %undefined, %returnedWriter_final, ",
                  "ctjs.call_direct @otherWriter$7(%undefined, %undefined, %returnedWriter_final, "),
+             replaced(differentReturnedWriterSource,
+                      "%returnedWriter_final = ctjs.call %forwardWriter(%undefined, %otherWriter)",
+                      "%returnedWriter_final = ctjs.call %forwardWriter(%undefined, %element)"),
+             replaced(
+                 replaced(differentReturnedWriterSource, "    %entrySet =",
+                          "    %mutableWriter = ctjs.create_cell %otherWriter\n"
+                          "    ctjs.cell_set %mutableWriter, %writeState\n"
+                          "    %changedWriter = ctjs.cell_get %mutableWriter\n"
+                          "    %entrySet ="),
+                 "%returnedWriter_final = ctjs.call %forwardWriter(%undefined, %otherWriter)",
+                 "%returnedWriter_final = ctjs.call %forwardWriter(%undefined, %changedWriter)"),
+             replaced(differentReturnedWriterSource, "    %finalCount =",
+                      "    ctjs.store_global \"leaked\", %returnedWriter_final\n"
+                      "    %finalCount ="),
+             replaced(directDifferentReturnedWriterSource, "    %finalCount =",
+                      "    %observedReturned = ctjs.binary_static add %returnedWriter_final, "
+                      "%argumentStep_final\n"
+                      "    %finalCount ="),
+             replaced(
+                 directDifferentReturnedWriterSource,
+                 "ctjs.call_direct @otherWriter$7(%undefined, %undefined, %returnedWriter_final, ",
+                 "ctjs.call_direct @writeState$6(%undefined, %undefined, %returnedWriter_final, "),
+             replaced(differentReturnedWriterSource,
+                      "%forwardResult = ctjs.call %returner(%forwardUndefined, %writer)",
+                      "%forwardResult = ctjs.call %callee(%forwardUndefined, %writer)"),
          }) {
         auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(fixture), "hostile nested helper witness parses");
@@ -2762,7 +2900,11 @@ module {
                          *callableWriter,
                          *directCallableWriter,
                          *returnedWriter,
-                         *directReturnedWriter}) {
+                         *directReturnedWriter,
+                         *differentCallableWriter,
+                         *directDifferentCallableWriter,
+                         *differentReturnedWriter,
+                         *directDifferentReturnedWriter}) {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(fixture);
         unsigned low = 0, high = completeBudget;
