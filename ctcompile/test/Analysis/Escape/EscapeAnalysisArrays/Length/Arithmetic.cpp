@@ -477,6 +477,8 @@ void LengthCases::arithmetic() {
                     literal == "#ctjs.number<4602678819172646912>" ||
                     literal == "#ctjs.number<4751297606875873280>" ||
                     literal == "#ctjs.number<13974669643730649088>" ||
+                    literal == "#ctjs.number<9218868437227405312>" ||
+                    literal == "#ctjs.number<9221120237041090560>" ||
                     literal == "#ctjs.string<\"0\">" || literal == "#ctjs.string<\"00\">" ||
                     literal == "#ctjs.boolean<false>" || literal == "#ctjs.null" ||
                     ((literal == "#ctjs.number<13830554455654793216>" ||

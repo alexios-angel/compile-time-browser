@@ -111,6 +111,14 @@
 // CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
 
+// Nonfinite original Numbers convert only at bitwise consumers.
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -189,6 +197,19 @@
 // RECORD-LABEL: fn 83 entries 1 params 0 frame {{[0-9]+}} name mutatedWideNumberTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 84 entries 1 params 0 frame {{[0-9]+}} name nonfiniteWideNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 85 entries 1 params 0 frame {{[0-9]+}} name nonfiniteNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 86 entries 1 params 0 frame {{[0-9]+}} name negatedNonfiniteNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 87 entries 1 params 0 frame {{[0-9]+}} name nonfiniteNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 88 entries 1 params 0 frame {{[0-9]+}} name savedNonfiniteNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 89 entries 1 params 0 frame {{[0-9]+}} name mutatedNonfiniteNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 90 entries 1 params 0 frame {{[0-9]+}} name unconvertedNonfiniteNumberTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -482,6 +503,8 @@ numberFractionalBitwiseTableKey(); numberFractionalComplementTableKey(); numberF
 savedNumberFractionalTableChild(); mutatedNumberFractionalTableKey(); wideNumberFractionalTableKey();
 wideNumberBitwiseTableKey(); wideNumberComplementTableKey(); wideNumberShiftTableKey();
 savedWideNumberTableChild(); mutatedWideNumberTableKey(); nonfiniteWideNumberTableKey();
+nonfiniteNumberBitwiseTableKey(); negatedNonfiniteNumberTableKey(); nonfiniteNumberShiftTableKey();
+savedNonfiniteNumberTableChild(); mutatedNonfiniteNumberTableKey(); unconvertedNonfiniteNumberTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -688,5 +711,40 @@ function mutatedWideNumberTableKey() {
 function nonfiniteWideNumberTableKey() {
     var child = {}, a = [child, 0, child], keys = [4294967296.9, 1e999];
     for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function nonfiniteNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function negatedNonfiniteNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-1e999, 2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] >>> 0] = 0;
+    return a;
+}
+function nonfiniteNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [1e999, 1.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedNonfiniteNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedNonfiniteNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 1e999;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function unconvertedNonfiniteNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [1e999, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
     return a;
 }

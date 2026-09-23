@@ -221,7 +221,7 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     return std::nullopt;
 }
 
-// Bitwise conversion may truncate a finite original Number or bounded String. Arithmetic and
+// Bitwise conversion accepts an original Number or bounded String. Arithmetic and
 // property keys still require their separate exact Number/spelling proofs.
 std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     if (const auto positive = boundedConvertedNumber(input)) {
@@ -242,8 +242,8 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
     const auto number =
         literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
-    // Core reduces the finite Number modulo 2^32 before converting to an integer.
-    if (number && std::isfinite(number.getDouble())) {
+    // Core maps nonfinite Numbers to zero and reduces finite Numbers before integer conversion.
+    if (number) {
         return ctbrowser::number_to_uint32(negate ? -number.getDouble() : number.getDouble());
     }
     return std::nullopt;

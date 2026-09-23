@@ -615,7 +615,7 @@ void InductionCases::invariantReads() {
     for (const std::string bits :
          {"4751297606874824704", "13974669643729600512", "4751297606876816998",
           "9218868437227405312", "18442240474082181120", "9221120237041090560"}) {
-        if (bits == "13974669643729600512" || bits == "4751297606876816998") {
+        if (bits != "4751297606874824704") {
             const bool retained = bits == "13974669643729600512";
             run({.what = "wide Number conversion preserves original reads and retained children",
                  .body = replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
@@ -627,7 +627,7 @@ void InductionCases::invariantReads() {
                 retained ? "" : "x");
             continue;
         }
-        reject("Number bitwise conversion requires finite inputs and valid own-index results",
+        reject("Number bitwise conversion requires valid own-index results",
                replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
                        "#ctjs.number<" + bits + ">"));
     }
@@ -745,8 +745,84 @@ void InductionCases::invariantReads() {
     }
     for (const std::string bits :
          {"9218868437227405312", "18442240474082181120", "9221120237041090560"}) {
-        reject("wide Number conversion still refuses nonfinite inputs",
-               replace(wideNumberTable, "4751297606876816998", bits));
+        run({.what = "nonfinite Numbers convert to zero bits while keeping original table values",
+             .body = replace(wideNumberTable, "4751297606876816998", bits),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto nonfiniteNumberTable =
+        replace(numberFractionalTable, "4606281698874543309", "9218868437227405312");
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+          "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+          "shr %i, %textZero", "ushr %i, %textZero"}) {
+        run({.what = "nonfinite Number table operands masks and counts share Core conversion",
+             .body = replace(nonfiniteNumberTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto negatedNonfiniteNumber = replace(
+        nonfiniteNumberTable, "  %textZero = ctjs.constant #ctjs.number<9218868437227405312>",
+        "  %infinity = ctjs.constant #ctjs.number<9218868437227405312>\n"
+        "  %textZero = ctjs.unary neg %infinity");
+    const auto complementedNonfiniteNumber = replace(
+        nonfiniteNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+        "  %complement = ctjs.unary bitnot %slot\n  %converted = ctjs.unary bitnot %complement");
+    for (const auto & source : {negatedNonfiniteNumber, complementedNonfiniteNumber}) {
+        run({.what = "source Neg and signed complement keep the original nonfinite identity",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "nonfinite varying shift counts convert without changing their table",
+         .body =
+             replace(replace(replace(nonfiniteNumberTable, "[%x, %zero, %x]", "[%zero, %x, %x]"),
+                             "4613712638259704627", "4611235658464650854"),
+                     "bitor %slot, %zero", "shl %one, %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "nonfinite bitwise writes cannot release a previously saved child",
+         .body = replace(replace(nonfiniteNumberTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    const auto selectedNonfiniteNumber =
+        replace(selectedNumberFractional, "4606281698874543309", "9218868437227405312");
+    run({.what = "nonfinite table conversion retains its independent receiver reload gap",
+         .body = selectedNonfiniteNumber,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads =
+             "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    reject("nonfinite conversion cannot invalidate a reloaded table receiver",
+           replace(selectedNonfiniteNumber, "4613712638259704627", "4611235658464650854"));
+    for (const std::string expression :
+         {"unary plus %slot", "binary sub %slot, %zero", "binary mul %slot, %one",
+          "binary div %slot, %one", "binary add %slot, %zero"}) {
+        reject("nonfinite arithmetic cannot borrow zero bitwise facts",
+               replace(nonfiniteNumberTable, "binary_static bitor %slot, %zero", expression));
+        reject("nonfinite computed results retain separate provenance requirements",
+               replace(nonfiniteNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                       "  %number = ctjs." + expression +
+                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+    }
+    reject("nonfinite original Number properties retain their spelling",
+           replace(nonfiniteNumberTable, "%base[%converted]", "%base[%slot]"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("nonfinite conversion preserves table mutations before and after reads",
+               replace(nonfiniteNumberTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
     reject("table conversion cannot invoke object coercion",
            replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));

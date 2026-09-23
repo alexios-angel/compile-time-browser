@@ -236,7 +236,7 @@ void LengthCases::liveMutations() {
                     : ArrayContentsFailure::UnknownIndex,
                 negatedUnit);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, binary ? "0.5" : "0"));
         inspect(unary || shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         if (unary || shift) {

@@ -541,7 +541,9 @@ void InductionCases::signedStrides() {
             if (constant == "#ctjs.string<\"00\">" ||
                 constant == "#ctjs.number<4602678819172646912>" ||
                 constant == "#ctjs.number<4751297606875873280>" ||
-                constant == "#ctjs.number<13974669643730649088>") {
+                constant == "#ctjs.number<13974669643730649088>" ||
+                constant == "#ctjs.number<9218868437227405312>" ||
+                constant == "#ctjs.number<9221120237041090560>") {
                 run({.what = "bounded primitive conversion preserves original reads and retained "
                              "children",
                      .body = body,

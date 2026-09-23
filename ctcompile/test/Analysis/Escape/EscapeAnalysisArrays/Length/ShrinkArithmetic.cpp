@@ -499,9 +499,11 @@ void LengthCases::shrinkArithmetic() {
                               "\n  %wanted = " + producer +
                               "\n  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n";
             if ((literal == "#ctjs.number<4602678819172646912>" ||
-                 literal == "#ctjs.number<4751297606875873280>") &&
+                 literal == "#ctjs.number<4751297606875873280>" ||
+                 literal == "#ctjs.number<9218868437227405312>" ||
+                 literal == "#ctjs.number<9221120237041090560>") &&
                 producer == "ctjs.binary_static ushr %input, %input") {
-                run({.what = "a finite Number supplies an exact bitwise empty length",
+                run({.what = "a Number supplies an exact bitwise empty length",
                      .body = body,
                      .arrays = "a:[]",
                      .exit = "a -> {a}"});
