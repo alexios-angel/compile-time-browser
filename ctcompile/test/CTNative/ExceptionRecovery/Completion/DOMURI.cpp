@@ -8,6 +8,50 @@
 namespace ctcompile::test::exception_recovery {
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    for (unsigned control = 0; control < 7; ++control) {
+        std::string source = "function guarded(element) { try { throw element; } "
+                             "catch (error) { return error === element; } }";
+        if (control == 1) {
+            source.replace(source.find("error === element"), 17,
+                           "error.hasAttribute('data-closed')");
+        }
+        if (control == 2) {
+            source.insert(source.find("throw element"), "element.hasAttribute('data-before'); ");
+        }
+        if (control == 3) {
+            source.replace(source.find("return error === element;"), 25, "throw error;");
+        }
+        if (control == 4) {
+            source.replace(source.find("return error === element;"), 25, "return error;");
+        }
+        if (control == 5) { source.insert(source.find("throw element"), "if (element) "); }
+        auto candidate = import(context, source, true);
+        if (!candidate) { continue; }
+        const auto original = printed(*candidate);
+        ctnative::HostContract request;
+        request.provider = ctnative::HostContract::Provider::ctbrowserDOM;
+        request.entry = guarded(*candidate).getSymName().str();
+        request.elementParameters = {0};
+        request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
+        const auto fingerprint = request.moduleSha256;
+        auto error = ctnative::prepareDOMEntry(*candidate, request, control == 6 ? 0 : 100000);
+        if (control >= 2) {
+            check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
+            llvm::consumeError(std::move(error));
+            check(printed(*candidate) == original && request.moduleSha256 == fingerprint,
+                  "refused caught-node preparation preserves source and contract");
+        } else {
+            if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+            check(ctnative::DOMEntryAnalysis(*candidate, request).proved() &&
+                      mlir::succeeded(mlir::verify(*candidate)),
+                  "caught node keeps its identity through complete DOM reproof");
+            bool exception = false;
+            candidate->walk([&](mlir::Operation * operation) {
+                exception |= llvm::isa<ctjs::ThrowOp, ctjs::TryOp, ctjs::PushHandlerOp>(operation);
+            });
+            check(!exception, "local catch needs no escaping borrowed exception carrier");
+        }
+    }
     if (!testClassTransactions(context)) { return; }
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {

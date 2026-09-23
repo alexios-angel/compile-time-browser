@@ -4,6 +4,7 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseSet.h"
@@ -372,6 +373,88 @@ struct DOMURI {
 };
 
 } // namespace
+
+llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps) {
+    const auto refuse = [](llvm::StringRef reason) -> llvm::Expected<bool> {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+    };
+    unsigned remaining = maxSteps;
+    bool throws = false;
+    const auto scanned = function.walk([&](mlir::Operation * operation) {
+        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
+        if (cost > remaining / 3) { return mlir::WalkResult::interrupt(); }
+        remaining -= static_cast<unsigned>(cost * 3); // Scan and reserve the final rewrite.
+        throws |= llvm::isa<ctjs::ThrowOp>(operation);
+        return mlir::WalkResult::advance();
+    });
+    if (scanned.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
+    if (!throws) { return false; }
+    auto recovered = recoverPrimitiveExceptionRegion(function, remaining);
+    if (!recovered.recovered) { return false; }
+    remaining -= recovered.steps;
+    const auto rewritten = function.walk([&](mlir::Operation * operation) {
+        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
+        if (cost > remaining / 3) { return mlir::WalkResult::interrupt(); }
+        remaining -= static_cast<unsigned>(cost * 3);
+        return mlir::WalkResult::advance();
+    });
+    if (rewritten.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
+    if (!function.getBody().hasOneBlock()) {
+        return refuse("DOM caught throw requires a structured local prefix");
+    }
+    auto attempts = function.getBody().front().getOps<ctjs::TryOp>();
+    if (!llvm::hasSingleElement(attempts)) {
+        return refuse("DOM caught throw requires one local catch");
+    }
+    auto attempt = *attempts.begin();
+    auto & body = attempt.getBody().front();
+    auto & caught = attempt.getCatchBody().front();
+    auto exit = llvm::dyn_cast<ctjs::TryExitOp>(body.getTerminator());
+    auto yield = llvm::dyn_cast<ctjs::TryYieldOp>(caught.getTerminator());
+    auto flag = exit ? exit.getIsThrow().getDefiningOp<mlir::arith::ConstantOp>()
+                     : mlir::arith::ConstantOp{};
+    auto literal = flag ? llvm::dyn_cast<mlir::IntegerAttr>(flag.getValue()) : mlir::IntegerAttr{};
+    // ponytail: only an unconditional explicit throw; mixed completions need
+    // their own branch/state proof before a caught borrow can be selected.
+    if (!exit || !yield || !literal || !literal.getValue().isOne() ||
+        exit.getCaughtValues().size() != caught.getNumArguments()) {
+        return refuse("DOM caught throw requires an unconditional local completion");
+    }
+    for (mlir::Operation & operation : body.without_terminator()) {
+        if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation);
+            poison && poison.getResult() == exit.getNormalResult() &&
+            poison.getResult().hasOneUse()) {
+            continue; // The unconditional throw cannot observe its normal result.
+        }
+        // Recovery removed protected checks. Prove their effects independently
+        // of DOM result typing: even a typed URI/JSON call can throw implicitly.
+        if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, mlir::arith::ConstantOp>(operation)) {
+            continue;
+        }
+        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+            compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+            continue;
+        }
+        return refuse("DOM caught throw protected effect lacks a nonthrowing proof");
+    }
+    for (auto [argument, value] : llvm::zip(caught.getArguments(), exit.getCaughtValues())) {
+        argument.replaceAllUsesWith(value);
+    }
+    for (mlir::Operation & operation : llvm::make_early_inc_range(body.without_terminator())) {
+        if (llvm::isa<mlir::ub::PoisonOp>(operation)) { continue; }
+        operation.moveBefore(attempt);
+    }
+    for (mlir::Operation & operation : llvm::make_early_inc_range(caught.without_terminator())) {
+        operation.moveBefore(attempt);
+    }
+    attempt.getResult().replaceAllUsesWith(yield.getValue());
+    attempt.erase();
+    // CFG structuring can leave unused dispatch constants in the outer prefix.
+    function.walk([](mlir::arith::ConstantOp constant) {
+        if (constant->use_empty()) { constant.erase(); }
+    });
+    return true;
+}
 
 llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,
                             unsigned maxSteps, llvm::StringRef function) {

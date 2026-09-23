@@ -408,6 +408,17 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 continue;
             }
         }
+        auto caught = lowering_detail::normalizeDOMCaughtThrow(
+            composed->lookupSymbol<ctjs::FuncOp>(handler), maxSteps);
+        if (!caught) {
+            sourceError = caught.takeError();
+            break;
+        }
+        if (*caught) {
+            if (handler == contract.entry) { entryHandler = false; }
+            transformed.moduleSha256 = hostContractFingerprint(*composed);
+            continue;
+        }
         sourceError = lowering_detail::normalizeDOMURI(*composed, transformed, maxSteps, handler);
         transformed.moduleSha256 = hostContractFingerprint(*composed);
     }

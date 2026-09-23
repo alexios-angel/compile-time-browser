@@ -28,6 +28,11 @@ llvm::Error normalizeStructuredExits(ctjs::FuncOp function, unsigned & remaining
 llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,
                             unsigned maxSteps = 100000, llvm::StringRef function = {});
 
+// On the private DOM candidate only: consume an unconditional explicit throw
+// inside its original catch. Final DOM proof must still validate all values and
+// catch effects; no borrowed C++ exception or native payload authority is added.
+llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps);
+
 struct ExceptionRecoveryResult {
     bool recovered = false;
     std::string refusal;
