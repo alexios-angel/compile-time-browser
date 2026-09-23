@@ -51,6 +51,20 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             llvm::DenseSet<mlir::Value> suffixReads;
             llvm::SmallVector<ctjs::CallOp> consumedSelectors;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
+            const auto selectFeedingRead = [&](ctjs::CallOp leaf,
+                                               ctjs::GetPropertyOp & pendingMethod,
+                                               ctjs::CallOp & pendingRead) {
+                if (!pendingRead || leaf.getArgs()[1] == pendingRead.getResult()) { return true; }
+                if (!suffixReads.erase(leaf.getArgs()[1])) { return false; }
+                // The write may consume an earlier read. Preserve the last
+                // argument read for its own later consumer, in source order.
+                suffixValues.append({pendingMethod.getResult(), pendingRead.getResult()});
+                suffixUses.insert(&pendingRead->getOpOperand(0));
+                suffixReads.insert(pendingRead.getResult());
+                pendingRead = leaf.getArgs()[1].getDefiningOp<ctjs::CallOp>();
+                pendingMethod = pendingRead.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                return true;
+            };
             for (mlir::Operation & operation : target.getBody().front()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
@@ -83,9 +97,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                              (selectorLeaf && ctjs::constantKey(read.getKey()) == "matches"))) {
                     if (sourceReadMethod) {
                         if (suffixRead || !sourceReadCall) { return false; }
-                        // Earlier argument reads are independent of the final
-                        // feeding read. Keep their values in the complete use
-                        // census; the write must still consume the final read.
+                        // Keep completed argument reads in the complete use
+                        // census; the write selects its feeding read below.
                         suffixValues.append(
                             {sourceReadMethod.getResult(), sourceReadCall.getResult()});
                         suffixUses.insert(&sourceReadCall->getOpOperand(0));
@@ -120,6 +133,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
                     leaf && method && !protectedLeaf && leaf.getCallee() == method.getResult() &&
                     leaf.getReceiver() == method.getObject() && leaf.getArgs().size() == 2) {
+                    if (!selectFeedingRead(leaf, readMethod, readCall)) { return false; }
                     protectedLeaf = leaf;
                     continue;
                 }
@@ -127,7 +141,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     leaf && secondMethod && !secondLeaf &&
                     leaf.getCallee() == secondMethod.getResult() &&
                     leaf.getReceiver() == secondMethod.getObject() && leaf.getArgs().size() == 2 &&
-                    trailingCall && leaf.getArgs()[1] == trailingCall.getResult()) {
+                    trailingCall) {
+                    if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) { return false; }
                     secondLeaf = leaf;
                     continue;
                 }
