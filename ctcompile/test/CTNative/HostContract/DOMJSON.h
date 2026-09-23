@@ -675,6 +675,79 @@ module {
               "missing, conditional, late or replaced slots and wrong receivers refuse");
         if (error) { llvm::consumeError(std::move(error)); }
     }
+
+    const std::string throwingSource = R"MLIR(
+module {
+  ctjs.func @saved$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 1
+    %payload = ctjs.constant #ctjs.number<4607182418800017408>
+    %normal = ctjs.constant #ctjs.number<4611686018427387904>
+    %equal = ctjs.compare strict_eq %element, %element
+    %condition = ctjs.truthy %equal
+    %answer = scf.if %condition -> (!ctjs.value) {
+      scf.execute_region {
+        ctjs.throw %payload
+      } {no_inline}
+      scf.yield %normal : !ctjs.value
+    } else {
+      ctjs.frame_exit %frame
+      scf.yield %normal : !ctjs.value
+    }
+    ctjs.return %answer
+  }
+}
+)MLIR";
+    for (auto payload :
+         {"#ctjs.number<4607182418800017408>", "#ctjs.string<\"saved\">", "#ctjs.boolean<true>"}) {
+        auto text = replaced(throwingSource, "#ctjs.number<4607182418800017408>", payload);
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(input), "saved primitive throw fixture parses");
+        if (!input) { continue; }
+        auto bound = contract;
+        bound.entry = "saved$0";
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            bound.provider = provider;
+            DOMEntryAnalysis proof(*input, bound);
+            check(proof.proved() && proof.savedThrows().size() == 1 &&
+                      proof.unreachableYields().size() == 1,
+                  "saved primitive throws preserve the reachable sibling frame join");
+            if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+            if (!proof.proved()) { continue; }
+            check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
+                  "saved primitive throw reproduces its exact proof budget");
+            for (unsigned budget = 0; budget < proof.steps(); ++budget) {
+                DOMEntryAnalysis limited(*input, bound, budget);
+                check(!limited.proved() && limited.exhausted() && limited.savedThrows().empty() &&
+                          limited.unreachableYields().empty() && !limited.entry(),
+                      "incomplete throw proof publishes no evidence");
+            }
+        }
+    }
+    for (const auto & invalid :
+         {replaced(throwingSource, "ctjs.throw %payload", "ctjs.throw %element"),
+          replaced(throwingSource, "#ctjs.number<4607182418800017408>", "#ctjs.null"),
+          replaced(throwingSource, "#ctjs.number<4607182418800017408>", "#ctjs.undefined"),
+          replaced(throwingSource, " {no_inline}", ""),
+          replaced(throwingSource, "ctjs.throw %payload",
+                   "%local = ctjs.constant #ctjs.number<4613937818241073152>\n        ctjs.throw "
+                   "%local"),
+          replaced(throwingSource, "      } {no_inline}",
+                   "      } {no_inline}\n      ctjs.frame_exit %frame"),
+          replaced(throwingSource, "      ctjs.frame_exit %frame\n", ""),
+          replaced(throwingSource, "    ctjs.return %answer",
+                   "    ctjs.store_global \"escaped\", %element\n    ctjs.return %answer")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsupported saved throw fixture parses");
+        if (!input) { continue; }
+        auto bound = contract;
+        bound.entry = "saved$0";
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        DOMEntryAnalysis proof(*input, bound);
+        check(!proof.proved() && proof.savedThrows().empty() && !proof.entry(),
+              "unproved payloads, regions, continuations and late effects publish no throw proof");
+    }
 }
 
 } // namespace ctcompile::test::host_contract

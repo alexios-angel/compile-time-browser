@@ -6,6 +6,37 @@ namespace ctcompile::ctnative::dom_entry_detail {
 
 std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block & body,
                                       unsigned depth, mlir::Value & frame, bool & returned) {
+    if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
+        auto & region = abrupt.getRegion();
+        auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
+                          ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
+                          : ctjs::ThrowOp{};
+        if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !abrupt.getNoInline() ||
+            abrupt->getNumOperands() || abrupt.getNumResults() || !thrown ||
+            region.front().getNumArguments()) {
+            refusal = "DOM abrupt region requires one exact saved primitive throw";
+            return false;
+        }
+        for (auto * parent = abrupt->getParentOp(); parent != function;
+             parent = parent->getParentOp()) {
+            if (!spend()) { return false; }
+            if (!llvm::isa<mlir::scf::IfOp>(parent)) {
+                refusal = "DOM saved throw requires an acyclic unprotected branch";
+                return false;
+            }
+        }
+        if (!spend() || !spend()) { return false; }
+        if ((!hasKind(thrown.getValue(), Kind::number) &&
+             !hasKind(thrown.getValue(), Kind::boolean) &&
+             !hasKind(thrown.getValue(), Kind::string)) ||
+            !dominance.dominates(thrown.getValue(), thrown)) {
+            refusal = "DOM saved throw requires a preceding owning primitive";
+            return false;
+        }
+        provedThrows.push_back(thrown);
+        nonReturning.insert(&body);
+        return true;
+    }
     if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation)) {
         if (!loop.getBefore().hasOneBlock() || !loop.getAfter().hasOneBlock()) {
             refusal = "DOM loop requires complete scalar regions";
@@ -153,6 +184,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         }
         llvm::SmallVector<Kind> joined;
         mlir::Value thenFrame = frame, elseFrame = frame;
+        bool thenThrows = false, elseThrows = false, joinedArm = false;
         const auto known = constantBooleans.find(branch.getCondition());
         const std::optional<bool> selected =
             known == constantBooleans.end() ? std::nullopt : std::optional(known->second);
@@ -203,6 +235,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
             auto & armFrame = first ? thenFrame : elseFrame;
             if (!visit(region.front(), depth + 1, armFrame)) { return false; }
+            const bool throws = nonReturning.contains(&region.front());
+            (first ? thenThrows : elseThrows) = throws;
             auto yielded = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
             if (!yielded || yielded.getNumOperands() != branch.getNumResults()) {
                 refusal = "DOM entry branch requires exact scalar yields";
@@ -225,8 +259,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 }
                 // Both arms retain the complete typed effect proof, even
                 // when an original argument decides the default branch.
-                if (selected && first != *selected) { continue; }
-                if (first || selected) {
+                if (throws || (selected && first != *selected)) { continue; }
+                if (!joinedArm) {
                     joined.push_back(kind);
                     continue;
                 }
@@ -261,16 +295,38 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 }
                 joined[index] = Kind::optionalString;
             }
+            if (!throws && (!selected || first == *selected)) { joinedArm = true; }
         }
-        if (thenFrame != elseFrame) {
+        if (!thenThrows && !elseThrows && thenFrame != elseFrame) {
             refusal = "DOM entry branch has inconsistent shadow frame exits";
             return false;
         }
-        frame = thenFrame;
+        frame = thenThrows ? elseFrame : thenFrame;
+        if (thenThrows && elseThrows) { nonReturning.insert(&body); }
         if (joined.size() != branch.getNumResults() ||
             (branch.getNumResults() && branch.getElseRegion().empty())) {
             refusal = "DOM entry branch is missing a scalar arm";
             return false;
+        }
+        for (auto & region : branch->getRegions()) {
+            if (region.empty() || !nonReturning.contains(&region.front())) { continue; }
+            if (!spend()) { return false; }
+            HostDOMUnreachableYield padding{region.front().getTerminator(), {}};
+            for (Kind kind : joined) {
+                if (!spend()) { return false; }
+                auto * context = branch.getContext();
+                if (kind == Kind::boolean) {
+                    padding.values.push_back(ctjs::BooleanAttr::get(context, false));
+                } else if (kind == Kind::number) {
+                    padding.values.push_back(ctjs::NumberAttr::get(context, 0));
+                } else if (kind == Kind::string) {
+                    padding.values.push_back(ctjs::StringAttr::get(context, ""));
+                } else {
+                    refusal = "DOM throw join requires a primitive normal result";
+                    return false;
+                }
+            }
+            provedThrowYields.push_back(std::move(padding));
         }
         for (auto [value, kind] : llvm::zip(branch.getResults(), joined)) {
             values[value] = kind;

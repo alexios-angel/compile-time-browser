@@ -2288,7 +2288,7 @@ def refusals():
 
 
 def protected_attribute(args, compilers, includes, libraries):
-    # Exercise typed suppression separately from the still-refused source throw.
+    # Exercise typed suppression separately from the saved source throw.
     source = """module {
   ctjs.func @protectedAttribute$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value, %other: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %same = ctjs.compare strict_eq %element, %other
@@ -2402,6 +2402,170 @@ def protected_attribute(args, compilers, includes, libraries):
     print(f"Protected raw DOM attribute: {executions} native executions, {refused} refusals")
 
 
+def saved_throws(args, compilers, includes, libraries):
+    # Retain the historical source inventory; execute every promoted body here.
+    original = refusals()["body-throw"]
+    cases = (
+        ("number", original, "js_num", "error.value.value() == 1.0"),
+        ("boolean", original.replace("throw 1;", "throw false;"), "js_boolean_t", "!error.value"),
+        (
+            "boolean-snapshot",
+            refusals()["body-throw-boolean-snapshot"],
+            "js_boolean_t",
+            "!error.value",
+        ),
+        (
+            "string",
+            original.replace("throw 1;", "throw 'saved';"),
+            "js_string",
+            'error.value.value() == "saved"',
+        ),
+    )
+    checks = r"""
+        (void)pressed;
+        const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+            const auto next = target.atoms().intern("data-next");
+            const auto yielded = target.atoms().intern("data-yielded");
+            const auto closed = target.atoms().intern("data-closed");
+            const auto visited = target.atoms().intern("data-visited");
+            target.log_writes(true);
+            for (unsigned repetition = 0; repetition < 2; ++repetition) {
+                for (auto name : {next, yielded, closed, visited}) {
+                    assert(target.remove_attribute(id, name));
+                }
+                (void)target.take_writes();
+                bool caught = false;
+                try { (void)call(); }
+                catch (const ctnative::js_exception<ctnative::@TYPE@> & error) {
+                    caught = @PAYLOAD@;
+                }
+                assert(caught);
+                const auto writes = target.take_writes();
+                assert(writes.size() == @WRITE_COUNT@ && writes[0].name == next &&
+                       writes[1].name == yielded && writes[@CLOSED_INDEX@].name == closed);
+                for (const auto & write : writes) { assert(write.node == id && !write.text); }
+                assert(target.read().attribute_value(id, next) == "false");
+                assert(target.read().attribute_value(id, closed) == "yes");
+                assert(target.read().has_attribute(id, visited) == @VISITED@);
+                if (@VISITED@) {
+                    assert(writes[2].name == visited);
+                    assert(target.read().attribute_value(id, visited) == "yes");
+                }
+                assert(target.remove_attribute(id, closed));
+                (void)target.take_writes();
+                assert(static_cast<bool>(call()) == @VISITED@);
+                const auto exhausted = target.take_writes();
+                assert(exhausted.size() == 2 && exhausted[0].name == next &&
+                       exhausted[1].name == yielded);
+                assert(target.read().attribute_value(id, next) == "true");
+                assert(!target.read().has_attribute(id, closed));
+            }
+        };
+        exercise(doc, button, [&] { return @ENTRY@(alias); });
+        exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+"""
+    executions = refused = observations = 0
+    for label, text, kind, payload in cases:
+        snapshot = label == "boolean-snapshot"
+        js_kind = label.partition("-")[0]
+        script = text + """
+var savedThrow, savedExhausted;
+(function() {
+  const saved = {};
+  let writes = '';
+  const anchor = {
+    hasAttribute(name) { return name in saved; },
+    setAttribute(name, value) {
+      saved[name] = '' + value;
+      writes += name + '=' + saved[name] + ';';
+    }
+  };
+  try { customElements(anchor); }
+  catch (error) { savedThrow = typeof error + ':' + error + ':' + writes; }
+  writes = '';
+  savedExhausted = '' + customElements(anchor) + ':' + writes;
+})();
+"""
+        expected = {
+            "savedThrow": f"{js_kind}:"
+            + {"number": "1", "boolean": "false", "string": "saved"}[js_kind]
+            + ":data-next=false;data-yielded=yes;"
+            + ("data-visited=yes;" if snapshot else "")
+            + "data-closed=yes;",
+            "savedExhausted": ("true" if snapshot else "false")
+            + ":data-next=true;data-yielded=yes;",
+        }
+        node = args.work / f"saved-throw-{label}-node.js"
+        node.write_text(script + "console.log(savedThrow); console.log(savedExhausted);\n")
+        assert dom.run([args.node, str(node)]).stdout.splitlines() == list(expected.values())
+        vm = args.work / f"saved-throw-{label}-vm.js"
+        vm.write_text(script)
+        assert dom.run([args.reference, str(vm)]).stdout == "".join(
+            f'{name}="{quote(value)}"\n' for name, value in sorted(expected.items())
+        )
+        observations += 4
+        ir, contract = dom.prepare(
+            args, f"saved-throw-{label}", text, 1, entry_name="customElements"
+        )
+        contract.update(initial_intrinsics=INTRINSICS)
+        for owned in (False, True):
+            manifest = dict(
+                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+            )
+            for optimize in (False, True):
+                name = f"saved-throw-{label}-{owned}-{optimize}"
+                native = dom.lower(args, ir, manifest, name, optimize=optimize)
+                cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+                if "throw ctnative::js_exception{" not in cpp or "if (true)" in cpp:
+                    raise RuntimeError(f"{name}: saved throw lost its ordinary terminating scope")
+                dom.standalone(
+                    args,
+                    native,
+                    name,
+                    (checks + (OWNED_CHECKS if owned else ""))
+                    .replace("@TYPE@", kind)
+                    .replace("@PAYLOAD@", payload)
+                    .replace("@VISITED@", "true" if snapshot else "false")
+                    .replace("@WRITE_COUNT@", "4" if snapshot else "3")
+                    .replace("@CLOSED_INDEX@", "3" if snapshot else "2"),
+                    compilers,
+                    includes,
+                    libraries,
+                )
+                executions += 2 * len(compilers)
+                if label == "number":
+                    for suffix, bad, budget in (
+                        ("budget", manifest, 0),
+                        ("missing-element", dict(manifest, element_parameters=[]), None),
+                        (
+                            "missing-close",
+                            dict(
+                                manifest,
+                                initial_intrinsics=[
+                                    value
+                                    for value in INTRINSICS
+                                    if value != "__ctbrowser_iter_close"
+                                ],
+                            ),
+                            None,
+                        ),
+                    ):
+                        dom.lower(
+                            args,
+                            ir,
+                            bad,
+                            name + "-" + suffix,
+                            optimize=optimize,
+                            max_steps=budget,
+                            success=False,
+                        )
+                        refused += 1
+    print(
+        f"Saved primitive DOM throw: {executions} native executions, {refused} refusals, "
+        f"{observations} Node/VM observations"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "clang", "node", "reference"):
@@ -2417,6 +2581,7 @@ def main():
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
     protected_attribute(args, compilers, includes, libraries)
+    saved_throws(args, compilers, includes, libraries)
     executions, refused = mixed_selectors(args, compilers)
     admitted = 0
     for label, text, breaking, results, resetting, closed in POSITIVES:
@@ -2541,6 +2706,8 @@ def main():
             dom.lower(args, ir, contract, f"compile-only-{name}-{optimize}", optimize=optimize)
             admitted += 1
     for name, text in refusals().items():
+        if name in ("body-throw", "body-throw-boolean-snapshot"):
+            continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         for optimize in (False, True):

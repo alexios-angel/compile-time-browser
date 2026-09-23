@@ -1248,10 +1248,18 @@ static LogicalResult printOperation(CppEmitter &emitter, emitc::IfOp ifOp) {
     return success();
   };
 
-  os << "if (";
-  if (failed(emitter.emitOperand(ifOp.getCondition())))
-    return failure();
-  os << ") {\n";
+  auto literal = ifOp.getCondition().getDefiningOp<emitc::LiteralOp>();
+  const bool scope = literal && literal.getValue() == "true" &&
+                     ifOp.getElseRegion().empty() &&
+                     llvm::hasSingleElement(ifOp.getThenRegion().front().without_terminator()) &&
+                     isa<ctcompile::ctnative::CppThrowOp>(ifOp.getThenRegion().front().front());
+  if (!scope) {
+    os << "if (";
+    if (failed(emitter.emitOperand(ifOp.getCondition())))
+      return failure();
+    os << ") ";
+  }
+  os << "{\n";
   os.indent();
   if (failed(emitAllExceptLast(ifOp.getThenRegion())))
     return failure();

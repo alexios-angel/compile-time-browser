@@ -449,6 +449,17 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         if (!source.proved()) { return refuse("native DOM entry: " + source.reason()); }
         mlir::IRMapping mapping;
         prepared = llvm::cast<mlir::ModuleOp>((*composed)->clone(mapping));
+        // A saved throw cannot reach its structural yield. Keep that padding
+        // in the live sibling's proved primitive kind before sparse inference,
+        // so an unreachable undefined does not widen an ordinary result.
+        for (const auto & padding : source.unreachableYields()) {
+            auto * yield = mapping.lookup(padding.operation);
+            auto at = mlir::OpBuilder::atBlockBegin(yield->getBlock());
+            for (auto [index, value] : llvm::enumerate(padding.values)) {
+                auto constant = ctjs::ConstantOp::create(at, yield->getLoc(), value);
+                yield->setOperand(static_cast<unsigned>(index), constant.getResult());
+            }
+        }
         if (auto wrapper = source.wrapper()) {
             prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
         }
@@ -525,6 +536,10 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
     }
     prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
     prepared->lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
+
+    // The complete DOM proof above establishes the replacement's structure.
+    // An earlier CFG-lifting failure describes the original handler body only.
+    prepared->lookupSymbol<ctjs::FuncOp>(contract.entry)->removeAttr("ctjs.not_structured");
 
     transformed.moduleSha256 = hostContractFingerprint(*prepared);
     const DOMEntryAnalysis checked(*prepared, transformed, maxSteps);

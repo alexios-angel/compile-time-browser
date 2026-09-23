@@ -255,6 +255,12 @@ struct HostDOMStringRefinement {
     std::vector<HostDOMStringUse> uses;
 };
 
+// Inert values for the structural yield of a proved nonreturning arm.
+struct HostDOMUnreachableYield {
+    mlir::Operation * operation;
+    std::vector<mlir::Attribute> values;
+};
+
 // Live evidence for one synchronous typed DOM entry. Only the checked source
 // declaration wrapper may be omitted. No source invocation, retained handle,
 // receiver/capture observation, or arbitrary property dispatch is authorized.
@@ -301,6 +307,11 @@ public:
     // the implicit error payload is proved unused. A parse invoke may nest in
     // the decode success continuation. This is fresh provider evidence.
     [[nodiscard]] bool invocation(ctjs::InvokeOp operation) const;
+    // Exact nonreturning regions with owning Number, Boolean or String payloads.
+    [[nodiscard]] llvm::ArrayRef<ctjs::ThrowOp> savedThrows() const { return throws; }
+    [[nodiscard]] llvm::ArrayRef<HostDOMUnreachableYield> unreachableYields() const {
+        return throwYields;
+    }
     [[nodiscard]] llvm::ArrayRef<mlir::Value> optionalStringJoins() const {
         return optionalStrings;
     }
@@ -353,6 +364,8 @@ private:
     std::vector<ctjs::LoadGlobalOp> uriIntrinsics, jsonIntrinsics, objectIntrinsics,
         regexpIntrinsics;
     std::vector<ctjs::InvokeOp> invocations;
+    std::vector<ctjs::ThrowOp> throws;
+    std::vector<HostDOMUnreachableYield> throwYields;
     std::vector<mlir::Value> optionalStrings;
     std::vector<HostDOMStringRefinement> refinements;
     std::vector<mlir::Value> strings;

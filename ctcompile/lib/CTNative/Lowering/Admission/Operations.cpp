@@ -24,6 +24,16 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (domEntry) {
+        if (auto thrown = llvm::dyn_cast<ThrowOp>(o);
+            thrown && llvm::is_contained(domEntry->savedThrows(), thrown)) {
+            return llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(thrown.getValue())) ||
+                   refuse("saved DOM throw lost its owning primitive carrier");
+        }
+        if (llvm::isa<mlir::scf::ExecuteRegionOp>(o) &&
+            llvm::any_of(domEntry->savedThrows(),
+                         [&](ThrowOp thrown) { return thrown->getParentOp() == o; })) {
+            return true;
+        }
         if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
             read &&
             (!domEntry->wellKnownSymbol(read).empty() || domEntry->isSymbolDescription(read) ||

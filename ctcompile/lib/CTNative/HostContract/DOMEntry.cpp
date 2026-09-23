@@ -205,6 +205,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         provedJSONIntrinsics, provedObjectIntrinsics, provedRegExpIntrinsics;
     std::vector<ctjs::CallOp> provedPrefixRegExps;
     std::vector<ctjs::InvokeOp> provedInvocations;
+    std::vector<ctjs::ThrowOp> provedThrows;
+    std::vector<HostDOMUnreachableYield> provedThrowYields;
     llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> provedMethods;
     std::vector<HostDOMCall> provedCalls;
     std::vector<ctjs::CreateObjectOp> provedJSONObjects;
@@ -358,6 +360,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                                        provedRegExpIntrinsics,
                                        provedPrefixRegExps,
                                        provedInvocations,
+                                       provedThrows,
+                                       provedThrowYields,
                                        provedMethods,
                                        provedCalls,
                                        provedJSONObjects,
@@ -602,6 +606,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     uriIntrinsics = std::move(provedURIIntrinsics);
     jsonIntrinsics = std::move(provedJSONIntrinsics);
     invocations = std::move(provedInvocations);
+    throws = std::move(provedThrows);
+    throwYields = std::move(provedThrowYields);
     methods = std::move(provedMethods);
     calls = std::move(provedCalls);
     jsonObjects = std::move(provedJSONObjects);

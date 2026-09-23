@@ -62,6 +62,7 @@ struct lowering {
     llvm::DenseSet<mlir::Operation *> domSymbolDescriptions;
     llvm::DenseSet<mlir::Value> domDatasetParameters;
     llvm::DenseSet<mlir::Operation *> domInvocations;
+    llvm::DenseSet<mlir::Operation *> domThrows;
     llvm::DenseSet<mlir::Value> domUnusedPayloads;
     llvm::DenseSet<mlir::Operation *> domNulls;
     llvm::DenseSet<mlir::Value> domOptionalStrings;

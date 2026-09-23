@@ -21,8 +21,10 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             return false;
         }
         if ((operation.getNumRegions() != 0 &&
-             !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::InvokeOp>(operation)) ||
-            operation.getNumSuccessors() != 0 || returned) {
+             !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ExecuteRegionOp,
+                        ctjs::InvokeOp>(operation)) ||
+            operation.getNumSuccessors() != 0 || returned ||
+            (nonReturning.contains(&body) && !llvm::isa<mlir::scf::YieldOp>(operation))) {
             refusal = "DOM entry does not admit nested control flow or a source continuation";
             return false;
         }

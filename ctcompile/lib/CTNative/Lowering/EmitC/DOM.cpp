@@ -1,4 +1,5 @@
 #include "Emitter.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -25,6 +26,7 @@ std::string lowering::domDataDefinition() const {
 
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
+    domThrows.insert(entry.savedThrows().begin(), entry.savedThrows().end());
     hasHostEntry = true;
     domDocumentParameter = entry.documentParameter();
     llvm::append_range(domStyleValues, entry.styleValues());
@@ -337,6 +339,22 @@ void lowering::prepareDOMStrings() {
 
 bool lowering::replaceDOM(mlir::Operation * operation) {
     if (domReads.contains(operation)) { return true; } // erased after their calls
+    if (domThrows.erase(operation)) {
+        auto thrown = llvm::cast<ctjs::ThrowOp>(operation);
+        auto * region = thrown->getParentOp();
+        mlir::OpBuilder at(region);
+        auto where = thrown.getLoc();
+        // Keep a terminating scope: SCF result lowering may append unreachable
+        // assignments outside it. The printer spells this unconditional scope
+        // as an ordinary C++ block, without a runtime control flag.
+        auto always = ec::LiteralOp::create(at, where, at.getI1Type(), "true");
+        auto scope = ec::IfOp::create(at, where, always, false);
+        mlir::OpBuilder body = mlir::OpBuilder::atBlockBegin(&scope.getThenRegion().front());
+        CppThrowOp::create(body, where, thrown.getValue());
+        ec::YieldOp::create(body, where);
+        region->erase();
+        return true;
+    }
     mlir::OpBuilder at(operation);
     const auto where = operation->getLoc();
     const auto optionalString = ec::OpaqueType::get(context, kDOMOptionalStringType);

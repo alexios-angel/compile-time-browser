@@ -147,6 +147,8 @@ struct Body {
     std::vector<ctjs::LoadGlobalOp> & provedRegExpIntrinsics;
     std::vector<ctjs::CallOp> & provedPrefixRegExps;
     std::vector<ctjs::InvokeOp> & provedInvocations;
+    std::vector<ctjs::ThrowOp> & provedThrows;
+    std::vector<HostDOMUnreachableYield> & provedThrowYields;
     llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> & provedMethods;
     std::vector<HostDOMCall> & provedCalls;
     std::vector<ctjs::CreateObjectOp> & provedJSONObjects;
@@ -168,6 +170,7 @@ struct Body {
     llvm::function_ref<bool()> spend;
     llvm::function_ref<bool(mlir::Value)> emptyString;
     bool documentRootPresent = false;
+    llvm::DenseSet<mlir::Block *> nonReturning{};
 
     bool hasKind(mlir::Value value, Kind kind) const {
         const auto found = values.find(value);
