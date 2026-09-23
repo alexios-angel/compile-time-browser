@@ -41,6 +41,18 @@
 // CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj escapes:stored
 
+// Numeric binary conversions preserve primitive identity without broadening Add.
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function varyingTableKey() {
     var child = {}, a = [child, 0, child], keys = [0, 2];
@@ -229,3 +241,60 @@ convertedStringTableKey(); negatedStringTableKey(); complementedStringTableKey()
 selectedConvertedTableKey(); mixedConvertedTableKey(); retainedConvertedTableKey();
 savedConvertedTableChild(); noncanonicalConvertedTableKey(); concatenatedConvertedTableKey();
 mutatedConvertedTableAlias(); overwrittenConvertedTableReceiver(); unconvertedSignedTableKey();
+
+function subtractedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0] = 0;
+    return a;
+}
+function multipliedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [null, '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function dividedTableKey() {
+    var child = {}, a = [0, child, child], keys = ['1', '2'];
+    for (var i = 0; i < a.length; i++) a[2 / keys[i % 2]] = 0;
+    return a;
+}
+function shiftedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [false, '1'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] << 1] = 0;
+    return a;
+}
+function poweredTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] ** 1] = 0;
+    return a;
+}
+function savedBinaryTableChild() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0] = 0;
+    return saved;
+}
+function concatenatedBinaryTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '0'];
+    for (var i = 0; i < a.length; i++) a[+(keys[i % 2] + 0)] = 0;
+    return a;
+}
+function noncanonicalBinaryTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function mutatedBinaryTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) {
+        a[keys[i % 2] - 0] = 0;
+        keys[1] = '0';
+    }
+    return a;
+}
+function overlappingBinaryTableReceiver() {
+    var child = {}, keys = ['0', '1'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2] * 1] = 0;
+    return a;
+}
+subtractedTableKey(); multipliedTableKey(); dividedTableKey(); shiftedTableKey(); poweredTableKey();
+savedBinaryTableChild(); concatenatedBinaryTableKey(); noncanonicalBinaryTableKey();
+mutatedBinaryTableKey(); overlappingBinaryTableReceiver();

@@ -311,7 +311,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 if (!position) { return std::nullopt; }
                 result = {operand, ContentsKind::NonBigInt, *position};
             } else if (use == IndexUse::Conversion) {
-                // Explicit unary operations convert the selected primitive to a
+                // Numeric operations convert the selected primitive to a
                 // separate Number. Do not lend this conversion to String Add or
                 // to the original property's spelling; replay retains both values.
                 const auto positive = boundedConvertedNumber(result);
@@ -395,10 +395,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
+        // Add keeps String concatenation; every other admitted binary
+        // operation converts its primitive operands before computing a Number.
+        const auto operandUse = add ? IndexUse::Number : IndexUse::Conversion;
         unsigned offsetOperand = 1;
-        auto range = self(self, expression->getOperand(0), depth + 1);
+        auto range = self(self, expression->getOperand(0), depth + 1, operandUse);
         if (!range && invariantFailure != ArrayContentsFailure::WorkLimit) {
-            range = self(self, expression->getOperand(1), depth + 1);
+            range = self(self, expression->getOperand(1), depth + 1, operandUse);
             offsetOperand = 0;
         }
         if (!range) { return std::nullopt; }
@@ -431,7 +434,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             (add || subtract || multiply || divide || remainder || shift || bitAnd || bitOr ||
              bitXor) &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
-            const auto other = self(self, expression->getOperand(offsetOperand), depth + 1);
+            const auto other =
+                self(self, expression->getOperand(offsetOperand), depth + 1, operandUse);
             if (other && endpointNumber(other->first) == endpointNumber(other->last)) {
                 offset = other->first;
             } else if (other && (bitAnd || bitOr || bitXor) &&
@@ -447,7 +451,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         const auto exponent = !offset && power && offsetOperand == 1 &&
                                       invariantFailure != ArrayContentsFailure::WorkLimit
-                                  ? self(self, expression->getOperand(1), depth + 1)
+                                  ? self(self, expression->getOperand(1), depth + 1, operandUse)
                                   : std::nullopt;
         // A syntactically varying operand can still have one proved value.
         // Reuse the invariant power transfer; its producers and reloads remain

@@ -294,6 +294,119 @@ void InductionCases::invariantReads() {
     reject("converted table aliases keep their exact allocation in the write census",
            replace(convertedTableAlias,
                    "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
+    const auto binaryTable = replace(convertedTable, "unary plus %slot", "binary sub %slot, %zero");
+    for (const std::string expression :
+         {"binary sub %slot, %zero", "binary sub %two, %slot", "binary mul %slot, %one",
+          "binary mul %one, %slot", "binary div %slot, %one", "binary mod %slot, %three",
+          "binary pow %slot, %one", "binary_static bitand %slot, %two",
+          "binary_static bitor %slot, %zero", "binary_static bitxor %slot, %zero",
+          "binary_static shl %slot, %zero", "binary_static shr %slot, %zero",
+          "binary_static ushr %slot, %zero"}) {
+        run({.what = "numeric binary table operands convert without changing original read values",
+             .body = replace(binaryTable, "binary sub %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string primitive : {"#ctjs.null", "#ctjs.boolean<false>"}) {
+        run({.what = "numeric binary operations retain original null and Boolean table values",
+             .body = replace(binaryTable, "#ctjs.string<\"0\">", primitive),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string expression :
+         {"binary div %two, %slot", "binary mod %two, %slot", "binary_static shr %two, %slot",
+          "binary pow %two, %slot"}) {
+        const bool divide = expression == "binary div %two, %slot";
+        const bool remainder = expression == "binary mod %two, %slot";
+        auto source = replace(binaryTable, "binary sub %slot, %zero", expression);
+        source = replace(source, "#ctjs.string<\"0\">",
+                         divide || remainder ? "#ctjs.string<\"1\">" : "#ctjs.string<\"0\">");
+        source = replace(source, "#ctjs.string<\"2\">",
+                         remainder ? "#ctjs.string<\"3\">"
+                         : divide  ? "#ctjs.string<\"2\">"
+                                   : "#ctjs.string<\"1\">");
+        if (!remainder) { source = replace(source, "[%x, %zero, %x]", "[%zero, %x, %x]"); }
+        run({.what =
+                 "varying binary right operands preserve original division shift and power order",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "binary table replay retains children never actually overwritten",
+         .body = replace(binaryTable, "[%textZero, %textTwo]", "[%textZero, %textZero]"),
+         .arrays = "keys:[textZero,textZero]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textZero; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    run({.what = "a child saved before binary table writes retains its original identity",
+         .body = replace(replace(binaryTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    run({.what = "two varying binary operands retain their independent original reads",
+         .body = replace(binaryTable, "  %converted = ctjs.binary sub %slot, %zero",
+                         "  %other = ctjs.get_property %keys[%pick]\n"
+                         "  %converted = ctjs.binary sub %slot, %other"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[0]=textZero; keys[1]=textTwo; keys[1]=textTwo; "
+                  "keys[0]=textZero; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    const auto selectedBinaryTable =
+        replace(selectedConvertedTable, "unary plus %slot", "binary mul %slot, %one");
+    run({.what = "binary table conversions still prove independent receiver reload gaps",
+         .body = selectedBinaryTable,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads = "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; "
+                  "keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    for (const std::string primitive :
+         {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">", "#ctjs.string<\"0.0\">",
+          "#ctjs.string<\"-2\">", "#ctjs.string<\"3\">", "#ctjs.string<\"4294967296\">",
+          "#ctjs.number<4602678819172646912>", "#ctjs.bigint<\"0\">", "#ctjs.undefined"}) {
+        reject("binary table conversion retains exact primitive and own-index bounds",
+               replace(binaryTable, "#ctjs.string<\"0\">", primitive));
+    }
+    reject("binary table conversion cannot invoke object coercion",
+           replace(binaryTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
+    reject("binary table conversion cannot read a missing own element",
+           replace(binaryTable, "[%textZero, %textTwo]", "[%textZero]"));
+    for (const std::string expression :
+         {"binary div %slot, %zero", "binary mod %slot, %zero", "binary div %slot, %three",
+          "binary pow %slot, %two", "binary add %slot, %zero", "binary add %zero, %slot",
+          "binary_static add %slot, %zero"}) {
+        reject("numeric table conversions retain poles fractional values general powers and String "
+               "Add",
+               replace(binaryTable, "binary sub %slot, %zero", expression));
+    }
+    reject("a numeric outer operation cannot convert an earlier String addition into Number Add",
+           replace(binaryTable, "  %converted = ctjs.binary sub %slot, %zero",
+                   "  %text = ctjs.binary add %slot, %zero\n"
+                   "  %converted = ctjs.binary sub %text, %zero"));
+    reject("binary table conversions cannot overlap a selected receiver reload",
+           replace(selectedBinaryTable, "#ctjs.string<\"2\">", "#ctjs.string<\"1\">"));
+    reject("a later write cannot invalidate a binary table receiver",
+           replace(selectedBinaryTable,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("binary conversion cannot make the mutable guard array an invariant table",
+           replace(binaryTable, "%keys[%pick]", "%base[%pick]"));
+    for (const std::string mutation :
+         {"ctjs.set_property %keys[%one], %textZero", "ctjs.set_property %keys[%key], %one"}) {
+        reject("binary table conversion retains mutations before reads in the complete census",
+               replace(binaryTable, "  %pick =", "  " + mutation + "\n  %pick ="));
+        reject("binary table conversion retains mutations after reads in the complete census",
+               replace(binaryTable, "  %step =", "  " + mutation + "\n  %step ="));
+    }
+    reject("binary table aliases retain exact allocation in the complete write census",
+           replace(replace(convertedTableAlias, "unary plus %slot", "binary sub %slot, %zero"),
+                   "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
     const auto reloaded = replace(
         replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
         "add %i, %one", "add %i, %unit");
