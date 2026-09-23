@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved reads through final iterator-close arguments, 2026-09-23 UTC
+
+Resumed clean **d58cbb32** and retained source `40cadb13`, including the
+interrupted compiler build and source candidate. **51d60934** reuses the
+existing feeding-read selection for the final protected write. An earlier saved
+Boolean survives another `hasAttribute` read inside that write's arguments.
+The complete use census, source order/guard, typed DOM/Style reproof, original
+body exception and budgets remain. The unchanged original, getter and order
+variant execute. Independent native review found no issues.
+
+Focused checks pass: **26 admission/refusal preflight checks, 48 native executions,
+76 refusals, 24 Node/VM observations and exact host-contract CTest 1/1**.
+Full formatting passes **1126 C++, 157 Python, 114 web files**; all three final
+code/test hashes match the devbox. The first host gate found one historical
+refusal now supported by the same proof. Its exact input was preserved and moved
+to existing saved-value identity/order assertions; production stayed unchanged.
+All 28 historical raw MLIR literals and prior source/oracle bodies are preserved.
+
+Parallel escape investigation made no code change. A focused source probe of
+`a[keys[i % 2]] = 0` with `keys = [0, 2]` still reports the child as `stored`,
+although an exact Node witness writes 0, 2, 0 and removes both child slots.
+Loop-varying table reads need a separate dependency proof; no escape improvement
+is claimed. Source/raw/escape work survived interruption through saved artifacts.
+No browser implementation changed; Claude remained uncertain. Full suites skipped.
+
+**Next native boundary:** retained
+`unsupported-saved-selector-through-final-write-argument-read`, source `c9ccc672`,
+refuses **DOM protected helper needs an independent inert-body proof** under both
+policies. Preserve a saved `matches` Boolean across the final argument read,
+including its literal-selector validity and original body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap, general powers, varying table
+keys and legacy SCF retention remain unfinished. No full-Bootstrap coverage gain
+is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-final-argument-read-values.md).
+
 ## Iterator-close feeding-read selection and invariant shift bases, 2026-09-23 UTC
 
 Resumed clean **0ca10958** and retained `005c36e5`. **8768efa0** selects the
