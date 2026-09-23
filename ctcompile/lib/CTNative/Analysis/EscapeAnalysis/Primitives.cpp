@@ -246,8 +246,10 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     if (!origin) { return std::nullopt; }
     auto unary = origin.getDefiningOp<ctjs::UnaryOp>();
     const bool negate = unary && unary.getKind() == ctjs::UnaryKind::Neg;
-    // ponytail: one literal or its source Neg; computed fractions need provenance.
-    if (negate) { origin = unary.getOperand(); }
+    // ponytail: one literal or its source Plus/Neg; arithmetic chains need provenance.
+    if (unary && (negate || unary.getKind() == ctjs::UnaryKind::Plus)) {
+        origin = unary.getOperand();
+    }
     auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
     const auto number =
         literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};

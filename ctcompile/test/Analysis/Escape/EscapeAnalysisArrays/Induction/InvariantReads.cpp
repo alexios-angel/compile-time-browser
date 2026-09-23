@@ -668,6 +668,69 @@ void InductionCases::invariantReads() {
                replace(numberFractionalTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto plusNumberTable =
+        replace(replace(numberFractionalTable,
+                        "  %textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                        "  %rawZero = ctjs.constant #ctjs.number<4606281698874543309>\n"
+                        "  %textZero = ctjs.unary plus %rawZero"),
+                "  %textTwo = ctjs.constant #ctjs.number<4613712638259704627>",
+                "  %rawTwo = ctjs.constant #ctjs.number<4613712638259704627>\n"
+                "  %textTwo = ctjs.unary plus %rawTwo");
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+          "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+          "shr %i, %textZero", "ushr %i, %textZero"}) {
+        run({.what = "one source Number Plus preserves table operands masks and shift counts",
+             .body = replace(plusNumberTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string bits :
+         {"9223372036854775808", "4751297606876816998", "9218868437227405311",
+          "9218868437227405312", "18442240474082181120", "9221120237041090560"}) {
+        run({.what = "source Plus preserves zero wide and nonfinite Number bitwise conversion",
+             .body = replace(plusNumberTable, "4606281698874543309", bits),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "source Plus preserves signed fractional Number complement",
+         .body = replace(
+             replace(replace(plusNumberTable, "4606281698874543309", "13834607695319426662"),
+                     "4613712638259704627", "13839336474928165683"),
+             "binary_static bitor %slot, %zero", "unary bitnot %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "source Plus cannot release a previously saved child",
+         .body = replace(replace(plusNumberTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    reject("source Plus does not lend bitwise truncation to original property keys",
+           replace(plusNumberTable, "%base[%converted]", "%base[%slot]"));
+    reject("source Plus does not lend bitwise truncation to arithmetic",
+           replace(plusNumberTable, "binary_static bitor %slot, %zero", "binary sub %slot, %zero"));
+    reject("source Plus requires an immediate original Number",
+           replace(plusNumberTable, "unary plus %rawZero", "unary plus %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("source Plus cannot borrow a String conversion proof",
+           replace(plusNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    reject("nested Plus requires its own computed Number provenance",
+           replace(plusNumberTable, "  %textZero = ctjs.unary plus %rawZero",
+                   "  %inner = ctjs.unary plus %rawZero\n"
+                   "  %textZero = ctjs.unary plus %inner"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("source Plus preserves mutations before and after table reads",
+               replace(plusNumberTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     const auto wideNumberTable =
         replace(replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
                         "#ctjs.number<4751297606876816998>"),

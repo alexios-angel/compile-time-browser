@@ -143,6 +143,14 @@
 // CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
 
+// One source Number Plus retains exact bitwise results and child observers.
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 111 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 112 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 113 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 114 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -273,6 +281,19 @@
 // RECORD-LABEL: fn 107 entries 1 params 0 frame {{[0-9]+}} name mutatedWideStringTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 108 entries 1 params 0 frame {{[0-9]+}} name unconvertedWideStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 109 entries 1 params 0 frame {{[0-9]+}} name unaryPlusNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 110 entries 1 params 0 frame {{[0-9]+}} name unaryPlusNonfiniteBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 111 entries 1 params 0 frame {{[0-9]+}} name unaryPlusNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 112 entries 1 params 0 frame {{[0-9]+}} name savedUnaryPlusNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 113 entries 1 params 0 frame {{[0-9]+}} name mutatedUnaryPlusNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 114 entries 1 params 0 frame {{[0-9]+}} name retainedUnaryPlusNumberTableChild
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -582,6 +603,12 @@ wideStringShiftTableKey();
 savedWideStringTableChild();
 mutatedWideStringTableKey();
 unconvertedWideStringTableKey();
+unaryPlusNumberBitwiseTableKey();
+unaryPlusNonfiniteBitwiseTableKey();
+unaryPlusNumberShiftTableKey();
+savedUnaryPlusNumberTableChild();
+mutatedUnaryPlusNumberTableKey();
+retainedUnaryPlusNumberTableChild();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -928,5 +955,40 @@ function mutatedWideStringTableKey() {
 function unconvertedWideStringTableKey() {
     var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
     for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+
+function unaryPlusNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function unaryPlusNonfiniteBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+1e999, +2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function unaryPlusNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [+0.5, +1.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedUnaryPlusNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedUnaryPlusNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = +0.5;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function retainedUnaryPlusNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+0.9, +0.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
     return a;
 }
