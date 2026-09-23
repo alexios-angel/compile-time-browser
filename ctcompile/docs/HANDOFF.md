@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mutable throwing iterator closes and negative varying powers, 2026-09-23 UTC
+
+Resumed clean **011b60ec** and retained mutable throwing closes `cd9eb979` and
+`83b34eed`. **f94cc18d** moves the existing terminal literal throw conversion
+before mutable-state body validation. Frame validation, private state transport,
+original/final observer checks, exact suppression and complete typed DOM reproof
+remain. Both original sources execute unchanged. A new witness confirms close
+sees count 13 while the saved exception remains Number 3; conditional getter
+`2b727264` is now executed too.
+
+Parallel **19c4e507** proves bounded negative varying exponents when the
+signed-unit base lattice excludes zero. Its output retains the nonzero-unit
+congruence, preserving invariant reloads from the unwritten middle slot.
+Complete reload/store census and actual-write replay remain. All 89 historical
+power source bodies/CHECKs and raw witnesses are unchanged; twelve source
+controls were added.
+
+Four selected sources pass **64 native executions, 104 refusals and 24 Node/VM
+observations**. Focused host/arrays CTests and the exact power-index lit case
+pass. Seven final code/test hashes match the devbox; 32 generated C++ files
+contain no Script/VM protocol or nullable-scalar fallback. Full formatting
+passes **1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** nonliteral mutable close `822a327b` still refuses
+**DOM iterator method must return one fresh own-field record** in both policies.
+It throws current count 13 after its effects; the saved body exception must
+remain Number 3. Prove the ignored scalar throw while retaining its producers
+and ordinary-close checks. Nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-mutable-throwing-close.md).
+
 ## Conditional iterator closes and powers with two varying operands, 2026-09-23 UTC
 
 Resumed clean **b73eba63** and retained conditional primitive/throwing closes
