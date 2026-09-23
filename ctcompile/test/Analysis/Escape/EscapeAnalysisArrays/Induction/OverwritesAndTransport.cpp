@@ -794,6 +794,59 @@ void InductionCases::overwritesAndTransport() {
            replace(boundedPower, "unary plus %power", "unary neg %power"));
     reject("power own-bound refinement does not invent integral exponents",
            replace(boundedPower, "mod %i, %two", "div %i, %two"));
+    const auto correlatedDivision = replace(dividedPower,
+                                            "%part = ctjs.binary mul %i, %two\n"
+                                            "  %powerBase = ctjs.binary add %part, %one",
+                                            "%powerBase = ctjs.binary add %i, %two");
+    run({.what = "correlated power division excludes unreachable fractional quotient positions",
+         .body = correlatedDivision,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "refined division retains children outside actual writes",
+         .body = replace(correlatedDivision, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "refined division preserves snapshots taken before overwrites",
+         .body = replace(replace(correlatedDivision, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    run({.what = "correlated division preserves negative divisors and numerator order",
+         .body = replace(replace(correlatedDivision, "sub %power, %one", "sub %one, %power"),
+                         "%position = ctjs.binary div %numerator, %two",
+                         "%negative = ctjs.unary neg %two\n"
+                         "  %position = ctjs.binary div %numerator, %negative"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto correlatedDivisionReload =
+        replace(replace(correlatedDivision, "[%x, %x, %zero]", "[%x, %x, %two]"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "  %exponent = ctjs.binary mod %i, %divisor");
+    run({.what = "fractional-enclosure refinement independently reproves reload gaps",
+         .body = correlatedDivisionReload,
+         .arrays = "a:[zero,zero,two]",
+         .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two",
+         .exit = "a -> {a}"},
+        "x");
+    reject("fractional-enclosure refinement retains the complete later-store census",
+           replace(correlatedDivisionReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
+    reject("fractional-enclosure refinement rejects an actually overwritten divisor",
+           replace(replace(correlatedDivisionReload, "[%x, %x, %two]", "[%two, %x, %zero]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("correlated division cannot discard a fractional actual key",
+           replace(correlatedDivision, "add %i, %two", "add %i, %one"));
+    reject("correlated division does not refine a zero divisor",
+           replace(correlatedDivision, "div %numerator, %two", "div %numerator, %zero"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

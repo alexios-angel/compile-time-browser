@@ -264,6 +264,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         return range;
     };
     std::pair<std::size_t, std::size_t> indexBounds{*start, last};
+    bool fractionalEnclosure = false;
     const auto indexRange = [&](auto && self, mlir::Value operand,
                                 unsigned depth) -> std::optional<IndexRange> {
         if (!spend()) {
@@ -723,6 +724,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // a singleton has no adjacent visit whose stride needs dividing.
             if (!divisor || *divisor == 0 || *first % *divisor != 0 ||
                 (!singleton && range->stride % *divisor != 0)) {
+                // Correlated unions can include fractional quotients absent
+                // from every actual visit. Only subdivision may discharge this
+                // failure; no fractional value becomes an integer range fact.
+                fractionalEnclosure |= divisor && *divisor != 0 && range->mixedShift;
                 return std::nullopt;
             }
             range->stride = singleton ? 1 : range->stride / *divisor;
@@ -809,9 +814,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 return false;
             }
             indexBounds = {begin, end};
+            fractionalEnclosure = false;
             const auto actual = indexRange(indexRange, key, 0);
-            if (!actual || guardReloads.size() != reloadCount) { return false; }
-            if (accepts(*actual)) { return true; }
+            if (guardReloads.size() != reloadCount ||
+                (!actual &&
+                 (!fractionalEnclosure || invariantFailure == ArrayContentsFailure::WorkLimit))) {
+                return false;
+            }
+            if (actual && accepts(*actual)) { return true; }
             if (begin == end) { return false; }
             const auto middle = begin + (end - begin) / *stride / 2 * *stride;
             return self(self, begin, middle) && self(self, middle + *stride, end);
@@ -826,24 +836,26 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (&operation == block->getTerminator()) { continue; }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 if (block != body) { return unsupported; }
-                if (auto range = indexRange(indexRange, store.getKey(), 0)) {
+                fractionalEnclosure = false;
+                if (auto range = indexRange(indexRange, store.getKey(), 0);
+                    range || (fractionalEnclosure && *start < size)) {
                     if (*start < size) {
                         const auto ownBounds = [&](const IndexRange & candidate) {
                             return candidate.first.integerNumber && candidate.last.integerNumber &&
                                    *candidate.first.integerNumber < size &&
                                    *candidate.last.integerNumber < size;
                         };
-                        if (!ownBounds(*range)) {
-                            if (!range->mixedShift ||
+                        if (!range || !ownBounds(*range)) {
+                            if ((range && !range->mixedShift) ||
                                 !refineIndexRange(store.getKey(), ownBounds)) {
                                 return invariantFailure;
                             }
                             // Every visit is now proved own. Keep a conservative
                             // footprint; reload gaps still need their own reproof.
-                            *range = {{store.getKey(), ContentsKind::NonBigInt, 0},
-                                      {store.getKey(), ContentsKind::NonBigInt, size - 1},
-                                      1,
-                                      true};
+                            range = IndexRange{{store.getKey(), ContentsKind::NonBigInt, 0},
+                                               {store.getKey(), ContentsKind::NonBigInt, size - 1},
+                                               1,
+                                               true};
                         }
                         guardStoreRanges.push_back(
                             {*range->first.integerNumber, *range->last.integerNumber, range->stride,

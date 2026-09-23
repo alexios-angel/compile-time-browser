@@ -596,6 +596,45 @@ void StructuredCases::mutationRefusals() {
                "%divisor = ctjs.get_property %base[%one]"));
     reject("structured own-bound refinement rejects actual negative keys",
            replace(boundedPower, "unary plus %power", "unary neg %power"));
+    const auto correlatedDivision = replace(dividedPower,
+                                            "%part = ctjs.binary mul %i, %two\n"
+                                            "    %powerBase = ctjs.binary add %part, %one",
+                                            "%powerBase = ctjs.binary add %i, %two");
+    rows.push_back({.what = "structured power division refines fractional enclosure members",
+                    .body = correlatedDivision,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "structured refined division preserves negative divisor order",
+         .body = replace(replace(correlatedDivision, "sub %power, %one", "sub %one, %power"),
+                         "%position = ctjs.binary div %numerator, %two",
+                         "%negative = ctjs.unary neg %two\n"
+                         "    %position = ctjs.binary div %numerator, %negative"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"});
+    const auto correlatedDivisionReload =
+        replace(replace(correlatedDivision, "ctjs.append %zero to %a", "ctjs.append %two to %a"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "    %exponent = ctjs.binary mod %i, %divisor");
+    rows.push_back({.what = "structured refined division independently checks reload gaps",
+                    .body = correlatedDivisionReload,
+                    .arrays = "a:[zero,zero,ctjs.binary]",
+                    .reads = "a[2]=ctjs.binary; a[0]=zero; a[2]=ctjs.binary; a[1]=zero; "
+                             "a[2]=ctjs.binary; a[2]=ctjs.binary",
+                    .exit = "a -> {a}"});
+    reject("structured fractional-enclosure refinement retains every later store",
+           replace(correlatedDivisionReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %one\n    %step ="));
+    reject("structured fractional-enclosure refinement rejects overlapping reloads",
+           replace(replace(correlatedDivisionReload, "create_array [%x, %x]",
+                           "create_array [%two, %x]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("structured division refinement retains fractional actual keys",
+           replace(correlatedDivision, "add %i, %two", "add %i, %one"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
