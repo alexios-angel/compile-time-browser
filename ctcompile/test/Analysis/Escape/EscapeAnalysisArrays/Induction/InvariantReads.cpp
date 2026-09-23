@@ -720,8 +720,13 @@ void InductionCases::invariantReads() {
     reject("source Plus requires an immediate original Number",
            replace(plusNumberTable, "unary plus %rawZero", "unary plus %p"),
            ArrayContentsFailure::UnsupportedOperation);
-    reject("source Plus cannot borrow a String conversion proof",
-           replace(plusNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    run({.what = "source Plus preserves bounded original String conversion",
+         .body =
+             replace(plusNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     run({.what = "two source Plus operations preserve the original Number provenance",
          .body = replace(plusNumberTable, "  %textZero = ctjs.unary plus %rawZero",
                          "  %inner = ctjs.unary plus %rawZero\n"
@@ -779,9 +784,13 @@ void InductionCases::invariantReads() {
          .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
          .exit = "a -> {a}"},
         "x");
-    reject(
-        "nested unary Number proof cannot convert String origins",
-        replace(nestedNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    run({.what = "nested unary Number proof preserves bounded String origins",
+         .body = replace(nestedNumberTable, "#ctjs.number<4606281698874543309>",
+                         "#ctjs.string<\"0.9\">"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     reject("nested unary Number proof cannot borrow an unknown operand",
            replace(nestedNumberTable, "unary plus %rawZero", "unary plus %p"),
            ArrayContentsFailure::UnsupportedOperation);
@@ -822,8 +831,13 @@ void InductionCases::invariantReads() {
     }
     const auto longNumberTable = unaryChainTable(64, "plus");
     reject("Number unary provenance stops after 64 source operations", unaryChainTable(65, "plus"));
-    reject("long unary Number provenance cannot convert String origins",
-           replace(longNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    run({.what = "64 unary operations preserve bounded original String provenance",
+         .body =
+             replace(longNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     reject("long unary Number provenance cannot cross an unknown operand",
            replace(longNumberTable, "unary plus %rawZero", "unary plus %p"),
            ArrayContentsFailure::UnsupportedOperation);
@@ -834,6 +848,69 @@ void InductionCases::invariantReads() {
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject("long unary Number table mutations remain visible before and after reads",
                replace(longNumberTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    const auto unaryStringTable = replace(
+        replace(plusNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"),
+        "#ctjs.number<4613712638259704627>", "#ctjs.string<\"2.9\">");
+    for (const std::string kind : {"plus", "neg"}) {
+        auto source = unaryStringTable;
+        if (kind == "neg") {
+            source = replace(replace(replace(source, "unary plus %rawZero", "unary neg %rawZero"),
+                                     "#ctjs.string<\"0.9\">", "#ctjs.string<\"-0.9\">"),
+                             "#ctjs.string<\"2.9\">", "#ctjs.string<\"-2.9\">");
+            reject("an unnegated negative String operand cannot authorize an own array index",
+                   source);
+            source = replace(source, "unary plus %rawTwo", "unary neg %rawTwo");
+        }
+        for (const std::string expression :
+             {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+              "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+              "shr %i, %textZero", "ushr %i, %textZero"}) {
+            run({.what = "String unary Number operands masks and counts keep Core conversion",
+                 .body = replace(source, "bitor %slot, %zero", expression),
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+    }
+    for (const std::string text :
+         {"-0", "4294967296.9", "Infinity", "-Infinity", "NaN", "1e999", "0x100000000"}) {
+        run({.what = "String unary Number zero wide and nonfinite inputs keep bounded grammar",
+             .body = replace(unaryStringTable, "#ctjs.string<\"0.9\">",
+                             "#ctjs.string<\"" + text + "\">"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "String unary Number complement keeps signed fractional values",
+         .body = replace(
+             replace(replace(unaryStringTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"-1.9\">"),
+                     "#ctjs.string<\"2.9\">", "#ctjs.string<\"-3.9\">"),
+             "binary_static bitor %slot, %zero", "unary bitnot %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string text :
+         {"1e2147483647", "0x", "1e", "nan", "000000000000000000000000000000000"}) {
+        reject(
+            "String unary provenance preserves grammar exponent and source-size bounds",
+            replace(unaryStringTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    reject("String unary provenance stops after 64 source operations",
+           replace(unaryChainTable(65, "plus"), "#ctjs.number<4606281698874543309>",
+                   "#ctjs.string<\"0.9\">"));
+    reject("String unary Number bitwise conversion does not truncate property keys",
+           replace(unaryStringTable, "%base[%converted]", "%base[%slot]"));
+    reject(
+        "String unary Number bitwise conversion does not truncate arithmetic",
+        replace(unaryStringTable, "binary_static bitor %slot, %zero", "binary sub %slot, %zero"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("String unary Number conversion retains mutations before and after table reads",
+               replace(unaryStringTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
     const auto wideNumberTable =
