@@ -390,6 +390,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         if (!offset && power && offsetOperand == 1 &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
             if (!exponent) { return std::nullopt; }
+            // Correlated visits may use only scalar identities even when these
+            // independent ranges include general powers or zero to a negative
+            // exponent. Subdivision must prove every visit with the same transfer.
+            refinableEnclosure = true;
             if (endpointNumber(range->first) < -1 || endpointNumber(range->last) > 1) {
                 if (exponent->first.integerNumber != 0 || exponent->last.integerNumber != 1) {
                     return std::nullopt;

@@ -382,10 +382,32 @@ void StructuredCases::mutationRefusals() {
            replace(replace(singletonReload, "create_array [%x, %one]", "create_array [%one, %x]"),
                    "%divisor = ctjs.get_property %base[%one]",
                    "%divisor = ctjs.get_property %base[%zero]"));
-    reject("structured nonsingleton exponents cannot borrow unit power proofs",
-           replace(singletonPower, "mod %i, %one", "mod %i, %two"));
+    rows.push_back({.what = "structured correlated exponents prove only actual scalar identities",
+                    .body = replace(singletonPower, "mod %i, %one", "mod %i, %two"),
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
     reject("structured singleton exponents cannot prove general interior powers",
            replace(singletonPower, "add %part, %one", "add %part, %two"));
+    const auto correlatedPower =
+        replace(replace(singletonPower, "ctjs.append %y to %a", "ctjs.append %two to %a"),
+                "%part = ctjs.binary mod %i, %one\n"
+                "    %exponent = ctjs.binary add %part, %one",
+                "%offset = ctjs.get_property %base[%two]\n"
+                "    %exponent = ctjs.binary sub %offset, %i");
+    rows.push_back({.what = "structured correlated powers independently prove reload gaps",
+                    .body = correlatedPower,
+                    .arrays = "a:[zero,zero,ctjs.binary]",
+                    .reads = "a[2]=ctjs.binary; a[0]=zero; a[2]=ctjs.binary; a[1]=zero; "
+                             "a[2]=ctjs.binary; a[2]=ctjs.binary",
+                    .exit = "a -> {a}"});
+    reject("structured correlated powers retain all later producer writes",
+           replace(correlatedPower,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured correlated powers cannot reload a written element",
+           replace(replace(correlatedPower, "create_array [%x, %x]", "create_array [%two, %x]"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%zero]"));
     const auto singletonBasePower =
         replace(replace(replace(twoPointPower, "create_array [%x]", "create_array [%x, %x]"),
                         "ctjs.append %y to %a", "ctjs.append %zero to %a"),

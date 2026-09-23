@@ -124,7 +124,7 @@
 // CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj escapes:stored
 
 // A proved singleton base uses the existing invariant-base proof and its exact scalar identities.
@@ -284,6 +284,18 @@
 // CHECK: escape {{[0-9a-f]+}} 243 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 244 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 245 {{[0-9]+}} obj escapes:stored
+
+// Correlated powers subdivide to existing exact identities; actual general powers still refuse.
+// CHECK: escape {{[0-9a-f]+}} 246 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 247 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 248 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 249 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 250 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 251 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 252 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 253 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 254 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 255 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function unit() {
@@ -1684,3 +1696,60 @@ varyingQuotient(); varyingRemainder(); negativeVaryingRemainder();
 retainedVaryingDivisor(); savedVaryingDivisor(); reloadedVaryingDivisor();
 laterVaryingDivisorStore(); overlappingVaryingDivisor();
 interiorZeroVaryingDivisor(); fractionalVaryingDivisor();
+
+function correlatedPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (2 - i)] = 0;
+    return a;
+}
+function reversedCorrelatedPower() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(2 - i) ** i] = 0;
+    return a;
+}
+function retainedCorrelatedPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (2 - i)] = 0;
+    return a;
+}
+function savedCorrelatedPower() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i ** (2 - i)] = 0;
+    return saved;
+}
+function reloadedCorrelatedPower() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[i ** (a[2] - i)] = 0;
+    return a;
+}
+function laterCorrelatedPowerStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[i ** (a[2] - i)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingCorrelatedPower() {
+    var child = {}, a = [2, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (a[0] - i)] = 0;
+    return a;
+}
+function crossingCorrelatedPower() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** (i - 1) + 1] = 0;
+    return a;
+}
+function poleCorrelatedPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** (i - 2) + 1] = 0;
+    return a;
+}
+function generalCorrelatedPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** i % 3] = 0;
+    return a;
+}
+correlatedPower(); reversedCorrelatedPower(); retainedCorrelatedPower(); savedCorrelatedPower();
+reloadedCorrelatedPower(); laterCorrelatedPowerStore(); overlappingCorrelatedPower();
+crossingCorrelatedPower(); poleCorrelatedPower(); generalCorrelatedPower();

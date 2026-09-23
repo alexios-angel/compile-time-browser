@@ -538,10 +538,71 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(singletonReload, "[%x, %one, %zero]", "[%one, %x, %zero]"),
                    "%divisor = ctjs.get_property %base[%one]",
                    "%divisor = ctjs.get_property %base[%zero]"));
-    reject("a nonsingleton exponent cannot borrow a unit power proof",
-           replace(singletonPower, "mod %i, %one", "mod %i, %two"));
+    run({.what = "correlated nonsingleton exponents prove only the actual scalar identities",
+         .body = replace(singletonPower, "mod %i, %one", "mod %i, %two"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
     reject("a singleton exponent does not prove general interior powers",
            replace(singletonPower, "add %part, %one", "add %part, %two"));
+    const auto correlatedPower = replace(replace(unitPower, "[%one, %x]", "[%x, %x, %zero]"),
+                                         "%position = ctjs.binary pow %i, %one",
+                                         "%exponent = ctjs.binary sub %two, %i\n"
+                                         "  %position = ctjs.binary pow %i, %exponent");
+    run({.what = "correlated power operands refine to exact scalar identities",
+         .body = correlatedPower,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "correlated power replay preserves unvisited children",
+         .body = replace(correlatedPower, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "correlated powers retain saved child identity",
+         .body = replace(replace(correlatedPower, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto correlatedReload =
+        replace(replace(correlatedPower, "[%x, %x, %zero]", "[%x, %x, %two]"),
+                "%exponent = ctjs.binary sub %two, %i",
+                "%offset = ctjs.get_property %base[%two]\n"
+                "  %exponent = ctjs.binary sub %offset, %i");
+    run({.what = "correlated powers independently prove every producer reload gap",
+         .body = correlatedReload,
+         .arrays = "a:[zero,zero,two]",
+         .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two",
+         .exit = "a -> {a}"},
+        "x");
+    reject("correlated powers retain the complete later-store census",
+           replace(correlatedReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("correlated powers cannot reload an actual overwritten element",
+           replace(replace(correlatedReload, "[%x, %x, %two]", "[%two, %x, %zero]"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%zero]"));
+    const auto crossingCorrelatedPower =
+        replace(replace(correlatedPower, "[%x, %x, %zero]", "[%x, %one, %x]"),
+                "%exponent = ctjs.binary sub %two, %i\n"
+                "  %position = ctjs.binary pow %i, %exponent",
+                "%powerBase = ctjs.binary sub %i, %one\n"
+                "  %exponent = ctjs.binary sub %i, %one\n"
+                "  %power = ctjs.binary pow %powerBase, %exponent\n"
+                "  %position = ctjs.binary add %power, %one");
+    run({.what = "correlated signed powers exclude nonexistent zero-base negative exponents",
+         .body = crossingCorrelatedPower,
+         .arrays = "a:[zero,one,zero]",
+         .reads = "a[0]=zero; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("correlated powers retain a real zero-base negative exponent refusal",
+           replace(crossingCorrelatedPower, "%exponent = ctjs.binary sub %i, %one",
+                   "%exponent = ctjs.binary sub %i, %two"));
     const auto singletonBasePower = replace(replace(unitPower, "[%one, %x]", "[%x, %x, %zero]"),
                                             "%position = ctjs.binary pow %i, %one",
                                             "%part = ctjs.binary mod %i, %one\n"
