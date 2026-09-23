@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mixed iterator completions and unit-base power indices, 2026-09-23 UTC
+
+Resumed clean **e4e06268** and the retained mixed throw/return source `43ab2b64`.
+**e2dee4cc** proves its three effectful exits with a bounded ordinal discriminator.
+Each exit keeps its tuple until the continuation selects the live payload;
+selected-arm use checks, source effects, saved pre-close values, frame cleanup
+and complete DOM reproof remain. The unchanged original now executes throw,
+return and exhaustion, including both Boolean payloads and throw precedence
+when both guards are set. Generated code uses public DOM and ordinary ownership.
+
+Parallel **43392dca** proves unit-base power indices such as `1 ** i`
+through existing bounded conversion and power transfer. Operand order, reload
+and store census, actual-write replay and budgets remain; general powers refuse.
+Two historical raw source bodies now prove unchanged. All 17 historical power
+source functions and CHECKs remain, with ten controls appended.
+
+Focused host and arrays CTests and the exact power-index lit case pass.
+Eight saved-throw sources pass **128 native executions, 24 refusals and
+56 Node/VM observations**; three prior sources pass **48 executions, 76 refusals
+and 24 Node/VM observations**, with no nonexecuted admissions. Five historical
+throw oracles agree on **20 observations per engine**. Full formatting passes
+**1126 C++, 157 Python, 114 web files**, followed by the final scoped C++ check.
+Seven final hashes match the devbox; 88 generated C++ files contain no Script/VM
+or nullable-scalar fallback. All 233 historical iterator bodies and 86 metadata
+rows are preserved. Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** original Number snapshot `7c0874c9`, then conditional
+`8ee2040d`, still refuse **DOM iterator protected close needs a mutable-state
+proof** in both policies. Preserve the saved pre-close Number while transporting
+the close method's captured-state writes through suppression and complete reproof.
+Throwing/primitive close methods, multiple protected regions, implicit cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver
+and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-mixed-completion.md).
+
 ## Protected attribute reads and zero/unit power indices, 2026-09-23 UTC
 
 Resumed clean **cdd54063** and retained conditional Boolean throw `9c10be3d`.
