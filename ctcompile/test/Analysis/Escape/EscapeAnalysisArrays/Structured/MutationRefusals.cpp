@@ -304,6 +304,45 @@ void StructuredCases::mutationRefusals() {
                    "%exponent = ctjs.binary sub %i, %one"));
     reject("structured varying powers cannot borrow fractional exponent bounds",
            replace(varyingOddPower, "mul %i, %two", "div %i, %two"));
+    const auto negativeVaryingPower =
+        replace(replace(replace(signedUnitOdd, "create_array [%x, %y]", "create_array [%x, %zero]"),
+                        "add %i, %one", "add %i, %two"),
+                "%power = ctjs.binary pow %powerBase, %three",
+                "%exponent = ctjs.binary sub %i, %three\n"
+                "    %power = ctjs.binary pow %powerBase, %exponent");
+    for (const auto & subtrahend : {"%three", "%one"}) {
+        rows.push_back({.what = "structured varying signed units allow bounded negative exponents",
+                        .body = replace(negativeVaryingPower, "sub %i, %three",
+                                        "sub %i, " + std::string(subtrahend)),
+                        .arrays = "a:[zero,zero,zero]",
+                        .reads = "a[0]=zero; a[2]=zero",
+                        .exit = "a -> {a}"});
+    }
+    rows.push_back({.what = "structured negative even powers preserve an unwritten child",
+                    .body = replace(negativeVaryingPower, "sub %i, %three", "sub %i, %two"),
+                    .arrays = "a:[x,zero,zero]",
+                    .reads = "a[0]=x; a[2]=zero",
+                    .exit = "a -> {a,x}"});
+    const auto negativeVaryingReload = replace(
+        replace(negativeVaryingPower, "create_array [%x, %zero]", "create_array [%x, %three]"),
+        "%exponent = ctjs.binary sub %i, %three",
+        "%offset = ctjs.get_property %base[%one]\n"
+        "    %exponent = ctjs.binary sub %i, %offset");
+    rows.push_back({.what = "structured negative varying powers retain disjoint offset reloads",
+                    .body = negativeVaryingReload,
+                    .arrays = "a:[zero,ctjs.binary,zero]",
+                    .reads = "a[1]=ctjs.binary; a[0]=zero; a[1]=ctjs.binary; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured negative varying powers cannot include an interior zero base",
+           replace(negativeVaryingPower, "add %i, %two", "add %i, %one"));
+    reject("structured negative varying powers retain the complete later-store census",
+           replace(negativeVaryingReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="));
+    reject("structured negative varying powers cannot hide overlapping offset reloads",
+           replace(replace(negativeVaryingReload, "create_array [%x, %three]",
+                           "create_array [%three, %zero]"),
+                   "%offset = ctjs.get_property %base[%one]",
+                   "%offset = ctjs.get_property %base[%zero]"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

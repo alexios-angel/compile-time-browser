@@ -447,6 +447,51 @@ void InductionCases::overwritesAndTransport() {
            replace(positiveVaryingPower, "add %i, %one\n", "div %i, %two\n"));
     reject("two varying signed powers must still produce own nonnegative keys",
            replace(varyingOddPower, "add %power, %one", "add %power, %zero"));
+    const auto negativeVaryingPower =
+        replace(signedTwoPoint, "%power = ctjs.binary pow %powerBase, %three",
+                "%exponent = ctjs.binary sub %i, %three\n"
+                "  %power = ctjs.binary pow %powerBase, %exponent");
+    for (const auto & subtrahend : {"%three", "%one"}) {
+        run({.what = "varying signed units exclude zero for negative and crossing exponents",
+             .body = replace(negativeVaryingPower, "sub %i, %three",
+                             "sub %i, " + std::string(subtrahend)),
+             .arrays = "a:[zero,zero,zero]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "even negative varying powers retain children outside actual writes",
+         .body = replace(negativeVaryingPower, "sub %i, %three", "sub %i, %two"),
+         .arrays = "a:[x,zero,zero]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    const auto negativeVaryingReload =
+        replace(replace(negativeVaryingPower, "[%x, %zero, %x]", "[%x, %three, %x]"),
+                "%exponent = ctjs.binary sub %i, %three",
+                "%offset = ctjs.get_property %base[%one]\n"
+                "  %exponent = ctjs.binary sub %i, %offset");
+    run({.what = "negative varying powers refine the gap before accepting invariant reloads",
+         .body = negativeVaryingReload,
+         .arrays = "a:[zero,three,zero]",
+         .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative varying power overwrites retain saved child identity",
+         .body = replace(replace(negativeVaryingPower, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    reject("negative varying powers cannot hide an interior zero base",
+           replace(negativeVaryingPower, "add %i, %two", "add %i, %one"));
+    reject("negative varying powers retain the complete later-store census",
+           replace(negativeVaryingReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
+    reject("negative varying powers cannot reload an overwritten exponent offset",
+           replace(replace(negativeVaryingReload, "[%x, %three, %x]", "[%three, %zero, %x]"),
+                   "%offset = ctjs.get_property %base[%one]",
+                   "%offset = ctjs.get_property %base[%zero]"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

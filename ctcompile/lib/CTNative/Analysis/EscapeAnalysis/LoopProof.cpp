@@ -357,23 +357,29 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         if (!offset && power && offsetOperand == 1 &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
             const auto exponent = self(self, expression->getOperand(1), depth + 1);
-            if (!exponent || !exponent->first.integerNumber || endpointNumber(range->first) < -1 ||
-                endpointNumber(range->last) > 1) {
+            if (!exponent || endpointNumber(range->first) < -1 || endpointNumber(range->last) > 1) {
                 return std::nullopt;
             }
+            // A signed-unit lattice may skip zero. Negative exponents are exact
+            // only when every possible base is a unit, including interior visits.
+            const bool zeroBase = endpointNumber(range->first) <= 0 &&
+                                  endpointNumber(range->last) >= 0 &&
+                                  (range->first.integerNumber == 0 || range->stride == 1);
+            if (!exponent->first.integerNumber && zeroBase) { return std::nullopt; }
             // Every combination is an exact scalar identity. An odd exponent
             // can retain a negative unit; zero to zero must still include one.
-            const bool odd = *exponent->first.integerNumber % 2 != 0 ||
+            const bool odd = endpointNumber(exponent->first) % 2 != 0 ||
                              (endpointNumber(exponent->first) != endpointNumber(exponent->last) &&
                               exponent->stride % 2 != 0);
-            ContentsValue first{operand, ContentsKind::NonBigInt, 0};
+            ContentsValue first{operand, ContentsKind::NonBigInt, zeroBase ? 0U : 1U};
             if (range->first.negativeIntegerNumber && odd) {
                 first.integerNumber.reset();
                 first.negativeIntegerNumber = 1;
             }
             // ponytail: independent ranges lose correlation; bounded whole-key
             // refinement checks reload gaps, while replay records actual writes.
-            return IndexRange{first, {operand, ContentsKind::NonBigInt, 1}, 1, true};
+            return IndexRange{
+                first, {operand, ContentsKind::NonBigInt, 1}, zeroBase ? 1U : 2U, true};
         }
         if (!offset) { return std::nullopt; }
         // At most two varying values need only their exact scalar power proofs;
