@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Suppressed iterator close throws and two-value power indices, 2026-09-23 UTC
+
+Resumed clean **6d6d026d** and original throwing close `fa88f9d6`.
+**3d221b61** proves its terminal literal throw is unobserved under exact
+saved-throw suppression. The close method must have one confined closure and
+no symbolic callers; exhaustion removes only a proved unreachable close.
+All preceding effects and payload producers remain for complete helper and
+DOM reproof. The original body exception wins over the close exception, with
+ordinary owned native values and public DOM calls. No browser code changed.
+
+Parallel **abddf2d3** proves power indices with at most two possible
+varying values through existing scalar transfer and endpoint bounds.
+Operand order, signed bounds, complete reload/store checks and actual-write
+replay remain. All 53 historical source bodies survive; source 13 now proves
+unchanged, and twelve controls were appended.
+
+Fifteen saved-throw sources pass **240 native executions, 116 refusals and
+88 Node/VM observations**. After the final own-store check, the two affected
+sources pass **32 native executions, 32 refusals and eight Node/VM observations**.
+Focused host/arrays CTests and the exact power-index lit case pass. All seven
+final code/test hashes match the devbox; 144 generated C++ files contain no
+Script/VM protocol or nullable-scalar fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** original getter close `68ea7208` still refuses
+**DOM helper has no complete return or yield** in both policies. Its return
+property getter writes an attribute and throws during method lookup; preserve
+those effects and the original saved exception under the existing suppression.
+Derived conditional primitive/throwing closes `1fe1a3e8`/`fd04cbc3` still need
+loop completion/done correlation. Mutable throwing-close state, nonterminal
+exceptional state, multiple protected regions, implicit cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-throwing-close.md).
+
 ## Primitive iterator close results and negative-unit power indices, 2026-09-23 UTC
 
 Resumed clean **563a6a4a** and the retained primitive close `5c738524`.
