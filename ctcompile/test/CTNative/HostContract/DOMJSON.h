@@ -642,6 +642,17 @@ module {
         replaced(appendWrite(alternatingTerminal, finalWrite, "late"),
                  "ctjs.call %lateMethod(%element, %lateName, %lateValue)",
                  "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)");
+    const auto terminalSelectorValue = replaced(
+        earlierTerminalValue, "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+        "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)");
+    const auto alternatingSelectorValue =
+        replaced(alternatingEarlierValue,
+                 "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                 "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)");
+    const auto lastSelectorValue =
+        replaced(alternatingEarlierValue,
+                 "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                 "ctjs.call %lateMethod(%element, %lateName, %alternateTerminalPresent)");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -719,6 +730,22 @@ module {
              std::pair{earlierTerminalValue, true},
              std::pair{secondTerminalValue, true},
              std::pair{alternatingEarlierValue, true},
+             std::pair{terminalSelectorValue, true},
+             std::pair{alternatingSelectorValue, true},
+             std::pair{lastSelectorValue, true},
+             std::pair{replaced(terminalSelectorValue, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(terminalSelectorValue, "data-late", "bad name"), false},
+             std::pair{replaced(terminalSelectorValue, "#ctjs.string<\"data-after-terminal\">",
+                                "#ctjs.number<0>"),
+                       false},
+             std::pair{replaced(replaced(terminalSelectorValue,
+                                         "ctjs.get_property %element[%terminalReadKey]",
+                                         "ctjs.get_property %text[%terminalReadKey]"),
+                                "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                                "ctjs.call %terminalReadMethod(%text, %terminalReadName)"),
+                       false},
              std::pair{singleTerminalValue, true},
              std::pair{replaced(earlierTerminalValue, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
@@ -987,6 +1014,11 @@ module {
             valid.find("%name, %afterTerminalPresent)") != std::string::npos;
         const bool savedSecondTerminalValue =
             valid.find("%lateName, %secondTerminalPresent)") != std::string::npos;
+        const bool savedTerminalSelector =
+            valid.find("%lateName, %terminalPresent)") != std::string::npos;
+        const bool savedAlternateSelector =
+            valid.find("%lateName, %alternateTerminalPresent)") != std::string::npos;
+        const bool savedSelectorValue = savedTerminalSelector || savedAlternateSelector;
         const bool terminalMatches =
             valid.find("%terminalReadKey = ctjs.constant #ctjs.string<\"matches\">") !=
             std::string::npos;
@@ -1096,7 +1128,12 @@ module {
                 auto value = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
                 auto read = call.getArgs()[1].getDefiningOp<ctjs::CallOp>();
                 const bool retainsValue =
-                    savedTerminalValue
+                    savedSelectorValue
+                        ? read && read.getResult().hasOneUse() && read->isBeforeInBlock(method) &&
+                              ctjs::constantKey(read.getArgs()[0]) ==
+                                  (savedTerminalSelector ? "[data-terminal]"
+                                                         : "[data-alternate-terminal]")
+                    : savedTerminalValue
                         ? read && read.getResult().hasOneUse() && read->isBeforeInBlock(method) &&
                               (!typed || ctjs::constantKey(read.getArgs()[0]) ==
                                              (savedSecondTerminalValue ? "data-second-terminal"
@@ -1109,8 +1146,9 @@ module {
                                   (alternatingReads
                                        ? mlir::Attribute(ctjs::StringAttr::get(&context, "yes"))
                                        : ctjs::BooleanAttr::get(&context, false));
-                check(preceding == (alternatingReads ? 7u : 6u) && retainsValue &&
-                          llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
+                check(preceding == (alternatingReads ? 7u : 6u) -
+                                       static_cast<unsigned>(savedSelectorValue) &&
+                          retainsValue && llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
                       "late write retains its value, selector order and source guard");
                 for (ctjs::CallOp read : invoke->getBlock()->getOps<ctjs::CallOp>()) {
                     if (read.getResult().use_empty()) {
@@ -1140,7 +1178,7 @@ module {
                         preceding += invoke->isBeforeInBlock(method);
                     }
                     check(
-                        preceding == 6 &&
+                        preceding == 6u - static_cast<unsigned>(savedTerminalSelector) &&
                             (savedTerminalValue && !savedSecondTerminalValue
                                  ? call.getResult().hasOneUse()
                                  : call.getResult().use_empty()) &&
@@ -1208,7 +1246,8 @@ module {
                                  static_cast<unsigned>(finalWrites) + suffixWrites +
                                  static_cast<unsigned>(terminalMatches) +
                                  static_cast<unsigned>(alternatingReads) +
-                                 static_cast<unsigned>(lateWrites) &&
+                                 static_cast<unsigned>(lateWrites) -
+                                 static_cast<unsigned>(savedSelectorValue) &&
                   calls ==
                       1u + static_cast<unsigned>(reads) + static_cast<unsigned>(trailingReads) +
                           static_cast<unsigned>(secondWrites) +
@@ -1255,7 +1294,7 @@ module {
                 check(proof.call(call) &&
                           proof.call(call)->kind ==
                               (selector ? HostDOMMethod::matches : HostDOMMethod::hasAttribute) &&
-                          (!selector || selectedWrites),
+                          (!selector || selectedWrites || savedSelectorValue),
                       "the moved read has exact typed no-source-throw evidence");
             });
             check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
@@ -1287,7 +1326,9 @@ module {
                                       terminalReadValue,
                                       alternatingReadValue,
                                       earlierTerminalValue,
-                                      alternatingEarlierValue}) {
+                                      alternatingEarlierValue,
+                                      terminalSelectorValue,
+                                      alternatingSelectorValue}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1308,7 +1349,31 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(earlierTerminalValue, "%answer = ctjs.create_object",
+         {replaced(terminalSelectorValue, "[data-terminal]", "["),
+          replaced(terminalSelectorValue, "#ctjs.string<\"[data-terminal]\">", "#ctjs.number<0>"),
+          replaced(lastSelectorValue, "[data-alternate-terminal]", "["),
+          replaced(terminalSelectorValue,
+                   "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                   "ctjs.call %terminalReadMethod(%element, %terminalReadName, %name)"),
+          replaced(terminalSelectorValue, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %terminalPresent"),
+          replaced(terminalSelectorValue, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %terminalPresent\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(appendWrite(terminalSelectorValue, finalWrite, "reuse"),
+                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                   "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
+          replaced(terminalSelectorValue,
+                   "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)",
+                   "ctjs.call %lateMethod(%element, %terminalPresent, %terminalPresent)"),
+          replaced(terminalSelectorValue, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %terminalReadMethod(%element, %terminalReadName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(terminalSelectorValue, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(earlierTerminalValue, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
           replaced(earlierTerminalValue, "%answer = ctjs.create_object",
@@ -1323,9 +1388,6 @@ module {
           replaced(earlierTerminalValue,
                    "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
                    "ctjs.call %lateMethod(%text, %lateName, %afterTerminalPresent)"),
-          replaced(earlierTerminalValue,
-                   "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
-                   "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)"),
           replaced(earlierTerminalValue,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),

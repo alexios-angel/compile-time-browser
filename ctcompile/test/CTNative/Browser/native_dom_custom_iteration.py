@@ -2482,6 +2482,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.hasAttribute('data-closed'); anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
         "const present = anchor.hasAttribute('data-closed'); anchor.hasAttribute('data-unvisited'); anchor.setAttribute('data-after-terminal', present);",
     )
+    terminal_write_selector_value_source = terminal_write_earlier_value_source.replace(
+        "anchor.matches('[data-closed=false]'); const present = anchor.hasAttribute('data-closed');",
+        "const present = anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-closed');",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3075,6 +3079,30 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-value-close",
+            terminal_write_selector_value_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-value-getter-close",
+            terminal_write_selector_value_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-value-order-close",
+            terminal_write_selector_value_source.replace(
+                "anchor.setAttribute('data-closed', false); const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', false);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -3141,12 +3169,14 @@ def saved_throws(args, compilers, includes, libraries):
         terminal_match_read = "-terminal-match-read-" in label
         terminal_write = "-terminal-match-read-sequence-write-" in label
         terminal_write_value = "-terminal-match-read-sequence-write-value-" in label
+        terminal_selector_value = "-write-selector-value-" in label
+        early_terminal_selector = terminal_selector_value and label.endswith("-order-close")
         terminal_sequence = ()
         if "-terminal-match-read-sequence-" in label:
             terminal_sequence = ("data-closed", "data-unvisited")
             if label.endswith("-missing-read"):
                 terminal_sequence = ("data-unvisited", "data-unvisited")
-            elif label.endswith("-order-close"):
+            elif label.endswith("-order-close") and not early_terminal_selector:
                 terminal_sequence = ("data-unvisited", "data-closed")
             elif label.endswith("-wider-close"):
                 terminal_sequence = (
@@ -3217,6 +3247,11 @@ def saved_throws(args, compilers, includes, libraries):
         if terminal_match:
             terminal_value = "false" if closed == "true" else "true"
             close_writes += f"matches=[data-closed=false]:{terminal_value};"
+        if early_terminal_selector:
+            close_writes = (
+                close_writes.removesuffix("data-closed=false;matches=[data-closed=false]:true;")
+                + "matches=[data-closed=false]:false;data-closed=false;"
+            )
         if terminal_sequence:
             for terminal_name in terminal_sequence:
                 if terminal_name is None:
@@ -3234,6 +3269,8 @@ def saved_throws(args, compilers, includes, libraries):
                 after_terminal_value = (
                     "false" if terminal_sequence[0] == "data-unvisited" else "true"
                 )
+            if terminal_selector_value:
+                after_terminal_value = "false" if early_terminal_selector else "true"
             close_writes += f"data-after-terminal={after_terminal_value};"
         conditional = label.startswith("conditional-")
         numeric_snapshot = kind == "js_num" and label not in (
@@ -3516,14 +3553,23 @@ var savedThrow, savedExhausted;
                         close_body = cpp[
                             cpp.index(selector_call) : cpp.index("throw ctnative::js_exception{")
                         ]
+                        if early_terminal_selector:
+                            last_selector = close_body.rfind(selector_call)
+                            last_closed_write = close_body.rfind(
+                                "ctnative::set_attribute(",
+                                0,
+                                close_body.rfind("ctnative::set_attribute("),
+                            )
+                            if last_selector >= last_closed_write:
+                                raise RuntimeError(f"{name}: saved selector moved after its write")
                         final_write = close_body.rfind("ctnative::set_attribute(")
                         before_terminal_write = (
                             close_body[:final_write] if terminal_write else close_body
                         )
-                        if close_body.count(selector_call) != 2 + terminal_sequence.count(
-                            None
-                        ) or close_body.rfind(selector_call) <= before_terminal_write.rfind(
-                            "ctnative::set_attribute("
+                        if close_body.count(selector_call) != 2 + terminal_sequence.count(None) or (
+                            not early_terminal_selector
+                            and close_body.rfind(selector_call)
+                            <= before_terminal_write.rfind("ctnative::set_attribute(")
                         ):
                             raise RuntimeError(f"{name}: final selector lost its close write order")
                         if terminal_match_read and close_body.rfind(
@@ -3547,9 +3593,14 @@ var savedThrow, savedExhausted;
                                 or "ctnative::set_attribute(" in line
                                 or selector_call in line
                             ]
-                            expected_operations = [
-                                "matches" if item is None else "read" for item in terminal_sequence
-                            ] + (["write"] if terminal_write else [])
+                            expected_operations = (
+                                (["write"] if early_terminal_selector else [])
+                                + [
+                                    "matches" if item is None else "read"
+                                    for item in terminal_sequence
+                                ]
+                                + (["write"] if terminal_write else [])
+                            )
                             if operations != expected_operations:
                                 raise RuntimeError(
                                     f"{name}: terminal read/selector sequence changed"
@@ -3735,6 +3786,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-earlier-value-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-earlier-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-earlier-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-value-order-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -4583,10 +4637,66 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-terminal-selector-write-earlier-value",
-            terminal_write_earlier_value_source.replace(
-                "anchor.matches('[data-closed=false]'); const present = anchor.hasAttribute('data-closed');",
-                "const present = anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-closed');",
+            "normal-terminal-selector-write-close",
+            terminal_write_selector_value_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-terminal-selector-write-close",
+            terminal_write_selector_value_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-terminal-selector-write-name",
+            terminal_write_selector_value_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "anchor.setAttribute('bad name', present);",
+            ),
+        ),
+        (
+            "bad-terminal-selector-write-receiver",
+            terminal_write_selector_value_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "(0).setAttribute('data-after-terminal', present);",
+            ),
+        ),
+        (
+            "invalid-terminal-selector-write-arity",
+            terminal_write_selector_value_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "anchor.setAttribute('data-after-terminal', present, false);",
+            ),
+        ),
+        (
+            "bad-terminal-selector-write-selector-receiver",
+            terminal_write_selector_value_source.replace(
+                "const present = anchor.matches('[data-closed=false]');",
+                "const present = (0).matches('[data-closed=false]');",
+            ),
+        ),
+        (
+            "invalid-terminal-selector-write-selector",
+            terminal_write_selector_value_source.replace(
+                "const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[');",
+            ),
+        ),
+        (
+            "unsupported-terminal-selector-write-reuse",
+            terminal_write_selector_value_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+            ),
+        ),
+        (
+            "unsupported-terminal-selector-write-value-effect",
+            terminal_write_selector_value_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "external(present); anchor.setAttribute('data-after-terminal', present);",
             ),
         ),
         (
