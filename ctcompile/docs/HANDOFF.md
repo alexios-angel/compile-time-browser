@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nonliteral iterator close throws and singleton power exponents, 2026-09-23 UTC
+
+Resumed clean **ed41f1e5** and retained nonliteral mutable close `822a327b`.
+**bdeaa5b9** validates the original ignored payload's definitions, dominance
+and frame before replacing its value with undefined. All producers remain for
+state transport and complete helper/DOM reproof. Exact suppression, private
+closure/holder checks, saved exception and ordinary-close validation remain.
+The original source now executes unchanged: close throws current count 13 while
+the saved exception remains Number 3. Three derived cases cover a state-observing
+attribute, a return getter and a comma-expression payload effect.
+
+Parallel **425e7d47** reuses the existing invariant power proof when a varying
+exponent has a proved singleton range. Complete reload/store census and replay
+remain. All 101 historical power sources/CHECKs and raw cases are preserved;
+nine source controls were added.
+
+Four selected sources pass **64 native executions, 120 refusals and 16 Node/VM
+observations**. Focused host/arrays CTests and the exact power-index lit case
+pass. Seven final hashes match the devbox; 32 generated C++ files contain no
+Script/VM protocol or nullable-scalar fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** Boolean source `4def4ec7` still refuses
+**DOM protected helper needs an independent inert-body proof** in both policies.
+Its close writes an attribute, then reads it with `hasAttribute` as the ignored
+throw payload. Preserve that post-write producer and the saved Boolean while
+extending the protected effect ordering proof. Nonterminal exceptional state,
+multiple protected regions, implicit cleanup, nested custom iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+
+[Exact checks and next boundary](handoff/2026-09-23-nonliteral-close.md).
+
 ## Mutable throwing iterator closes and negative varying powers, 2026-09-23 UTC
 
 Resumed clean **011b60ec** and retained mutable throwing closes `cd9eb979` and
