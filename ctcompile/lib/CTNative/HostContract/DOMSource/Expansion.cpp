@@ -40,7 +40,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
         // ponytail: two writes with feeding reads, one matches, then read/write pairs
-        // and an unused final read; other effects need their exceptional edges represented.
+        // and an unused final read/selector; other effects need their exceptional edges
+        // represented.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
             ctjs::GetPropertyOp selectorMethod, finalMethod, finalReadMethod;
@@ -76,7 +77,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                                         : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                     read && !sourceReadMethod &&
-                    ctjs::constantKey(read.getKey()) == "hasAttribute") {
+                    (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
+                     (selectorLeaf && ctjs::constantKey(read.getKey()) == "matches"))) {
                     sourceReadMethod = read;
                     continue;
                 }
@@ -126,7 +128,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     leaf && finalMethod && leaf.getCallee() == finalMethod.getResult() &&
                     leaf.getReceiver() == finalMethod.getObject() && leaf.getArgs().size() == 2) {
                     if (finalReadMethod &&
-                        (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult())) {
+                        (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult() ||
+                         ctjs::constantKey(finalReadMethod.getKey()) != "hasAttribute")) {
                         return false;
                     }
                     // Each suffix read belongs only to its following write.
@@ -182,6 +185,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 // order and require its result to have no remaining observer.
                 suffixValues.append({finalReadMethod.getResult(), finalReadCall.getResult()});
                 suffixUses.insert(&finalReadCall->getOpOperand(0));
+                // An unused selector retains exact suppression and the same
+                // typed literal-selector proof as the earlier selector.
+                if (ctjs::constantKey(finalReadMethod.getKey()) == "matches") {
+                    suffixLeaves.insert(finalReadCall);
+                }
             }
             if (selectorFeedsWrite) {
                 auto literal = selectorLeaf.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();

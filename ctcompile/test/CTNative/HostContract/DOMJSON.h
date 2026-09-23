@@ -601,6 +601,10 @@ module {
     %terminalReadMethod = ctjs.get_property %element[%terminalReadKey]
     %terminalPresent = ctjs.call %terminalReadMethod(%element, %terminalReadName)
     %answer = ctjs.create_object)MLIR");
+    const auto terminalMatch = replaced(
+        replaced(terminalRead, "%terminalReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                 "%terminalReadKey = ctjs.constant #ctjs.string<\"matches\">"),
+        "data-terminal", "[data-terminal]");
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
@@ -657,6 +661,20 @@ module {
              std::pair{fourthRead, true},
              std::pair{fifthRead, true},
              std::pair{terminalRead, true},
+             std::pair{terminalMatch, true},
+             std::pair{replaced(terminalMatch, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(terminalMatch, "[data-terminal]", "["), false},
+             std::pair{
+                 replaced(terminalMatch, "#ctjs.string<\"[data-terminal]\">", "#ctjs.number<0>"),
+                 false},
+             std::pair{
+                 replaced(replaced(terminalMatch, "ctjs.get_property %element[%terminalReadKey]",
+                                   "ctjs.get_property %text[%terminalReadKey]"),
+                          "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                          "ctjs.call %terminalReadMethod(%text, %terminalReadName)"),
+                 false},
              std::pair{replaced(terminalRead, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -832,6 +850,9 @@ module {
         const bool selectedWrites = valid.find("%finalName, %selected)") != std::string::npos;
         const bool finalReads = valid.find("%finalReadKey") != std::string::npos;
         const bool terminalReads = valid.find("%terminalReadKey") != std::string::npos;
+        const bool terminalMatches =
+            valid.find("%terminalReadKey = ctjs.constant #ctjs.string<\"matches\">") !=
+            std::string::npos;
         const unsigned suffixWrites =
             static_cast<unsigned>(valid.find("%fourthKey") != std::string::npos) +
             static_cast<unsigned>(valid.find("%fifthKey") != std::string::npos);
@@ -900,8 +921,11 @@ module {
                 for (ctjs::InvokeOp prior : invoke->getBlock()->getOps<ctjs::InvokeOp>()) {
                     preceding += prior->isBeforeInBlock(method);
                 }
-                check(preceding == 2 && llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
-                      "selector lookup and evaluation follow both writes at the source guard");
+                const bool terminal =
+                    terminalMatches && ctjs::constantKey(call.getArgs()[0]) != "[data-closed]";
+                check(preceding == (terminal ? 5u : 2u) && method->isBeforeInBlock(invoke) &&
+                          llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
+                      "selector lookup and evaluation retain their write order and source guard");
             });
         }
         if (reads || trailingReads) {
@@ -953,7 +977,8 @@ module {
         }
         check(invocations == 1u + static_cast<unsigned>(secondWrites) +
                                  static_cast<unsigned>(selectorReads && !selectedWrites) +
-                                 static_cast<unsigned>(finalWrites) + suffixWrites &&
+                                 static_cast<unsigned>(finalWrites) + suffixWrites +
+                                 static_cast<unsigned>(terminalMatches) &&
                   calls ==
                       1u + static_cast<unsigned>(reads) + static_cast<unsigned>(trailingReads) +
                           static_cast<unsigned>(secondWrites) +
@@ -1010,7 +1035,7 @@ module {
     }
     for (const auto & budgetSource :
          {protectedRead, trailingRead, secondWrite, selectorRead, finalWrite, selectedWrite,
-          finalRead, fourthWrite, fourthRead, fifthRead, terminalRead}) {
+          finalRead, fourthWrite, fourthRead, fifthRead, terminalRead, terminalMatch}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1031,7 +1056,20 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(terminalRead, "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+         {replaced(terminalMatch, "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                   "ctjs.call %terminalReadMethod(%text, %terminalReadName)"),
+          replaced(terminalMatch, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %terminalPresent"),
+          replaced(terminalMatch, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %terminalReadMethod(%element, %terminalReadName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(replaced(finalRead,
+                            "%finalReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                            "%finalReadKey = ctjs.constant #ctjs.string<\"matches\">"),
+                   "%finalReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                   "%finalReadName = ctjs.constant #ctjs.string<\"[data-closed]\">"),
+          replaced(terminalRead, "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
                    "ctjs.call %terminalReadMethod(%text, %terminalReadName)"),
           replaced(terminalRead,
                    "%terminalPresent = ctjs.call %terminalReadMethod(%element, "

@@ -2458,6 +2458,10 @@ def saved_throws(args, compilers, includes, libraries):
     terminal_postselector_throwing_source = fourth_postselector_throwing_source.replace(
         "throw false;", "throw anchor.hasAttribute('data-closed');"
     )
+    terminal_match_throwing_source = terminal_postselector_throwing_source.replace(
+        "throw anchor.hasAttribute('data-closed');",
+        "throw anchor.matches('[data-closed=false]');",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2866,6 +2870,30 @@ def saved_throws(args, compilers, includes, libraries):
             "true",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-close",
+            terminal_match_throwing_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-getter-close",
+            terminal_match_throwing_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-order-close",
+            terminal_match_throwing_source.replace(
+                "anchor.setAttribute('data-closed', false);",
+                "anchor.setAttribute('data-closed', true);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -2928,7 +2956,8 @@ def saved_throws(args, compilers, includes, libraries):
         second_close = label.startswith("conditional-boolean-second-postwrite-")
         third_close = "-selector-third-" in label
         postselector_read = "-selector-third-read-" in label
-        terminal_read = "-terminal-" in label
+        terminal_match = "-terminal-match-" in label
+        terminal_read = "-terminal-" in label and not terminal_match
         following_writes = ()
         if "-fourth-" in label:
             following_writes = (
@@ -2937,7 +2966,7 @@ def saved_throws(args, compilers, includes, libraries):
                     ("data-closed", "true", "data-after-selector"),
                 )
                 if label.endswith(("-fourth-read-close", "-fourth-read-terminal-close"))
-                else (("data-closed", "true", "data-closed"), ("data-closed", "false", None))
+                else (("data-closed", "true", "data-closed"), ("data-closed", closed, None))
             )
         elif label.endswith("-sixth-read-close"):
             following_writes = (
@@ -2985,6 +3014,9 @@ def saved_throws(args, compilers, includes, libraries):
             )
             terminal_value = "false" if label.endswith("-missing-read") else "true"
             close_writes += f"hasAttribute={terminal_name}:{terminal_value};"
+        if terminal_match:
+            terminal_value = "false" if closed == "true" else "true"
+            close_writes += f"matches=[data-closed=false]:{terminal_value};"
         conditional = label.startswith("conditional-")
         numeric_snapshot = kind == "js_num" and label not in (
             "number",
@@ -3091,6 +3123,14 @@ var savedThrow, savedExhausted;
                     "delete saved['data-closed'];",
                     "delete saved['data-closed']; delete saved['data-after-selector'];",
                 )
+            )
+        if terminal_match:
+            script = script.replace(
+                "let selectorReadPending = 0;",
+                "let selectorReadPending = 0; let closeMatches = 0;",
+            ).replace(
+                f"selectorReadPending = {read_count};",
+                f"selectorReadPending = ++closeMatches % 2 ? {read_count} : 0;",
             )
         if mixed:
             script = (
@@ -3220,6 +3260,15 @@ var savedThrow, savedExhausted;
                             "ctnative::set_attribute("
                         ):
                             raise RuntimeError(f"{name}: final read moved before its close writes")
+                    if terminal_match:
+                        selector_call = "ctnative::Element.prototype.matches.call"
+                        close_body = cpp[
+                            cpp.index(selector_call) : cpp.index("throw ctnative::js_exception{")
+                        ]
+                        if close_body.count(selector_call) != 2 or close_body.rfind(
+                            selector_call
+                        ) <= close_body.rfind("ctnative::set_attribute("):
+                            raise RuntimeError(f"{name}: final selector lost its close write order")
                 dom.standalone(
                     args,
                     native,
@@ -3374,6 +3423,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-missing-read",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-order-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -3819,10 +3871,70 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-terminal-postselector-match",
-            terminal_postselector_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
+            "normal-terminal-match-close",
+            terminal_match_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-terminal-match-close",
+            terminal_match_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "normal-terminal-match-getter-close",
+            terminal_match_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-terminal-match-getter-close",
+            terminal_match_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-terminal-match-selector",
+            terminal_match_throwing_source.replace(
+                "throw anchor.matches('[data-closed=false]');", "throw anchor.matches('[');"
+            ),
+        ),
+        (
+            "dynamic-terminal-match-selector",
+            terminal_match_throwing_source.replace(
+                "throw anchor.matches('[data-closed=false]');", "throw anchor.matches(anchor);"
+            ),
+        ),
+        (
+            "bad-terminal-match-receiver",
+            terminal_match_throwing_source.replace(
                 "throw anchor.matches('[data-closed=false]');",
+                "throw (0).matches('[data-closed=false]');",
+            ),
+        ),
+        (
+            "invalid-terminal-match-arity",
+            terminal_match_throwing_source.replace(
+                "throw anchor.matches('[data-closed=false]');", "throw anchor.matches();"
+            ),
+        ),
+        (
+            "unsupported-terminal-match-escape",
+            terminal_match_throwing_source.replace(
+                "throw anchor.matches('[data-closed=false]');",
+                "const matched = anchor.matches('[data-closed=false]'); external(matched); throw matched;",
+            ),
+        ),
+        (
+            "unsupported-terminal-match-read",
+            terminal_match_throwing_source.replace(
+                "throw anchor.matches('[data-closed=false]');",
+                "anchor.matches('[data-closed=false]'); throw anchor.hasAttribute('data-closed');",
             ),
         ),
         (
