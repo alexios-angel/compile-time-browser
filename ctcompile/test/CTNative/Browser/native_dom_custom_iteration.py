@@ -2413,6 +2413,10 @@ def saved_throws(args, compilers, includes, libraries):
     postwrite_throwing_source = conditional_source.replace(
         "return {};", "throw anchor.hasAttribute('data-closed');"
     )
+    second_postwrite_throwing_source = postwrite_throwing_source.replace(
+        "throw anchor.hasAttribute('data-closed');",
+        "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed')); throw false;",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2635,6 +2639,30 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-close",
+            second_postwrite_throwing_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-second-postwrite-getter-close",
+            second_postwrite_throwing_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-second-postwrite-missing-read",
+            second_postwrite_throwing_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -2668,6 +2696,7 @@ def saved_throws(args, compilers, includes, libraries):
                 const auto writes = target.take_writes();
                 assert(writes.size() == @WRITE_COUNT@ && writes[0].name == next &&
                        writes[1].name == yielded && writes[@CLOSED_INDEX@].name == closed);
+                @SECOND_CLOSE@
                 for (const auto & write : writes) { assert(write.node == id && !write.text); }
                 assert(target.read().attribute_value(id, next) == "false");
                 assert(target.read().attribute_value(id, closed) == "@CLOSED@");
@@ -2693,6 +2722,8 @@ def saved_throws(args, compilers, includes, libraries):
     executions = refused = observations = 0
     for label, text, kind, payload, closed in cases:
         mixed = label == "conditional-boolean-throw-or-return"
+        second_close = label.startswith("conditional-boolean-second-postwrite-")
+        close_writes = ("data-closed=true;" if second_close else "") + f"data-closed={closed};"
         conditional = label.startswith("conditional-")
         numeric_snapshot = kind == "js_num" and label not in (
             "number",
@@ -2796,7 +2827,7 @@ var savedThrow, savedExhausted;
             )
             + ":data-next=false;data-yielded=yes;"
             + ("data-visited=yes;" if snapshot else "")
-            + f"data-closed={closed};",
+            + close_writes,
             "savedExhausted": ("0" if numeric_snapshot else "true" if snapshot else "false")
             + ":data-next=true;data-yielded=yes;",
         }
@@ -2805,7 +2836,8 @@ var savedThrow, savedExhausted;
                 savedNormal=("1" if numeric_snapshot else "true")
                 + ":data-next=false;data-yielded=yes;data-visited=yes;data-next=true;data-yielded=yes;",
                 savedPrior=("number:3" if numeric_snapshot else "boolean:true")
-                + f":data-next=false;data-yielded=yes;data-visited=yes;data-closed={closed};",
+                + ":data-next=false;data-yielded=yes;data-visited=yes;"
+                + close_writes,
             )
         if mixed:
             expected.update(
@@ -2925,7 +2957,11 @@ var savedThrow, savedExhausted;
                         ),
                     )
                     .replace("@VISITED@", "true" if snapshot else "false")
-                    .replace("@WRITE_COUNT@", "4" if snapshot else "3")
+                    .replace("@WRITE_COUNT@", "5" if second_close else "4" if snapshot else "3")
+                    .replace(
+                        "@SECOND_CLOSE@",
+                        "assert(writes[4].name == closed);" if second_close else "",
+                    )
                     .replace("@CLOSED_INDEX@", "3" if snapshot else "2"),
                     compilers,
                     includes,
@@ -2946,6 +2982,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-nonliteral-close",
                         "conditional-boolean-postwrite-getter-close",
                         "conditional-boolean-postwrite-missing-read",
+                        "conditional-boolean-second-postwrite-close",
+                        "conditional-boolean-second-postwrite-getter-close",
+                        "conditional-boolean-second-postwrite-missing-read",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -3024,10 +3063,59 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "second-postwrite-effect",
-            postwrite_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed')); throw false;",
+            "normal-second-postwrite-close",
+            second_postwrite_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-second-postwrite-close",
+            second_postwrite_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "normal-second-postwrite-getter-close",
+            second_postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-second-postwrite-getter-close",
+            second_postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-second-postwrite-name",
+            second_postwrite_throwing_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                "anchor.setAttribute('bad name', anchor.hasAttribute('data-closed'));",
+            ),
+        ),
+        (
+            "bad-second-postwrite-receiver",
+            second_postwrite_throwing_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                "(0).setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+            ),
+        ),
+        (
+            "escaping-second-postwrite-result",
+            second_postwrite_throwing_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                "anchor.setAttribute('data-closed', "
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed')));",
+            ),
+        ),
+        (
+            "unsupported-second-postwrite-selector-read",
+            second_postwrite_throwing_source.replace(
+                "throw false;", "throw anchor.matches('[data-closed]');"
             ),
         ),
         (

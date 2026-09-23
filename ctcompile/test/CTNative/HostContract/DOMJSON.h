@@ -546,6 +546,17 @@ module {
     %answer = ctjs.create_object)MLIR");
     };
     const auto trailingRead = readAfterWrite(protectedRead);
+    const auto writeAfterRead = [&](const std::string & source) {
+        return replaced(replaced(source, "%afterReadKey =", R"MLIR(
+    %secondKey = ctjs.constant #ctjs.string<"setAttribute">
+    %secondName = ctjs.constant #ctjs.string<"data-closed">
+    %secondMethod = ctjs.get_property %element[%secondKey]
+    %afterReadKey =)MLIR"),
+                        "%answer = ctjs.create_object", R"MLIR(
+    %secondEffect = ctjs.call %secondMethod(%element, %secondName, %afterPresent)
+    %answer = ctjs.create_object)MLIR");
+    };
+    const auto secondWrite = writeAfterRead(trailingRead);
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
@@ -593,6 +604,27 @@ module {
                  true},
              std::pair{protectedRead, true},
              std::pair{trailingRead, true},
+             std::pair{secondWrite, true},
+             std::pair{writeAfterRead(readAfterWrite(capturedAttribute)), true},
+             std::pair{replaced(secondWrite, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(secondWrite,
+                                "%secondName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%secondName = ctjs.constant #ctjs.string<\"bad name\">"),
+                       false},
+             std::pair{replaced(secondWrite,
+                                "%secondName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%secondName = ctjs.constant #ctjs.number<0>"),
+                       false},
+             std::pair{replaced(secondWrite, "%name = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%name = ctjs.constant #ctjs.string<\"bad name\">"),
+                       false},
+             std::pair{replaced(replaced(secondWrite, "ctjs.get_property %element[%secondKey]",
+                                         "ctjs.get_property %text[%secondKey]"),
+                                "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                                "ctjs.call %secondMethod(%text, %secondName, %afterPresent)"),
+                       false},
              std::pair{replaced(trailingRead,
                                 "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
                                 "%afterReadName = ctjs.constant #ctjs.string<\"bad name\">"),
@@ -651,10 +683,19 @@ module {
         input->walk([&](ctjs::CreateObjectOp) { ++allocations; });
         const bool reads = valid.find("%readKey") != std::string::npos;
         const bool trailingReads = valid.find("%afterReadKey") != std::string::npos;
+        const bool secondWrites = valid.find("%secondKey") != std::string::npos;
         if (reads || trailingReads) {
             input->walk([&](ctjs::CallOp call) {
                 auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!method || ctjs::constantKey(method.getKey()) != "hasAttribute") { return; }
+                if (secondWrites && ctjs::constantKey(call.getArgs()[0]) == "data-closed") {
+                    bool followsWrite = false;
+                    for (ctjs::InvokeOp invoke : call->getBlock()->getOps<ctjs::InvokeOp>()) {
+                        followsWrite |= invoke->isBeforeInBlock(method);
+                    }
+                    check(followsWrite,
+                          "second write reads the state after the first protected write");
+                }
                 if (call.getResult().use_empty()) {
                     bool ordered = false;
                     for (ctjs::InvokeOp invoke : call->getBlock()->getOps<ctjs::InvokeOp>()) {
@@ -680,9 +721,10 @@ module {
                       "member lookup, read and protected write retain source order and guard");
             });
         }
-        check(invocations == 1 &&
-                  calls ==
-                      1u + static_cast<unsigned>(reads) + static_cast<unsigned>(trailingReads) &&
+        check(invocations == 1u + static_cast<unsigned>(secondWrites) &&
+                  calls == 1u + static_cast<unsigned>(reads) +
+                               static_cast<unsigned>(trailingReads) +
+                               static_cast<unsigned>(secondWrites) &&
                   allocations == 0 && mlir::succeeded(mlir::verify(*input)),
               "protected expansion retains call-plus-exit and only elides unused objects");
         auto bound = contract;
@@ -722,7 +764,7 @@ module {
             }
         }
     }
-    for (const auto & budgetSource : {protectedRead, trailingRead}) {
+    for (const auto & budgetSource : {protectedRead, trailingRead, secondWrite}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -743,7 +785,25 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(trailingRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+         {replaced(secondWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                   "ctjs.call %secondMethod(%text, %secondName, %afterPresent)"),
+          replaced(secondWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                   "ctjs.call %secondMethod(%element, %secondName, %text)"),
+          replaced(secondWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                   "ctjs.call %secondMethod(%element, %secondName)"),
+          replaced(secondWrite,
+                   "%secondEffect = ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                   ""),
+          replaced(secondWrite, "%answer = ctjs.create_object",
+                   "%third = ctjs.call %secondMethod(%element, %secondName, %afterPresent)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(secondWrite, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %secondEffect"),
+          replaced(secondWrite, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %afterPresent"),
+          replaced(trailingRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
                    "ctjs.call %afterReadMethod(%text, %afterReadName)"),
           replaced(trailingRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
                    "ctjs.call %afterReadMethod(%element, %afterReadName, %name)"),
