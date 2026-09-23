@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Reads before iterator-close selectors and scalar-bound refinement, 2026-09-23 UTC
+
+Resumed clean **3111e52e** and retained before-first-selector source `b3f9a6ca`.
+**795982ce** starts the existing standalone read census after the second protected
+write. A saved `hasAttribute` Boolean can now precede the first `matches`, survive
+both selectors and intervening writes, and feed one later write. Initial feeding
+writes, complete use checks, typed DOM/Style reproof, source guard/order, saved body
+exception and budgets remain. The unchanged original, getter and order variant run.
+
+**27ae4a64** reuses bounded whole-key subdivision when a mixed index enclosure
+makes an exact scalar transfer fail. At visits 0, 3 and 6, `i % 5` produces 0, 3
+and 1; adding 4294967292 is bounded at every visit, although the enclosing residue
+4 would exceed the bound. Exact visited arithmetic, reload/store checks, independent
+reload gaps, restored bounds and actual-write replay remain required. Seven raw
+admissions, four raw refusals and nine source controls cover sums, products,
+signed differences, retained children and unsupported actual intermediates.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. All six changed code/test
+hashes match the devbox; 24 generated C++ files retain the earlier Boolean and
+original exception without Script/VM or nullable fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Three agents began source/raw/escape work;
+the parent finished rate-limited source/escape tasks. The raw agent independently
+reviewed native production. All focused gates passed first run; full suites were
+skipped. No browser implementation changed; Claude availability stayed uncertain.
+
+**Next native boundary:** retained `unsupported-earlier-read-write-before-second-write`
+source `40e597cd` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the Boolean captured after the first protected
+write but before the second, through both selectors and later writes, while the
+original body exception wins. Single-write selector cleanup, nonterminal exceptional
+state, multiple protected regions, implicit cleanup, nested custom iterators,
+unguarded Bootstrap defaults, the application driver, full native Bootstrap and
+general powers remain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-before-first-selector-values.md).
+
 ## Saved reads across iterator-close selectors and varying addition, 2026-09-23 UTC
 
 Resumed clean **97222f8e** and retained before-selector read source `abc08f6e`.
