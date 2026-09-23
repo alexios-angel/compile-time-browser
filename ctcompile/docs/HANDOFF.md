@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mixed break iterator completion, 2026-09-23 UTC
+
+Resumed clean **df14ba50** and unchanged `mixed-body-throw-break-close`, source
+`962dd3f8`. **f65d48e5** follows exact literal completion tags from inert switch
+arms to their later normal close. Every path still proves its own cleanup; wrong
+tags, effectful deferred arms, missing closes and incomplete budgets refuse.
+Fully proved throwing branches retain ordinary typed DOM checks for subsequent
+source reads/calls, with the owning throw still preceding them in native output.
+Direct abrupt regions remain strict. The original method and getter execute;
+independent production review is complete and clean.
+
+Focused validation passes: **64 native executions, 36 refusals, 46 Node/VM
+observations and the exact host CTest**. Formatting passes **1126 C++, 157 Python
+and 114 web files**. Four final code/test hashes match the devbox; all 32 generated
+C++ files contain no Script namespace. Historical source/raw inputs remain.
+No browser/runtime implementation changed. The parallel escape investigation
+ended in a parent review of the prior Undefined proof, with no new code or
+precision measurement. Full suites and full Bootstrap were skipped.
+
+**Next native boundary:** unchanged `mixed-body-throw-return-mutable-close`, source
+`b705b1fb`, refuses **DOM iterator protected state requires an immediate saved
+throw** under both policies; getter twin `13d9387b` shares it. Preserve captured
+count updates, the saved Boolean body exception, normal cleanup Number 13,
+original DOM reads/writes, snapshots and exhaustion. Normal object-throwing
+getters, nested custom iterators, unguarded Bootstrap defaults, the application
+driver and full native Bootstrap remain. Escape's unproved globals, wider
+computed-number provenance and other recorded limits remain; the VM fractional
+index discrepancy stays separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-mixed-break-completion.md).
+
 ## Mixed iterator cleanup and Undefined unary Number inputs, 2026-09-23 UTC
 
 Resumed clean **af864871** and unchanged `mixed-body-throw-return-close`, source
