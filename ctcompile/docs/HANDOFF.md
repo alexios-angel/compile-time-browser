@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Ordered iterator close writes and tight odd-power bounds, 2026-09-23 UTC
+
+Resumed clean **98a8f335** and retained two-write source `442af76b`.
+**3098b880** keeps the second `setAttribute` in its own exact suppression region,
+with its feeding read after the first write at the same source guard. Both writes
+require complete typed DOM reproof and independent valid-name checks. Saved
+Boolean snapshots, private callable/frame checks, confined results and budgets
+remain. The original source, getter and order-sensitive missing-read variant
+execute unchanged.
+
+Parallel **a7342199** tightens the existing odd-power bound for negative-or-zero
+bases. It no longer invents a positive-unit array index; even/zero exponents and
+positive bases retain their wider bounds. Complete reload/store census and
+actual-write replay remain. All 122 historical power bodies/CHECKs and raw cases
+survive; thirteen source controls were added.
+
+Three selected sources pass **48 native executions, 68 refusals and 24 Node/VM
+observations**. Focused host/arrays CTests and the exact power-index lit case pass.
+Seven final hashes match the devbox; 24 generated C++ files contain no Script/VM
+protocol or nullable-scalar fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** selector-read source `f4005c21` still refuses
+**DOM protected helper needs an independent inert-body proof** in both policies.
+It calls `matches('[data-closed]')` after both close writes; preserve that evaluation
+and the saved Boolean while proving exceptional behavior. Nonterminal exceptional
+state, multiple protected regions, implicit cleanup, nested custom iterators,
+unguarded Bootstrap defaults, the application driver and full native Bootstrap
+remain. General powers need a separate arithmetic proof.
+
+[Exact checks and next boundary](handoff/2026-09-23-second-postwrite-close.md).
+
 ## Post-write iterator close reads and singleton power bases, 2026-09-23 UTC
 
 Resumed clean **00e7f1cb** and retained Boolean source `4def4ec7`.
