@@ -57,6 +57,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     mlir::IRMapping mapping;
     mlir::DominanceInfo dominance(function);
     llvm::DenseSet<mlir::Operation *> visited;
+    auto terminalThrow = llvm::dyn_cast<ctjs::ThrowOp>(function.getBody().front().back());
     bool normalReturn = false;
     for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
         if (!step()) { return false; }
@@ -656,13 +657,18 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     return {};
                 }
             }
-            if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+            if (llvm::isa<ctjs::ReturnOp>(operation) || &operation == terminalThrow) {
                 if (continuation || terminal.kind != Terminal::returned) {
                     refuse("DOM helper completion returns inside a source region");
                     return {};
                 }
+                if (terminalThrow && &operation != terminalThrow) {
+                    refuse("DOM helper completion mixes return and throw terminals");
+                    return {};
+                }
                 normalReturn = true;
-                return llvm::SmallVector<mlir::Value>{values.lookupOrDefault(result.getValue())};
+                return llvm::SmallVector<mlir::Value>{
+                    values.lookupOrDefault(operation.getOperand(0))};
             }
             if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
                 auto & region = abrupt.getRegion();
@@ -946,7 +952,13 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         return mlir::WalkResult::advance();
     });
     if (complete.wasInterrupted()) { return false; }
-    ctjs::ReturnOp::create(at, function.getLoc(), result->front());
+    if (terminalThrow) {
+        // Join the saved payload exactly like a return, retaining each path's
+        // effects. Only the separate iterator-close proof may suppress it.
+        ctjs::ThrowOp::create(at, function.getLoc(), result->front());
+    } else {
+        ctjs::ReturnOp::create(at, function.getLoc(), result->front());
+    }
     // Only inert completion arithmetic is removed. Source effects remain
     // for the unchanged complete DOM/frame proof below.
     llvm::SmallVector<mlir::Operation *> arithmetic;

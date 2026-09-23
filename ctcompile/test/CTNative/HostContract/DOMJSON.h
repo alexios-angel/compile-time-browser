@@ -887,6 +887,13 @@ module {
                  "    %elseMethod = ctjs.get_property %element[%secondKey]\n"
                  "    %elseEffect = ctjs.call %elseMethod(%element, %elseName, %elseValue)\n"
                  "    scf.yield");
+    const auto conditionalIgnoredPayload =
+        replaced(replaced(replaced(conditionalElseWrite, "scf.if %nestedCondition {",
+                                   "%ignoredPayload = scf.if %nestedCondition -> (!ctjs.value) {"),
+                          "    scf.yield\n    } else {",
+                          "    scf.yield %afterPresent : !ctjs.value\n    } else {"),
+                 "    scf.yield\n    }\n    scf.yield\n    }\n",
+                 "    scf.yield %elseValue : !ctjs.value\n    }\n    scf.yield\n    }\n");
     const auto conditionalElseRead =
         replaced(replaced(conditionalElseWrite, "    %elseMethod =",
                           "    %elseReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">\n"
@@ -2455,6 +2462,14 @@ module {
              std::pair{conditionalDeeperWrite, true},
              std::pair{conditionalNestedElse, true},
              std::pair{conditionalElseWrite, true},
+             std::pair{conditionalIgnoredPayload, true},
+             std::pair{replaced(conditionalIgnoredPayload, "scf.yield %afterPresent : !ctjs.value",
+                                "scf.yield %present : !ctjs.value"),
+                       true},
+             std::pair{replaced(conditionalFourthWrite,
+                                "ctjs.call %fourthMethod(%element, %fourthName, %afterPresent)",
+                                "ctjs.call %fourthMethod(%element, %fourthName, %text)"),
+                       true},
              std::pair{conditionalElseRead, true},
              std::pair{conditionalElseSelector, true},
              std::pair{conditionalElseNested, true},
@@ -2569,10 +2584,18 @@ module {
                       method.getObject() == call.getReceiver(),
                   "nested method lookup retains its unique call and receiver");
             for (mlir::OpOperand & use : call.getResult().getUses()) {
-                check((llvm::isa<ctjs::TruthyOp, ctjs::InvokeExitOp>(use.getOwner()) &&
-                       use.getOperandNumber() == 0) ||
-                          (llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 3),
-                      "every nested snapshot use remains an exact guard or write value");
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
+                auto guard = yield ? llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp())
+                                   : mlir::scf::IfOp{};
+                const bool ignoredPayload = guard &&
+                                            use.getOperandNumber() < guard.getNumResults() &&
+                                            guard.getResult(use.getOperandNumber()).use_empty();
+                check(
+                    (llvm::isa<ctjs::TruthyOp, ctjs::InvokeExitOp>(use.getOwner()) &&
+                     use.getOperandNumber() == 0) ||
+                        (llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 3) ||
+                        ignoredPayload,
+                    "every nested snapshot use remains a guard, write or ignored payload");
             }
         });
         input->walk([&](ctjs::InvokeOp invocation) {
@@ -2716,6 +2739,7 @@ module {
                                       conditionalNestedSelector,
                                       conditionalDeeperWrite,
                                       conditionalElseWrite,
+                                      conditionalIgnoredPayload,
                                       conditionalElseSelector,
                                       conditionalElseNested}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
@@ -2741,6 +2765,10 @@ module {
          {replaced(conditionalElseSelector, "[data-else-read]", "["),
           replaced(conditionalElseSelector, "#ctjs.string<\"[data-else-read]\">",
                    "#ctjs.number<0>"),
+          replaced(conditionalIgnoredPayload,
+                   "    scf.yield %elseValue : !ctjs.value\n    }\n    scf.yield",
+                   "    scf.yield %elseValue : !ctjs.value\n    }\n"
+                   "    ctjs.store_global \"observed\", %ignoredPayload\n    scf.yield"),
           replaced(conditionalElseWrite, "    %elseEffect =",
                    "    ctjs.store_global \"leaked\", %elseMethod\n    %elseEffect ="),
           replaced(conditionalElseRead, "    %elseMethod =",

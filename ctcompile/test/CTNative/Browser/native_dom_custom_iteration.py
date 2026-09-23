@@ -2569,6 +2569,13 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
         "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); else anchor.setAttribute('data-after-second', false); }",
     )
+    selector_nested_throw_source = selector_nested_third_else_source.replace(
+        "anchor.setAttribute('data-after-second', false);",
+        "{ anchor.setAttribute('data-after-second', false); throw true; }",
+    )
+    selector_nested_false_throw_source = selector_nested_throw_source.replace(
+        "if (anchor.hasAttribute('data-closed'))", "if (anchor.matches('[data-closed=true]'))"
+    ).replace("throw true;", "throw false;")
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3686,6 +3693,37 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-close",
+            selector_nested_throw_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-false-guard-close",
+            selector_nested_false_throw_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-getter-false-guard-close",
+            selector_nested_false_throw_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-then-close",
+            selector_nested_throw_source.replace(
+                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); else",
+                "{ anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); throw false; } else",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-close",
             selector_nested_third_else_source,
             "js_boolean_t",
@@ -3795,6 +3833,8 @@ def saved_throws(args, compilers, includes, libraries):
 """
     executions = refused = observations = 0
     for label, text, kind, payload, closed in cases:
+        nested_branch_throw = "-branch-throw-" in label
+        takes_branch_throw = nested_branch_throw and not label.endswith("-throw-close")
         mixed = label == "conditional-boolean-throw-or-return"
         second_close = label.startswith("conditional-boolean-second-postwrite-")
         third_close = "-selector-third-" in label
@@ -4358,6 +4398,13 @@ var savedThrow, savedExhausted;
                 ),
                 1,
             )
+        if takes_branch_throw:
+            terminal_write_trace = "data-after-second=" + (
+                "false;" if nested_guard_false else "true;"
+            )
+            expected["savedPrior"] = (
+                expected["savedPrior"].split(terminal_write_trace, 1)[0] + terminal_write_trace
+            )
         if before_first_write_read and terminal_sequence[0] == "data-closed":
             expected["savedPrior"] = (
                 expected["savedPrior"]
@@ -4490,6 +4537,26 @@ var savedThrow, savedExhausted;
                             "",
                         )
                     )
+                if takes_branch_throw:
+                    selected_checks = (
+                        selected_checks.replace("(7 + 2 * repetition)", "(7 - repetition)")
+                        .replace(
+                            "assert(writes[4 + 2 * repetition].name == closed);",
+                            "if (!repetition) { assert(writes[4].name == closed); }",
+                        )
+                        .replace(
+                            "assert(writes[5 + 2 * repetition].name == closed);",
+                            "if (!repetition) { assert(writes[5].name == closed); }",
+                        )
+                        .replace(
+                            "assert(writes.back().name == after_terminal);",
+                            "if (!repetition) { assert(writes.back().name == after_terminal); }",
+                        )
+                        .replace(
+                            'assert(target.read().attribute_value(id, after_terminal) == "true");',
+                            'assert(target.read().has_attribute(id, after_terminal) == !repetition); if (!repetition) { assert(target.read().attribute_value(id, after_terminal) == "true"); }',
+                        )
+                    )
                 selected_includes, selected_libraries = includes, libraries
                 if selecting:
                     selected_checks = (
@@ -4511,7 +4578,9 @@ var savedThrow, savedExhausted;
                             "ctnative::set_attribute("
                         ):
                             raise RuntimeError(f"{name}: final read moved before its close writes")
-                    if terminal_match:
+                    # Joined throw paths duplicate the surviving suffix into each
+                    # normal arm; their path/order assertions execute above.
+                    if terminal_match and not nested_branch_throw:
                         selector_call = "ctnative::Element.prototype.matches.call"
                         close_body = cpp[
                             cpp.index(selector_call) : cpp.index("throw ctnative::js_exception{")
@@ -5056,6 +5125,10 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-order-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-throw-false-guard-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-false-guard-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-getter-false-guard-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-then-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
@@ -7116,10 +7189,66 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-selector-nested-third-else-throw",
-            selector_nested_third_else_source.replace(
+            "normal-selector-branch-throw-close",
+            selector_nested_throw_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-branch-throw-close",
+            selector_nested_throw_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-branch-throw-name",
+            selector_nested_throw_source.replace(
                 "anchor.setAttribute('data-after-second', false);",
-                "{ anchor.setAttribute('data-after-second', false); throw true; }",
+                "anchor.setAttribute('bad name', false);",
+            ),
+        ),
+        (
+            "bad-selector-branch-throw-receiver",
+            selector_nested_throw_source.replace(
+                "anchor.setAttribute('data-after-second', false);",
+                "(0).setAttribute('data-after-second', false);",
+            ),
+        ),
+        (
+            "invalid-selector-branch-throw-arity",
+            selector_nested_throw_source.replace(
+                "anchor.setAttribute('data-after-second', false);",
+                "anchor.setAttribute('data-after-second', false, false);",
+            ),
+        ),
+        (
+            "invalid-selector-branch-throw-selector",
+            selector_nested_throw_source.replace(
+                "throw true;",
+                "throw anchor.matches('[');",
+            ),
+        ),
+        (
+            "dynamic-selector-branch-throw-selector",
+            selector_nested_throw_source.replace(
+                "throw true;",
+                "throw anchor.matches(anchor);",
+            ),
+        ),
+        (
+            "unsupported-selector-branch-throw-observer",
+            selector_nested_throw_source.replace(
+                "throw true;",
+                "throw external(false);",
+            ),
+        ),
+        (
+            "unsupported-selector-branch-throw-read",
+            selector_nested_throw_source.replace(
+                "throw true;",
+                "throw anchor.getAttribute('data-closed');",
             ),
         ),
         (

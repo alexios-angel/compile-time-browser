@@ -115,10 +115,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         auto truth = guard.getCondition().getDefiningOp<ctjs::TruthyOp>();
                         if (guardDepth == 64 || !truth || !truth.getResult().hasOneUse() ||
                             truth->getBlock() != guard->getBlock() ||
-                            !suffixReads.contains(truth.getValue()) || guard.getNumResults() ||
+                            !suffixReads.contains(truth.getValue()) ||
                             !guard.getThenRegion().hasOneBlock() ||
                             guard.getThenRegion().front().getNumArguments()) {
                             return false;
+                        }
+                        // Completion joins may retain an ignored close payload.
+                        // Only forwarding through other proved guards is allowed;
+                        // the complete use census rejects any surviving observer.
+                        for (mlir::Value value : guard.getResults()) {
+                            if (!step()) { return false; }
+                            suffixValues.push_back(value);
                         }
                         // ponytail: bounded cleanup guards; other control flow still
                         // needs its exceptional edges represented.
@@ -206,10 +213,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                     // Later branch-local reads may replace trailingCall.
                                     // Keep this write's use of the original snapshot.
                                     suffixUses.insert(&leaf->getOpOperand(3));
+                                    if (!retainTrailingRead()) { return false; }
                                     continue;
                                 }
                                 if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(nested);
-                                    yield && yield.getResults().empty() && secondLeaf) {
+                                    yield && secondLeaf) {
+                                    for (mlir::OpOperand & operand : yield->getOpOperands()) {
+                                        if (!step()) { return false; }
+                                        suffixUses.insert(&operand);
+                                    }
                                     continue;
                                 }
                                 return false;
