@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved reads across iterator-close selectors and varying addition, 2026-09-23 UTC
+
+Resumed clean **97222f8e** and retained before-selector read source `abc08f6e`.
+**4b063cb7** preserves a standalone `hasAttribute` Boolean across a later
+`matches` call and ignored read for one protected write. Removing the unnecessary
+terminal-selector state reuses the existing complete read/use census. Original
+guard/order, typed DOM/Style reproof, saved body exception and budgets remain.
+The unchanged original, getter and order-sensitive variant execute.
+
+Parallel **388db8e0** extends bounded whole-key refinement to numeric addition,
+using the existing exact scalar sum proof. String concatenation, fractional and
+unbounded intermediates remain refused; complete reload/store checks, independent
+reload gaps and actual-write replay remain. Two historical raw `i/2+i` refusals
+now admit unchanged after exact Node key/read/own-key/identity witnesses.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. All seven final code/test
+hashes match the devbox; 24 generated C++ files retain the earlier Boolean and
+original exception without Script/VM or nullable fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Corrected one new raw order assertion and
+one new escape-fixture SSA-name collision; production was unchanged after the
+first gates. Three agents worked in parallel before rate limits; the parent
+completed their saved work, review, integration and validation. Full suites were
+skipped; no browser implementation changed. Claude availability stayed uncertain.
+
+**Next native boundary:** retained `unsupported-earlier-read-write-before-first-selector`
+source `b3f9a6ca` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the `hasAttribute('data-closed')` Boolean
+captured before the first selector, across both selectors and intervening writes,
+for `data-after-terminal`, while the original body exception wins. Single-write
+selector cleanup, nonterminal exceptional state, multiple protected regions,
+implicit cleanup, nested custom iterators, unguarded Bootstrap defaults, the
+application driver, full native Bootstrap and general powers remain.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-before-selector-read-values.md).
+
 ## Terminal iterator-close selector values and varying multiplication, 2026-09-23 UTC
 
 Resumed clean **78aacd8e** and retained selector-value source `f3f1e6c6`.
