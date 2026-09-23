@@ -2411,7 +2411,7 @@ def normal_throws(args, compilers, includes, libraries, cases):
         mutable = "mutable-" in label
         cleanup_number = (
             13
-            if mutable and "effectful" in label
+            if mutable and (mixed or "effectful" in label)
             else 11 if mutable and "nonliteral" in label else 2
         )
         unconditional_return = mutable or label in (
@@ -2529,7 +2529,9 @@ var {name} = (function() {{
                             writes.append(("data-visited", "yes"))
                             trace += f"read:data-closed={'true' if mode in (2, 6) else 'false'};"
                         value = "true" if visiting else "false"
-                        trace += f"read:data-visited={value};write:data-closed={value};"
+                        if not mutable:
+                            trace += f"read:data-visited={value};"
+                        trace += f"write:data-closed={value};"
                         writes.append(("data-closed", value))
                         result = (
                             f"throw:boolean:{'true' if mode == 2 else 'false'}:"
@@ -5752,9 +5754,7 @@ var savedThrow, savedExhausted;
         (label.replace("-close", "-getter-close"), text.replace("return() {", "get return() {"))
         for label, text in mixed_close_cases
     )
-    normal_cases += tuple(
-        (label, text) for label, text in mixed_close_cases if "-mutable-" not in label
-    )
+    normal_cases += mixed_close_cases
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
@@ -5819,6 +5819,8 @@ var savedThrow, savedExhausted;
         "return-getter-close",
         "mixed-body-throw-break-close",
         "mixed-body-throw-break-getter-close",
+        "mixed-body-throw-return-mutable-close",
+        "mixed-body-throw-return-mutable-getter-close",
         "unknown-close-throw",
         "unknown-getter-throw",
         "return-mutable-throwing-close",
@@ -8177,6 +8179,11 @@ var savedThrow, savedExhausted;
             (label.replace("-close", "-invalid-close"), text.replace("'data-closed'", "'bad name'"))
             for label, text in mixed_close_cases
             if "-break-" in label
+        )
+        + tuple(
+            (label.replace("-close", "-invalid-close"), text.replace("'data-closed'", "'bad name'"))
+            for label, text in mixed_close_cases
+            if "-mutable-" in label
         )
     ):
         accepted = label in accepted_normal_closes

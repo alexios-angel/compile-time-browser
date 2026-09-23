@@ -2181,6 +2181,16 @@ module {
     check(mixedBreak && mixedBreakGetter && mixedBreakReversed,
           "three-arm method/getter break and reversed-tag comparison parse");
     if (!mixedBreak || !mixedBreakGetter || !mixedBreakReversed) { return; }
+    const auto mixedBreakMutableSource =
+        replaced(mutableThrowingClose(mixedBreakSource), "    ctjs.throw %result",
+                 "    %payload = ctjs.get_property %this[%stateKey]\n    ctjs.throw %payload");
+    auto mixedBreakMutable =
+        mlir::parseSourceString<mlir::ModuleOp>(mixedBreakMutableSource, &context);
+    auto mixedBreakMutableGetter =
+        mlir::parseSourceString<mlir::ModuleOp>(getterReturn(mixedBreakMutableSource), &context);
+    check(mixedBreakMutable && mixedBreakMutableGetter,
+          "mutable cleanup with a projected saved exception parses");
+    if (!mixedBreakMutable || !mixedBreakMutableGetter) { return; }
     const auto mixedMutableSource = mutableThrowingClose(mixedThrowingSource);
     const auto mixedMutablePayloadSource =
         replaced(mixedMutableSource, "    ctjs.throw %result",
@@ -2206,8 +2216,8 @@ module {
          {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn, *normalGetterBreak,
           *booleanThrowingReturn, *booleanGetterReturn, *normalMutable, *normalMutableGetter,
           *normalMutablePayload, *normalMutablePayloadGetter, *mixedThrowing, *mixedGetter,
-          *mixedMutable, *mixedMutableGetter, *mixedBreak, *mixedBreakGetter,
-          *mixedBreakReversed}) {
+          *mixedMutable, *mixedMutableGetter, *mixedBreak, *mixedBreakGetter, *mixedBreakReversed,
+          *mixedBreakMutable, *mixedBreakMutableGetter}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
@@ -2233,7 +2243,9 @@ module {
                 updated ? updated.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
             auto ten = increment ? llvm::dyn_cast<ctjs::NumberAttr>(increment.getValue())
                                  : ctjs::NumberAttr{};
-            const bool mixedState = fixture == *mixedMutable || fixture == *mixedMutableGetter;
+            const bool mixedState = fixture == *mixedMutable || fixture == *mixedMutableGetter ||
+                                    fixture == *mixedBreakMutable ||
+                                    fixture == *mixedBreakMutableGetter;
             const bool mixed = fixture == *mixedThrowing || fixture == *mixedGetter || mixedState ||
                                fixture == *mixedBreak || fixture == *mixedBreakGetter ||
                                fixture == *mixedBreakReversed;
@@ -2294,6 +2306,48 @@ module {
             request.moduleSha256 = hostContractFingerprint(*input);
             const DOMEntryAnalysis proof(*input, request);
             check(proof.proved(), "normal close exception retains complete typed DOM reproof");
+        }
+    }
+    for (const auto & invalid : {
+             replaced(mixedBreakMutableSource, "^normalClose(%ignored: !ctjs.value):",
+                      "^normalClose(%ignored: !ctjs.value):\n"
+                      "        ctjs.store_global \"observed\", %ignored"),
+             replaced(mixedBreakMutableSource, "^caughtClose(%caught: !ctjs.value):",
+                      "^caughtClose(%caught: !ctjs.value):\n"
+                      "        ctjs.store_global \"observed\", %caught"),
+             replaced(mixedBreakMutableSource,
+                      "      scf.yield %one, %throwCompletion : !ctjs.value, i32",
+                      "      %observed = ctjs.get_property %holder[%stateKey]\n"
+                      "      scf.yield %observed, %throwCompletion : !ctjs.value, i32"),
+             replaced(mixedBreakMutableSource,
+                      "      scf.yield %one, %throwCompletion : !ctjs.value, i32",
+                      "      scf.yield %one, %normalCompletion : !ctjs.value, i32"),
+             replaced(mixedBreakMutableSource, "    %answer = scf.if %throwTest -> !ctjs.value {",
+                      "    %answer = scf.if %throwTest -> !ctjs.value {\n"
+                      "      %observed = ctjs.get_property %holder[%stateKey]\n"
+                      "      ctjs.store_global \"observed\", %observed"),
+             replaced(mixedBreakMutableSource, "        ctjs.throw %completion#0",
+                      "        scf.yield"),
+         }) {
+        for (const auto & specimen : {invalid, getterReturn(invalid)}) {
+            check(!specimen.empty() && specimen != mixedBreakMutableSource,
+                  "mutable projected cleanup refusal changes the complete source");
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
+                check(static_cast<bool>(input), "mutable projected cleanup observer parses");
+                if (!input) { continue; }
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "mutable protected cleanup requires its unobserved saved throw path");
+                llvm::consumeError(std::move(failure));
+                request.moduleSha256 = hostContractFingerprint(*input);
+                check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "mutable projected cleanup refusal publishes no native evidence");
+            }
         }
     }
     for (const auto & invalid : {
@@ -5691,6 +5745,8 @@ module {
                          *mixedBreak,
                          *mixedBreakGetter,
                          *mixedBreakReversed,
+                         *mixedBreakMutable,
+                         *mixedBreakMutableGetter,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,

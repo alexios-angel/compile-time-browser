@@ -1380,17 +1380,65 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator suppression must close its original record");
         }
     }
+    // Follow an exact completion tag without executing any intervening source
+    // operation. Both close coverage and private-state disposal use this edge.
+    const auto selectedContinuation = [&](mlir::scf::YieldOp yield) -> mlir::Region * {
+        if (!yield || !spend()) { return nullptr; }
+        auto * parent = yield->getParentOp();
+        if (!llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(parent) ||
+            yield.getOperandTypes() != parent->getResultTypes()) {
+            return nullptr;
+        }
+        auto * next = parent->getNextNode();
+        while (next && llvm::isa<mlir::arith::ConstantOp>(next)) {
+            if (!spend()) { return nullptr; }
+            next = next->getNextNode();
+        }
+        auto compare = llvm::dyn_cast_or_null<mlir::arith::CmpIOp>(next);
+        if (!spend() || !compare ||
+            (compare.getPredicate() != mlir::arith::CmpIPredicate::eq &&
+             compare.getPredicate() != mlir::arith::CmpIPredicate::ne)) {
+            return nullptr;
+        }
+        auto selected = llvm::dyn_cast<mlir::OpResult>(compare.getLhs());
+        auto other = compare.getRhs();
+        if (!selected || selected.getOwner() != parent) {
+            selected = llvm::dyn_cast<mlir::OpResult>(compare.getRhs());
+            other = compare.getLhs();
+        }
+        auto literal = selected && selected.getOwner() == parent
+                           ? yield.getOperand(selected.getResultNumber())
+                                 .getDefiningOp<mlir::arith::ConstantOp>()
+                           : mlir::arith::ConstantOp{};
+        auto key = other.getDefiningOp<mlir::arith::ConstantOp>();
+        auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(compare->getNextNode());
+        if (!literal || !key || !branch || branch.getCondition() != compare.getResult() ||
+            !llvm::isa<mlir::IntegerAttr>(literal.getValue()) ||
+            !llvm::isa<mlir::IntegerAttr>(key.getValue())) {
+            return nullptr;
+        }
+        const bool equal = literal.getValue() == key.getValue();
+        return equal == (compare.getPredicate() == mlir::arith::CmpIPredicate::eq)
+                   ? &branch.getThenRegion()
+                   : &branch.getElseRegion();
+    };
     // The captured cells and receiver are private. A terminal saved throw
     // cannot observe the close's final state, but the method still receives
     // current state and must retain every effect before throwing resumes.
-    // ponytail: only an immediate saved throw; later observers need explicit
-    // exceptional-state transport instead of discarding the method result.
+    // ponytail: only an immediate saved throw, possibly across one exact tag
+    // projection; later observers need explicit exceptional-state transport.
     if (!protectedCloses.empty() && !stateInitials.empty()) {
         for (auto & [invocation, call] : protectedCloses) {
             (void)call;
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            auto terminal =
-                llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(invocation->getNextNode());
+            auto * next = invocation->getNextNode();
+            if (auto yield = llvm::dyn_cast_or_null<mlir::scf::YieldOp>(next)) {
+                auto * continuation = selectedContinuation(yield);
+                next = continuation && continuation->hasOneBlock() && !continuation->front().empty()
+                           ? &continuation->front().front()
+                           : nullptr;
+            }
+            auto terminal = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(next);
             if (!terminal || !terminal.getNoInline() || terminal.getNumResults() ||
                 !terminal.getRegion().hasOneBlock() ||
                 !llvm::hasSingleElement(terminal.getRegion().front()) ||
@@ -1455,48 +1503,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 auto yield = llvm::hasSingleElement(region.front())
                                  ? llvm::dyn_cast<mlir::scf::YieldOp>(region.front().front())
                                  : mlir::scf::YieldOp{};
-                if (!yield || yield.getOperandTypes() != cursor->getResultTypes()) {
-                    closed = false;
-                    continue;
-                }
-                auto next = std::next(cursor);
-                while (next != end && llvm::isa<mlir::arith::ConstantOp>(*next)) {
-                    if (!spend()) { return false; }
-                    ++next;
-                }
-                auto compare = next != end ? llvm::dyn_cast<mlir::arith::CmpIOp>(*next)
-                                           : mlir::arith::CmpIOp{};
-                if (!spend()) { return false; }
-                if (!compare || (compare.getPredicate() != mlir::arith::CmpIPredicate::eq &&
-                                 compare.getPredicate() != mlir::arith::CmpIPredicate::ne)) {
-                    closed = false;
-                    continue;
-                }
-                auto selected = llvm::dyn_cast<mlir::OpResult>(compare.getLhs());
-                auto other = compare.getRhs();
-                if (!selected || selected.getOwner() != &*cursor) {
-                    selected = llvm::dyn_cast<mlir::OpResult>(compare.getRhs());
-                    other = compare.getLhs();
-                }
-                auto literal = selected && selected.getOwner() == &*cursor
-                                   ? yield.getOperand(selected.getResultNumber())
-                                         .template getDefiningOp<mlir::arith::ConstantOp>()
-                                   : mlir::arith::ConstantOp{};
-                auto key = other.getDefiningOp<mlir::arith::ConstantOp>();
-                auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(compare->getNextNode());
-                if (!literal || !key || !branch || branch.getCondition() != compare.getResult() ||
-                    !llvm::isa<mlir::IntegerAttr>(literal.getValue()) ||
-                    !llvm::isa<mlir::IntegerAttr>(key.getValue())) {
-                    closed = false;
-                    continue;
-                }
-                const bool equal = literal.getValue() == key.getValue();
-                auto & continuation =
-                    equal == (compare.getPredicate() == mlir::arith::CmpIPredicate::eq)
-                        ? branch.getThenRegion()
-                        : branch.getElseRegion();
-                closed &= continuation.hasOneBlock() && self(self, continuation.front().begin(),
-                                                             continuation.front().end(), depth + 1);
+                auto * continuation = selectedContinuation(yield);
+                closed &= continuation && continuation->hasOneBlock() &&
+                          self(self, continuation->front().begin(), continuation->front().end(),
+                               depth + 1);
             }
             if (closed) { return true; }
         }
