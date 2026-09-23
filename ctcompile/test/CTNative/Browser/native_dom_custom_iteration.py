@@ -2509,6 +2509,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
         "const present = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
     )
+    inside_first_write_read_source = before_first_write_read_source.replace(
+        "const present = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+        "let present; anchor.setAttribute('data-closed', (present = anchor.hasAttribute('data-closed'), anchor.hasAttribute('data-visited')));",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3231,6 +3235,33 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-inside-first-write-value-close",
+            inside_first_write_read_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-inside-first-write-value-getter-close",
+            inside_first_write_read_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-inside-first-write-value-order-close",
+            inside_first_write_read_source.replace(
+                "present = anchor.hasAttribute('data-closed')",
+                "present = anchor.hasAttribute('data-unvisited')",
+            ).replace(
+                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-closed');",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -3301,7 +3332,10 @@ def saved_throws(args, compilers, includes, libraries):
         before_selector_read = "-write-before-selector-value-" in label
         before_first_selector_read = "-write-before-first-selector-value-" in label
         before_second_write_read = "-write-before-second-write-value-" in label
-        before_first_write_read = "-write-before-first-write-value-" in label
+        before_first_write_read = (
+            "-write-before-first-write-value-" in label
+            or "-write-inside-first-write-value-" in label
+        )
         early_terminal_selector = terminal_selector_value and label.endswith("-order-close")
         terminal_sequence = ()
         if "-terminal-match-read-sequence-" in label:
@@ -4071,6 +4105,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-before-first-write-value-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-before-first-write-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-before-first-write-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-inside-first-write-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-inside-first-write-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-inside-first-write-value-order-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -5164,10 +5201,73 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-earlier-read-inside-first-write",
-            before_first_write_read_source.replace(
-                "const present = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+            "normal-inside-first-write-read-write-close",
+            inside_first_write_read_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-inside-first-write-read-write-close",
+            inside_first_write_read_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-inside-first-write-read-write-name",
+            inside_first_write_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "anchor.setAttribute('bad name', present);",
+            ),
+        ),
+        (
+            "bad-inside-first-write-read-write-receiver",
+            inside_first_write_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "(0).setAttribute('data-after-terminal', present);",
+            ),
+        ),
+        (
+            "invalid-inside-first-write-read-write-arity",
+            inside_first_write_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "anchor.setAttribute('data-after-terminal', present, false);",
+            ),
+        ),
+        (
+            "bad-inside-first-write-read-write-read-receiver",
+            inside_first_write_read_source.replace(
+                "present = anchor.hasAttribute('data-closed')",
+                "present = (0).hasAttribute('data-closed')",
+            ),
+        ),
+        (
+            "bad-inside-first-write-read-write-ignored-receiver",
+            inside_first_write_read_source.replace(
+                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
+            ),
+        ),
+        (
+            "unsupported-inside-first-write-read-write-reuse",
+            inside_first_write_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+            ),
+        ),
+        (
+            "unsupported-inside-first-write-read-write-extra-use",
+            inside_first_write_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', present);",
+                "external(present); anchor.setAttribute('data-after-terminal', present);",
+            ),
+        ),
+        (
+            "unsupported-feeding-read-before-saved-read-inside-first-write",
+            inside_first_write_read_source.replace(
                 "let present; anchor.setAttribute('data-closed', (present = anchor.hasAttribute('data-closed'), anchor.hasAttribute('data-visited')));",
+                "let present, feeding; anchor.setAttribute('data-closed', (feeding = anchor.hasAttribute('data-visited'), present = anchor.hasAttribute('data-closed'), feeding));",
             ),
         ),
         (

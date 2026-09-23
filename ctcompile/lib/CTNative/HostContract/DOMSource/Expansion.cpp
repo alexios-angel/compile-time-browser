@@ -79,9 +79,19 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                         : protectedLeaf ? trailingCall
                                                         : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-                    read && !sourceReadMethod &&
-                    (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
-                     (selectorLeaf && ctjs::constantKey(read.getKey()) == "matches"))) {
+                    read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
+                             (selectorLeaf && ctjs::constantKey(read.getKey()) == "matches"))) {
+                    if (sourceReadMethod) {
+                        if (suffixRead || !sourceReadCall) { return false; }
+                        // Earlier argument reads are independent of the final
+                        // feeding read. Keep their values in the complete use
+                        // census; the write must still consume the final read.
+                        suffixValues.append(
+                            {sourceReadMethod.getResult(), sourceReadCall.getResult()});
+                        suffixUses.insert(&sourceReadCall->getOpOperand(0));
+                        suffixReads.insert(sourceReadCall.getResult());
+                        sourceReadCall = {};
+                    }
                     sourceReadMethod = read;
                     continue;
                 }
