@@ -33,6 +33,42 @@ void StructuredCases::mutationRefusals() {
                                              "    ctjs.set_property %base[%position], %zero\n"
                                              "    %read ="),
                                      "ctjs.return %result", "ctjs.return %a");
+    const auto unitPower = replace(scaledIndex, "binary mul %i, %one", "binary pow %i, %one");
+    rows.push_back({.what = "structured unit powers preserve reordered induction transport",
+                    .body = unitPower,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    for (const std::string literal :
+         {"#ctjs.boolean<false>", "#ctjs.null", "#ctjs.string<\"0\">"}) {
+        rows.push_back(
+            {.what = "structured zero powers retain the unwritten child",
+             .body = replace(replace(unitPower, "  %a =",
+                                     "  %exponent = ctjs.constant " + literal + "\n  %a ="),
+                             "pow %i, %one", "pow %i, %exponent"),
+             .arrays = "a:[x,zero]",
+             .reads = "a[0]=x; a[1]=zero",
+             .exit = "a -> {a,x}"});
+    }
+    const auto powerReload =
+        replace(replace(unitPower, "create_array [%x]", "create_array [%zero]"),
+                "%position = ctjs.binary pow %i, %one",
+                "%exponent = ctjs.get_property %base[%zero]\n"
+                "    %position = ctjs.binary pow %i, %exponent");
+    rows.push_back({.what = "structured power exponent reloads preserve the singleton gap",
+                    .body = powerReload,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[0]=zero; a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured power exponent reloads retain the complete later-store census",
+           replace(powerReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
+    reject("structured power exponents cannot overlap their write footprint",
+           replace(powerReload, "create_array [%zero]", "create_array [%one]"));
+    reject("structured powers cannot commute a changing exponent",
+           replace(unitPower, "pow %i, %one", "pow %one, %i"));
+    reject("structured powers refuse nonunit varying results",
+           replace(unitPower, "pow %i, %one", "pow %i, %i"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

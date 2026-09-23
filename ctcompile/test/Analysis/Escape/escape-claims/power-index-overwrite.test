@@ -1,0 +1,117 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name power-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-power-index-overwrite.claims
+
+// Zero/unit exponents preserve each source operation, actual writes and snapshots.
+// Reloads must be disjoint from every write; general powers remain unproved.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function unit() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** 1] = 0;
+    return a;
+}
+function stringUnit() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** "1"] = 0;
+    return a;
+}
+function zero() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[i ** 0] = 0;
+    return a;
+}
+function nullZero() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[i ** null] = 0;
+    return a;
+}
+function signedBase() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[2 + (-i) ** 1] = 0;
+    return a;
+}
+function gappedUnit() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[i ** 1] = 0;
+    return a;
+}
+function reloadedZero() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[i ** a[0]] = 0;
+    return a;
+}
+function reloadedUnitGap() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i += 2) a[i ** a[1]] = 0;
+    return a;
+}
+function retainedZero() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** 0] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [child, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i ** 1] = 0;
+    return saved;
+}
+function laterStore() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i ** a[0]] = 0;
+        a[0] = 1;
+    }
+    return a;
+}
+function overlappingExponent() {
+    var child = {}, a = [1, child];
+    for (var i = 0; i < a.length; i++) a[i ** a[0]] = 0;
+    return a;
+}
+function nonunitExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** 2] = 0;
+    return a;
+}
+function changingExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** i] = 0;
+    return a;
+}
+function reversedOperands() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 ** i] = 0;
+    return a;
+}
+function noncanonicalExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** "01"] = 0;
+    return a;
+}
+function undefinedExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** undefined] = 0;
+    return a;
+}
+unit(); stringUnit(); zero(); nullZero(); signedBase(); gappedUnit();
+reloadedZero(); reloadedUnitGap(); retainedZero(); saved(); laterStore();
+overlappingExponent(); nonunitExponent(); changingExponent(); reversedOperands();
+noncanonicalExponent(); undefinedExponent();

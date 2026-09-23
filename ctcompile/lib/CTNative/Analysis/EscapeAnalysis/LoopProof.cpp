@@ -329,6 +329,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
         const bool remainder = binary && binary.getKind() == ctjs::BinaryKind::Mod;
         const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
+        const bool power = binary && binary.getKind() == ctjs::BinaryKind::Pow;
         const bool bitAnd = addition && addition.getKind() == ctjs::BinaryKind::BitAnd;
         const bool bitOr = addition && addition.getKind() == ctjs::BinaryKind::BitOr;
         const bool bitXor = addition && addition.getKind() == ctjs::BinaryKind::BitXor;
@@ -337,14 +338,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             leftShift || (addition && (addition.getKind() == ctjs::BinaryKind::Shr ||
                                        addition.getKind() == ctjs::BinaryKind::UShr));
         if (!expression || expression->getBlock() != body ||
-            !(subtract || divide || remainder || multiply || shift || bitAnd || bitOr || bitXor ||
-              (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
+            !(subtract || divide || remainder || multiply || power || shift || bitAnd || bitOr ||
+              bitXor || (binary && binary.getKind() == ctjs::BinaryKind::Add) ||
               (addition && addition.getKind() == ctjs::BinaryKind::Add))) {
             return std::nullopt;
         }
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1);
-        if (!range && !divide && !remainder && !shift &&
+        if (!range && !divide && !remainder && !power && !shift &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
             range = self(self, expression->getOperand(1), depth + 1);
             offsetOperand = 0;
@@ -354,6 +355,17 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // Each transfer proves bounded primitive conversion; boundedNumberSum
         // separately excludes String concatenation for Add.
         if (!offset) { return std::nullopt; }
+        if (power) {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            // ponytail: only zero/unit exponents; wider powers need an exact
+            // Number result and an enclosure for every interior visit.
+            const auto exponent = boundedConvertedNumber(*offset);
+            if (!exponent || *exponent > 1) { return std::nullopt; }
+            if (*exponent == 0) { range->stride = 1; }
+        }
         if (remainder) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
@@ -630,6 +642,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 boundedNumberDivision(*endpoint, *offset, false, result);
             } else if (multiply) {
                 boundedNumberProduct(*endpoint, *offset, result);
+            } else if (power) {
+                boundedNumberPower(*endpoint, *offset, result);
             } else if (subtract) {
                 if (offsetOperand == 0) {
                     boundedNumberDifference(*offset, *endpoint, result);

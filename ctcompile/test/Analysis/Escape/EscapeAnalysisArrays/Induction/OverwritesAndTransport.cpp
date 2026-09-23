@@ -41,6 +41,70 @@ void InductionCases::overwritesAndTransport() {
         replace(replace(savedChild, "ctjs.return %result", "ctjs.return %a"), "  %read =",
                 "  %position = ctjs.binary_static bitand %i, %one\n"
                 "  ctjs.set_property %base[%position], %zero\n  %read =");
+    const auto unitPower =
+        replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary pow %i, %one");
+    for (const std::string literal :
+         {"#ctjs.number<4607182418800017408>", "#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
+        run({.what = "unit power indices preserve exact Number writes after primitive conversion",
+             .body = replace(replace(unitPower, "  %a =",
+                                     "  %exponent = ctjs.constant " + literal + "\n  %a ="),
+                             "pow %i, %one", "pow %i, %exponent"),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string literal :
+         {"#ctjs.number<0>", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.string<\"0\">"}) {
+        run({.what = "zero power indices include zero to zero and retain only actual writes",
+             .body = replace(replace(unitPower, "  %a =",
+                                     "  %exponent = ctjs.constant " + literal + "\n  %a ="),
+                             "pow %i, %one", "pow %i, %exponent"),
+             .arrays = "a:[one,zero]",
+             .reads = "a[0]=one; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "zero power writes leave children outside the singleton footprint",
+         .body =
+             replace(replace(unitPower, "[%one, %x]", "[%x, %x]"), "pow %i, %one", "pow %i, %zero"),
+         .arrays = "a:[x,zero]",
+         .reads = "a[0]=x; a[1]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "power overwrites retain the child observed before the write",
+         .body = replace(overwritten, "  ctjs.set_property %base[%i], %zero",
+                         "  %position = ctjs.binary pow %i, %one\n"
+                         "  ctjs.set_property %base[%position], %zero"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    const auto powerReload = replace(replace(unitPower, "[%one, %x]", "[%zero, %x]"),
+                                     "%position = ctjs.binary pow %i, %one",
+                                     "%exponent = ctjs.get_property %base[%zero]\n"
+                                     "  %position = ctjs.binary pow %i, %exponent");
+    run({.what = "zero exponents reload outside the singleton write footprint",
+         .body = powerReload,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[0]=zero; a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("unit exponent reloads cannot overlap the proved writes",
+           replace(powerReload, "[%zero, %x]", "[%one, %x]"));
+    reject("power exponent reloads retain the complete later-store census",
+           replace(powerReload, "  %step =", "  ctjs.set_property %base[%zero], %one\n  %step ="));
+    reject("power operands cannot commute the changing exponent",
+           replace(unitPower, "pow %i, %one", "pow %one, %i"));
+    reject("power exponents cannot borrow an object conversion",
+           replace(unitPower, "pow %i, %one", "pow %i, %x"));
+    for (const std::string literal :
+         {"#ctjs.number<4611686018427387904>", "#ctjs.number<13830554455654793216>",
+          "#ctjs.number<4602678819172646912>", "#ctjs.number<9221120237041090560>",
+          "#ctjs.undefined", "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
+        reject("power indices require exact zero/unit Number exponents",
+               replace(replace(unitPower,
+                               "  %a =", "  %exponent = ctjs.constant " + literal + "\n  %a ="),
+                       "pow %i, %one", "pow %i, %exponent"));
+    }
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :
