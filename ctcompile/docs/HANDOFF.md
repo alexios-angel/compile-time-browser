@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Normal cleanup exceptions and wide finite Strings, 2026-09-23 UTC
+
+Resumed clean **8224a1ff** and retained source `b216ee20` from the previous
+handoff. **a5cf5588** preserves exceptions from normal `break`/body-return
+iterator closes when the private cleanup method always throws and has no mutable
+iterator state or protected closes. The existing owning primitive throw lowering preserves
+the payload, guards, effects and suffix ordering. Saved-body exceptions retain
+their existing suppression. Independent native production review is complete and
+clean. Seventy-two historical normal-close expectations now admit; their source
+constructions remain unchanged.
+
+**f3fd445d** permits wide finite String bitwise inputs through public Core's
+modulo conversion. The magnitude guard moves to the bounded arithmetic consumer;
+original property spelling, grammar, source-size, exponent, provenance and
+mutation checks remain. The exact same source program, `48bf7525f0f77603`, changes
+six child sites from all stored to **three confined and three stored**, each
+observed once with zero unresolved or unchecked instances. No runtime code changed.
+
+Focused checks pass: **144 native executions, 44 refusals, 72 Node/VM observations,
+230 source-policy checks, exact host/arrays CTests and one table-key lit case**.
+Final formatting passes **1126 C++, 157 Python and 114 web files**; eight final
+code/test hashes match the devbox. All **72 generated C++ variants** contain no
+Script namespace. Interrupted builds/formatting resumed; completed gates were
+not replayed. Full suites were skipped.
+
+**Next native boundary:** the unchanged `normal-selector-branch-throw-read-close`,
+source `b216ee20`, now refuses **DOM entry branch has incompatible scalar
+alternatives** under both policies. Preserve its optional-String/Boolean throw
+payloads and branch/read/write/suffix order; the body-return variant has the same
+boundary. Normal throwing getters, mutable or mixed-suppression closes, broader
+cleanup/control flow, nested custom iterators, unguarded Bootstrap defaults,
+the application driver and full native Bootstrap remain. Escape still excludes
+unsafe String exponents, Strings over 32 bytes, computed fractional/nonfinite
+origins, general powers and legacy SCF retention. The VM fractional-index
+discrepancy remains separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-normal-close-wide-strings.md).
+
 ## String cleanup payloads and nonfinite String tokens, 2026-09-23 UTC
 
 Resumed clean **e4396a38** and retained source `39355ceb` from the preceding
