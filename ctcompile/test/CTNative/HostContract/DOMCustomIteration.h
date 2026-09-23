@@ -2042,6 +2042,66 @@ module {
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
         }
     }
+    // Three exits keep their saved slots private until the selected arm and
+    // its continuation have completed. The fallback uses a distinct tag too.
+    const auto threeWaySource =
+        replaced(savedCompletionSource, "    default {\n",
+                 "    case 11 {\n"
+                 "      %thirdClose = ctjs.call %close(%undefined, %record, %normal)\n"
+                 "      scf.yield %loop#2 : !ctjs.value\n"
+                 "    }\n    default {\n");
+    const auto fallbackSource =
+        replaced(threeWaySource, "%breakTag = arith.constant 11", "%breakTag = arith.constant 13");
+    auto threeWay = mlir::parseSourceString<mlir::ModuleOp>(threeWaySource, &context);
+    auto fallback = mlir::parseSourceString<mlir::ModuleOp>(fallbackSource, &context);
+    check(threeWay && fallback, "three-way saved completion parses");
+    if (!threeWay || !fallback) { return; }
+    for (auto fixture : {*threeWay, *fallback}) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            if (!failure) { failure = expandDOMHelpers(*input, request.entry, completeBudget); }
+            check(!failure, "three-way selected payloads normalize and expand");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            const DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "three-way saved slots retain complete DOM proof");
+            if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
+        }
+    }
+    for (const auto & text : {
+             replaced(threeWaySource, "    case 11 {\n",
+                      "    case 11 {\n      %observed = ctjs.truthy %loop#1\n"),
+             replaced(threeWaySource, "    case 7 {\n",
+                      "    case 7 {\n      %observed = ctjs.truthy %loop#2\n"),
+             replaced(threeWaySource, "    ctjs.frame_exit %frame",
+                      "    %observed = ctjs.truthy %loop#2\n    ctjs.frame_exit %frame"),
+             replaced(threeWaySource, "    %selector =",
+                      "    %observed = arith.index_castui %loop#3 : i32 to index\n"
+                      "    %selector ="),
+         }) {
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(fixture), "observed three-way inactive slot parses");
+        if (!fixture) { return; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*fixture);
+        mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(static_cast<bool>(failure), "three-way selected or external inactive slot refuses");
+        if (failure) { llvm::consumeError(std::move(failure)); }
+        check(hostContractFingerprint(*fixture) == request.moduleSha256,
+              "three-way refusal preserves the original source");
+        request.moduleSha256 = hostContractFingerprint(*input);
+        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+              "three-way refusal publishes no DOM evidence");
+    }
     for (const auto & invalidOriginal : {
              replaced(savedCompletionSource, "%poison, %normalValue, %poison, %normalTag",
                       "%poison, %poison, %poison, %normalTag"),
@@ -4825,6 +4885,8 @@ module {
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,
+                         *threeWay,
+                         *fallback,
                          *comparisons[0],
                          *comparisons[3],
                          *elementCompletion,

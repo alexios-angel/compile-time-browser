@@ -2450,6 +2450,13 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-throw-or-return",
+            refusals()["body-throw-or-return-snapshot"],
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
             "string",
             original.replace("throw 1;", "throw 'saved';"),
             "js_string",
@@ -2504,6 +2511,7 @@ def saved_throws(args, compilers, includes, libraries):
 """
     executions = refused = observations = 0
     for label, text, kind, payload, closed in cases:
+        mixed = label == "conditional-boolean-throw-or-return"
         conditional = label.startswith("conditional-")
         snapshot = conditional or label == "boolean-snapshot"
         js_kind = "boolean" if conditional else label.partition("-")[0]
@@ -2554,6 +2562,42 @@ var savedThrow, savedExhausted;
 """,
                 )
             )
+        if mixed:
+            script = (
+                script.replace(
+                    "var savedThrow, savedExhausted, savedNormal, savedPrior;",
+                    "var savedThrow, savedExhausted, savedNormal, savedPrior, "
+                    "savedReturn, savedReturnPrior, savedReturnExhausted, savedReturnPriorExhausted;",
+                )
+                .replace(
+                    "  saved.stop = 'yes';",
+                    "  saved.stop = 'yes';\n  saved.advance = 'yes';",
+                )
+                .replace("  delete saved.stop;", "  delete saved.stop;\n  delete saved.advance;")
+                .replace(
+                    "})();",
+                    """
+  delete saved.stop;
+  saved.advance = 'yes';
+  for (let repetition = 0; repetition < 2; ++repetition) {
+    delete saved['data-yielded'];
+    delete saved['data-visited'];
+    delete saved['data-closed'];
+    if (repetition) saved['data-closed'] = 'before';
+    writes = '';
+    const returned = '' + customElements(anchor) + ':' + writes;
+    if (repetition) savedReturnPrior = returned;
+    else savedReturn = returned;
+    delete saved['data-closed'];
+    writes = '';
+    const exhausted = '' + customElements(anchor) + ':' + writes;
+    if (repetition) savedReturnPriorExhausted = exhausted;
+    else savedReturnExhausted = exhausted;
+  }
+})();
+""",
+                )
+            )
         expected = {
             "savedThrow": f"{js_kind}:"
             + {"number": "1", "boolean": "false", "string": "saved"}[js_kind]
@@ -2569,6 +2613,15 @@ var savedThrow, savedExhausted;
                 "data-next=true;data-yielded=yes;",
                 savedPrior="boolean:true:data-next=false;data-yielded=yes;data-visited=yes;"
                 f"data-closed={closed};",
+            )
+        if mixed:
+            expected.update(
+                savedReturn="false:data-next=false;data-yielded=yes;data-visited=yes;"
+                "data-closed=true;",
+                savedReturnPrior="true:data-next=false;data-yielded=yes;data-visited=yes;"
+                "data-closed=true;",
+                savedReturnExhausted="true:data-next=true;data-yielded=yes;",
+                savedReturnPriorExhausted="true:data-next=true;data-yielded=yes;",
             )
         node = args.work / f"saved-throw-{label}-node.js"
         node.write_text(script + "".join(f"console.log({key});\n" for key in expected))
@@ -2605,6 +2658,11 @@ var savedThrow, savedExhausted;
                             'if (repetition) { assert(target.set_attribute(id, closed, "before")); }'
                             if conditional
                             else ""
+                        )
+                        + (
+                            'assert(target.set_attribute(id, target.atoms().intern("advance"), "yes"));'
+                            if mixed
+                            else ""
                         ),
                     )
                     .replace(
@@ -2612,6 +2670,7 @@ var savedThrow, savedExhausted;
                         (
                             r"""
                 assert(target.remove_attribute(id, target.atoms().intern("stop")));
+                assert(target.remove_attribute(id, target.atoms().intern("advance")));
                 assert(target.remove_attribute(id, yielded));
                 assert(target.remove_attribute(id, visited));
                 (void)target.take_writes();
@@ -2622,6 +2681,34 @@ var savedThrow, savedExhausted;
                 assert(!target.read().has_attribute(id, closed));
 """
                             if conditional
+                            else ""
+                        )
+                        + (
+                            r"""
+                assert(target.set_attribute(id, target.atoms().intern("advance"), "yes"));
+                assert(target.remove_attribute(id, yielded));
+                assert(target.remove_attribute(id, visited));
+                if (repetition) { assert(target.set_attribute(id, closed, "before")); }
+                (void)target.take_writes();
+                assert(static_cast<bool>(call()) == (repetition != 0));
+                const auto returned = target.take_writes();
+                assert(returned.size() == 4 && returned[0].name == next &&
+                       returned[1].name == yielded && returned[2].name == visited &&
+                       returned[3].name == closed);
+                for (const auto & write : returned) { assert(write.node == id && !write.text); }
+                assert(target.read().attribute_value(id, next) == "false");
+                assert(target.read().attribute_value(id, visited) == "yes");
+                assert(target.read().attribute_value(id, closed) == "true");
+                assert(target.remove_attribute(id, closed));
+                (void)target.take_writes();
+                assert(static_cast<bool>(call()));
+                const auto return_exhausted = target.take_writes();
+                assert(return_exhausted.size() == 2 && return_exhausted[0].name == next &&
+                       return_exhausted[1].name == yielded);
+                assert(target.read().attribute_value(id, next) == "true");
+                assert(!target.read().has_attribute(id, closed));
+"""
+                            if mixed
                             else ""
                         ),
                     )
@@ -2813,6 +2900,7 @@ def main():
             "body-throw",
             "body-throw-boolean-snapshot",
             "body-throw-branch-boolean-snapshot",
+            "body-throw-or-return-snapshot",
         ):
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")

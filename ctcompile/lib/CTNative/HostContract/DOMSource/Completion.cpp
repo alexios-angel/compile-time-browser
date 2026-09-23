@@ -153,16 +153,24 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             return {};
                         }
                         auto * selected = terminal.exit.fallback;
+                        unsigned choice = static_cast<unsigned>(terminal.exit.arms.size());
                         for (auto [index, value] : llvm::enumerate(terminal.exit.cases)) {
                             if (!step()) { return {}; }
-                            if (value == key.getInt()) { selected = terminal.exit.arms[index]; }
+                            if (value == key.getInt()) {
+                                selected = terminal.exit.arms[index];
+                                choice = static_cast<unsigned>(index);
+                            }
                         }
                         selectedExit = selected;
                         if (terminal.exit.effectful) {
-                            arguments[terminal.exit.selector] = ctjs::ConstantOp::create(
-                                at, condition.getLoc(),
-                                ctjs::BooleanAttr::get(function.getContext(),
-                                                       selected != terminal.exit.fallback));
+                            mlir::Attribute discriminator =
+                                terminal.exit.cases.size() == 1
+                                    ? mlir::Attribute(ctjs::BooleanAttr::get(function.getContext(),
+                                                                             choice == 0))
+                                    : mlir::Attribute(ctjs::NumberAttr::get(
+                                          function.getContext(), static_cast<double>(choice)));
+                            arguments[terminal.exit.selector] =
+                                ctjs::ConstantOp::create(at, condition.getLoc(), discriminator);
                             ++operationCount;
                         } else {
                             // Read the entire selected tuple before replacing any
@@ -182,9 +190,14 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                     } else if (terminal.exit.effectful) {
                         // The after region cannot observe the exit selector.
-                        arguments[terminal.exit.selector] = ctjs::ConstantOp::create(
-                            at, condition.getLoc(),
-                            ctjs::BooleanAttr::get(function.getContext(), false));
+                        mlir::Attribute discriminator =
+                            terminal.exit.cases.size() == 1
+                                ? mlir::Attribute(
+                                      ctjs::BooleanAttr::get(function.getContext(), false))
+                                : mlir::Attribute(
+                                      ctjs::NumberAttr::get(function.getContext(), 0.0));
+                        arguments[terminal.exit.selector] =
+                            ctjs::ConstantOp::create(at, condition.getLoc(), discriminator);
                         ++operationCount;
                     }
                 }
@@ -388,9 +401,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                         exit.effectful |= !llvm::hasSingleElement(region.front());
                     }
-                    // ponytail: a single case becomes an ordinary Boolean branch;
-                    // more exit arms need a separately proved discriminator.
-                    if (exit.effectful && exit.cases.size() != 1) { return {}; }
+                    // Each effectful case adds a branch to the bounded exit tree.
+                    if (exit.effectful && (exit.cases.empty() || exit.cases.size() >= 64 - depth)) {
+                        return {};
+                    }
                     for (auto & region : exit.dispatch->getRegions()) {
                         if (!step()) { return {}; }
                         if (exit.effectful) { continue; }
@@ -495,6 +509,61 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 values.map(loop.getResults(), copied.getResults());
                 if (before.exit.dispatch) {
                     auto dispatch = before.exit.dispatch;
+                    if (before.exit.effectful && before.exit.cases.size() > 1) {
+                        // Keep each exit's exact tuple until its continuation has
+                        // selected the live payload. Joining here would expose
+                        // the sibling return/throw slot's poison or integer tag.
+                        Continuation tail{&body, std::next(dispatch->getIterator()),
+                                          dispatch->getResults(), continuation};
+                        const auto emitExit = [&](auto && exitSelf, unsigned index,
+                                                  mlir::OpBuilder & builder) -> Results {
+                            if (!step() || depth + index >= 64) { return {}; }
+                            auto * source = index < before.exit.arms.size()
+                                                ? before.exit.arms[index]
+                                                : before.exit.fallback;
+                            const auto emitArm = [&](mlir::OpBuilder & nested) -> Results {
+                                for (const auto & item : values.getValueMap()) {
+                                    (void)item;
+                                    if (!step()) { return {}; }
+                                }
+                                for (const auto & item : values.getOperationMap()) {
+                                    (void)item;
+                                    if (!step()) { return {}; }
+                                }
+                                mlir::IRMapping path(values);
+                                return self(self, source->front(), source->front().begin(), path,
+                                            nested, &tail, terminal, depth + index + 1);
+                            };
+                            if (index == before.exit.arms.size()) { return emitArm(builder); }
+                            auto tag = ctjs::ConstantOp::create(
+                                builder, dispatch->getLoc(),
+                                ctjs::NumberAttr::get(function.getContext(),
+                                                      static_cast<double>(index)));
+                            auto equal = ctjs::CompareOp::create(
+                                builder, dispatch->getLoc(), tag.getType(),
+                                ctjs::CompareKind::StrictEq, copied.getResult(before.exit.selector),
+                                tag);
+                            auto choice =
+                                ctjs::TruthyOp::create(builder, dispatch->getLoc(), equal);
+                            auto branch = mlir::scf::IfOp::create(
+                                builder, dispatch->getLoc(), terminal.types, choice.getResult());
+                            operationCount += 4;
+                            for (auto [arm, region] : llvm::enumerate(branch->getRegions())) {
+                                auto & output = region.emplaceBlock();
+                                mlir::OpBuilder nested(&output, output.begin());
+                                auto result = arm == 0 ? emitArm(nested)
+                                                       : exitSelf(exitSelf, index + 1, nested);
+                                if (!result) { return {}; }
+                                mlir::scf::YieldOp::create(nested, dispatch->getLoc(), *result);
+                                ++operationCount;
+                            }
+                            return llvm::SmallVector<mlir::Value>(branch.getResults());
+                        };
+                        auto result = emitExit(emitExit, 0, at);
+                        if (before.exit.cast) { visited.insert(before.exit.cast); }
+                        visited.insert(dispatch);
+                        return result;
+                    }
                     if (before.exit.effectful) {
                         auto choice = ctjs::TruthyOp::create(
                             at, dispatch->getLoc(), copied.getResult(before.exit.selector));
