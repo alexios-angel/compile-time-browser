@@ -1046,6 +1046,37 @@ void StructuredCases::mutationRefusals() {
              .reads = "a[0]=zero; a[1]=zero",
              .exit = "a -> {a}"});
     }
+    const auto varyingSum =
+        replace(replace(replace(scaledIndex, "create_array [%x]", "create_array [%zero, %y]"),
+                        "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+                "%position = ctjs.binary mul %i, %one",
+                "%offset = ctjs.binary sub %one, %i\n"
+                "    %position = ctjs.binary add %i, %offset");
+    for (const auto & expression : {"ctjs.binary add %i, %offset", "ctjs.binary add %offset, %i",
+                                    "ctjs.binary_static add %i, %offset"}) {
+        rows.push_back({.what = "structured varying sums retain bounded source-order cancellation",
+                        .body = replace(varyingSum, "ctjs.binary add %i, %offset", expression),
+                        .arrays = "a:[zero,zero,zero]",
+                        .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto sumReload =
+        replace(replace(varyingSum, "create_array [%zero, %y]", "create_array [%one, %y]"),
+                "%offset = ctjs.binary sub %one, %i",
+                "%bound = ctjs.get_property %base[%zero]\n"
+                "    %offset = ctjs.binary sub %bound, %i");
+    rows.push_back({.what = "structured varying sums independently prove reload gaps",
+                    .body = sumReload,
+                    .arrays = "a:[one,zero,zero]",
+                    .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured varying sums retain every later producer store",
+           replace(sumReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
+    reject("structured varying sums cannot reload an overwritten producer",
+           replace(replace(sumReload, "create_array [%one, %y]", "create_array [%x, %one]"),
+                   "%bound = ctjs.get_property %base[%zero]",
+                   "%bound = ctjs.get_property %base[%one]"));
     const auto varyingProduct =
         replace(replace(replace(replace(scaledIndex, "  %a =",
                                         "  %two = ctjs.binary add %one, %one "
@@ -1390,8 +1421,12 @@ void StructuredCases::mutationRefusals() {
                     .arrays = "a:[one,zero,zero,one]",
                     .reads = "a[0]=one; a[2]=zero",
                     .exit = "a -> {a}"});
+    rows.push_back({.what = "structured varying sums retain children between actual stride visits",
+                    .body = replace(composedIndex, "add %part, %one", "add %part, %i"),
+                    .arrays = "a:[zero,x,y,zero]",
+                    .reads = "a[0]=zero; a[2]=y",
+                    .exit = "a -> {a,x,y}"});
     for (const auto & body : {replace(composedIndex, "add %i, %two", "add %i, %one"),
-                              replace(composedIndex, "add %part, %one", "add %part, %i"),
                               replace(composedIndex, "add %part, %one", "sub %part, %one"),
                               replace(composedIndex, "%part = ctjs.binary div %i, %two",
                                       "%factor = ctjs.get_property %base[%one]\n"

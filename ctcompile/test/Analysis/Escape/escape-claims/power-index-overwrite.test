@@ -320,6 +320,19 @@
 // CHECK: escape {{[0-9a-f]+}} 273 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 274 {{[0-9]+}} obj escapes:stored
 
+// Bounded varying addition reuses exact scalar sums without erasing source intermediates.
+// CHECK: escape {{[0-9a-f]+}} 275 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 276 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 277 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 278 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 279 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 280 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 281 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 282 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 283 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 284 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 285 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -1886,3 +1899,65 @@ varyingProduct(); reversedVaryingProduct(); retainedVaryingProduct(); savedVaryi
 signedVaryingProduct(); reloadedVaryingProduct(); laterVaryingProductStore();
 overlappingVaryingProduct(); interiorVaryingProductGrowth(); fractionalVaryingProduct();
 unboundedVaryingProduct();
+
+function varyingSum() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[i + (1 - i)] = 0;
+    return a;
+}
+function reversedVaryingSum() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - i) + i] = 0;
+    return a;
+}
+function retainedVaryingSum() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i + (1 - i)] = 0;
+    return a;
+}
+function savedVaryingSum() {
+    var child = {}, a = [0, child, 0], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i + (1 - i)] = 0;
+    return saved;
+}
+function reloadedVaryingSum() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i + (a[0] - i)] = 0;
+    return a;
+}
+function laterVaryingSumStore() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[i + (a[0] - i)] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingVaryingSum() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[i + (a[1] - i)] = 0;
+    return a;
+}
+function interiorVaryingSumGrowth() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2) + (i % 2) + 1] = 0;
+    return a;
+}
+function fractionalVaryingSum() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i / 2) + -(i / 2)] = 0;
+    return a;
+}
+function unboundedVaryingSum() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 4294967295) + -(i + 4294967295)] = 0;
+    return a;
+}
+function stringVaryingSum() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i + "") + (0 - i)] = 0;
+    return a;
+}
+varyingSum(); reversedVaryingSum(); retainedVaryingSum(); savedVaryingSum();
+reloadedVaryingSum(); laterVaryingSumStore(); overlappingVaryingSum();
+interiorVaryingSumGrowth(); fractionalVaryingSum(); unboundedVaryingSum(); stringVaryingSum();

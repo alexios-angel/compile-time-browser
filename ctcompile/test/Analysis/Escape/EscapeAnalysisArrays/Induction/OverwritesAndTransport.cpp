@@ -4893,6 +4893,61 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
     }
+    const auto varyingSum = replace(replace(scaledIndex, "[%one, %x]", "[%zero, %x, %zero]"),
+                                    "%position = ctjs.binary mul %i, %one",
+                                    "%offset = ctjs.binary sub %one, %i\n"
+                                    "  %position = ctjs.binary add %i, %offset");
+    for (const auto & expression : {"ctjs.binary add %i, %offset", "ctjs.binary add %offset, %i",
+                                    "ctjs.binary_static add %i, %offset"}) {
+        run({.what = "bounded varying sums preserve cancellation and source operand order",
+             .body = replace(varyingSum, "ctjs.binary add %i, %offset", expression),
+             .arrays = "a:[zero,zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "varying sum replay retains unvisited children",
+         .body = replace(varyingSum, "[%zero, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[x,zero,x]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "varying sum replay preserves a saved overwritten child",
+         .body = replace(replace(varyingSum, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[1]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto sumReload = replace(replace(varyingSum, "[%zero, %x, %zero]", "[%one, %x, %zero]"),
+                                   "%offset = ctjs.binary sub %one, %i",
+                                   "%bound = ctjs.get_property %base[%zero]\n"
+                                   "  %offset = ctjs.binary sub %bound, %i");
+    run({.what = "varying sums independently prove producer reload gaps",
+         .body = sumReload,
+         .arrays = "a:[one,zero,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("varying sums retain every later producer store",
+           replace(sumReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    reject("varying sums cannot reload an overwritten producer",
+           replace(replace(sumReload, "[%one, %x, %zero]", "[%x, %one, %zero]"),
+                   "%bound = ctjs.get_property %base[%zero]",
+                   "%bound = ctjs.get_property %base[%one]"));
+    reject("varying sums cannot conceal a fractional intermediate through cancellation",
+           replace(varyingSum,
+                   "%offset = ctjs.binary sub %one, %i\n"
+                   "  %position = ctjs.binary add %i, %offset",
+                   "%half = ctjs.binary div %i, %two\n"
+                   "  %offset = ctjs.unary neg %half\n"
+                   "  %position = ctjs.binary add %half, %offset"));
+    reject("varying sum endpoints cannot conceal interior array growth",
+           replace(varyingSum,
+                   "%offset = ctjs.binary sub %one, %i\n"
+                   "  %position = ctjs.binary add %i, %offset",
+                   "%part = ctjs.binary mod %i, %two\n"
+                   "  %twicePart = ctjs.binary add %part, %part\n"
+                   "  %position = ctjs.binary add %twicePart, %one"));
     const auto varyingProduct = replace(replace(scaledIndex, "[%one, %x]", "[%x, %x, %zero]"),
                                         "%position = ctjs.binary mul %i, %one",
                                         "%factor = ctjs.binary sub %two, %i\n"
@@ -5256,10 +5311,14 @@ void InductionCases::overwritesAndTransport() {
          .arrays = "a:[one,zero,x,one]",
          .reads = "a[0]=one; a[2]=x",
          .exit = "a -> {a,x}"});
+    run({.what = "composed varying sums retain children between actual stride visits",
+         .body = replace(composedIndex, "add %part, %one", "add %part, %i"),
+         .arrays = "a:[zero,x,x,zero]",
+         .reads = "a[0]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
     for (const auto & body :
          {replace(composedIndex, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
           replace(composedIndex, "div %i, %two", "div %i, %zero"),
-          replace(composedIndex, "add %part, %one", "add %part, %i"),
           replace(composedIndex, "add %part, %one", "add %part, %s"),
           replace(composedIndex, "add %part, %one", "add %part, %three"),
           replace(replace(composedIndex,
