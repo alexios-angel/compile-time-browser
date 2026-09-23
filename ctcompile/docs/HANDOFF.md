@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Reads after iterator-close selectors and correlated division, 2026-09-23 UTC
+
+Resumed clean **44416c8e** and retained post-selector read source `fcad547a`.
+**2c05286e** preserves its final `hasAttribute` read after the selector and before
+its consuming attribute write. The existing ordered clone and complete typed
+DOM/Style reproof retain receiver/argument validation, exact write suppression,
+private callable checks, saved Boolean ownership and budgets. The original
+source, getter and false-read variant execute unchanged.
+
+Parallel **325a1b09** reuses bounded whole-key subdivision when correlated
+integer division has a coarse enclosure containing fractional quotients. Every
+accepted subrange still requires exact arithmetic and own-array bounds; complete
+reload/store census, independent reload-gap proof and actual-write replay remain.
+Fifteen raw and ten source controls were added; all 167 historical source bodies
+and expectations are unchanged.
+
+Three selected sources pass **48 native executions, 84 refusals and 24 Node/VM
+observations**. Exact host/arrays CTests and the selected power-index lit case pass.
+Seven source hashes match the devbox; all 24 generated C++ files retain the selector,
+then pass the actual attribute-read Boolean to the following write, with no
+Script/VM protocol or nullable-scalar fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** retained `unsupported-fourth-postselector-effect`
+source `c6857b84` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve its fourth write after the post-selector
+read and third write, together with the original saved body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap and general powers remain.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-postselector-read-close.md).
+
 ## Selector results in iterator closes and correlated array bounds, 2026-09-23 UTC
 
 Resumed clean **de58563d** and retained selector-result source `8038c1f8`.
