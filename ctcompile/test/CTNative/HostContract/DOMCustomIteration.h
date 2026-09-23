@@ -1751,6 +1751,88 @@ module {
         check(proof.proved(), "acyclic return preserves complete DOM lifetime and effect proof");
         if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
     }
+    const auto primitiveReturn = [&](const std::string & input) {
+        return replaced(input, "    %result = ctjs.create_object\n    ctjs.return %result",
+                        "    %result = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                        "    ctjs.return %result");
+    };
+    auto primitiveAbruptSource = primitiveReturn(returningSource);
+    const auto primitiveBegin = primitiveAbruptSource.find("    %saved = scf.if");
+    const auto primitiveEnd = primitiveAbruptSource.find("    ctjs.frame_exit %frame");
+    check(primitiveBegin != std::string::npos && primitiveEnd > primitiveBegin,
+          "primitive close fixture has complete replacement bounds");
+    if (primitiveBegin == std::string::npos || primitiveEnd <= primitiveBegin) { return; }
+    primitiveAbruptSource.replace(primitiveBegin, primitiveEnd - primitiveBegin, R"MLIR(
+    %loop = scf.if %test -> !ctjs.value {
+      %exhaustedClose = ctjs.call %close(%undefined, %record, %normal)
+      scf.yield %zero : !ctjs.value
+    } else {
+      %attribute = ctjs.get_property %item[%attributeName]
+      %written = ctjs.call %attribute(%item, %visited, %yes)
+      %abrupt = ctjs.constant #ctjs.boolean<true>
+      "ctjs.invoke"() ({
+        %closedAbrupt = ctjs.call %close(%undefined, %record, %abrupt)
+        ctjs.invoke_exit %closedAbrupt state()
+      }, {
+      ^normalClose(%ignored: !ctjs.value):
+        ctjs.invoke_yield()
+      }, {
+      ^caughtClose(%caught: !ctjs.value):
+        ctjs.invoke_yield()
+      }) : () -> ()
+      scf.execute_region {
+        ctjs.throw %one
+      } {no_inline}
+      scf.yield %one : !ctjs.value
+    }
+)MLIR");
+    auto primitiveAbrupt = mlir::parseSourceString<mlir::ModuleOp>(primitiveAbruptSource, &context);
+    check(static_cast<bool>(primitiveAbrupt), "primitive close with saved throw parses");
+    if (!primitiveAbrupt) { return; }
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto request = contract;
+        request.provider = provider;
+        request.moduleSha256 = hostContractFingerprint(*primitiveAbrupt);
+        mlir::OwningOpRef<mlir::ModuleOp> input(primitiveAbrupt->clone());
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(!failure, "only suppressed primitive closes survive completion proof");
+        if (failure) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+            continue;
+        }
+        unsigned closes = 0, throws = 0;
+        input->walk([&](ctjs::CallOp call) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!method || ctjs::constantKey(method.getKey()) != "return") { return; }
+            ++closes;
+            check(llvm::isa<ctjs::InvokeOp>(call->getParentOp()),
+                  "primitive close result stays in exact suppression");
+        });
+        input->walk([&](ctjs::ThrowOp thrown) {
+            ++throws;
+            auto value = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
+            check(value && llvm::cast<ctjs::NumberAttr>(value.getValue()).getDouble() == 1,
+                  "ignored primitive result cannot replace the original throw");
+        });
+        check(closes == 1 && throws == 1 && mlir::succeeded(mlir::verify(*input)),
+              "exhaustion elides close while the saved-throw close remains");
+    }
+    for (const auto & invalid :
+         {primitiveReturn(returningSource), primitiveReturn(countedSource)}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "normal primitive close control parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(static_cast<bool>(failure), "normal return and break require a valid close result");
+        if (failure) {
+            check(llvm::toString(std::move(failure)).find("saved-throw suppression") !=
+                      std::string::npos,
+                  "normal primitive result fails the result-validation boundary");
+        }
+    }
     for (const auto & invalid : {
              replaced(returningSource,
                       "      %returnClose = ctjs.call %close(%undefined, %record, %normal)\n", ""),
@@ -4903,6 +4985,7 @@ module {
     if (!abruptState) { return; }
     for (auto fixture : {*original,
                          *abruptState,
+                         *primitiveAbrupt,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,

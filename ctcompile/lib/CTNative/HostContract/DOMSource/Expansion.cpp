@@ -96,12 +96,18 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 return false;
             }
-            if (!protectedLeaf || !discardedResult ||
+            auto literal =
+                result ? result.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+            const bool primitiveResult =
+                literal && llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
+                                     ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue());
+            if (!protectedLeaf || (!discardedResult && !primitiveResult) ||
                 (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult()))) {
                 return false;
             }
             for (mlir::Value value : llvm::SmallVector<mlir::Value>{
-                     method.getResult(), protectedLeaf.getResult(), discardedResult.getResult(),
+                     method.getResult(), protectedLeaf.getResult(),
+                     discardedResult ? discardedResult.getResult() : mlir::Value{},
                      readMethod ? readMethod.getResult() : mlir::Value{},
                      readCall ? readCall.getResult() : mlir::Value{}}) {
                 if (!value) { continue; }
@@ -117,11 +123,12 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                          use.getOwner() == readCall && use.getOperandNumber() == 0) ||
                         (readCall && value == readCall.getResult() &&
                          use.getOwner() == protectedLeaf && use.getOperandNumber() == 3) ||
-                        (value == discardedResult.getResult() && use.getOwner() == result)) {
+                        (discardedResult && value == discardedResult.getResult() &&
+                         use.getOwner() == result)) {
                         continue;
                     }
-                    if (value == discardedResult.getResult() && use.getOperandNumber() == 0 &&
-                        discardedFields.contains(use.getOwner())) {
+                    if (discardedResult && value == discardedResult.getResult() &&
+                        use.getOperandNumber() == 0 && discardedFields.contains(use.getOwner())) {
                         continue;
                     }
                     return false;

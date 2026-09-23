@@ -1169,6 +1169,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         helper.closure.erase();
         helper.body.erase();
     }
+    bool primitiveClose = false;
     // Projecting these records cannot invoke getters, consult a prototype or
     // lose evaluation of a field producer. Complete DOM proof checks values.
     for (auto & [name, store] : slots) {
@@ -1198,12 +1199,21 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto returned = llvm::dyn_cast<ctjs::ReturnOp>(block.back());
         auto record = returned ? returned.getValue().getDefiningOp<ctjs::CreateObjectOp>()
                                : ctjs::CreateObjectOp{};
-        if (!record || record->getBlock() != &block) {
+        auto literal =
+            returned ? returned.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+        if (name == "return" && literal &&
+            llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
+                      ctjs::UndefinedAttr>(literal.getValue())) {
+            // A saved throw ignores the close result. After completion
+            // normalization, every surviving call must still be suppressed.
+            primitiveClose = true;
+        } else if (!record || record->getBlock() != &block) {
             return error("DOM iterator method must return one fresh own-field record");
         }
         llvm::StringSet<> fields;
-        for (mlir::Operation * user : record->getUsers()) {
+        for (mlir::Operation * user : returned.getValue().getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (!record) { continue; }
             if (user == returned || llvm::isa<ctjs::RootOp>(user)) { continue; }
             auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
             auto key = field ? ctjs::constantKey(field.getKey()) : llvm::StringRef{};
@@ -1416,7 +1426,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     // as scalar arguments/results; ordinary helper expansion later removes the
     // fresh result records. All source value producers remain for DOM reproof.
     for (auto & [name, store] : slots) {
-        (void)name;
         if (stateInitials.empty()) { break; }
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto body = targetOf(closure);
@@ -1528,6 +1537,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         closure.removeEnclosingIndicesAttr();
         body.setUpvalueCount(static_cast<uint32_t>(retained.size()));
         auto returned = llvm::cast<ctjs::ReturnOp>(block.back());
+        if (name == "return" && primitiveClose) { continue; }
         mlir::OpBuilder at(returned);
         for (auto [index, value] : llvm::enumerate(current)) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
@@ -1810,6 +1820,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         for (auto & value : innerState) { value = block.addArgument(type, where); }
                     }
                     mlir::OpBuilder inside(&block, block.end());
+                    if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                        auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        if (truth && values.lookup(truth.getValue()) == state.front()) {
+                            // The protocol exposes done only to truth tests.
+                            // Keep this arm's known state without changing the
+                            // source value or removing its producer.
+                            if (!spend()) { return false; }
+                            innerState.front() = ctjs::ConstantOp::create(
+                                inside, where,
+                                ctjs::BooleanAttr::get(candidate.getContext(),
+                                                       &from == &branch.getThenRegion()));
+                        }
+                    }
                     if (!self(self, from.front(), inside, values, innerState, depth + 1, true)) {
                         return false;
                     }
@@ -1942,11 +1965,41 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     }
     emittedNext = {};
     emittedDone = {};
+    bool normalPrimitiveClose = false;
+    llvm::SmallVector<mlir::scf::IfOp> exhaustedCloses;
     const auto methods = entry.walk([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
         auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
         auto get =
             call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+        if (primitiveClose && get && ctjs::constantKey(get.getKey()) == "return" &&
+            !llvm::isa<ctjs::InvokeOp>(call->getParentOp())) {
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(call->getParentOp());
+            auto truth =
+                branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
+            auto literal =
+                truth ? truth.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+            auto done = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
+                                : ctjs::BooleanAttr{};
+            // Completion may expose the constant only after selecting an
+            // exit. The generated close guard's empty then arm proves that
+            // exhaustion cannot call return or validate its ignored result.
+            if (!done || !done.getValue() || call->getParentRegion() != &branch.getElseRegion() ||
+                !branch.getThenRegion().hasOneBlock() ||
+                !llvm::hasSingleElement(branch.getThenRegion().front()) ||
+                !llvm::isa<mlir::scf::YieldOp>(branch.getThenRegion().front().front())) {
+                normalPrimitiveClose = true;
+                return mlir::WalkResult::interrupt();
+            }
+            const auto charged = branch.walk([&](mlir::Operation * nested) {
+                for (unsigned i = 0; i <= nested->getNumOperands(); ++i) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                }
+                return mlir::WalkResult::advance();
+            });
+            if (charged.wasInterrupted()) { return mlir::WalkResult::interrupt(); }
+            exhaustedCloses.push_back(branch);
+        }
         if (get && ctjs::constantKey(get.getKey()) == "next" &&
             get.getObject() == call.getReceiver() &&
             get.getObject().getDefiningOp<ctjs::CreateObjectOp>()) {
@@ -1955,8 +2008,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return mlir::WalkResult::advance();
     });
+    if (normalPrimitiveClose) {
+        return error("DOM iterator primitive close requires saved-throw suppression");
+    }
     if (methods.wasInterrupted() || !emittedNext) {
         return error("DOM custom iterator next call is ambiguous after completion");
+    }
+    for (auto branch : exhaustedCloses) {
+        auto yield = llvm::cast<mlir::scf::YieldOp>(branch.getThenRegion().front().front());
+        branch.replaceAllUsesWith(yield.getOperands());
+        branch.erase();
     }
     for (mlir::Operation * user : emittedNext->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }

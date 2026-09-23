@@ -546,6 +546,30 @@ module {
     %effect = ctjs.call)MLIR");
     for (const auto & [valid, typed] : {
              std::pair{protectedAttribute, true},
+             std::pair{replaced(protectedAttribute, "%answer = ctjs.create_object",
+                                "%answer = ctjs.constant #ctjs.number<4611686018427387904>"),
+                       true},
+             std::pair{replaced(capturedAttribute, "%answer = ctjs.create_object",
+                                "%answer = ctjs.constant #ctjs.null"),
+                       true},
+             std::pair{replaced(replaced(protectedAttribute, "%answer = ctjs.create_object",
+                                         "%answer = ctjs.constant #ctjs.undefined"),
+                                "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(protectedRead, "%answer = ctjs.create_object",
+                                "%answer = ctjs.constant #ctjs.boolean<false>"),
+                       true},
+             std::pair{replaced(protectedAttribute, "%answer = ctjs.create_object",
+                                "%answer = ctjs.constant #ctjs.string<\"ignored\">"),
+                       true},
+             std::pair{
+                 replaced(replaced(scalarState,
+                                   "%answer = ctjs.create_object\n    ctjs.set_property "
+                                   "%answer[%name], %text",
+                                   "%answer = ctjs.constant #ctjs.number<4611686018427387904>"),
+                          "ctjs.binary add %one, %one", "ctjs.binary add %element, %element"),
+                 false},
              std::pair{discardedState, true},
              std::pair{scalarState, true},
              std::pair{replaced(scalarState, "ctjs.binary add %one, %one",
@@ -602,7 +626,9 @@ module {
             input->walk([&](ctjs::CallOp call) {
                 auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!method || ctjs::constantKey(method.getKey()) != "hasAttribute") { return; }
-                auto invoke = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getNextNode());
+                auto * next = call->getNextNode();
+                while (next && llvm::isa<ctjs::ConstantOp>(next)) { next = next->getNextNode(); }
+                auto invoke = llvm::dyn_cast_or_null<ctjs::InvokeOp>(next);
                 auto write = invoke ? llvm::dyn_cast<ctjs::CallOp>(invoke.getBody().front().front())
                                     : ctjs::CallOp{};
                 auto writeMethod = write ? write.getCallee().getDefiningOp<ctjs::GetPropertyOp>()

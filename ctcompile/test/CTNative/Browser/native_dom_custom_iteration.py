@@ -2409,6 +2409,13 @@ def saved_throws(args, compilers, includes, libraries):
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
+            "number-primitive-close",
+            refusals()["body-throw-close-primitive"],
+            "js_num",
+            "error.value.value() == 1.0",
+            "yes",
+        ),
+        (
             "boolean",
             original.replace("throw 1;", "throw false;"),
             "js_boolean_t",
@@ -2438,6 +2445,13 @@ def saved_throws(args, compilers, includes, libraries):
             "js_boolean_t",
             "static_cast<bool>(error.value) == (repetition != 0)",
             "true",
+        ),
+        (
+            "boolean-snapshot-primitive-close",
+            refusals()["body-throw-boolean-snapshot"].replace("return {};", "return 2;"),
+            "js_boolean_t",
+            "!error.value",
+            "yes",
         ),
         (
             "conditional-boolean-missing-read",
@@ -2537,8 +2551,8 @@ def saved_throws(args, compilers, includes, libraries):
     for label, text, kind, payload, closed in cases:
         mixed = label == "conditional-boolean-throw-or-return"
         conditional = label.startswith("conditional-")
-        numeric_snapshot = kind == "js_num" and label != "number"
-        snapshot = conditional or label == "boolean-snapshot" or numeric_snapshot
+        numeric_snapshot = kind == "js_num" and label not in ("number", "number-primitive-close")
+        snapshot = conditional or label.startswith("boolean-snapshot") or numeric_snapshot
         js_kind = (
             "number" if numeric_snapshot else "boolean" if conditional else label.partition("-")[0]
         )
@@ -2770,7 +2784,16 @@ var savedThrow, savedExhausted;
                     libraries,
                 )
                 executions += 2 * len(compilers)
-                if label in ("number", "conditional-boolean-read") or numeric_snapshot:
+                if (
+                    label
+                    in (
+                        "number",
+                        "number-primitive-close",
+                        "conditional-boolean-read",
+                        "boolean-snapshot-primitive-close",
+                    )
+                    or numeric_snapshot
+                ):
                     for suffix, bad, budget in (
                         ("budget", manifest, 0),
                         ("missing-element", dict(manifest, element_parameters=[]), None),
@@ -2950,6 +2973,7 @@ def main():
             "body-throw-or-return-snapshot",
             "body-throw-number-snapshot",
             "body-throw-branch-number-snapshot",
+            "body-throw-close-primitive",
         ):
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
