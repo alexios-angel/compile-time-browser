@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Branch-local throw payloads and unary Number Plus, 2026-09-23 UTC
+
+Resumed clean **c46ef2e9** and retained `b216ee20`. **f2a0fae3** projects a
+helper result's sole immediate throw into its original tail branches, preserving
+payloads and effect order. Optional String throws become owning String or Null
+exceptions. Observer, budget, complete DOM and private-publication proofs remain;
+saved-body suppression is unchanged. The original normal-break/body-return
+sources execute unchanged. Independent native review is complete and clean.
+
+**0c9850c2** proves bitwise inputs from one original Number literal's unary Plus.
+The identical baseline/final program `763fa966d37fd6dd` changes six child sites
+from all stored to **three confined and three stored**, each observed once with
+zero unresolved or unchecked instances. Original property/arithmetic/mutation
+checks remain. The interrupted wide-String independent review also finished cleanly.
+
+Focused checks pass: **112 native executions, 48 refusals, 56 Node/VM observations,
+34 source-policy checks, exact host/arrays CTests and two selected lit cases**.
+The primitive-exception lit includes its existing ASan/UBSan checks. Formatting
+passes **1126 C++, 157 Python and 114 web files**; all 56 generated C++ variants
+have no Script namespace. No browser/runtime implementation changed. Full suites
+and full Bootstrap were skipped.
+
+**Next native boundary:** `normal-selector-branch-throw-read-getter-close`, source
+`3b17dc57`, refuses **DOM iterator getter requires a terminal suppressed throw**
+under both policies. Preserve the normal getter exception, original payloads and
+branch/read/write/suffix order. Mutable or mixed-suppression cleanup, nested
+custom iterators, unguarded Bootstrap defaults, the application driver and full
+native Bootstrap remain. General computed Number proofs, unsafe String exponents,
+Strings over 32 bytes, general powers and legacy SCF retention remain; the VM
+fractional-index discrepancy is separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-branch-throw-payloads-unary-plus.md).
+
 ## Normal cleanup exceptions and wide finite Strings, 2026-09-23 UTC
 
 Resumed clean **8224a1ff** and retained source `b216ee20` from the previous
