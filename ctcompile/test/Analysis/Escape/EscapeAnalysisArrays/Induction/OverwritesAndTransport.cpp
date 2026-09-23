@@ -3936,6 +3936,67 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[2]=three; a[0]=one; a[2]=three; a[2]=three",
          .exit = "a -> {a}"},
         "x");
+    const auto primitiveReverse = replace(
+        replace(scaledIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
+        "mul %i, %one", "sub %text, %i");
+    for (const auto & literal : {"#ctjs.string<\"1\">", "#ctjs.boolean<true>"}) {
+        run({.what = "primitive subtraction offsets preserve descending own-index writes",
+             .body = replace(primitiveReverse, "#ctjs.string<\"1\">", literal),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=one; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "String subtraction preserves a child saved before its overwrite",
+         .body = replace(replace(primitiveReverse, "  cf.br ^header(%a,",
+                                 "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[1]=x; a[0]=one; a[1]=zero",
+         .exit = "x -> {x}"});
+    for (const auto & literal : {"#ctjs.null", "#ctjs.boolean<false>", "#ctjs.string<\"0\">"}) {
+        run({.what = "subtracting a zero primitive retains every exact current index",
+             .body = replace(replace(primitiveReverse, "#ctjs.string<\"1\">", literal),
+                             "sub %text, %i", "sub %i, %text"),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "a negative String offset translates a positive-stride footprint",
+         .body = replace(
+             replace(offsetIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"-1\">\n  %a ="),
+             "add %i, %one", "sub %i, %text"),
+         .arrays = "a:[one,zero,one,zero]",
+         .reads = "a[0]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    const auto stringReverseReload = replace(
+        replace(reverseReload, "  %a =",
+                "  %text = ctjs.constant #ctjs.string<\"3\"> {storage_test_id = \"text\"}\n  %a ="),
+        "[%one, %x, %three, %x]", "[%one, %x, %text, %x]");
+    run({.what = "subtraction reloads keep their String identity in descending stride gaps",
+         .body = stringReverseReload,
+         .arrays = "a:[one,zero,text,zero]",
+         .reads = "a[2]=text; a[0]=one; a[2]=text; a[2]=text",
+         .exit = "a -> {a}"},
+        "x");
+    reject("String subtraction reloads cannot overlap a descending own-index write",
+           replace(replace(stringReverseReload, "[%one, %x, %text, %x]", "[%one, %x, %one, %text]"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%three]"));
+    reject("later stores invalidate earlier primitive subtraction reloads",
+           replace(stringReverseReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    for (const auto & literal :
+         {"#ctjs.string<\"01\">", "#ctjs.undefined", "#ctjs.bigint<\"1\">"}) {
+        reject("subtraction still requires a bounded primitive Number conversion",
+               replace(primitiveReverse, "#ctjs.string<\"1\">", literal));
+    }
+    reject("subtraction cannot borrow an object's conversion",
+           replace(primitiveReverse, "sub %text, %i", "sub %x, %i"));
+    reject("String Add retains its separate concatenation boundary",
+           replace(primitiveReverse, "sub %text, %i", "add %text, %i"));
     for (const auto & body :
          {replace(reverseIndex, "sub %three, %i", "sub %zero, %i"),
           replace(reverseIndex, "sub %three, %i", "sub %i, %i"),

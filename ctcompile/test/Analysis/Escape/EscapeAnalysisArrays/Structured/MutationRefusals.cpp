@@ -551,6 +551,46 @@ void StructuredCases::mutationRefusals() {
                     .arrays = "a:[zero,zero]",
                     .reads = "a[0]=x; a[1]=zero",
                     .exit = "a -> {a}"});
+    const auto primitiveReverse = replace(
+        replace(reverseIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
+        "sub %one, %i", "sub %text, %i");
+    for (const auto & literal : {"#ctjs.string<\"1\">", "#ctjs.boolean<true>"}) {
+        rows.push_back({.what = "structured primitive subtraction preserves descending own writes",
+                        .body = replace(primitiveReverse, "#ctjs.string<\"1\">", literal),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=x; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    for (const auto & literal : {"#ctjs.null", "#ctjs.boolean<false>"}) {
+        rows.push_back({.what = "structured zero primitive subtraction preserves current indices",
+                        .body = replace(replace(primitiveReverse, "#ctjs.string<\"1\">", literal),
+                                        "sub %text, %i", "sub %i, %text"),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=zero; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto stringReverseReload = replace(
+        replace(replace(replace(primitiveReverse, "ctjs.constant #ctjs.string<\"1\">",
+                                "ctjs.constant #ctjs.string<\"3\"> {storage_test_id = \"text\"}"),
+                        "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                "create_array [%x]", "create_array [%zero, %x, %text]"),
+        "add %i, %one", "add %i, %two");
+    const auto reloadedReverse =
+        replace(stringReverseReload, "%position = ctjs.binary sub %text, %i",
+                "%offset = ctjs.get_property %base[%two]\n"
+                "    %position = ctjs.binary sub %offset, %i");
+    rows.push_back({.what = "structured primitive subtraction reloads preserve their gap identity",
+                    .body = reloadedReverse,
+                    .arrays = "a:[zero,zero,text,zero]",
+                    .reads = "a[2]=text; a[0]=zero; a[2]=text; a[2]=text",
+                    .exit = "a -> {a}"});
+    reject("structured later stores invalidate primitive subtraction reloads",
+           replace(reloadedReverse,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured String Add still concatenates",
+           replace(primitiveReverse, "sub %text, %i", "add %text, %i"));
+    reject("structured subtraction cannot borrow object conversion",
+           replace(primitiveReverse, "sub %text, %i", "sub %x, %i"));
     rows.push_back({.what = "structured nested reversals preserve source subtraction order",
                     .body = replace(reverseIndex, "%position = ctjs.binary sub %one, %i",
                                     "%part = ctjs.binary sub %one, %i\n"

@@ -18,8 +18,14 @@
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function endMinusIndex() {
@@ -122,3 +128,39 @@ endMinusIndex(); descendingStride(); doubleReverse(); quotientAfterReverse();
 reverseAfterQuotient(); signedIntermediate(); reloadGap(); saved(); remaining(); zeroTrip();
 overlappingReload(); laterOverlap(); negativePosition(); roundedIntermediate();
 fractionalIntermediate(); twoVaryingOperands(); stringOffset(); cycle();
+
+function booleanOffset() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[true - i] = 0;
+    return a;
+}
+function stringReloadGap() {
+    var child = {}, a = [0, child, "3", child];
+    for (var i = 0; i < a.length; i += 2) a[a[2] - i] = 0;
+    return a;
+}
+function stringOverlappingReload() {
+    var child = {}, a = [0, child, 0, "3"];
+    for (var i = 0; i < a.length; i += 2) a[a[3] - i] = 0;
+    return a;
+}
+function stringLaterOverlap() {
+    var child = {}, a = [0, child, "3", child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[a[2] - i] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function stringSaved() {
+    var child = {}, a = [child, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a["1" - i] = 0;
+    return saved;
+}
+function stringRemaining() {
+    var child = {}, a = [child, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a["3" - i] = 0;
+    return a;
+}
+booleanOffset(); stringReloadGap(); stringOverlappingReload(); stringLaterOverlap();
+stringSaved(); stringRemaining();
