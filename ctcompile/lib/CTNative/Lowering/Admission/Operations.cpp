@@ -26,7 +26,12 @@ bool admission::op(mlir::Operation * o) {
     if (domEntry) {
         if (auto thrown = llvm::dyn_cast<ThrowOp>(o);
             thrown && llvm::is_contained(domEntry->savedThrows(), thrown)) {
-            return llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(thrown.getValue())) ||
+            const auto type = typeOf(thrown.getValue());
+            const auto optional = llvm::dyn_cast_or_null<OptType>(type);
+            auto literal = thrown.getValue().getDefiningOp<ConstantOp>();
+            return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
+                   (optional && llvm::isa<StrType>(optional.getElementType())) ||
+                   (literal && llvm::isa<NullAttr>(literal.getValue())) ||
                    refuse("saved DOM throw lost its owning primitive carrier");
         }
         if (llvm::isa<mlir::scf::ExecuteRegionOp>(o) &&

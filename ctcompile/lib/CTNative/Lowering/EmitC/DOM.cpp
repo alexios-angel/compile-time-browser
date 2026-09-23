@@ -350,7 +350,31 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         auto always = ec::LiteralOp::create(at, where, at.getI1Type(), "true");
         auto scope = ec::IfOp::create(at, where, always, false);
         mlir::OpBuilder body = mlir::OpBuilder::atBlockBegin(&scope.getThenRegion().front());
-        CppThrowOp::create(body, where, thrown.getValue());
+        const auto value = thrown.getValue();
+        if (value.getType() == ec::OpaqueType::get(context, kDOMOptionalStringType)) {
+            auto present = ec::MemberCallOpaqueOp::create(
+                body, where, mlir::TypeRange{body.getI1Type()}, value,
+                body.getStringAttr("has_value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                mlir::ValueRange{});
+            auto selected = ec::IfOp::create(body, where, present.getResult(0), true);
+            mlir::OpBuilder yes = mlir::OpBuilder::atBlockBegin(&selected.getThenRegion().front());
+            auto text = ec::MemberCallOpaqueOp::create(
+                yes, where, mlir::TypeRange{ec::OpaqueType::get(context, kRawStringType)}, value,
+                yes.getStringAttr("value"), mlir::ArrayAttr{}, mlir::ArrayAttr{},
+                mlir::ValueRange{});
+            CppThrowOp::create(yes, where,
+                               convertScalar(yes, where, text.getResult(0),
+                                             carrierType(context, carrier::string)));
+            ec::YieldOp::create(yes, where);
+            mlir::OpBuilder no = mlir::OpBuilder::atBlockBegin(&selected.getElseRegion().front());
+            auto absent = ec::LiteralOp::create(no, where,
+                                                ec::OpaqueType::get(context, "ctnative::js_null_t"),
+                                                "ctnative::js_null_t{}");
+            CppThrowOp::create(no, where, absent);
+            ec::YieldOp::create(no, where);
+        } else {
+            CppThrowOp::create(body, where, value);
+        }
         ec::YieldOp::create(body, where);
         region->erase();
         return true;

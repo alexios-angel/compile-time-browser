@@ -18,7 +18,8 @@ bool isExceptionPayload(mlir::Type type) {
     if (type.isF64() || type.isSignlessInteger(1)) { return true; }
     auto opaque = llvm::dyn_cast<mlir::emitc::OpaqueType>(type);
     static const llvm::StringSet<> carriers{"std::string", "ctnative::js_num",
-                                            "ctnative::js_string", "ctnative::js_boolean_t"};
+                                            "ctnative::js_string", "ctnative::js_boolean_t",
+                                            "ctnative::js_null_t"};
     return opaque && opaque.getValue().size() <= 22 && carriers.contains(opaque.getValue());
 }
 
@@ -117,7 +118,7 @@ mlir::LogicalResult CppTryOp::verify() {
     mlir::Block & handler = getCatchBody().front();
     if (handler.getNumArguments() != 1 || !isExceptionPayload(handler.getArgument(0).getType())) {
         return emitOpError("requires exactly one f64, i1 or owning std::string catch argument "
-                           "(including typed Number/Boolean/String)");
+                           "(including typed Number/Boolean/String/Null)");
     }
     for (mlir::Region * region : {&getBody(), &getCatchBody()}) {
         mlir::Block & block = region->front();
@@ -136,7 +137,7 @@ mlir::LogicalResult CppTryOp::verify() {
 mlir::LogicalResult CppThrowOp::verify() {
     if (!isExceptionPayload(getValue().getType())) {
         return emitOpError("requires an f64, i1 or owning std::string payload (including typed "
-                           "Number/Boolean/String)");
+                           "Number/Boolean/String/Null)");
     }
     mlir::Operation * next = getOperation()->getNextNode();
     if (!next || !next->hasTrait<mlir::OpTrait::IsTerminator>()) {

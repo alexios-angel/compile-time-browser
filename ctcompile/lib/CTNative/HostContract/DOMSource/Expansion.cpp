@@ -12,6 +12,16 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     bool selectorFeedsWrite = false;
     ctjs::CreateObjectOp discardedResult;
     llvm::DenseSet<mlir::Operation *> discardedFields;
+    auto abrupt = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode());
+    auto rethrow = abrupt && abrupt.getNoInline() && !abrupt.getNumResults() &&
+                           abrupt.getRegion().hasOneBlock() &&
+                           llvm::hasSingleElement(abrupt.getRegion().front())
+                       ? llvm::dyn_cast<ctjs::ThrowOp>(abrupt.getRegion().front().front())
+                       : ctjs::ThrowOp{};
+    if (!rethrow || call->getNumResults() != 1 || !call->getResult(0).hasOneUse() ||
+        rethrow.getValue() != call->getResult(0)) {
+        rethrow = {};
+    }
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
         if (!step()) { return false; }
         auto & called = invocation.getBody();
@@ -634,6 +644,68 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         return true;
     };
     if (!cloneBody(cloneBody, body, at)) { return false; }
+    if (rethrow) {
+        const auto payload = rethrow.getValue();
+        const auto where = rethrow.getLoc();
+        if (!step()) { return false; }
+        abrupt.erase();
+        // A result used only by this immediate throw needs no scalar join.
+        // Keep each payload and all its producers in their original arm.
+        // ponytail: one-result tail branches only; effectful continuations
+        // and observed results retain the ordinary typed join proof.
+        const auto emitThrow = [&](auto && self, mlir::Value value, mlir::Operation * end,
+                                   unsigned level) -> bool {
+            if (!step() || level == 64) { return refuse("DOM throw projection is too deep"); }
+            auto branch = value.getDefiningOp<mlir::scf::IfOp>();
+            bool project = branch && branch.getNumResults() == 1 && value.use_empty() &&
+                           branch->getBlock() == end->getBlock();
+            llvm::SmallVector<mlir::Operation *> unused;
+            if (project) {
+                for (auto * tail = branch->getNextNode(); tail != end; tail = tail->getNextNode()) {
+                    if (!step()) { return false; }
+                    if (!tail || !llvm::isa<ctjs::ConstantOp>(tail) || !tail->use_empty()) {
+                        project = false;
+                        break;
+                    }
+                    unused.push_back(tail);
+                }
+            }
+            mlir::OpBuilder at(end);
+            if (!project) {
+                if (!step() || !step()) { return false; }
+                auto scope = mlir::scf::ExecuteRegionOp::create(at, where, mlir::TypeRange{});
+                scope.setNoInline(true);
+                auto & throwing = scope.getRegion().emplaceBlock();
+                mlir::OpBuilder inside(&throwing, throwing.begin());
+                ctjs::ThrowOp::create(inside, where, value);
+                operationCount += 2;
+                return true;
+            }
+            if (!step()) { return false; }
+            at.setInsertionPoint(branch);
+            auto projected = mlir::scf::IfOp::create(at, branch.getLoc(), mlir::TypeRange{},
+                                                     branch.getCondition());
+            ++operationCount;
+            for (auto [source, destination] :
+                 llvm::zip(branch->getRegions(), projected->getRegions())) {
+                if (!step()) { return false; }
+                destination.takeBody(source);
+                auto yield = llvm::cast<mlir::scf::YieldOp>(destination.front().getTerminator());
+                const auto selected = yield.getOperand(0);
+                yield.getResultsMutable().clear();
+                if (!self(self, selected, yield, level + 1)) { return false; }
+            }
+            for (auto * constant : unused) {
+                if (!step()) { return false; }
+                inactiveFillers.erase(constant->getResult(0));
+                constant->erase();
+            }
+            inactiveFillers.erase(value);
+            branch.erase();
+            return true;
+        };
+        if (!emitThrow(emitThrow, payload, call, 0)) { return false; }
+    }
     // The caller erases the old call after the charged clone succeeds,
     // restoring the exact call+exit inside the original suppression.
     return true;

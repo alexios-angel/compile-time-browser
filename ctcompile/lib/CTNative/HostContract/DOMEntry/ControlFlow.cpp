@@ -29,7 +29,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         if (!spend() || !spend()) { return false; }
         if ((!hasKind(thrown.getValue(), Kind::number) &&
              !hasKind(thrown.getValue(), Kind::boolean) &&
-             !hasKind(thrown.getValue(), Kind::string)) ||
+             !hasKind(thrown.getValue(), Kind::string) &&
+             !hasKind(thrown.getValue(), Kind::optionalString) &&
+             !hasKind(thrown.getValue(), Kind::null)) ||
             !dominance.dominates(thrown.getValue(), thrown)) {
             refusal = "DOM saved throw requires a preceding owning primitive";
             return false;

@@ -3548,8 +3548,8 @@ module {
   }
 }
 )MLIR";
-    for (auto payload :
-         {"#ctjs.number<4607182418800017408>", "#ctjs.string<\"saved\">", "#ctjs.boolean<true>"}) {
+    for (auto payload : {"#ctjs.number<4607182418800017408>", "#ctjs.string<\"saved\">",
+                         "#ctjs.boolean<true>", "#ctjs.null"}) {
         auto text = replaced(throwingSource, "#ctjs.number<4607182418800017408>", payload);
         auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(input), "saved primitive throw fixture parses");
@@ -3578,7 +3578,6 @@ module {
     }
     for (const auto & invalid :
          {replaced(throwingSource, "ctjs.throw %payload", "ctjs.throw %element"),
-          replaced(throwingSource, "#ctjs.number<4607182418800017408>", "#ctjs.null"),
           replaced(throwingSource, "#ctjs.number<4607182418800017408>", "#ctjs.undefined"),
           replaced(throwingSource, " {no_inline}", ""),
           replaced(throwingSource, "ctjs.throw %payload",

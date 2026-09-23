@@ -17,9 +17,9 @@ def CTNative_CppTryOp : CTNative_Op<"cpp_try", [SingleBlock, RecursiveMemoryEffe
   let summary = "Catch a homogeneous owning primitive JavaScript exception in native C++";
   let description = [{
     Executes body and catches only ctnative::js_exception<T>. The catch region's
-    sole ctnative::js_num, ctnative::js_boolean_t or ctnative::js_string argument
-    copies the thrown primitive. Raw f64, i1 and owning std::string remain
-    supported for EmitC clients.
+    sole ctnative::js_num, ctnative::js_boolean_t, ctnative::js_string or
+    ctnative::js_null_t argument copies the thrown primitive. Raw f64, i1 and owning
+    std::string remain supported for EmitC clients.
     The payload type is homogeneous: no numeric/boolean coercion or borrowed
     string carrier is permitted. Each protected native throw must match it.
     Foreign C++ exceptions are not caught. Both regions are single blocks;
@@ -32,7 +32,7 @@ def CTNative_CppTryOp : CTNative_Op<"cpp_try", [SingleBlock, RecursiveMemoryEffe
 }
 
 def CTNative_CppThrowOp : CTNative_Op<"cpp_throw"> {
-  let summary = "Throw an owning number, boolean or string JavaScript exception";
+  let summary = "Throw an owning number, boolean, string or null JavaScript exception";
   let description = [{
     Emits a side-effecting C++ throw statement. It immediately precedes the
     enclosing region's terminator, including emitc.yield in an EmitC if arm.

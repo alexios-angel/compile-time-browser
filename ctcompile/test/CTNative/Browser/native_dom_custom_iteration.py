@@ -2408,6 +2408,8 @@ def normal_throws(args, compilers, includes, libraries, cases):
     for label, text in cases:
         selecting = "selector" in label
         branch_throw = "false-guard" in label
+        read_throw = "-throw-read-" in label
+        null_throw = "-read-null-" in label
         kind = "js_boolean_t" if selecting else "js_string" if "string" in label else "js_num"
         payload = (
             f"static_cast<bool>(error.value) == (mode == 2 && {'true' if branch_throw else 'false'})"
@@ -2418,6 +2420,22 @@ def normal_throws(args, compilers, includes, libraries, cases):
                 else "error.value.value() == 2.0"
             )
         )
+        extra_catch = attribute_getter = ""
+        if read_throw:
+            payload = f"!error.value && (mode != 2 || {'false' if branch_throw else 'true'})"
+            throw_kind = "js_null_t" if null_throw else "js_string"
+            throw_payload = "true" if null_throw else 'error.value.value() == "false"'
+            argument = "" if null_throw else " error"
+            extra_catch = f"""
+                catch (const ctnative::js_exception<ctnative::{throw_kind}> &{argument}) {{
+                    caught = mode == 2 && {'true' if branch_throw else 'false'} && {throw_payload};
+                }}"""
+            attribute_getter = """    getAttribute(name) {
+      const value = name in saved ? saved[name] : null;
+      trace += 'get:' + name + '=' + value + ';';
+      return value;
+    },
+"""
         closed = "true" if label.startswith("return-") else "yes"
         script, expected, states = text, {}, []
         for mode in range(4):
@@ -2446,7 +2464,7 @@ var {name} = (function() {{
       trace += 'match:' + selector + '=' + value + ';';
       return value;
     }},
-    setAttribute(name, value) {{
+{attribute_getter}    setAttribute(name, value) {{
       saved[name] = '' + value;
       trace += 'write:' + name + '=' + saved[name] + ';';
     }}
@@ -2505,6 +2523,8 @@ var {name} = (function() {{
                         ("data-closed", "false"),
                         ("data-after-terminal", "true"),
                     ]
+                if mode == 2 and branch_throw and read_throw:
+                    trace += "get:data-missing=null;" if null_throw else "get:data-closed=false;"
                 result = f"throw:boolean:{'true' if mode == 2 and branch_throw else 'false'}:"
             else:
                 if label.startswith("return-"):
@@ -2515,6 +2535,8 @@ var {name} = (function() {{
                 trace += f"write:data-closed={closed};"
                 writes += [("data-visited", "yes"), ("data-closed", closed)]
                 result = "throw:string:closed:" if "string" in label else "throw:number:2:"
+            if mode == 2 and branch_throw and read_throw:
+                result = "throw:object:null:" if null_throw else "throw:string:false:"
             expected[name] = result + trace
             final = dict(writes)
             state_checks = ""
@@ -2564,6 +2586,7 @@ var {name} = (function() {{
                 catch (const ctnative::js_exception<ctnative::@TYPE@> & error) {
                     caught = @PAYLOAD@;
                 }
+                @EXTRA_CATCH@
                 assert(caught == (mode == 1 || mode == 2));
                 const auto writes = target.take_writes();
                 @STATES@
@@ -2574,6 +2597,7 @@ var {name} = (function() {{
         """.replace("@TYPE@", kind)
             .replace("@PAYLOAD@", payload)
             .replace("@STATES@", "\n".join(states))
+            .replace("@EXTRA_CATCH@", extra_catch)
         )
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -5468,6 +5492,40 @@ var savedThrow, savedExhausted;
         )
         for label, text in normal_cases[2:4]
     )
+    read_close_cases = tuple(
+        (
+            f"{completion}-selector-branch-throw-read-close",
+            selector_branch_throw_read_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                statement,
+            ),
+        )
+        for completion, statement in (
+            ("normal", "break;"),
+            ("return", "return anchor.hasAttribute('data-closed');"),
+        )
+    )
+    read_close_cases += tuple(
+        (
+            label.replace("-read-close", "-read-false-guard-close"),
+            text.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (anchor.matches('[data-closed=true]'))",
+            ),
+        )
+        for label, text in read_close_cases
+    )
+    read_close_cases += tuple(
+        (
+            label.replace("-read-false-guard", "-read-null-false-guard"),
+            text.replace(
+                "throw anchor.getAttribute('data-closed');",
+                "throw anchor.getAttribute('data-missing');",
+            ),
+        )
+        for label, text in read_close_cases[2:]
+    )
+    normal_cases += read_close_cases
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
@@ -5488,6 +5546,7 @@ var savedThrow, savedExhausted;
             "second-postwrite-selector-close",
             "selector-before-first-write-close",
             "selector-branch-throw-close",
+            "selector-branch-throw-read-close",
             "selector-final-argument-read-write-close",
             "selector-guarded-second-postread-close",
             "selector-guarded-second-read-close",
@@ -7606,6 +7665,13 @@ var savedThrow, savedExhausted;
             selector_branch_throw_read_source.replace(
                 "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
                 "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "normal-selector-branch-throw-read-getter-close",
+            selector_branch_throw_read_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
             ),
         ),
         (
