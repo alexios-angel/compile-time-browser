@@ -22,6 +22,46 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved reads inside iterator-close arguments and invariant numerators, 2026-09-23 UTC
+
+Resumed clean **254fed05** and retained inside-first-write source `9533d479`.
+After interruption, reused the saved compiler build, preflight and agent edits.
+**8bd4c58b** retains completed earlier argument reads in the existing saved-value
+and complete-use census. The final read still feeds its pending first or second
+write. Source order/guard, typed DOM/Style reproof, suppression, original body
+exception and budgets remain. The unchanged original, getter and order variant
+execute with distinct saved and feeding snapshots.
+
+**9e5ee141** proves invariant numerators with varying divisors through existing
+bounded subdivision and ordered scalar division/remainder. For example,
+`6 / ((i % 3) + 1)` writes keys 6, 3, 2, 6, 3, 2, 6. Exact bounded arithmetic,
+nonzero divisors, integral quotients, reload/store checks, independent reload gaps
+and actual-write replay remain. Four new source child sites become confined;
+six retained/saved/overlap/pole/fractional controls stay stored.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. All six final code/test
+hashes match the devbox; 24 generated C++ files retain the saved Boolean and
+original exception without Script/VM or nullable fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Parallel source/raw/escape work survived
+interruption; an independent reviewer found no native issues. Corrected two new
+SCF test assertions that wrongly expected the legacy region-free retention census
+to be complete; exact contents assertions and production remained unchanged.
+Full suites were skipped. No browser implementation changed; Claude stayed uncertain.
+
+**Next native boundary:** retained
+`unsupported-feeding-read-before-saved-read-inside-first-write`, source `005c36e5`,
+refuses **DOM protected helper needs an independent inert-body proof** under both
+policies. Preserve the feeding read when a later argument read is saved for a
+subsequent write, while the original body exception wins. Single-write selector
+cleanup, nonterminal exceptional state, multiple protected regions, implicit
+cleanup, nested custom iterators, unguarded Bootstrap defaults, the application
+driver, full native Bootstrap and general powers remain. SCF contents support
+does not establish a complete legacy retention census. No full-Bootstrap coverage
+gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-inside-write-read-values.md).
+
 ## Saved reads before iterator-close writes and exact product distances, 2026-09-23 UTC
 
 Resumed clean **ec34d448** and retained before-first-write source `7ba9aa6f`.
