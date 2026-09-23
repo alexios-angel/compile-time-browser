@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Typed protected attributes and primitive shift counts, 2026-09-23 UTC
+
+Resumed clean **42c0502c** and unchanged `body-throw`, `f1b3f6b8`.
+**5cd8002a** proves an exact zero-result protected `setAttribute` call:
+one Element receiver, two Strings, a valid literal name checked by the public
+DOM validator, and empty unobserved continuations. Complete DOM proof retains
+method identity, source order and mutation checks. Lowering removes only the
+proved unnecessary suppression wrapper and emits the ordinary DOM call under
+its original guard. Invalid names, computed names and observed payloads refuse.
+
+Parallel **dad6a885** admits bounded primitive invariant shift counts through
+existing conversion, modulo-32 shift bounds, complete reload/store census and
+actual-write replay. Two historical String-count sources now admit unchanged;
+all 233 previous shift-source bodies are preserved.
+
+Focused host and arrays CTests and both shift-index lit cases pass. New raw
+attribute checks pass **32 native executions and 20 refusals**, including both
+guard outcomes and both providers. Three existing source positives pass
+**48 native executions, 82 refusals and 24 Node/VM observations**; another
+**20 saved-throw/effect observations agree per engine**. No source admission was
+left unexecuted. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+Eleven final hashes match the devbox; 40 generated C++ files contain no Script/VM
+protocol. All 233 historical iterator bodies and 86 positive metadata rows remain
+unchanged. Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** original `f1b3f6b8` now passes typed suppressed-call
+admission but both policies refuse **DOM entry does not admit nested control
+flow or a source continuation**. Prove its exact nonreturning `scf.execute_region`
+and saved primitive throw, reconcile branch/frame joins, and add proof-gated
+admission and emission through the existing `CppThrowOp`. Keep its payload and
+terminator verifier intact; retain complete prefix/global/reentry reproof.
+No native execution of the throw source is claimed. Mutable exceptional state,
+multiple protected regions, implicit cleanup, nested custom iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+
+[Exact checks and next boundary](handoff/2026-09-23-protected-attribute-admission.md).
+
 ## Protected attribute expansion and primitive OR/XOR masks, 2026-09-23 UTC
 
 Resumed clean **16d0dea5** and unchanged `body-throw`, `f1b3f6b8`.
