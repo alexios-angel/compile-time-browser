@@ -129,9 +129,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             continue;
                         }
                         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
-                            read && !secondLeaf &&
-                            (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
-                             ctjs::constantKey(read.getKey()) == "matches")) {
+                            read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
+                                     ctjs::constantKey(read.getKey()) == "matches")) {
                             if (trailingMethod) {
                                 if (!trailingCall) { return false; }
                                 suffixValues.append(
@@ -166,6 +165,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                 return false;
                             }
                             secondLeaf = leaf;
+                            // Later branch-local reads may replace trailingCall.
+                            // Keep this write's use of the original snapshot.
+                            suffixUses.insert(&leaf->getOpOperand(3));
                             continue;
                         }
                         if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(nested);

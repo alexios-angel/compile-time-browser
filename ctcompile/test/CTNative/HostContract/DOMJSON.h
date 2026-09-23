@@ -812,6 +812,28 @@ module {
                  "    %thirdReadMethod = ctjs.get_property %element[%afterReadKey]\n"
                  "    %thirdPresent = ctjs.call %thirdReadMethod(%element, %afterReadName)\n"
                  "    %secondEffect =");
+    const auto conditionalPostRead =
+        moveReadBefore(conditionalIgnoredRead,
+                       "    %afterReadKey =", "    %secondKey =", "    scf.yield\n    }\n");
+    const auto conditionalPostSecondRead =
+        moveReadBefore(conditionalTwoReads,
+                       "    %anotherReadMethod =", "    %secondEffect =", "    scf.yield\n    }\n");
+    const auto conditionalPostSelector =
+        replaced(replaced(conditionalPostRead,
+                          "%afterReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                          "%afterReadKey = ctjs.constant #ctjs.string<\"matches\">"),
+                 "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                 "%afterReadName = ctjs.constant #ctjs.string<\"[data-closed]\">");
+    const auto conditionalPostReads =
+        moveReadBefore(replaced(conditionalThreeReads,
+                                "ctjs.call %secondMethod(%element, %secondName, %anotherPresent)",
+                                "ctjs.call %secondMethod(%element, %secondName, %present)"),
+                       "    %afterReadKey =", "    %secondEffect =", "    scf.yield\n    }\n");
+    const auto conditionalMixedPostReads =
+        moveReadBefore(replaced(conditionalThreeReads,
+                                "ctjs.call %secondMethod(%element, %secondName, %anotherPresent)",
+                                "ctjs.call %secondMethod(%element, %secondName, %afterPresent)"),
+                       "    %anotherReadKey =", "    %secondEffect =", "    scf.yield\n    }\n");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -2046,6 +2068,30 @@ module {
              std::pair{conditionalMixedReads, true},
              std::pair{conditionalEarlySelectors, true},
              std::pair{conditionalThreeReads, true},
+             std::pair{conditionalPostRead, true},
+             std::pair{conditionalPostSecondRead, true},
+             std::pair{conditionalPostSelector, true},
+             std::pair{conditionalPostReads, true},
+             std::pair{conditionalMixedPostReads, true},
+             std::pair{replaced(conditionalPostReads, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{
+                 replaced(replaced(conditionalPostRead, "ctjs.get_property %element[%afterReadKey]",
+                                   "ctjs.get_property %text[%afterReadKey]"),
+                          "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                          "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+                 false},
+             std::pair{replaced(replaced(conditionalPostSelector,
+                                         "ctjs.get_property %element[%afterReadKey]",
+                                         "ctjs.get_property %text[%afterReadKey]"),
+                                "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                                "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+                       false},
+             std::pair{replaced(conditionalPostRead,
+                                "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%afterReadName = ctjs.constant #ctjs.number<0>"),
+                       false},
              std::pair{replaced(conditionalThreeReads,
                                 "ctjs.call %secondMethod(%element, %secondName, %anotherPresent)",
                                 "ctjs.call %secondMethod(%element, %secondName, %thirdPresent)"),
@@ -2194,11 +2240,14 @@ module {
             const bool feeds = valid.find("%secondName, " + valueName + ")") != std::string::npos;
             auto method = otherRead.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             const bool beforeLookup = valid.find(valueName + " =") < valid.find("%secondMethod =");
+            const bool beforeWrite = valid.find(valueName + " =") < valid.find("%secondEffect =");
             check(
                 method && otherRead->getParentRegion() == &guard.getThenRegion() &&
                     method->getBlock() == second->getBlock() &&
                     otherRead->getBlock() == second->getBlock() &&
-                    method->isBeforeInBlock(otherRead) && otherRead->isBeforeInBlock(second) &&
+                    method->isBeforeInBlock(otherRead) &&
+                    (beforeWrite ? otherRead->isBeforeInBlock(second)
+                                 : second->isBeforeInBlock(method)) &&
                     (beforeLookup ? otherRead->isBeforeInBlock(secondMethod)
                                   : secondMethod->isBeforeInBlock(method)) &&
                     method.getResult().hasOneUse() &&
@@ -2322,7 +2371,10 @@ module {
                                       conditionalIgnoredSelector,
                                       conditionalTwoReads,
                                       conditionalMixedReads,
-                                      conditionalThreeReads}) {
+                                      conditionalThreeReads,
+                                      conditionalPostRead,
+                                      conditionalPostSelector,
+                                      conditionalMixedPostReads}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -2343,7 +2395,33 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(conditionalMixedReads, "[data-next]", "["),
+         {replaced(conditionalPostSelector, "[data-closed]", "["),
+          replaced(conditionalPostReads, "[data-next]", "["),
+          replaced(conditionalPostSelector, "#ctjs.string<\"[data-closed]\">", "#ctjs.number<0>"),
+          replaced(conditionalPostRead,
+                   "%afterPresent = ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "%afterPresent = ctjs.constant #ctjs.boolean<false>"),
+          replaced(conditionalPostReads,
+                   "%anotherPresent = ctjs.call %anotherReadMethod(%element, %anotherReadName)",
+                   "%anotherPresent = ctjs.constant #ctjs.boolean<false>"),
+          replaced(conditionalPostRead, "    scf.yield\n    }\n",
+                   "    ctjs.store_global \"leaked\", %afterPresent\n    scf.yield\n    }\n"),
+          replaced(conditionalPostRead, "    scf.yield\n    }\n",
+                   "    ctjs.store_global \"leaked\", %afterReadMethod\n    scf.yield\n    }\n"),
+          replaced(conditionalPostRead, "    scf.yield\n    }\n",
+                   "    %again = ctjs.call %afterReadMethod(%element, %afterReadName)\n"
+                   "    scf.yield\n    }\n"),
+          replaced(conditionalPostRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+          replaced(conditionalPostRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%element, %afterReadName, %name)"),
+          replaced(conditionalPostRead, "    scf.yield\n    }\n",
+                   "    %unfinished = ctjs.get_property %element[%secondKey]\n"
+                   "    scf.yield\n    }\n"),
+          replaced(conditionalPostRead, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(conditionalMixedReads, "[data-next]", "["),
           replaced(conditionalEarlySelectors, "[data-closed]", "["),
           replaced(conditionalThreeReads, "[data-next]", "["),
           replaced(conditionalMixedReads, "#ctjs.string<\"[data-next]\">", "#ctjs.number<0>"),
@@ -2362,8 +2440,6 @@ module {
           replaced(conditionalTwoReads, "    %secondEffect =",
                    "    %again = ctjs.call %anotherReadMethod(%element, %afterReadName)\n"
                    "    %secondEffect ="),
-          moveReadBefore(conditionalTwoReads, "    %anotherReadMethod =", "    %secondEffect =",
-                         "    scf.yield\n    }\n"),
           replaced(replaced(conditionalTwoReads, "    %afterReadKey =",
                             "    scf.if %closeCondition {\n    %afterReadKey ="),
                    "    scf.yield\n    }\n", "    scf.yield\n    }\n    scf.yield\n    }\n"),
@@ -2393,8 +2469,6 @@ module {
           replaced(conditionalArgumentRead, "    %secondEffect =",
                    "    ctjs.store_global \"leaked\", %afterReadMethod\n"
                    "    %secondEffect ="),
-          moveReadBefore(conditionalIgnoredRead,
-                         "    %afterReadKey =", "    %secondKey =", "    scf.yield\n    }\n"),
           replaced(conditionalArgumentRead, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
                    "        ctjs.store_global \"effect\", %error"),
