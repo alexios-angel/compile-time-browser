@@ -106,6 +106,108 @@ void InductionCases::invariantReads() {
     reject("a changing carried table cannot borrow its initial allocation",
            replace(carriedTable, "^header(%base, %step, %added, %tableBody",
                    "^header(%base, %step, %added, %base"));
+    const auto stringTable = replace(
+        replace(tableIndex, "  %keys =",
+                "  %textZero = ctjs.constant #ctjs.string<\"0\"> {storage_test_id = \"textZero\"}\n"
+                "  %textTwo = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"textTwo\"}\n"
+                "  %keys ="),
+        "[%zero, %two]", "[%textZero, %textTwo]");
+    run({.what = "String table elements name canonical own keys without Number conversion",
+         .body = stringTable,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "mixed Number and String table keys preserve their original read identities",
+         .body = replace(stringTable, "[%textZero, %textTwo]", "[%zero, %textTwo]"),
+         .arrays = "keys:[zero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=zero; keys[1]=textTwo; keys[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "Number negative zero remains own zero alongside a String table key",
+         .body = replace(stringTable, "#ctjs.string<\"0\">", "#ctjs.number<9223372036854775808>"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "String table replay retains children never actually overwritten",
+         .body = replace(stringTable, "[%textZero, %textTwo]", "[%textZero, %textZero]"),
+         .arrays = "keys:[textZero,textZero]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textZero; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    run({.what = "saved child identity survives String table-directed overwrites",
+         .body = replace(replace(stringTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    const auto selectedStringTable =
+        replace(replace(stringTable, "[%x, %zero, %x]", "[%x, %keys, %x]"),
+                "  %slot = ctjs.get_property %keys[%pick]",
+                "  %table = ctjs.get_property %base[%one]\n"
+                "  %slot = ctjs.get_property %table[%pick]");
+    run({.what = "String table keys exclude a reloaded receiver from every write footprint",
+         .body = selectedStringTable,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads = "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; "
+                  "keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    const auto nestedStringTable =
+        replace(replace(stringTable, "  %keys =",
+                        "  %textOne = ctjs.constant #ctjs.string<\"1\"> "
+                        "{storage_test_id = \"textOne\"}\n"
+                        "  %picks = ctjs.create_array [%textZero, %textOne] "
+                        "{storage_test_id = \"picks\"}\n"
+                        "  %keys ="),
+                "  %slot = ctjs.get_property %keys[%pick]",
+                "  %lookup = ctjs.get_property %picks[%pick]\n"
+                "  %slot = ctjs.get_property %keys[%lookup]");
+    run({.what = "a nested table read converts String keys only at each property boundary",
+         .body = nestedStringTable,
+         .arrays = "picks:[textZero,textOne]; keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "picks[0]=textZero; keys[0]=textZero; picks[1]=textOne; keys[1]=textTwo; "
+                  "picks[0]=textZero; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string key : {"", "00", "-0", "+0", "0.0", " 0", "0x0", "3", "4294967295"}) {
+        reject("a String table key must spell an existing canonical own element",
+               replace(stringTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + key + "\">"));
+    }
+    reject("String table support cannot coerce an object element to a property key",
+           replace(stringTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
+    reject("String table support cannot treat the length property as an own element",
+           replace(stringTable, "#ctjs.string<\"0\">", "#ctjs.string<\"length\">"));
+    for (const std::string expression :
+         {"ctjs.binary add %slot, %zero", "ctjs.binary add %zero, %slot",
+          "ctjs.binary_static add %slot, %zero"}) {
+        reject("String table positions cannot become Number operands inside addition",
+               replace(replace(stringTable, "  ctjs.set_property %base[%slot]",
+                               "  %sumKey = " + expression + "\n  ctjs.set_property %base[%slot]"),
+                       "%base[%slot]", "%base[%sumKey]"));
+    }
+    reject("nested String lookups preserve canonical spelling at the inner property boundary",
+           replace(nestedStringTable, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
+    reject("String table writes cannot overlap a selected receiver reload",
+           replace(selectedStringTable, "#ctjs.string<\"2\">", "#ctjs.string<\"1\">"));
+    reject("a later store cannot hide inside a String table reload gap",
+           replace(selectedStringTable,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    for (const std::string mutation :
+         {"ctjs.set_property %keys[%one], %textZero", "ctjs.set_property %keys[%key], %one"}) {
+        reject("String table mutation before a read remains in the complete census",
+               replace(stringTable, "  %pick =", "  " + mutation + "\n  %pick ="));
+        reject("String table mutation after a read remains in the complete census",
+               replace(stringTable, "  %step =", "  " + mutation + "\n  %step ="));
+    }
+    const auto stringTableAlias =
+        replace(stringTable, "  cf.br ^header",
+                "  %box = ctjs.create_array [%keys]\n"
+                "  %alias = ctjs.get_property %box[%zero]\n  cf.br ^header");
+    reject("String table aliases retain the same exact allocation in the write census",
+           replace(stringTableAlias,
+                   "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
     const auto reloaded = replace(
         replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
         "add %i, %one", "add %i, %unit");

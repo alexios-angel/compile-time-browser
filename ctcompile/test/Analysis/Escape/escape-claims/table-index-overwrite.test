@@ -15,6 +15,18 @@
 // CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
 
+// Canonical String table keys retain property spelling and primitive identity.
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function varyingTableKey() {
     var child = {}, a = [child, 0, child], keys = [0, 2];
@@ -78,3 +90,60 @@ function overwrittenTableReceiver() {
 varyingTableKey(); reversedTableKey(); selectedTableKey(); retainedTableKey();
 savedTableChild(); mutatedTableKey(); mutatedTableAlias(); resizedTableKey();
 guardTableKey(); overwrittenTableReceiver();
+
+function stringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mixedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function selectedStringTableKey() {
+    var child = {}, keys = ['0', '2'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+function nestedStringTableKey() {
+    var child = {}, a = [child, 0, child], picks = ['0', '1'], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[picks[i % 2]]] = 0;
+    return a;
+}
+function retainedStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '0'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function savedStringTableChild() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return [saved, a];
+}
+function noncanonicalStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function concatenatedStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] + 0] = 0;
+    return a;
+}
+function mutatedStringTableAlias() {
+    var child = {}, a = [child, 0, child], keys = ['0', '2'], alias = keys;
+    for (var i = 0; i < a.length; i++) {
+        alias[1] = '0';
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function overwrittenStringTableReceiver() {
+    var child = {}, keys = ['0', '1'], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+stringTableKey(); mixedTableKey(); selectedStringTableKey(); nestedStringTableKey();
+retainedStringTableKey(); savedStringTableChild(); noncanonicalStringTableKey();
+concatenatedStringTableKey(); mutatedStringTableAlias(); overwrittenStringTableReceiver();
