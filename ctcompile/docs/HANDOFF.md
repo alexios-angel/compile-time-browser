@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Post-write iterator close reads and singleton power bases, 2026-09-23 UTC
+
+Resumed clean **00e7f1cb** and retained Boolean source `4def4ec7`.
+**e7cbb817** keeps an optional trailing `hasAttribute` read after the protected
+attribute write, under the same source guard. Prefix producers stay before the
+write; exact suppression, private callable checks, saved exception ownership and
+complete typed DOM reproof remain. The original source now executes unchanged,
+including its saved Boolean snapshot; getter and missing-attribute variants pass.
+
+Parallel **11d95228** reuses the existing invariant-base power proof when a
+syntactically varying base has one proved value. Complete reload/store census,
+exact scalar restrictions and actual-write replay remain. All 110 historical
+power sources/CHECKs and raw cases are preserved; twelve source controls were added.
+
+Three selected sources pass **48 native executions, 68 refusals and 24 Node/VM
+observations**. Focused host/arrays CTests and the exact power-index lit case pass.
+Seven final hashes match the devbox; 24 generated C++ files contain no Script/VM
+protocol or nullable-scalar fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** `second-postwrite-effect` source `442af76b` still refuses
+**DOM protected helper needs an independent inert-body proof** in both policies.
+It performs a second attribute write after reading the first write's result;
+retain both writes, their order and the original saved Boolean. Nonterminal
+exceptional state, multiple protected regions, implicit cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain. General powers still require a separate arithmetic proof.
+
+[Exact checks and next boundary](handoff/2026-09-23-postwrite-close.md).
+
 ## Nonliteral iterator close throws and singleton power exponents, 2026-09-23 UTC
 
 Resumed clean **ed41f1e5** and retained nonliteral mutable close `822a327b`.
