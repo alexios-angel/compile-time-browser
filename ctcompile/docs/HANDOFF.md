@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Reads after terminal iterator-close selectors and varying masks, 2026-09-23 UTC
+
+Resumed clean **b9a880eb** and retained terminal-selector/read source `54c46eea`.
+**b0745168** preserves its final `hasAttribute` after the second `matches` call.
+Unused terminal selectors enter the existing suppression and complete use census,
+leaving the final read slot available. Following writes still refuse; source
+order/guard, typed DOM/Style reproof, saved Boolean ownership and budgets remain.
+The original source, getter, missing-read and order-sensitive variants execute.
+
+Parallel **ecdb8d0e** reuses bounded whole-key subdivision when both bitwise
+mask operands vary. Each accepted subrange still requires the existing singleton
+transfer, complete reload/store census, independent reload-gap proof and actual
+write replay. Twenty raw and fourteen source controls were added; all 210 historical
+source bodies/expectations remain unchanged. Eight historical raw refusals now
+have exact admission checks supported by Node write/read/identity witnesses.
+
+Four selected sources pass **64 native executions, 96 refusals and 32 Node/VM
+observations**. Exact host/arrays CTests and the selected power-index lit case pass.
+Eight final source hashes match the devbox; all 32 generated C++ files retain the
+final read after both selectors and every write, without Script/VM or nullable
+fallback. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+The initial array gate found six stale refusals and one new test's missing scalar
+label; corrected expectations pass without a production change. Full suites were
+skipped; no browser/runtime implementation changed.
+
+**Next native boundary:** retained `unsupported-terminal-match-second-read`
+source `5cd57a59` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve both final `hasAttribute` calls after the
+second selector and the original saved body exception. Single-write selector
+cleanup, nonterminal exceptional state, multiple protected regions, implicit
+cleanup, nested custom iterators, unguarded Bootstrap defaults, the application
+driver, full native Bootstrap and general powers remain. Wider bitwise proofs
+retain the existing work budget. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-selector-read-close.md).
+
 ## Terminal iterator-close selectors and singleton bitwise masks, 2026-09-23 UTC
 
 Resumed clean **3fe78026** and retained terminal-selector source `5f783ab2`.
