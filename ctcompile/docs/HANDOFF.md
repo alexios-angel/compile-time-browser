@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Ordered iterator-close suffixes and singleton divisors, 2026-09-23 UTC
+
+Resumed clean **382d1677** and retained fourth-write source `c6857b84`.
+**7e094e1b** applies the existing post-selector read/write proof to bounded
+sequences. Each optional read feeds only its following write; complete use census,
+source order/guard, exact write suppression, typed DOM/Style reproof, saved Boolean
+ownership and budgets remain. Original source, getter, read-dependent fourth
+write and six-write sequence execute unchanged.
+
+Parallel **5f92f68c** proves division/remainder indices when a syntactically
+varying divisor has one exact bounded value. Existing arithmetic, complete
+reload/store census, independent reload-gap proof and actual-write replay remain.
+Eighteen raw and eleven source controls were added; all 177 historical source
+bodies and expectations are unchanged.
+
+Four selected sources pass **64 native executions, 96 refusals and 32 Node/VM
+observations**. Exact host/arrays CTests and the selected power-index lit case pass.
+Seven source hashes match the devbox; all 32 generated C++ files retain the selector
+and ordered suffix writes consuming actual read Booleans, without Script/VM or
+nullable fallback. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+The first host gate exposed incomplete SSA renaming in new test construction;
+corrected test setup passes, with production unchanged. Full suites were skipped.
+
+**Next native boundary:** retained `unsupported-terminal-postselector-read`
+source `51fc580e` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve its final `hasAttribute` after all writes,
+used as the ignored close throw, together with the original saved body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap and general powers remain.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-ordered-suffix-close.md).
+
 ## Reads after iterator-close selectors and correlated division, 2026-09-23 UTC
 
 Resumed clean **44416c8e** and retained post-selector read source `fcad547a`.
