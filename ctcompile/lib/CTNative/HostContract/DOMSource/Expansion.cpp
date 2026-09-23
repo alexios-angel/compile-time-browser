@@ -39,8 +39,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         // preparation and hasAttribute reads requires complete typed DOM reproof:
         // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
-        // ponytail: two writes with feeding reads, one matches, then read/write pairs;
-        // other effects need all their exceptional edges represented.
+        // ponytail: two writes with feeding reads, one matches, then read/write pairs
+        // and an unused final read; other effects need their exceptional edges represented.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
             ctjs::GetPropertyOp selectorMethod, finalMethod, finalReadMethod;
@@ -173,8 +173,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (!protectedLeaf || (!discardedResult && !primitiveResult) ||
                 (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult())) ||
                 (trailingMethod && !trailingCall) || (secondMethod && !secondLeaf) ||
-                (selectorMethod && !selectorLeaf) || finalMethod || finalReadMethod) {
+                (selectorMethod && !selectorLeaf) || finalMethod ||
+                (finalReadMethod && !finalReadCall)) {
                 return false;
+            }
+            if (finalReadCall) {
+                // The ignored close payload may leave a final read. Keep it in
+                // order and require its result to have no remaining observer.
+                suffixValues.append({finalReadMethod.getResult(), finalReadCall.getResult()});
+                suffixUses.insert(&finalReadCall->getOpOperand(0));
             }
             if (selectorFeedsWrite) {
                 auto literal = selectorLeaf.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
