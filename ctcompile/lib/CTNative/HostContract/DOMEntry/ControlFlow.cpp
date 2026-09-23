@@ -189,8 +189,19 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         mlir::Value thenFrame = frame, elseFrame = frame;
         bool thenThrows = false, elseThrows = false, joinedArm = false;
         const auto known = constantBooleans.find(branch.getCondition());
-        const std::optional<bool> selected =
+        std::optional<bool> selected =
             known == constantBooleans.end() ? std::nullopt : std::optional(known->second);
+        if (!selected && !branch.getNumResults()) {
+            // Iterator completion retains a literal done flag. Prove its
+            // selected cleanup arm without narrowing ordinary scalar joins.
+            if (!spend()) { return false; }
+            auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+            auto constant =
+                truth ? truth.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+            auto boolean = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
+                                    : ctjs::BooleanAttr{};
+            if (boolean) { selected = boolean.getValue(); }
+        }
         for (mlir::Region & region : branch->getRegions()) {
             if (region.empty()) { continue; }
             if (!spend()) { return false; }
@@ -305,7 +316,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             return false;
         }
         frame = thenThrows ? elseFrame : thenFrame;
-        if (thenThrows && elseThrows) { nonReturning.insert(&body); }
+        if (selected ? (*selected ? thenThrows : elseThrows) : (thenThrows && elseThrows)) {
+            nonReturning.insert(&body);
+        }
         if (joined.size() != branch.getNumResults() ||
             (branch.getNumResults() && branch.getElseRegion().empty())) {
             refusal = "DOM entry branch is missing a scalar arm";

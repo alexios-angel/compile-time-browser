@@ -2051,14 +2051,22 @@ module {
         getterReturn(throwingReturn(primitiveReturn(returningSource))), &context);
     auto normalGetterBreak = mlir::parseSourceString<mlir::ModuleOp>(
         getterReturn(throwingReturn(primitiveReturn(countedSource))), &context);
-    check(normalThrowingReturn && normalThrowingBreak && normalGetterReturn && normalGetterBreak,
+    const auto booleanExhaustionSource =
+        replaced(returningSource, "      scf.yield %zero : !ctjs.value",
+                 "      scf.yield %normal : !ctjs.value");
+    auto booleanThrowingReturn = mlir::parseSourceString<mlir::ModuleOp>(
+        throwingReturn(primitiveReturn(booleanExhaustionSource)), &context);
+    auto booleanGetterReturn = mlir::parseSourceString<mlir::ModuleOp>(
+        getterReturn(throwingReturn(primitiveReturn(booleanExhaustionSource))), &context);
+    check(normalThrowingReturn && normalThrowingBreak && normalGetterReturn && normalGetterBreak &&
+              booleanThrowingReturn && booleanGetterReturn,
           "historical normal terminal-throw close controls parse unchanged");
     if (!normalThrowingReturn || !normalThrowingBreak || !normalGetterReturn ||
-        !normalGetterBreak) {
+        !normalGetterBreak || !booleanThrowingReturn || !booleanGetterReturn) {
         return;
     }
-    for (auto fixture :
-         {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn, *normalGetterBreak}) {
+    for (auto fixture : {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn,
+                         *normalGetterBreak, *booleanThrowingReturn, *booleanGetterReturn}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
@@ -2107,8 +2115,30 @@ module {
                 continue;
             }
             request.moduleSha256 = hostContractFingerprint(*input);
-            check(DOMEntryAnalysis(*input, request).proved(),
-                  "normal close exception retains complete typed DOM reproof");
+            const DOMEntryAnalysis proof(*input, request);
+            check(proof.proved(), "normal close exception retains complete typed DOM reproof");
+        }
+    }
+    auto booleanReturning =
+        mlir::parseSourceString<mlir::ModuleOp>(booleanExhaustionSource, &context);
+    check(static_cast<bool>(booleanReturning), "normal heterogeneous completion control parses");
+    if (booleanReturning) {
+        auto request = contract;
+        request.provider = HostContract::Provider::ctbrowserDOM;
+        request.moduleSha256 = hostContractFingerprint(*booleanReturning);
+        auto failure = normalizeDOMCustomIteration(*booleanReturning, request, completeBudget);
+        if (!failure) {
+            failure = expandDOMHelpers(*booleanReturning, request.entry, completeBudget);
+        }
+        check(!failure, "nonthrowing close keeps both original return paths");
+        if (failure) {
+            llvm::consumeError(std::move(failure));
+        } else {
+            request.moduleSha256 = hostContractFingerprint(*booleanReturning);
+            const DOMEntryAnalysis proof(*booleanReturning, request);
+            check(noEvidence(*booleanReturning, proof) &&
+                      proof.reason().contains("incompatible scalar alternatives"),
+                  "reachable Boolean and Number return alternatives still refuse");
         }
     }
     for (const auto & invalid :
@@ -5354,6 +5384,8 @@ module {
                          *normalThrowingBreak,
                          *normalGetterReturn,
                          *normalGetterBreak,
+                         *booleanThrowingReturn,
+                         *booleanGetterReturn,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,

@@ -8,7 +8,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
         refusal = "DOM entry branch depth or block arguments are unsupported";
         return false;
     }
-    bool entered = false, returned = false;
+    bool entered = false, returned = false, structuralTail = false;
     for (mlir::Operation & operation : body) {
         if (!spend()) { return false; }
         // Pure callbacks observe only their String argument. No implicit
@@ -24,7 +24,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
              !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ExecuteRegionOp,
                         ctjs::InvokeOp>(operation)) ||
             operation.getNumSuccessors() != 0 || returned ||
-            (nonReturning.contains(&body) && !llvm::isa<mlir::scf::YieldOp>(operation))) {
+            (nonReturning.contains(&body) && !llvm::isa<mlir::scf::YieldOp>(operation) &&
+             !(structuralTail && llvm::isa<ctjs::ConstantOp, ctjs::FrameExitOp>(operation)))) {
             refusal = "DOM entry does not admit nested control flow or a source continuation";
             return false;
         }
@@ -45,6 +46,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
         }
         if (const auto handled = controlFlow(operation, body, depth, frame, returned)) {
             if (!*handled) { return false; }
+            structuralTail |= llvm::isa<mlir::scf::IfOp>(operation) && nonReturning.contains(&body);
             continue;
         }
         if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {

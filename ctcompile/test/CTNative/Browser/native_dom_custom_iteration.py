@@ -2407,6 +2407,11 @@ def normal_throws(args, compilers, includes, libraries, cases):
     executions = observations = 0
     for label, text in cases:
         selecting = "selector" in label
+        unconditional_return = label in (
+            "return-getter-close",
+            "return-method-close",
+            "return-effectful-getter-close",
+        )
         branch_throw = "false-guard" in label
         read_throw = "-throw-read-" in label
         null_throw = "-read-null-" in label
@@ -2438,12 +2443,14 @@ def normal_throws(args, compilers, includes, libraries, cases):
 """
         closed = "true" if label.startswith("return-") else "yes"
         script, expected, states = text, {}, []
-        for mode in range(4):
+        for mode in range(5 if unconditional_return else 4):
             setup = "saved.stop = '';" if mode in (1, 2) else ""
             if mode == 2:
                 setup += "saved['data-closed'] = 'false';"
-            elif mode == 3:
+            elif mode >= 3:
                 setup += "saved['data-yielded'] = 'yes';"
+            if mode == 4:
+                setup += "saved['data-visited'] = 'yes';"
             name = f"normalClose{mode}"
             script += f"""
 var {name} = (function() {{
@@ -2473,15 +2480,23 @@ var {name} = (function() {{
   catch (error) {{ return 'throw:' + typeof error + ':' + error + ':' + trace; }}
 }})();
 """
-            trace = f"read:data-yielded={'true' if mode == 3 else 'false'};"
+            trace = f"read:data-yielded={'true' if mode >= 3 else 'false'};"
             writes = [
-                ("data-next", "true" if mode == 3 else "false"),
+                ("data-next", "true" if mode >= 3 else "false"),
                 ("data-yielded", "yes"),
             ]
             trace += "".join(f"write:{key}={value};" for key, value in writes)
-            if mode == 3:
-                trace += "read:data-visited=false;"
-                result = "return:false:"
+            if mode >= 3:
+                value = "true" if mode == 4 else "false"
+                trace += f"read:data-visited={value};"
+                result = f"return:{value}:"
+            elif unconditional_return:
+                if label == "return-effectful-getter-close":
+                    trace += "write:data-visited=yes;"
+                    writes.append(("data-visited", "yes"))
+                trace += "write:data-closed=yes;"
+                writes.append(("data-closed", "yes"))
+                result = "throw:number:2:"
             elif mode == 0:
                 if selecting or label.startswith("return-"):
                     trace += "read:stop=false;"
@@ -2539,6 +2554,8 @@ var {name} = (function() {{
                 result = "throw:object:null:" if null_throw else "throw:string:false:"
             expected[name] = result + trace
             final = dict(writes)
+            if mode == 4:
+                final["data-visited"] = "yes"
             state_checks = ""
             for key in (
                 "data-next",
@@ -2572,22 +2589,23 @@ var {name} = (function() {{
         const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
             const auto atom = [&](std::string_view name) { return target.atoms().intern(name); };
             target.log_writes(true);
-            for (unsigned mode = 0; mode < 4; ++mode) {
+            for (unsigned mode = 0; mode < @MODES@; ++mode) {
                 for (const auto name : {"stop", "data-next", "data-yielded", "data-visited",
                                        "data-closed", "data-after-second", "data-after-terminal"}) {
                     assert(target.remove_attribute(id, atom(name)));
                 }
                 if (mode == 1 || mode == 2) { assert(target.set_attribute(id, atom("stop"), "")); }
                 if (mode == 2) { assert(target.set_attribute(id, atom("data-closed"), "false")); }
-                if (mode == 3) { assert(target.set_attribute(id, atom("data-yielded"), "yes")); }
+                if (mode >= 3) { assert(target.set_attribute(id, atom("data-yielded"), "yes")); }
+                if (mode == 4) { assert(target.set_attribute(id, atom("data-visited"), "yes")); }
                 (void)target.take_writes();
                 bool caught = false;
-                try { assert(static_cast<bool>(call()) == (mode == 0)); }
+                try { assert(static_cast<bool>(call()) == (@RETURNS_TRUE@)); }
                 catch (const ctnative::js_exception<ctnative::@TYPE@> & error) {
                     caught = @PAYLOAD@;
                 }
                 @EXTRA_CATCH@
-                assert(caught == (mode == 1 || mode == 2));
+                assert(caught == (@THROWS@));
                 const auto writes = target.take_writes();
                 @STATES@
             }
@@ -2598,6 +2616,9 @@ var {name} = (function() {{
             .replace("@PAYLOAD@", payload)
             .replace("@STATES@", "\n".join(states))
             .replace("@EXTRA_CATCH@", extra_catch)
+            .replace("@MODES@", "5" if unconditional_return else "4")
+            .replace("@RETURNS_TRUE@", "mode == 4" if unconditional_return else "mode == 0")
+            .replace("@THROWS@", "mode < 3" if unconditional_return else "mode == 1 || mode == 2")
         )
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -2840,6 +2861,13 @@ def saved_throws(args, compilers, includes, libraries):
         (
             "number-getter-object-close",
             refusals()["body-throw-close-getter"].replace("throw 2;", "throw anchor;"),
+            "js_num",
+            "error.value.value() == 1.0",
+            "yes",
+        ),
+        (
+            "number-method-object-close",
+            refusals()["body-throw-close-throws"].replace("throw 2;", "throw anchor;"),
             "js_num",
             "error.value.value() == 1.0",
             "yes",
@@ -4344,6 +4372,7 @@ def saved_throws(args, compilers, includes, libraries):
             "number-throwing-close",
             "number-getter-close",
             "number-getter-object-close",
+            "number-method-object-close",
         )
         snapshot = conditional or label.startswith("boolean-snapshot") or numeric_snapshot
         js_kind = (
@@ -5538,6 +5567,22 @@ var savedThrow, savedExhausted;
         (label.replace("-close", "-getter-close"), text.replace("return() {", "get return() {"))
         for label, text in read_close_cases
     )
+    normal_cases += (
+        (
+            "return-getter-close",
+            refusals()["body-throw-close-getter"].replace("throw 1;", "return 1;"),
+        ),
+        (
+            "return-method-close",
+            refusals()["body-throw-close-throws"].replace("throw 1;", "return 1;"),
+        ),
+        (
+            "return-effectful-getter-close",
+            refusals()["body-throw-close-getter"].replace(
+                "throw 1;", "return (node.setAttribute('data-visited', 'yes'), 1);"
+            ),
+        ),
+    )
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
@@ -5597,7 +5642,12 @@ var savedThrow, savedExhausted;
             "third-postselector-result-getter-close",
             "throwing-close",
         )
-    } | {"normal-getter-close", "unknown-getter-throw"}
+    } | {
+        "normal-getter-close",
+        "return-getter-close",
+        "unknown-close-throw",
+        "unknown-getter-throw",
+    }
     admitted = 0
     for label, text in (
         (

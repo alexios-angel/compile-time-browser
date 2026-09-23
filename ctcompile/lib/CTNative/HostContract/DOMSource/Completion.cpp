@@ -4,10 +4,25 @@
 namespace ctcompile::ctnative::dom_source_detail {
 
 bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
+    const auto repeatedCondition = [&](mlir::scf::IfOp branch) {
+        if (!branch.getNumResults()) { return false; }
+        for (mlir::Operation * user : branch.getCondition().getUsers()) {
+            if (!step()) { return false; }
+            auto later = llvm::dyn_cast<mlir::scf::IfOp>(user);
+            if (later && later != branch && later->getBlock() == branch->getBlock() &&
+                branch->isBeforeInBlock(later)) {
+                return true;
+            }
+        }
+        return false;
+    };
     bool dispatch = false;
     const auto walked = function.walk([&](mlir::Operation * operation) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         dispatch |= llvm::isa<mlir::scf::IndexSwitchOp, mlir::ub::PoisonOp>(operation);
+        if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+            dispatch |= repeatedCondition(branch);
+        }
         return mlir::WalkResult::advance();
     });
     if (walked.wasInterrupted()) { return false; }
@@ -751,7 +766,11 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 // Defined JavaScript results can join before their common
                 // continuation. Completion tags and inactive slots still need
                 // path expansion so their selectors retain exact values.
-                bool join = true;
+                // A later test of this exact SSA condition may close an iterator
+                // and throw before observing the saved result. Keep that result
+                // on its source path until the shared continuation is proved.
+                const bool repeated = repeatedCondition(branch);
+                bool join = !repeated;
                 for (mlir::Type type : branch.getResultTypes()) {
                     if (!step()) { return {}; }
                     join &= llvm::isa<ctjs::ValueType>(type);
@@ -798,6 +817,13 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     mlir::IRMapping path(values);
                     target.emplaceBlock();
                     mlir::OpBuilder nested(&target.front(), target.front().begin());
+                    if (repeated) {
+                        if (!step()) { return {}; }
+                        auto selected = mlir::arith::ConstantIntOp::create(
+                            nested, branch.getLoc(), &source == &branch.getThenRegion(), 1);
+                        path.map(branch.getCondition(), selected.getResult());
+                        ++operationCount;
+                    }
                     Results returned;
                     if (source.empty() && branch.getNumResults() == 0) {
                         returned = join ? Results(llvm::SmallVector<mlir::Value>{})
