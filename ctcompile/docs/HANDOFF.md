@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mixed iterator cleanup and Undefined unary Number inputs, 2026-09-23 UTC
+
+Resumed clean **af864871** and unchanged `mixed-body-throw-return-close`, source
+`24815b87`. **88dc57f2** preserves a saved Boolean body exception at protected
+cleanup and propagates Number 2 at a normal return close. Each caller keeps its
+original suppression or immediate rethrow; all payload producers and DOM effects
+remain. Both fully checked throwing arms use unreachable primitive padding, and
+proved exhaustion removes inactive cleanup. The original method and getter twin
+execute. Independent native production/raw review is complete and clean.
+
+**9b83e175** proves bitwise conversion of original unary Undefined literals through
+public Core's Number NaN conversion. The first six sources use global reads and
+remain conservatively Stored. Three added local-Undefined sources change from
+Stored to **Confined** on identical source `2cb5925d`, program `d072529396ae1d5d`.
+All nine child sites are observed once with zero unresolved or unchecked instances;
+all 132 historical functions and the six original global-source bodies remain.
+No global, arithmetic, property, mutation or provenance proof was weakened.
+
+Focused checks pass: **96 native executions, 68 refusals, 58 Node/VM observations,
+exact host/arrays CTests and one selected lit case**. Formatting passes
+**1126 C++, 157 Python and 114 web files**; all eight final code/test hashes match
+the devbox and all 48 generated C++ files have no Script namespace. No browser or
+runtime implementation changed. Full suites and full Bootstrap were skipped.
+
+**Next native boundary:** unchanged `mixed-body-throw-break-close`, source
+`962dd3f8`, refuses **DOM iterator completion must close every traversal exit**
+under both policies. Preserve its saved Boolean body exception, normal-break
+cleanup Number 2, original DOM reads/writes, snapshots and exhaustion ordering.
+The getter twin shares that boundary. Mixed mutable returns still require an
+immediate saved throw. Normal object-throwing getters, nested custom iterators,
+unguarded Bootstrap defaults, the application driver and full native Bootstrap
+remain. Escape still excludes unproved global reads, chains over 64, general
+computed Number proofs, unsafe String exponents, Strings over 32 bytes, general
+powers and legacy SCF retention. The VM fractional-index discrepancy remains
+separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-mixed-cleanup-undefined-unary.md).
+
 ## Mutable cleanup exceptions and String unary inputs, 2026-09-23 UTC
 
 Resumed clean **e51d742c** and unchanged `return-mutable-throwing-close`, source
