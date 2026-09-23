@@ -662,8 +662,11 @@ void StructuredCases::mutationRefusals() {
            replace(singletonDivisor, "add %i, %two", "add %i, %one"));
     reject("structured singleton divisors require a nonzero value",
            replace(singletonDivisor, "add %unit, %one", "sub %unit, %one"));
-    reject("structured varying divisors cannot borrow a singleton fact",
-           replace(singletonDivisor, "pow %one, %i", "pow %zero, %i"));
+    rows.push_back({.what = "structured varying divisors retain every unwritten child",
+                    .body = replace(singletonDivisor, "pow %one, %i", "pow %zero, %i"),
+                    .arrays = "a:[zero,x,zero]",
+                    .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+                    .exit = "a -> {a,x}"});
     rows.push_back(
         {.what = "structured singleton divisor ranges also preserve remainder writes",
          .body = replace(replace(unitPower, "ctjs.append %y to %a", "ctjs.append %one to %a"),
@@ -673,6 +676,39 @@ void StructuredCases::mutationRefusals() {
          .arrays = "a:[zero,one]",
          .reads = "a[0]=zero; a[1]=one",
          .exit = "a -> {a}"});
+    const auto varyingDivisor =
+        replace(replace(replace(unitPower, "create_array [%x]", "create_array [%zero, %x]"),
+                        "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+                "%position = ctjs.binary pow %i, %one",
+                "%numerator = ctjs.binary add %i, %one\n"
+                "    %divisor = ctjs.binary add %i, %one\n"
+                "    %position = ctjs.binary div %numerator, %divisor");
+    rows.push_back({.what = "structured varying divisors refine exact correlated quotients",
+                    .body = varyingDivisor,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "structured varying remainder divisors preserve negative divisor signs",
+         .body = replace(varyingDivisor, "%position = ctjs.binary div %numerator, %divisor",
+                         "%negative = ctjs.unary neg %divisor\n"
+                         "    %position = ctjs.binary mod %i, %negative"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"});
+    const auto varyingDivisorReload =
+        replace(replace(varyingDivisor, "create_array [%zero, %x]", "create_array [%one, %x]"),
+                "%divisor = ctjs.binary add %i, %one",
+                "%unit = ctjs.get_property %base[%zero]\n"
+                "    %divisor = ctjs.binary add %i, %unit");
+    rows.push_back({.what = "structured varying divisors independently reprove reload gaps",
+                    .body = varyingDivisorReload,
+                    .arrays = "a:[one,zero,zero]",
+                    .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured varying divisors retain every later producer store",
+           replace(varyingDivisorReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
     const auto singletonShift =
         replace(replace(replace(unitPower, "create_array [%x]", "create_array [%x, %x]"),
                         "ctjs.append %y to %a", "ctjs.append %zero to %a"),

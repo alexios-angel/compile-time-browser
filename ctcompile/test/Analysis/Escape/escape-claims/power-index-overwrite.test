@@ -273,6 +273,18 @@
 // CHECK: escape {{[0-9a-f]+}} 234 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 235 {{[0-9]+}} obj confined
 
+// Varying divisors refine exact own keys without losing reload or retention checks.
+// CHECK: escape {{[0-9a-f]+}} 236 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 237 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 238 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 239 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 240 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 241 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 242 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 243 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 244 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 245 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -1613,3 +1625,62 @@ varyingRightShift(); varyingUnsignedShift(); varyingLeftShift();
 retainedVaryingShift(); savedVaryingShift(); reloadedVaryingShift();
 laterVaryingShiftStore(); overlappingVaryingShift(); fractionalVaryingShift();
 negativeVaryingShift(); wrappedVaryingShift();
+
+function varyingQuotient() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + 1)] = 0;
+    return a;
+}
+function varyingRemainder() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i % (i + 1)] = 0;
+    return a;
+}
+function negativeVaryingRemainder() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i % -(i + 1)] = 0;
+    return a;
+}
+function retainedVaryingDivisor() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + 1)] = 0;
+    return a;
+}
+function savedVaryingDivisor() {
+    var child = {}, a = [0, child, 0], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + 1)] = 0;
+    return saved;
+}
+function reloadedVaryingDivisor() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + a[0])] = 0;
+    return a;
+}
+function laterVaryingDivisorStore() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[(i + 1) / (i + a[0])] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingVaryingDivisor() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + a[1])] = 0;
+    return a;
+}
+function interiorZeroVaryingDivisor() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) / (i - 1)] = 0;
+    return a;
+}
+function fractionalVaryingDivisor() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i / (i + 1)] = 0;
+    return a;
+}
+
+varyingQuotient(); varyingRemainder(); negativeVaryingRemainder();
+retainedVaryingDivisor(); savedVaryingDivisor(); reloadedVaryingDivisor();
+laterVaryingDivisorStore(); overlappingVaryingDivisor();
+interiorZeroVaryingDivisor(); fractionalVaryingDivisor();

@@ -365,9 +365,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 offset = range->first;
                 range = other;
                 offsetOperand = 1U - offsetOperand;
-            } else if (other && (shift || bitAnd || bitOr || bitXor)) {
+            } else if (other) {
                 // Both operands are bounded but correlated. Split the whole key
-                // until the existing singleton count/mask transfer proves each visit.
+                // until the existing singleton operand transfer proves each visit.
                 refinableEnclosure = true;
             }
         }

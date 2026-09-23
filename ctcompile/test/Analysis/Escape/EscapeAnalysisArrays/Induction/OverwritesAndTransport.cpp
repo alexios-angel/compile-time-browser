@@ -901,8 +901,11 @@ void InductionCases::overwritesAndTransport() {
            replace(singletonDivisor, "add %i, %two", "add %i, %one"));
     reject("a zero singleton divisor still refuses",
            replace(singletonDivisor, "add %unit, %one", "sub %unit, %one"));
-    reject("multiple possible divisor values cannot borrow a singleton fact",
-           replace(singletonDivisor, "pow %one, %i", "pow %zero, %i"));
+    run({.what = "varying divisor refinement retains every actually unwritten child",
+         .body = replace(singletonDivisor, "pow %one, %i", "pow %zero, %i"),
+         .arrays = "a:[zero,x,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
     const auto singletonRemainder = replace(replace(masked, "[%one, %x]", "[%x, %one]"),
                                             "%position = ctjs.binary_static bitand %i, %one",
                                             "%divisor = ctjs.binary pow %one, %i\n"
@@ -913,6 +916,53 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero; a[1]=one",
          .exit = "a -> {a}"},
         "x");
+    const auto varyingDivisor = replace(replace(masked, "[%one, %x]", "[%zero, %x, %zero]"),
+                                        "%position = ctjs.binary_static bitand %i, %one",
+                                        "%numerator = ctjs.binary add %i, %one\n"
+                                        "  %divisor = ctjs.binary add %i, %one\n"
+                                        "  %position = ctjs.binary div %numerator, %divisor");
+    run({.what = "varying divisors refine exact correlated quotients before replay",
+         .body = varyingDivisor,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying remainder divisors preserve exact ordered own writes",
+         .body = replace(replace(varyingDivisor, "[%zero, %x, %zero]", "[%x, %x, %x]"),
+                         "div %numerator, %divisor", "mod %i, %divisor"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying divisor replay preserves a saved overwritten child",
+         .body = replace(replace(varyingDivisor, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[1]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto varyingDivisorReload =
+        replace(replace(varyingDivisor, "[%zero, %x, %zero]", "[%one, %x, %zero]"),
+                "%divisor = ctjs.binary add %i, %one",
+                "%unit = ctjs.get_property %base[%zero]\n"
+                "  %divisor = ctjs.binary add %i, %unit");
+    run({.what = "varying divisors independently refine their producer reload gaps",
+         .body = varyingDivisorReload,
+         .arrays = "a:[one,zero,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("varying divisors retain the complete later-store census",
+           replace(varyingDivisorReload,
+                   "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    reject("varying divisors reject an actually overwritten producer reload",
+           replace(replace(varyingDivisorReload, "[%one, %x, %zero]", "[%x, %one, %zero]"),
+                   "%unit = ctjs.get_property %base[%zero]",
+                   "%unit = ctjs.get_property %base[%one]"));
+    reject("varying divisors cannot hide an interior zero over zero",
+           replace(varyingDivisor, "add %i, %one", "sub %i, %one"));
+    reject("varying divisors cannot round a fractional actual quotient",
+           replace(varyingDivisor, "div %numerator, %divisor", "div %i, %divisor"));
     const auto singletonShift = replace(replace(masked, "[%one, %x]", "[%x, %x, %zero]"),
                                         "%position = ctjs.binary_static bitand %i, %one",
                                         "%count = ctjs.binary pow %one, %i\n"
