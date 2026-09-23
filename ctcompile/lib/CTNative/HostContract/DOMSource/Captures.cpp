@@ -30,12 +30,17 @@ bool DOMSource::undefined(mlir::Value value) {
 }
 
 bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use) {
-    // Crossing only these regions proves the definition runs before the
-    // entire selected arm or loop. Invoke continuations require their own
-    // exception proof and cannot inherit this source-order shortcut.
-    while (use->getBlock() != definition->getBlock() &&
-           llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(use->getParentOp())) {
+    // The selected arm, loop or protected call follows the definition.
+    // Invoke continuations still require their own exception/state proof.
+    while (use->getBlock() != definition->getBlock()) {
         if (!step()) { return false; }
+        auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(use->getParentOp());
+        const bool protectedCall = invocation && use->getParentRegion() == &invocation.getBody() &&
+                                   llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(use);
+        if (!protectedCall &&
+            !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(use->getParentOp())) {
+            return false;
+        }
         use = use->getParentOp();
     }
     return use->getBlock() == definition->getBlock() && definition->isBeforeInBlock(use);

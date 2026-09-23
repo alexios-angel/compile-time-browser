@@ -459,6 +459,101 @@ module {
             }
         }
     }
+
+    const auto protectedHolder = replaced(
+        replaced(holderSource, "      %called = ctjs.call %method(%holder, %element)", R"MLIR(
+      "ctjs.invoke"() ({
+        %called = ctjs.call %method(%holder, %element)
+        ctjs.invoke_exit %called state()
+      }, {
+      ^bb0(%ignored: !ctjs.value):
+        ctjs.invoke_yield()
+      }, {
+      ^bb0(%error: !ctjs.value):
+        ctjs.invoke_yield()
+      }) : () -> ()
+)MLIR"),
+        "scf.yield %called : !ctjs.value", "scf.yield %flag : !ctjs.value");
+    for (const auto & valid :
+         {protectedHolder,
+          replaced(protectedHolder, "ctjs.call %method(%holder, %element)",
+                   "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+          replaced(protectedHolder, "%answer = ctjs.compare strict_eq %element, %element",
+                   "%answer = ctjs.unary typeof %element")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "protected immutable callable fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "independently inert helper discharges exact unused-result suppression");
+        if (error) {
+            llvm::consumeError(std::move(error));
+            continue;
+        }
+        bool retired = true;
+        input->walk([&](mlir::Operation * operation) {
+            retired &=
+                !llvm::isa<ctjs::InvokeOp, ctjs::CallOp, ctjs::CallDirectOp, ctjs::CreateClosureOp>(
+                    operation);
+        });
+        check(retired && mlir::succeeded(mlir::verify(*input)),
+              "protected expansion never leaves a flattened invalid invocation body");
+        auto bound = contract;
+        bound.entry = "entry$0";
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            bound.provider = provider;
+            // typeof is inert for every value, but this DOM proof has no
+            // Element typeof contract. Normalization must not grant one.
+            const bool typed = valid.find("ctjs.unary typeof") == std::string::npos;
+            check(DOMEntryAnalysis(*input, bound).proved() == typed,
+                  "discharged inert call still requires complete DOM entry reproof");
+        }
+    }
+    for (const auto & invalid :
+         {replaced(protectedHolder, "    ctjs.set_property %holder[%key], %helper\n", ""),
+          replaced(protectedHolder, "      %method =",
+                   "      ctjs.set_property %holder[%key], %helper\n      %method ="),
+          replaced(protectedHolder, "%answer = ctjs.compare strict_eq %element, %element",
+                   "%answer = ctjs.binary add %element, %element"),
+          replaced(protectedHolder, "%answer = ctjs.compare strict_eq %element, %element",
+                   "%answer = ctjs.get_property %element[%element]"),
+          replaced(protectedHolder, "    ctjs.return %answer\n  }\n}",
+                   "    ctjs.store_global \"effect\", %element\n"
+                   "    ctjs.return %answer\n  }\n}"),
+          replaced(protectedHolder, "^bb0(%ignored: !ctjs.value):",
+                   "^bb0(%ignored: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %ignored"),
+          replaced(protectedHolder, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(protectedHolder, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        %escaped = ctjs.get_property %holder[%key]"),
+          replaced(
+              replaced(protectedHolder, "state()", "state(%element)"),
+              "^bb0(%error: !ctjs.value):", "^bb0(%error: !ctjs.value, %state: !ctjs.value):")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved protected helper fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(error),
+              "coercions, getters, effects, observed continuations and unwind state refuse");
+        if (error) { llvm::consumeError(std::move(error)); }
+        unsigned invocations = 0;
+        input->walk([&](ctjs::InvokeOp) { ++invocations; });
+        check(invocations == 1 && mlir::succeeded(mlir::verify(*input)),
+              "refused protected expansion retains its valid suppression region");
+    }
+    for (unsigned budget : {0U, 64U, 128U}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(protectedHolder, &context);
+        check(static_cast<bool>(input), "protected helper budget fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", budget);
+        check(llvm::toString(std::move(error)).find("budget") != std::string::npos,
+              "incomplete protected helper proof refuses within its existing budget");
+    }
+
     const std::string slot = "    ctjs.set_property %holder[%key], %helper\n";
     for (const auto & invalid :
          {replaced(holderSource, slot, ""),

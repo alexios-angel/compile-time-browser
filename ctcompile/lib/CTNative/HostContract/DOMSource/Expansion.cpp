@@ -5,6 +5,40 @@ namespace ctcompile::ctnative::dom_source_detail {
 bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Operation * call,
                            mlir::ValueRange arguments, mlir::Value receiver, mlir::Value callee,
                            llvm::MutableArrayRef<Capture> captures, unsigned depth) {
+    if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
+        if (!step()) { return false; }
+        auto & called = invocation.getBody();
+        auto & normal = invocation.getNormalBody();
+        auto & unwind = invocation.getUnwindBody();
+        auto exit = llvm::dyn_cast_or_null<ctjs::InvokeExitOp>(call->getNextNode());
+        const auto emptyContinuation = [](mlir::Region & region) {
+            if (!region.hasOneBlock()) { return false; }
+            auto & block = region.front();
+            auto yield = llvm::hasSingleElement(block)
+                             ? llvm::dyn_cast<ctjs::InvokeYieldOp>(block.front())
+                             : ctjs::InvokeYieldOp{};
+            return yield && yield.getValues().empty() && block.getNumArguments() == 1 &&
+                   block.getArgument(0).use_empty();
+        };
+        if (invocation.getNumResults() || !called.hasOneBlock() ||
+            call->getParentRegion() != &called || called.front().getNumArguments() ||
+            &called.front().front() != call || !exit || exit->getNextNode() ||
+            exit.getNormalResult() != call->getResult(0) || !exit.getState().empty() ||
+            !call->getResult(0).hasOneUse() || !emptyContinuation(normal) ||
+            !emptyContinuation(unwind)) {
+            return refuse("DOM protected helper requires exact unused-result suppression");
+        }
+        // Reuse the independent inert-body census: it proves every path for
+        // arbitrary inputs, excluding calls, coercions, getters and throws.
+        // A normal helper body proof alone cannot discharge suppression.
+        // Effectful browser helpers need a separate typed no-throw proof.
+        if (!proveUnusedBody(target)) {
+            return refuse("DOM protected helper needs an independent inert-body proof");
+        }
+        if (!step() || !step()) { return false; }
+        call->moveBefore(invocation);
+        invocation.erase();
+    }
     auto & block = function.getBody().front();
     auto & body = target.getBody().front();
     mlir::OpBuilder at(call);
