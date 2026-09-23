@@ -405,6 +405,19 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
+        if (subtract && use == IndexUse::BitwiseConversion) {
+            const auto right = invariant(invariant, binary.getRhs(), 0);
+            if (right && boundedConvertedNumber(*right) == 0) {
+                // Subtracting exact zero changes neither the converted bits nor
+                // their range. Keep this algebraic proof local to bitwise demand.
+                auto converted = self(self, binary.getLhs(), depth + 1, use);
+                if (converted) {
+                    converted->first.original = operand;
+                    converted->last.original = operand;
+                    return converted;
+                }
+            }
+        }
         // Add keeps String concatenation; every other admitted binary
         // operation converts its primitive operands before computing a Number.
         const auto operandUse = add                                    ? IndexUse::Number

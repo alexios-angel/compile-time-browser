@@ -550,8 +550,8 @@ void InductionCases::invariantReads() {
             replace(fractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot") {
-            run({.what = "original table unary Plus supplies its own bitwise conversion",
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+            run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
@@ -670,8 +670,8 @@ void InductionCases::invariantReads() {
             replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot") {
-            run({.what = "Number Plus after a table read keeps its bitwise conversion snapshot",
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+            run({.what = "Number identity conversion after a read keeps its bitwise snapshot",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
@@ -688,6 +688,26 @@ void InductionCases::invariantReads() {
         replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                 "  %number = ctjs.unary plus %slot\n"
                 "  %converted = ctjs.binary_static bitor %number, %zero");
+    const auto afterSubZero =
+        replace(afterReadTable, "unary plus %slot", "binary sub %slot, %zero");
+    run({.what = "subtracting zero after a String read preserves its numeric conversion",
+         .body =
+             replace(afterSubZero, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("subtract-zero bits cannot become a fractional property key",
+           replace(afterSubZero, "%base[%converted]", "%base[%number]"));
+    reject("subtract-zero bits cannot become an arithmetic value",
+           replace(afterSubZero, "binary_static bitor %number, %zero", "binary add %number, %one"));
+    reject("nonzero subtraction needs an independent arithmetic result proof",
+           replace(afterSubZero, "binary sub %slot, %zero", "binary sub %slot, %one"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject(
+            "subtract-zero conversion retains the complete table mutation census",
+            replace(afterSubZero, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     for (const std::string kind : {"plus", "neg"}) {
         auto source = replace(afterReadTable, "unary plus %slot", "unary " + kind + " %slot");
         if (kind == "neg") {
@@ -1109,8 +1129,8 @@ void InductionCases::invariantReads() {
             replace(wideNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot") {
-            run({.what = "original table unary Plus supplies its own bitwise conversion",
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+            run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
@@ -1200,8 +1220,8 @@ void InductionCases::invariantReads() {
             replace(nonfiniteNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot") {
-            run({.what = "original table unary Plus supplies its own bitwise conversion",
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+            run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
@@ -1302,8 +1322,8 @@ void InductionCases::invariantReads() {
             replace(overflowStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot") {
-            run({.what = "original table unary Plus supplies its own bitwise conversion",
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+            run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
@@ -1374,8 +1394,8 @@ void InductionCases::invariantReads() {
             replace(nonfiniteStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot") {
-            run({.what = "original table unary Plus supplies its own bitwise conversion",
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+            run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
@@ -1436,8 +1456,8 @@ void InductionCases::invariantReads() {
             replace(wideStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot") {
-            run({.what = "original table unary Plus supplies its own bitwise conversion",
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+            run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",

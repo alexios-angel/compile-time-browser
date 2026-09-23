@@ -289,11 +289,12 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
             computeArrayContents(*narrowModule->template getOps<ctjs::FuncOp>().begin());
         const auto expanded =
             computeArrayContents(*wideModule->template getOps<ctjs::FuncOp>().begin());
-        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
+        const unsigned extraWork = spelling == "sub" ? 96U : 64U;
+        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + extraWork) {
             fail(row{.what = "comparison snapshots charge every independent primitive origin",
                      .body = wide.contents.body,
                      .expected = ""},
-                 "32 extra results did not cost one producer and one snapshot each");
+                 "32 extra results must charge producers, snapshots and subtract-zero bits");
         }
         check(*wideModule, wide);
     } else {

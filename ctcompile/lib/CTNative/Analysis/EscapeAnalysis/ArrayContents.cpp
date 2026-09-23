@@ -572,7 +572,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
                     boundedNumberDifference(left, right, result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
+                    if (!result.integerNumber && !result.negativeIntegerNumber &&
+                        boundedConvertedNumber(right) == 0 && left.unaryDepth <= 64) {
+                        // ToNumber(x) - 0 preserves ToUint32(x), including signed
+                        // zero and nonfinite inputs. This is no exact Number fact.
+                        result.convertedBits = boundedConvertedBits(left);
+                        result.unaryDepth = left.unaryDepth;
+                    }
+                    if (result.integerNumber || result.negativeIntegerNumber ||
+                        result.convertedBits) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }
