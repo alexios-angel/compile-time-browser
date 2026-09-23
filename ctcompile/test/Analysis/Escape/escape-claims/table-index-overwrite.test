@@ -179,6 +179,21 @@
 // CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
 
+
+// Original Undefined becomes Number NaN only through its proved unary conversion.
+// CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 138 {{[0-9]+}} obj escapes:stored
+
+
+// Local Undefined literals can prove unary Number conversion; global reads above cannot.
+// CHECK: escape {{[0-9a-f]+}} 139 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj confined
+
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 // RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
@@ -362,6 +377,27 @@
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 132 entries 1 params 0 frame {{[0-9]+}} name retainedUnaryStringNumberTableChild
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+
+// RECORD-LABEL: fn 133 entries 1 params 0 frame {{[0-9]+}} name unaryUndefinedNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 134 entries 1 params 0 frame {{[0-9]+}} name negatedUndefinedNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 135 entries 1 params 0 frame {{[0-9]+}} name unaryUndefinedNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 136 entries 1 params 0 frame {{[0-9]+}} name savedUnaryUndefinedNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 137 entries 1 params 0 frame {{[0-9]+}} name mutatedUnaryUndefinedNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 138 entries 1 params 0 frame {{[0-9]+}} name retainedUnaryUndefinedNumberTableChild
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 139 entries 1 params 0 frame {{[0-9]+}} name localUnaryUndefinedNumberBitwiseTableKey
+// RECORD: site 5 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 140 entries 1 params 0 frame {{[0-9]+}} name localNegatedUndefinedNumberBitwiseTableKey
+// RECORD: site 5 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 141 entries 1 params 0 frame {{[0-9]+}} name localUnaryUndefinedNumberShiftTableKey
+// RECORD: site 5 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 
 //--- source.js
 function varyingTableKey() {
@@ -694,6 +730,15 @@ unaryStringNumberShiftTableKey();
 savedUnaryStringNumberTableChild();
 mutatedUnaryStringNumberTableKey();
 retainedUnaryStringNumberTableChild();
+unaryUndefinedNumberBitwiseTableKey();
+negatedUndefinedNumberBitwiseTableKey();
+unaryUndefinedNumberShiftTableKey();
+savedUnaryUndefinedNumberTableChild();
+mutatedUnaryUndefinedNumberTableKey();
+retainedUnaryUndefinedNumberTableChild();
+localUnaryUndefinedNumberBitwiseTableKey();
+localNegatedUndefinedNumberBitwiseTableKey();
+localUnaryUndefinedNumberShiftTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -1180,5 +1225,59 @@ function mutatedUnaryStringNumberTableKey() {
 function retainedUnaryStringNumberTableChild() {
     var child = {}, a = [child, 0, child], keys = [+"0.9", -"-0.9"];
     for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function unaryUndefinedNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function negatedUndefinedNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] ^ 0] = 0;
+    return a;
+}
+function unaryUndefinedNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [+(+undefined), 1];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedUnaryUndefinedNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedUnaryUndefinedNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = -undefined;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function retainedUnaryUndefinedNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [+undefined, -undefined];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function localUnaryUndefinedNumberBitwiseTableKey() {
+    var undefined;
+    var child = {}, a = [child, 0, child], keys = [+undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function localNegatedUndefinedNumberBitwiseTableKey() {
+    var undefined;
+    var child = {}, a = [child, 0, child], keys = [-undefined, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] ^ 0] = 0;
+    return a;
+}
+function localUnaryUndefinedNumberShiftTableKey() {
+    var undefined;
+    var child = {}, a = [0, child, child], keys = [+(+undefined), 1];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
     return a;
 }

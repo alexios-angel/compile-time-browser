@@ -853,6 +853,47 @@ void InductionCases::invariantReads() {
     const auto unaryStringTable = replace(
         replace(plusNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"),
         "#ctjs.number<4613712638259704627>", "#ctjs.string<\"2.9\">");
+    const auto unaryUndefinedTable =
+        replace(plusNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.undefined");
+    for (const std::string kind : {"plus", "neg"}) {
+        const auto source =
+            replace(unaryUndefinedTable, "unary plus %rawZero", "unary " + kind + " %rawZero");
+        for (const std::string expression :
+             {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+              "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+              "shr %i, %textZero", "ushr %i, %textZero"}) {
+            run({.what = "Undefined unary Number operands masks and counts retain NaN conversion",
+                 .body = replace(source, "bitor %slot, %zero", expression),
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+    }
+    run({.what = "64 unary operations retain original Undefined provenance",
+         .body = replace(longNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.undefined"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("Undefined unary provenance stops after 64 source operations",
+           replace(unaryChainTable(65, "plus"), "#ctjs.number<4606281698874543309>",
+                   "#ctjs.undefined"));
+    reject("Undefined bitwise proof requires an explicit unary Number conversion",
+           replace(unaryUndefinedTable, "unary plus %rawZero", "constant #ctjs.undefined"));
+    reject("Undefined unary Number proof cannot borrow an unknown operand",
+           replace(unaryUndefinedTable, "unary plus %rawZero", "unary plus %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("Undefined unary Number property keys retain NaN spelling",
+           replace(unaryUndefinedTable, "%base[%converted]", "%base[%slot]"));
+    reject("Undefined unary Number arithmetic cannot borrow bitwise zero",
+           replace(unaryUndefinedTable, "binary_static bitor %slot, %zero",
+                   "binary sub %slot, %zero"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("Undefined unary Number table mutations remain visible before and after reads",
+               replace(unaryUndefinedTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     for (const std::string kind : {"plus", "neg"}) {
         auto source = unaryStringTable;
         if (kind == "neg") {

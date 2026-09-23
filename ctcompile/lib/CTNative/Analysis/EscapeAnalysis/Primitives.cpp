@@ -264,6 +264,9 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
         return ctbrowser::number_to_uint32(negate ? -number.getDouble() : number.getDouble());
     }
     if (origin == input.origin()) { return std::nullopt; }
+    if (literal && llvm::isa<ctjs::UndefinedAttr>(literal.getValue())) {
+        return ctbrowser::number_to_uint32(std::numeric_limits<double>::quiet_NaN());
+    }
     if (const auto converted = boundedStringNumber({origin, ContentsKind::String})) {
         return ctbrowser::number_to_uint32(negate ? -*converted : *converted);
     }
