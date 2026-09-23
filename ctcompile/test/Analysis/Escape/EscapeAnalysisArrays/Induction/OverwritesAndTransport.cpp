@@ -4893,6 +4893,68 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
     }
+    const auto twoPointProduct =
+        replace(replace(replace(replace(scaledIndex, "[%one, %x]", "[%x, %x, %zero]"),
+                                "add %i, %one\n  cf.br", "add %i, %two\n  cf.br"),
+                        "  %a =",
+                        "  %factor = ctjs.constant #ctjs.number<4751297606873776128> "
+                        "{storage_test_id = \"factor\"}\n"
+                        "  %shiftCount = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
+                "%position = ctjs.binary mul %i, %one",
+                "%signed = ctjs.binary sub %i, %one\n"
+                "  %product = ctjs.binary mul %signed, %factor\n"
+                "  %position = ctjs.binary_static ushr %product, %shiftCount");
+    for (const auto & operands : {"%signed, %factor", "%factor, %signed"}) {
+        run({.what = "two bounded products retain a stride larger than the scalar bound",
+             .body =
+                 replace(twoPointProduct, "mul %signed, %factor", "mul " + std::string(operands)),
+             .arrays = "a:[zero,zero,zero]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "negative two-point products retain descending source order",
+         .body = replace(twoPointProduct, "4751297606873776128", "13974669643728551936"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "two-point products retain children outside actual writes",
+         .body = replace(twoPointProduct, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "two-point products preserve the original child snapshot",
+         .body = replace(replace(twoPointProduct, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto twoPointProductReload =
+        replace(replace(twoPointProduct, "[%x, %x, %zero]", "[%x, %x, %factor]"),
+                "%product = ctjs.binary mul %signed, %factor",
+                "%loaded = ctjs.get_property %base[%two]\n"
+                "  %product = ctjs.binary mul %signed, %loaded");
+    run({.what = "two-point product reloads independently preserve gaps",
+         .body = twoPointProductReload,
+         .arrays = "a:[zero,zero,factor]",
+         .reads = "a[2]=factor; a[0]=zero; a[2]=factor; a[2]=factor",
+         .exit = "a -> {a}"},
+        "x");
+    reject("two-point products retain the complete later-store census",
+           replace(twoPointProductReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("two-point products cannot reload overwritten factors",
+           replace(replace(twoPointProductReload, "[%x, %x, %factor]", "[%x, %factor, %x]"),
+                   "%loaded = ctjs.get_property %base[%two]",
+                   "%loaded = ctjs.get_property %base[%one]"));
+    reject("two-point products cannot hide an unbounded scalar intermediate",
+           replace(twoPointProduct, "4751297606873776128", "4751297606875873280"));
+    reject("two-point products cannot hide fractional scalar intermediates",
+           replace(twoPointProduct, "4751297606873776128", "4746794007246405632"));
+    reject("two-point product proof cannot skip a third scalar value",
+           replace(twoPointProduct, "[%x, %x, %zero]", "[%x, %x, %zero, %zero, %zero]"));
     const auto boundedRemainder =
         replace(replace(replace(replace(scaledIndex, "[%one, %x]",
                                         "[%x, %x, %zero, %zero, %zero, %zero, %zero]"),

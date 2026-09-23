@@ -666,9 +666,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         // Two input points need no monotone conversion or output band. Their
         // exact images also retain gaps lost by uneven right-shift rounding.
-        const bool twoPointShift =
-            shift && endpointNumber(range->last) - endpointNumber(range->first) <=
-                         static_cast<std::int64_t>(range->stride);
+        const bool twoPoints = endpointNumber(range->last) - endpointNumber(range->first) <=
+                               static_cast<std::int64_t>(range->stride);
+        const bool twoPointShift = shift && twoPoints;
+        const bool twoPointProduct = multiply && twoPoints;
         std::int64_t roundedIntervals = 0;
         bool descending = (subtract || power) && offsetOperand == 0;
         if (shift) {
@@ -798,7 +799,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             *endpoint = result;
         }
-        if (multiply) {
+        if (multiply && !twoPointProduct) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
@@ -819,7 +820,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         // Keep the set of visited positions ordered even when the source
         // visits them backwards. The stride keeps its positive magnitude.
-        if (twoPointShift || twoPointPower) {
+        if (twoPointShift || twoPointPower || twoPointProduct) {
+            // The distance between two bounded signed products may exceed the
+            // scalar bound. It is a lattice stride, not a source multiplication.
             boundEndpointPair(*range);
         } else if (roundedIntervals) {
             // Each rounded increment is q or q+1. An integral average must

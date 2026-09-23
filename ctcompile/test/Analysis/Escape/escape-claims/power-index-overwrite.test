@@ -355,6 +355,17 @@
 // CHECK: escape {{[0-9a-f]+}} 303 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 304 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 305 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 306 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 307 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 308 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 309 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 310 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 311 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 312 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 313 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 314 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -2109,3 +2120,60 @@ overlappingMixedPowerExponent();
 poleMixedPowerExponent();
 generalMixedPowerBase();
 fractionalMixedPowerExponent();
+
+function twoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return a;
+}
+function reverseTwoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(-4294967295 * (i - 1)) >>> 31] = 0;
+    return a;
+}
+function retainedTwoPointProduct() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return a;
+}
+function savedTwoPointProduct() {
+    var child = {}, a = [child, child, 0], before = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return before;
+}
+function reloadTwoPointProduct() {
+    var child = {}, a = [child, child, 4294967295];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * a[2]) >>> 31] = 0;
+    return a;
+}
+function laterTwoPointProductStore() {
+    var child = {}, a = [child, child, 4294967295];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i - 1) * a[2]) >>> 31] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingTwoPointProduct() {
+    var child = {}, a = [child, 4294967295, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * a[1]) >>> 31] = 0;
+    return a;
+}
+function unboundedTwoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967296) >>> 31] = 0;
+    return a;
+}
+function fractionalTwoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 2147483647.5) >>> 31] = 0;
+    return a;
+}
+function threePointProduct() {
+    var child = {}, a = [child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return a;
+}
+twoPointProduct(); reverseTwoPointProduct(); retainedTwoPointProduct(); savedTwoPointProduct();
+reloadTwoPointProduct(); laterTwoPointProductStore(); overlappingTwoPointProduct();
+unboundedTwoPointProduct(); fractionalTwoPointProduct(); threePointProduct();
