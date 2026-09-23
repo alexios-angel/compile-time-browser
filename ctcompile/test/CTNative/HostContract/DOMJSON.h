@@ -581,6 +581,20 @@ module {
     %finalEffect = ctjs.call)MLIR"),
                                     "ctjs.call %finalMethod(%element, %finalName, %finalValue)",
                                     "ctjs.call %finalMethod(%element, %finalName, %finalPresent)");
+    const auto appendWrite = [&](const std::string & source, const std::string & pattern,
+                                 llvm::StringRef label) {
+        const auto start = pattern.find("    %finalKey =");
+        auto suffix =
+            pattern.substr(start, pattern.find("    %answer = ctjs.create_object") - start);
+        while (suffix.find("final") != std::string::npos) {
+            suffix = replaced(suffix, "final", label);
+        }
+        return replaced(source, "    %answer = ctjs.create_object",
+                        suffix + "    %answer = ctjs.create_object");
+    };
+    const auto fourthRead = appendWrite(finalRead, finalRead, "fourth");
+    const auto fourthWrite = appendWrite(finalRead, finalWrite, "fourth");
+    const auto fifthRead = appendWrite(fourthRead, finalRead, "fifth");
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
@@ -633,6 +647,26 @@ module {
              std::pair{finalWrite, true},
              std::pair{selectedWrite, true},
              std::pair{finalRead, true},
+             std::pair{fourthWrite, true},
+             std::pair{fourthRead, true},
+             std::pair{fifthRead, true},
+             std::pair{replaced(fourthRead, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(fourthRead, "data-fourth", "bad name"), false},
+             std::pair{replaced(fourthWrite, "#ctjs.string<\"data-fourth\">", "#ctjs.number<0>"),
+                       false},
+             std::pair{replaced(replaced(fourthRead, "ctjs.get_property %element[%fourthKey]",
+                                         "ctjs.get_property %text[%fourthKey]"),
+                                "ctjs.call %fourthMethod(%element, %fourthName, %fourthPresent)",
+                                "ctjs.call %fourthMethod(%text, %fourthName, %fourthPresent)"),
+                       false},
+             std::pair{replaced(replaced(fourthRead, "ctjs.get_property %element[%fourthReadKey]",
+                                         "ctjs.get_property %text[%fourthReadKey]"),
+                                "ctjs.call %fourthReadMethod(%element, %fourthReadName)",
+                                "ctjs.call %fourthReadMethod(%text, %fourthReadName)"),
+                       false},
+             std::pair{replaced(fifthRead, "data-fifth", "bad name"), false},
              std::pair{replaced(finalRead, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -779,6 +813,26 @@ module {
         const bool finalWrites = valid.find("%finalKey") != std::string::npos;
         const bool selectedWrites = valid.find("%finalName, %selected)") != std::string::npos;
         const bool finalReads = valid.find("%finalReadKey") != std::string::npos;
+        const unsigned suffixWrites =
+            static_cast<unsigned>(valid.find("%fourthKey") != std::string::npos) +
+            static_cast<unsigned>(valid.find("%fifthKey") != std::string::npos);
+        const unsigned suffixReads =
+            static_cast<unsigned>(valid.find("%fourthReadKey") != std::string::npos) +
+            static_cast<unsigned>(valid.find("%fifthReadKey") != std::string::npos);
+        if (suffixWrites) {
+            input->walk([&](ctjs::InvokeOp invoke) {
+                auto call = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
+                const auto name = ctjs::constantKey(call.getArgs()[0]);
+                if (name != "data-fourth" && name != "data-fifth") { return; }
+                unsigned preceding = 0;
+                for (ctjs::InvokeOp prior : invoke->getBlock()->getOps<ctjs::InvokeOp>()) {
+                    preceding += prior->isBeforeInBlock(invoke);
+                }
+                check(preceding == (name == "data-fourth" ? 4u : 5u) &&
+                          llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
+                      "suffix writes retain their order and source guard");
+            });
+        }
         if (finalWrites) {
             input->walk([&](ctjs::InvokeOp invoke) {
                 auto call = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
@@ -870,12 +924,12 @@ module {
         }
         check(invocations == 1u + static_cast<unsigned>(secondWrites) +
                                  static_cast<unsigned>(selectorReads && !selectedWrites) +
-                                 static_cast<unsigned>(finalWrites) &&
+                                 static_cast<unsigned>(finalWrites) + suffixWrites &&
                   calls ==
                       1u + static_cast<unsigned>(reads) + static_cast<unsigned>(trailingReads) +
                           static_cast<unsigned>(secondWrites) +
                           static_cast<unsigned>(selectorReads) + static_cast<unsigned>(finalReads) +
-                          static_cast<unsigned>(finalWrites) &&
+                          static_cast<unsigned>(finalWrites) + suffixWrites + suffixReads &&
                   allocations == 0 && mlir::succeeded(mlir::verify(*input)),
               "protected expansion retains call-plus-exit and only elides unused objects");
         auto bound = contract;
@@ -924,8 +978,9 @@ module {
             }
         }
     }
-    for (const auto & budgetSource : {protectedRead, trailingRead, secondWrite, selectorRead,
-                                      finalWrite, selectedWrite, finalRead}) {
+    for (const auto & budgetSource :
+         {protectedRead, trailingRead, secondWrite, selectorRead, finalWrite, selectedWrite,
+          finalRead, fourthWrite, fourthRead, fifthRead}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -946,7 +1001,19 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(finalRead, "ctjs.call %finalReadMethod(%element, %finalReadName)",
+         {replaced(fourthRead, "ctjs.call %fourthMethod(%element, %fourthName, %fourthPresent)",
+                   "ctjs.call %fourthMethod(%element, %fourthName, %finalPresent)"),
+          replaced(
+              fourthRead, "%answer = ctjs.create_object",
+              "ctjs.store_global \"leaked\", %fourthPresent\n    %answer = ctjs.create_object"),
+          replaced(
+              fourthRead, "%answer = ctjs.create_object",
+              "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %fourthEffect"),
+          replaced(fifthRead, "ctjs.call %fifthMethod(%element, %fifthName, %fifthPresent)",
+                   "ctjs.call %fifthMethod(%element, %fifthName, %fourthPresent)"),
+          replaced(fourthWrite, "ctjs.call %fourthMethod(%element, %fourthName, %fourthValue)",
+                   "ctjs.call %fourthMethod(%element, %fourthName, %selected)"),
+          replaced(finalRead, "ctjs.call %finalReadMethod(%element, %finalReadName)",
                    "ctjs.call %finalReadMethod(%text, %finalReadName)"),
           replaced(finalRead, "ctjs.call %finalReadMethod(%element, %finalReadName)",
                    "ctjs.call %finalReadMethod(%element, %finalReadName, %name)"),

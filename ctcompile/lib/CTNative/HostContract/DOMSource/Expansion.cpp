@@ -7,7 +7,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                            mlir::ValueRange arguments, mlir::Value receiver, mlir::Value callee,
                            llvm::MutableArrayRef<Capture> captures, unsigned depth) {
     ctjs::InvokeOp protectedInvocation;
-    ctjs::CallOp protectedLeaf, secondLeaf, selectorLeaf, finalLeaf;
+    ctjs::CallOp protectedLeaf, secondLeaf, selectorLeaf;
+    llvm::DenseSet<mlir::Operation *> suffixLeaves;
     bool selectorFeedsWrite = false;
     ctjs::CreateObjectOp discardedResult;
     llvm::DenseSet<mlir::Operation *> discardedFields;
@@ -38,12 +39,14 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         // preparation and hasAttribute reads requires complete typed DOM reproof:
         // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
-        // ponytail: two writes with feeding reads, matches, and a final read/write;
-        // larger bodies need all their exceptional edges represented.
+        // ponytail: two writes with feeding reads, one matches, then read/write pairs;
+        // other effects need all their exceptional edges represented.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
             ctjs::GetPropertyOp selectorMethod, finalMethod, finalReadMethod;
             ctjs::CallOp readCall, trailingCall, finalReadCall;
+            llvm::SmallVector<mlir::Value> suffixValues;
+            llvm::DenseSet<mlir::OpOperand *> suffixUses;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             for (mlir::Operation & operation : target.getBody().front()) {
                 if (!step()) { return false; }
@@ -72,7 +75,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                         : protectedLeaf ? trailingCall
                                                         : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-                    read && !sourceReadMethod && !finalLeaf &&
+                    read && !sourceReadMethod &&
                     ctjs::constantKey(read.getKey()) == "hasAttribute") {
                     sourceReadMethod = read;
                     continue;
@@ -120,10 +123,30 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     continue;
                 }
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
-                    leaf && finalMethod && !finalLeaf &&
-                    leaf.getCallee() == finalMethod.getResult() &&
+                    leaf && finalMethod && leaf.getCallee() == finalMethod.getResult() &&
                     leaf.getReceiver() == finalMethod.getObject() && leaf.getArgs().size() == 2) {
-                    finalLeaf = leaf;
+                    if (finalReadMethod &&
+                        (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult())) {
+                        return false;
+                    }
+                    // Each suffix read belongs only to its following write.
+                    // Check every use below, including uses in later pairs.
+                    suffixValues.append({finalMethod.getResult(), leaf.getResult()});
+                    suffixUses.insert(&leaf->getOpOperand(0));
+                    if (finalReadCall) {
+                        suffixValues.append(
+                            {finalReadMethod.getResult(), finalReadCall.getResult()});
+                        suffixUses.insert(&finalReadCall->getOpOperand(0));
+                        suffixUses.insert(&leaf->getOpOperand(3));
+                    }
+                    if (suffixLeaves.empty() && leaf.getArgs()[1] == selectorLeaf.getResult()) {
+                        selectorFeedsWrite = true;
+                        suffixUses.insert(&leaf->getOpOperand(3));
+                    }
+                    suffixLeaves.insert(leaf);
+                    finalMethod = {};
+                    finalReadMethod = {};
+                    finalReadCall = {};
                     continue;
                 }
                 if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
@@ -150,13 +173,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (!protectedLeaf || (!discardedResult && !primitiveResult) ||
                 (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult())) ||
                 (trailingMethod && !trailingCall) || (secondMethod && !secondLeaf) ||
-                (selectorMethod && !selectorLeaf) || (finalMethod && !finalLeaf) ||
-                (finalReadMethod && (!finalReadCall || !finalLeaf ||
-                                     finalLeaf.getArgs()[1] != finalReadCall.getResult()))) {
+                (selectorMethod && !selectorLeaf) || finalMethod || finalReadMethod) {
                 return false;
             }
-            selectorFeedsWrite =
-                selectorLeaf && finalLeaf && finalLeaf.getArgs()[1] == selectorLeaf.getResult();
             if (selectorFeedsWrite) {
                 auto literal = selectorLeaf.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
                 auto selector = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
@@ -171,21 +190,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 (void)ctbrowser::style::css::parse_selector_text(text, atoms, invalid);
                 if (invalid) { return false; }
             }
-            for (mlir::Value value : llvm::SmallVector<mlir::Value>{
-                     method.getResult(), protectedLeaf.getResult(),
-                     discardedResult ? discardedResult.getResult() : mlir::Value{},
-                     readMethod ? readMethod.getResult() : mlir::Value{},
-                     readCall ? readCall.getResult() : mlir::Value{},
-                     trailingMethod ? trailingMethod.getResult() : mlir::Value{},
-                     trailingCall ? trailingCall.getResult() : mlir::Value{},
-                     secondMethod ? secondMethod.getResult() : mlir::Value{},
-                     secondLeaf ? secondLeaf.getResult() : mlir::Value{},
-                     selectorMethod ? selectorMethod.getResult() : mlir::Value{},
-                     selectorLeaf ? selectorLeaf.getResult() : mlir::Value{},
-                     finalReadMethod ? finalReadMethod.getResult() : mlir::Value{},
-                     finalReadCall ? finalReadCall.getResult() : mlir::Value{},
-                     finalMethod ? finalMethod.getResult() : mlir::Value{},
-                     finalLeaf ? finalLeaf.getResult() : mlir::Value{}}) {
+            suffixValues.append({method.getResult(), protectedLeaf.getResult(),
+                                 discardedResult ? discardedResult.getResult() : mlir::Value{},
+                                 readMethod ? readMethod.getResult() : mlir::Value{},
+                                 readCall ? readCall.getResult() : mlir::Value{},
+                                 trailingMethod ? trailingMethod.getResult() : mlir::Value{},
+                                 trailingCall ? trailingCall.getResult() : mlir::Value{},
+                                 secondMethod ? secondMethod.getResult() : mlir::Value{},
+                                 secondLeaf ? secondLeaf.getResult() : mlir::Value{},
+                                 selectorMethod ? selectorMethod.getResult() : mlir::Value{},
+                                 selectorLeaf ? selectorLeaf.getResult() : mlir::Value{}});
+            for (mlir::Value value : suffixValues) {
                 if (!value) { continue; }
                 for (mlir::OpOperand & use : value.getUses()) {
                     if (!step()) { return false; }
@@ -207,14 +222,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                          use.getOwner() == secondLeaf && use.getOperandNumber() == 0) ||
                         (selectorMethod && value == selectorMethod.getResult() &&
                          use.getOwner() == selectorLeaf && use.getOperandNumber() == 0) ||
-                        (selectorFeedsWrite && value == selectorLeaf.getResult() &&
-                         use.getOwner() == finalLeaf && use.getOperandNumber() == 3) ||
-                        (finalReadMethod && value == finalReadMethod.getResult() &&
-                         use.getOwner() == finalReadCall && use.getOperandNumber() == 0) ||
-                        (finalReadCall && value == finalReadCall.getResult() &&
-                         use.getOwner() == finalLeaf && use.getOperandNumber() == 3) ||
-                        (finalMethod && value == finalMethod.getResult() &&
-                         use.getOwner() == finalLeaf && use.getOperandNumber() == 0) ||
+                        suffixUses.contains(&use) ||
                         (discardedResult && value == discardedResult.getResult() &&
                          use.getOwner() == result)) {
                         continue;
@@ -235,7 +243,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             protectedLeaf = {};
             secondLeaf = {};
             selectorLeaf = {};
-            finalLeaf = {};
+            suffixLeaves.clear();
             selectorFeedsWrite = false;
             discardedResult = {};
             discardedFields.clear();
@@ -327,7 +335,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 // must still exclude receiver failure, coercion and reentry.
                 if (&operation == secondLeaf ||
                     (&operation == selectorLeaf && !selectorFeedsWrite) ||
-                    &operation == finalLeaf) {
+                    suffixLeaves.contains(&operation)) {
                     // Splitting suppression is valid only after complete DOM
                     // reproof excludes source exceptions from EVERY call.
                     // Each write retains its own valid-name check; matches

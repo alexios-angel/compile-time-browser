@@ -2440,6 +2440,21 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-closed', false);",
         "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
     )
+    fourth_postselector_throwing_source = postselector_read_throwing_source.replace(
+        "throw false;", "anchor.setAttribute('data-closed', false); throw false;"
+    )
+    fourth_read_throwing_source = fourth_postselector_throwing_source.replace(
+        "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+        "anchor.setAttribute('data-after-selector', anchor.hasAttribute('data-closed'));",
+    ).replace(
+        "anchor.setAttribute('data-closed', false);",
+        "anchor.setAttribute('data-closed', anchor.hasAttribute('data-after-selector'));",
+    )
+    sequence_throwing_source = fourth_postselector_throwing_source.replace(
+        "throw false;",
+        "anchor.setAttribute('data-after-selector', anchor.hasAttribute('data-closed')); "
+        "anchor.setAttribute('data-closed', anchor.hasAttribute('data-after-selector')); throw false;",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2787,6 +2802,34 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-close",
+            fourth_postselector_throwing_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-getter-close",
+            fourth_postselector_throwing_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-read-close",
+            fourth_read_throwing_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-sixth-read-close",
+            sequence_throwing_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -2849,6 +2892,23 @@ def saved_throws(args, compilers, includes, libraries):
         second_close = label.startswith("conditional-boolean-second-postwrite-")
         third_close = "-selector-third-" in label
         postselector_read = "-selector-third-read-" in label
+        following_writes = ()
+        if "-fourth-" in label:
+            following_writes = (
+                (
+                    ("data-after-selector", "true", "data-closed"),
+                    ("data-closed", "true", "data-after-selector"),
+                )
+                if label.endswith("-fourth-read-close")
+                else (("data-closed", "true", "data-closed"), ("data-closed", "false", None))
+            )
+        elif label.endswith("-sixth-read-close"):
+            following_writes = (
+                ("data-closed", "true", "data-closed"),
+                ("data-closed", "false", None),
+                ("data-after-selector", "true", "data-closed"),
+                ("data-closed", "true", "data-after-selector"),
+            )
         before_selector = (
             ("false" if postselector_read or label.endswith("-missing-read") else "true")
             if third_close
@@ -2865,11 +2925,17 @@ def saved_throws(args, compilers, includes, libraries):
                 selector = "[data-closed=true]"
             matched = closed if selector_result else "true"
             close_writes += f"matches={selector}:{matched};"
-        if postselector_read:
-            read_name = "data-unvisited" if label.endswith("-missing-read") else "data-closed"
-            close_writes += f"hasAttribute={read_name}:{closed};"
-        if third_close:
-            close_writes += f"data-closed={closed};"
+        if following_writes:
+            for name, value, read_name in following_writes:
+                if read_name:
+                    close_writes += f"hasAttribute={read_name}:{value};"
+                close_writes += f"{name}={value};"
+        else:
+            if postselector_read:
+                read_name = "data-unvisited" if label.endswith("-missing-read") else "data-closed"
+                close_writes += f"hasAttribute={read_name}:{closed};"
+            if third_close:
+                close_writes += f"data-closed={closed};"
         conditional = label.startswith("conditional-")
         numeric_snapshot = kind == "js_num" and label not in (
             "number",
@@ -2965,6 +3031,17 @@ var savedThrow, savedExhausted;
 """,
                 )
             )
+        if following_writes:
+            read_count = sum(read_name is not None for _, _, read_name in following_writes)
+            script = (
+                script.replace("let selectorReadPending = false;", "let selectorReadPending = 0;")
+                .replace("selectorReadPending = true;", f"selectorReadPending = {read_count};")
+                .replace("selectorReadPending = false;", "--selectorReadPending;")
+                .replace(
+                    "delete saved['data-closed'];",
+                    "delete saved['data-closed']; delete saved['data-after-selector'];",
+                )
+            )
         if mixed:
             script = (
                 script.replace(
@@ -3055,6 +3132,23 @@ var savedThrow, savedExhausted;
                 if "throw ctnative::js_exception{" not in cpp or "if (true)" in cpp:
                     raise RuntimeError(f"{name}: saved throw lost its ordinary terminating scope")
                 selected_checks = checks + (OWNED_CHECKS if owned else "")
+                if any(name == "data-after-selector" for name, _, _ in following_writes):
+                    selected_checks = (
+                        selected_checks.replace(
+                            'const auto visited = target.atoms().intern("data-visited");',
+                            'const auto visited = target.atoms().intern("data-visited");'
+                            'const auto after_selector = target.atoms().intern("data-after-selector");',
+                        )
+                        .replace(
+                            "{next, yielded, closed, visited}",
+                            "{next, yielded, closed, visited, after_selector}",
+                        )
+                        .replace(
+                            'assert(target.read().attribute_value(id, closed) == "@CLOSED@");',
+                            'assert(target.read().attribute_value(id, closed) == "@CLOSED@");'
+                            'assert(target.read().attribute_value(id, after_selector) == "true");',
+                        )
+                    )
                 selected_includes, selected_libraries = includes, libraries
                 if selecting:
                     selected_checks = (
@@ -3153,12 +3247,29 @@ var savedThrow, savedExhausted;
                     .replace("@VISITED@", "true" if snapshot else "false")
                     .replace(
                         "@WRITE_COUNT@",
-                        "6" if third_close else "5" if second_close else "4" if snapshot else "3",
+                        (
+                            str(5 + len(following_writes))
+                            if following_writes
+                            else (
+                                "6"
+                                if third_close
+                                else "5" if second_close else "4" if snapshot else "3"
+                            )
+                        ),
                     )
                     .replace(
                         "@SECOND_CLOSE@",
                         ("assert(writes[4].name == closed);" if second_close else "")
-                        + ("assert(writes[5].name == closed);" if third_close else ""),
+                        + (
+                            "".join(
+                                f"assert(writes[{index}].name == "
+                                + ("closed" if name == "data-closed" else "after_selector")
+                                + ");"
+                                for index, (name, _, _) in enumerate(following_writes, 5)
+                            )
+                            if following_writes
+                            else "assert(writes[5].name == closed);" if third_close else ""
+                        ),
                     )
                     .replace("@CLOSED_INDEX@", "3" if snapshot else "2"),
                     compilers,
@@ -3195,6 +3306,10 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-close",
                         "conditional-boolean-second-postwrite-selector-third-read-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-missing-read",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-read-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-sixth-read-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -3489,9 +3604,84 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-fourth-postselector-effect",
-            postselector_read_throwing_source.replace(
-                "throw false;", "anchor.setAttribute('data-closed', false); throw false;"
+            "normal-fourth-postselector-close",
+            fourth_postselector_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-fourth-postselector-close",
+            fourth_postselector_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "normal-fourth-postselector-getter-close",
+            fourth_postselector_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-fourth-postselector-getter-close",
+            fourth_postselector_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-fourth-postselector-name",
+            fourth_postselector_throwing_source.replace(
+                "anchor.setAttribute('data-closed', false);",
+                "anchor.setAttribute('bad name', false);",
+            ),
+        ),
+        (
+            "dynamic-fourth-postselector-name",
+            fourth_postselector_throwing_source.replace(
+                "anchor.setAttribute('data-closed', false);", "anchor.setAttribute(anchor, false);"
+            ),
+        ),
+        (
+            "bad-fourth-postselector-receiver",
+            fourth_postselector_throwing_source.replace(
+                "anchor.setAttribute('data-closed', false);",
+                "(0).setAttribute('data-closed', false);",
+            ),
+        ),
+        (
+            "bad-fourth-postselector-value-receiver",
+            fourth_read_throwing_source.replace(
+                "anchor.hasAttribute('data-after-selector')",
+                "(0).hasAttribute('data-after-selector')",
+            ),
+        ),
+        (
+            "dynamic-fourth-postselector-value-name",
+            fourth_read_throwing_source.replace(
+                "anchor.hasAttribute('data-after-selector')", "anchor.hasAttribute(anchor)"
+            ),
+        ),
+        (
+            "unsupported-fourth-postselector-effect-call",
+            fourth_postselector_throwing_source.replace(
+                "throw false;", "external(anchor); throw false;"
+            ),
+        ),
+        (
+            "unsupported-fourth-postselector-read-escape",
+            fourth_read_throwing_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-after-selector'));",
+                "const present = anchor.hasAttribute('data-after-selector'); "
+                "anchor.setAttribute('data-closed', present); external(present);",
+            ),
+        ),
+        (
+            "unsupported-terminal-postselector-read",
+            fourth_postselector_throwing_source.replace(
+                "throw false;", "throw anchor.hasAttribute('data-closed');"
             ),
         ),
         (
