@@ -2045,9 +2045,68 @@ module {
         check(static_cast<bool>(failure), "returning, unsuppressed or replaced getter refuses");
         llvm::consumeError(std::move(failure));
     }
-    for (const auto & invalid : {primitiveReturn(returningSource), primitiveReturn(countedSource),
-                                 throwingReturn(primitiveReturn(returningSource)),
-                                 throwingReturn(primitiveReturn(countedSource))}) {
+    auto normalThrowingReturn = mlir::parseSourceString<mlir::ModuleOp>(
+        throwingReturn(primitiveReturn(returningSource)), &context);
+    auto normalThrowingBreak = mlir::parseSourceString<mlir::ModuleOp>(
+        throwingReturn(primitiveReturn(countedSource)), &context);
+    check(normalThrowingReturn && normalThrowingBreak,
+          "historical normal terminal-throw close controls parse unchanged");
+    if (!normalThrowingReturn || !normalThrowingBreak) { return; }
+    for (auto fixture : {*normalThrowingReturn, *normalThrowingBreak}) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(!failure, "normal return and break preserve terminal close exceptions");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            auto close = input->lookupSymbol<ctjs::FuncOp>("return$3");
+            auto returned = close ? llvm::dyn_cast<ctjs::ReturnOp>(close.getBody().front().back())
+                                  : ctjs::ReturnOp{};
+            auto payload = returned ? returned.getValue().getDefiningOp<ctjs::ConstantOp>()
+                                    : ctjs::ConstantOp{};
+            auto number =
+                payload ? llvm::dyn_cast<ctjs::NumberAttr>(payload.getValue()) : ctjs::NumberAttr{};
+            check(number && number.getDouble() == 2 &&
+                      llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()),
+                  "normal close returns its original exception after exiting its frame");
+            unsigned closes = 0, throws = 0;
+            input->walk([&](ctjs::CallOp call) {
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (!method || ctjs::constantKey(method.getKey()) != "return") { return; }
+                ++closes;
+                auto region =
+                    llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode());
+                auto thrown = region && region.getRegion().hasOneBlock() &&
+                                      llvm::hasSingleElement(region.getRegion().front())
+                                  ? llvm::dyn_cast<ctjs::ThrowOp>(region.getRegion().front().back())
+                                  : ctjs::ThrowOp{};
+                check(thrown && region.getNoInline() && !region.getNumResults() &&
+                          !llvm::isa<ctjs::InvokeOp>(call->getParentOp()) && call->hasOneUse() &&
+                          thrown.getValue() == call.getResult(),
+                      "each normal close immediately throws its own saved payload");
+            });
+            input->walk([&](ctjs::ThrowOp) { ++throws; });
+            check(closes > 0 && throws == closes && mlir::succeeded(mlir::verify(*input)),
+                  "normal closes retain exactly their unsuppressed throws");
+            failure = expandDOMHelpers(*input, request.entry, completeBudget);
+            check(!failure, "normal throwing close passes complete helper proof");
+            if (failure) {
+                llvm::consumeError(std::move(failure));
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(DOMEntryAnalysis(*input, request).proved(),
+                  "normal close exception retains complete typed DOM reproof");
+        }
+    }
+    for (const auto & invalid :
+         {primitiveReturn(returningSource), primitiveReturn(countedSource)}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(input), "normal primitive close control parses");
         if (!input) { continue; }
@@ -5285,6 +5344,8 @@ module {
                          *abruptState,
                          *primitiveAbrupt,
                          *getterAbrupt,
+                         *normalThrowingReturn,
+                         *normalThrowingBreak,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,

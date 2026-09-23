@@ -1192,6 +1192,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     }
     bool primitiveClose = false;
     bool suppressedThrow = false;
+    bool observableThrow = false;
     // Projecting these records cannot invoke getters, consult a prototype or
     // lose evaluation of a field producer. Complete DOM proof checks values.
     for (auto & [name, store] : slots) {
@@ -1228,10 +1229,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             (thrown ||
              (literal && llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
                                    ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue())))) {
-            // A saved throw ignores the close result. After completion
-            // normalization, every surviving call must still be suppressed.
+            // A primitive return needs suppression; an always-throwing
+            // method can instead propagate its payload at a normal close.
             primitiveClose = true;
             suppressedThrow = static_cast<bool>(thrown);
+            // A normal close propagates the cleanup exception. Keep the payload
+            // and throw it at the original call, where the typed DOM proof can
+            // check its ownership and the unreachable continuation.
+            // ponytail: stateless, normal-only closes; mixed suppression and
+            // mutable state need separate exceptional-state transport.
+            observableThrow = thrown && protectedCloses.empty() && stateInitials.empty();
         } else if (!record || record->getBlock() != &block) {
             return error("DOM iterator method must return one fresh own-field record");
         }
@@ -1272,8 +1279,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         if (thrown) {
             // Normalize this private terminal before the mutable-state body
-            // proof. Publication still requires every surviving call to have
-            // exact unused-result suppression and the final observer census.
+            // proof. Publication still requires exact suppression or an
+            // immediate rethrow, checked by the final observer census.
             // Preserve all preceding effects and let checkBody verify frames.
             mlir::Value frame;
             for (mlir::Operation & operation : *thrown->getBlock()) {
@@ -1294,10 +1301,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto terminal = ctjs::ReturnOp::create(at, thrown.getLoc(), thrown.getValue());
             thrown.erase();
             // Validate the original payload's definition, dominance and frame
-            // before discarding its unobserved value. Its producers remain for
+            // before suppressing or propagating its value. Its producers remain for
             // scalar state transport and complete typed DOM/effect reproof.
             if (!work.checkBody(body, false, true, true)) { return error(work.reason); }
-            terminal.getValueMutable().assign(ignored.getResult());
+            if (!observableThrow) { terminal.getValueMutable().assign(ignored.getResult()); }
         }
         if (!stateInitials.empty()) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
@@ -1712,8 +1719,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         }
                         auto closingState = state;
                         if (&region == &branch.getElseRegion()) {
-                            if (!methodCall(inside, "return", values, closingState)) {
-                                return false;
+                            auto called = methodCall(inside, "return", values, closingState);
+                            if (!called) { return false; }
+                            if (observableThrow) {
+                                if (!spend() || !spend()) { return false; }
+                                auto abrupt = mlir::scf::ExecuteRegionOp::create(inside, where,
+                                                                                 mlir::TypeRange{});
+                                abrupt.setNoInline(true);
+                                auto & throwing = abrupt.getRegion().emplaceBlock();
+                                mlir::OpBuilder terminal(&throwing, throwing.begin());
+                                ctjs::ThrowOp::create(terminal, where, called.getResult());
                             }
                         }
                         if (state.size() > 1) {
@@ -2029,7 +2044,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
         auto get =
             call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-        if (primitiveClose && get && ctjs::constantKey(get.getKey()) == "return" &&
+        if (primitiveClose && !observableThrow && get &&
+            ctjs::constantKey(get.getKey()) == "return" &&
             !llvm::isa<ctjs::InvokeOp>(call->getParentOp())) {
             auto branch = llvm::dyn_cast<mlir::scf::IfOp>(call->getParentOp());
             auto truth =
@@ -2107,8 +2123,20 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return error("DOM custom iterator budget exhausted"); }
                 if (llvm::isa<ctjs::RootOp>(observer)) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(observer);
+                auto abrupt =
+                    call ? llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode())
+                         : mlir::scf::ExecuteRegionOp{};
+                auto thrown =
+                    abrupt && abrupt.getNoInline() && !abrupt.getNumResults() &&
+                            abrupt.getRegion().hasOneBlock() &&
+                            llvm::hasSingleElement(abrupt.getRegion().front())
+                        ? llvm::dyn_cast<ctjs::ThrowOp>(abrupt.getRegion().front().front())
+                        : ctjs::ThrowOp{};
+                const bool propagates = observableThrow && thrown && call->hasOneUse() &&
+                                        thrown.getValue() == call.getResult();
                 if (!call || call.getCallee() != read || call.getReceiver() != holder ||
-                    (call != emittedNext && !llvm::isa<ctjs::InvokeOp>(call->getParentOp()))) {
+                    (call != emittedNext && !llvm::isa<ctjs::InvokeOp>(call->getParentOp()) &&
+                     !propagates)) {
                     return error("DOM throwing close method retains an unproved observer");
                 }
             }

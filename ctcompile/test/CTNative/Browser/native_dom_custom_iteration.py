@@ -2402,6 +2402,214 @@ def protected_attribute(args, compilers, includes, libraries):
     print(f"Protected raw DOM attribute: {executions} native executions, {refused} refusals")
 
 
+def normal_throws(args, compilers, includes, libraries, cases):
+    """Observe cleanup exceptions replacing normal break and return completions."""
+    executions = observations = 0
+    for label, text in cases:
+        selecting = "selector" in label
+        branch_throw = "false-guard" in label
+        kind = "js_boolean_t" if selecting else "js_string" if "string" in label else "js_num"
+        payload = (
+            f"static_cast<bool>(error.value) == (mode == 2 && {'true' if branch_throw else 'false'})"
+            if selecting
+            else (
+                'error.value.value() == "closed"'
+                if "string" in label
+                else "error.value.value() == 2.0"
+            )
+        )
+        closed = "true" if label.startswith("return-") else "yes"
+        script, expected, states = text, {}, []
+        for mode in range(4):
+            setup = "saved.stop = '';" if mode in (1, 2) else ""
+            if mode == 2:
+                setup += "saved['data-closed'] = 'false';"
+            elif mode == 3:
+                setup += "saved['data-yielded'] = 'yes';"
+            name = f"normalClose{mode}"
+            script += f"""
+var {name} = (function() {{
+  const saved = {{}};
+  {setup}
+  let trace = '';
+  const anchor = {{
+    hasAttribute(name) {{
+      const value = name in saved;
+      trace += 'read:' + name + '=' + value + ';';
+      return value;
+    }},
+    matches(selector) {{
+      let value;
+      if (selector === '[data-closed=false]') value = saved['data-closed'] === 'false';
+      else if (selector === '[data-closed=true]') value = saved['data-closed'] === 'true';
+      else throw 'unexpected selector';
+      trace += 'match:' + selector + '=' + value + ';';
+      return value;
+    }},
+    setAttribute(name, value) {{
+      saved[name] = '' + value;
+      trace += 'write:' + name + '=' + saved[name] + ';';
+    }}
+  }};
+  try {{ return 'return:' + customElements(anchor) + ':' + trace; }}
+  catch (error) {{ return 'throw:' + typeof error + ':' + error + ':' + trace; }}
+}})();
+"""
+            trace = f"read:data-yielded={'true' if mode == 3 else 'false'};"
+            writes = [
+                ("data-next", "true" if mode == 3 else "false"),
+                ("data-yielded", "yes"),
+            ]
+            trace += "".join(f"write:{key}={value};" for key, value in writes)
+            if mode == 3:
+                trace += "read:data-visited=false;"
+                result = "return:false:"
+            elif mode == 0:
+                if selecting or label.startswith("return-"):
+                    trace += "read:stop=false;"
+                trace += "write:data-visited=yes;"
+                if not selecting and label.startswith("normal-"):
+                    trace += "read:stop=false;"
+                trace += "read:data-yielded=true;write:data-next=true;write:data-yielded=yes;read:data-visited=true;"
+                writes += [
+                    ("data-visited", "yes"),
+                    ("data-next", "true"),
+                    ("data-yielded", "yes"),
+                ]
+                result = "return:true:"
+            elif selecting:
+                trace += "read:stop=true;"
+                if label.startswith("return-"):
+                    trace += f"read:data-closed={'true' if mode == 2 else 'false'};"
+                trace += f"match:[data-closed=false]={'true' if mode == 2 else 'false'};"
+                writes += [("data-closed", "true" if mode == 2 else "false")]
+                trace += f"write:data-closed={writes[-1][1]};"
+                if mode == 2:
+                    trace += (
+                        "read:data-visited=false;read:data-unvisited=false;write:data-closed=false;"
+                    )
+                    trace += (
+                        "match:[data-closed=true]=false;"
+                        if branch_throw
+                        else "read:data-closed=true;read:data-closed=true;"
+                    )
+                    trace += f"write:data-after-second={'false' if branch_throw else 'true'};"
+                    writes += [
+                        ("data-closed", "false"),
+                        ("data-after-second", "false" if branch_throw else "true"),
+                    ]
+                if mode != 2 or not branch_throw:
+                    trace += "match:[data-closed=false]=true;read:data-closed=true;write:data-closed=true;write:data-closed=false;match:[data-closed=false]=true;read:data-closed=true;read:data-unvisited=false;match:[data-closed=false]=true;write:data-after-terminal=true;"
+                    writes += [
+                        ("data-closed", "true"),
+                        ("data-closed", "false"),
+                        ("data-after-terminal", "true"),
+                    ]
+                result = f"throw:boolean:{'true' if mode == 2 and branch_throw else 'false'}:"
+            else:
+                if label.startswith("return-"):
+                    trace += "read:stop=true;write:data-visited=yes;"
+                    trace += f"read:data-closed={'true' if mode == 2 else 'false'};read:data-visited=true;"
+                else:
+                    trace += "write:data-visited=yes;read:stop=true;"
+                trace += f"write:data-closed={closed};"
+                writes += [("data-visited", "yes"), ("data-closed", closed)]
+                result = "throw:string:closed:" if "string" in label else "throw:number:2:"
+            expected[name] = result + trace
+            final = dict(writes)
+            state_checks = ""
+            for key in (
+                "data-next",
+                "data-yielded",
+                "data-visited",
+                "data-closed",
+                "data-after-second",
+                "data-after-terminal",
+            ):
+                if key in final:
+                    state_checks += f'assert(target.read().attribute_value(id, atom("{key}")) == "{final[key]}");'
+                else:
+                    state_checks += f'assert(!target.read().has_attribute(id, atom("{key}")));'
+            write_checks = f"assert(writes.size() == {len(writes)});" + "".join(
+                f'assert(writes[{index}].node == id && writes[{index}].name == atom("{key}") && !writes[{index}].text);'
+                for index, (key, _) in enumerate(writes)
+            )
+            states.append(f"if (mode == {mode}) {{ {state_checks} {write_checks} }}")
+        node = args.work / f"{label}-node.js"
+        node.write_text(script + "".join(f"console.log({key});\n" for key in expected))
+        assert dom.run([args.node, str(node)]).stdout.splitlines() == list(expected.values())
+        vm = args.work / f"{label}-vm.js"
+        vm.write_text(script)
+        assert dom.run([args.reference, str(vm)]).stdout == "".join(
+            f'{name}="{quote(value)}"\n' for name, value in sorted(expected.items())
+        )
+        observations += 2 * len(expected)
+        checks = (
+            r"""
+        (void)pressed;
+        const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+            const auto atom = [&](std::string_view name) { return target.atoms().intern(name); };
+            target.log_writes(true);
+            for (unsigned mode = 0; mode < 4; ++mode) {
+                for (const auto name : {"stop", "data-next", "data-yielded", "data-visited",
+                                       "data-closed", "data-after-second", "data-after-terminal"}) {
+                    assert(target.remove_attribute(id, atom(name)));
+                }
+                if (mode == 1 || mode == 2) { assert(target.set_attribute(id, atom("stop"), "")); }
+                if (mode == 2) { assert(target.set_attribute(id, atom("data-closed"), "false")); }
+                if (mode == 3) { assert(target.set_attribute(id, atom("data-yielded"), "yes")); }
+                (void)target.take_writes();
+                bool caught = false;
+                try { assert(static_cast<bool>(call()) == (mode == 0)); }
+                catch (const ctnative::js_exception<ctnative::@TYPE@> & error) {
+                    caught = @PAYLOAD@;
+                }
+                assert(caught == (mode == 1 || mode == 2));
+                const auto writes = target.take_writes();
+                @STATES@
+            }
+        };
+        exercise(doc, button, [&] { return @ENTRY@(alias); });
+        exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+        """.replace("@TYPE@", kind)
+            .replace("@PAYLOAD@", payload)
+            .replace("@STATES@", "\n".join(states))
+        )
+        ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
+        contract.update(initial_intrinsics=INTRINSICS)
+        for owned in (False, True):
+            manifest = dict(
+                contract,
+                provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1",
+            )
+            for optimize in (False, True):
+                name = f"{label}-{owned}-{optimize}"
+                native = dom.lower(args, ir, manifest, name, optimize=optimize)
+                selected_checks = checks + (OWNED_CHECKS if owned else "")
+                selected_includes, selected_libraries = includes, libraries
+                if selecting:
+                    selected_checks = (
+                        "style::engine selectors{atoms}, foreign_selectors{foreign_atoms};\n"
+                        + selected_checks.replace(
+                            "@ENTRY@(alias)", "@ENTRY@(alias, selectors)"
+                        ).replace("@ENTRY@(foreign)", "@ENTRY@(foreign, foreign_selectors)")
+                    )
+                    selected_includes, selected_libraries = dom.link_options(args, selectors=True)
+                dom.standalone(
+                    args,
+                    native,
+                    name,
+                    selected_checks,
+                    compilers,
+                    selected_includes,
+                    selected_libraries,
+                )
+                executions += 2 * len(compilers)
+    print(
+        f"Normal DOM close throw: {executions} native executions, {observations} Node/VM observations"
+    )
+
+
 def saved_throws(args, compilers, includes, libraries):
     # Retain the historical source inventory; execute every promoted body here.
     original = refusals()["body-throw"]
@@ -5222,8 +5430,90 @@ var savedThrow, savedExhausted;
                             success=False,
                         )
                         refused += 1
+    normal_cases = (
+        ("normal-throwing-close", source(True).replace("return {};", "throw 2;")),
+        (
+            "return-throwing-close",
+            BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace("return {};", "throw 2;"),
+        ),
+        (
+            "normal-selector-branch-throw-boolean-close",
+            selector_nested_throw_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-branch-throw-boolean-close",
+            selector_nested_throw_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+    )
+    normal_cases += tuple(
+        (
+            label.replace("-throwing-close", "-string-throwing-close"),
+            text.replace("throw 2;", "throw 'closed';"),
+        )
+        for label, text in normal_cases[:2]
+    )
+    normal_cases += tuple(
+        (
+            label.replace("-boolean-close", "-boolean-false-guard-close"),
+            text.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (anchor.matches('[data-closed=true]'))",
+            ),
+        )
+        for label, text in normal_cases[2:4]
+    )
+    normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
+    accepted_normal_closes = {
+        f"{completion}-{suffix}"
+        for completion in ("normal", "return")
+        for suffix in (
+            "before-first-selector-read-write-close",
+            "before-first-write-read-write-close",
+            "before-second-write-read-write-close",
+            "before-selector-read-write-close",
+            "feeding-first-read-write-close",
+            "final-argument-read-write-close",
+            "fourth-postselector-close",
+            "inside-first-write-read-write-close",
+            "postwrite-close",
+            "second-postwrite-close",
+            "second-postwrite-selector-close",
+            "selector-before-first-write-close",
+            "selector-branch-throw-close",
+            "selector-final-argument-read-write-close",
+            "selector-guarded-second-postread-close",
+            "selector-guarded-second-read-close",
+            "selector-guarded-second-two-reads-close",
+            "selector-guarded-second-write-close",
+            "selector-guarded-third-write-close",
+            "selector-inside-final-argument-close",
+            "selector-inside-first-argument-close",
+            "selector-nested-third-else-close",
+            "selector-nested-third-write-close",
+            "selector-reused-second-write-close",
+            "terminal-earlier-read-write-close",
+            "terminal-match-close",
+            "terminal-match-read-close",
+            "terminal-postselector-close",
+            "terminal-read-sequence-close",
+            "terminal-read-write-close",
+            "terminal-selector-write-close",
+            "terminal-write-close",
+            "third-postselector-close",
+            "third-postselector-read-close",
+            "third-postselector-result-close",
+            "throwing-close",
+        )
+    }
+    admitted = 0
     for label, text in (
         (
             "normal-postwrite-close",
@@ -7545,6 +7835,7 @@ var savedThrow, savedExhausted;
             mutable_throwing_source.replace("data-closed", "bad name"),
         ),
     ):
+        accepted = label in accepted_normal_closes
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         for owned in (False, True):
@@ -7556,12 +7847,13 @@ var savedThrow, savedExhausted;
                     manifest,
                     f"{label}-{owned}-{optimize}",
                     optimize=optimize,
-                    success=False,
+                    success=accepted,
                 )
-                refused += 1
+                refused += not accepted
+                admitted += accepted
     print(
         f"Saved primitive DOM throw: {executions} native executions, {refused} refusals, "
-        f"{observations} Node/VM observations"
+        f"{observations} Node/VM observations, {admitted} historical source admissions"
     )
 
 
