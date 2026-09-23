@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Terminal iterator-close read sequences and varying shift counts, 2026-09-23 UTC
+
+Resumed clean **71e24614** and retained second-read source `5cd57a59`.
+**294f2e21** retains bounded sequences of unused `hasAttribute` reads and
+`matches` calls after the terminal selector. Each read enters the existing
+complete use census immediately; only selectors need exact suppression. Source
+order/guard, typed DOM/Style reproof, saved Boolean ownership, budgets and the
+prohibition on subsequent writes remain. The unchanged original, getter, missing
+read, reordered reads, four-read and alternating read/selector sources execute.
+
+Parallel **7e081e79** reuses bounded whole-key subdivision for varying shift
+counts. Existing singleton transfers retain operand order, conversion and count
+masking, complete reload/store census, independent reload-gap proof and actual
+write replay. Eleven source controls were added. All 224 historical source bodies
+survive; exact source 198 and two historical raw refusals now admit after Node
+write/read/own-key/identity witnesses.
+
+Six selected sources pass **96 native executions, 120 refusals and 48 Node/VM
+observations**. Exact host/arrays CTests and the selected power-index lit case pass.
+Seven final source hashes match the devbox; all 48 generated C++ files retain the
+terminal operation sequence after every write without Script/VM or nullable
+fallback. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+Two subagents hit rate limits; the parent completed their work and another agent
+reviewed both changes. Full suites were skipped; no browser implementation changed.
+Linux process checks were incomplete, so concurrent-agent area rules remained in force.
+
+**Next native boundary:** retained `unsupported-terminal-read-write` source
+`ce6d790d` refuses **DOM protected helper needs an independent inert-body proof**
+under both policies. Preserve the `setAttribute('data-after-terminal', false)`
+after both terminal reads, together with the original saved body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap and general powers remain. Wider
+shift/mask proofs retain the existing work budget. No full-Bootstrap coverage
+gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-read-sequences.md).
+
 ## Reads after terminal iterator-close selectors and varying masks, 2026-09-23 UTC
 
 Resumed clean **b9a880eb** and retained terminal-selector/read source `54c46eea`.
