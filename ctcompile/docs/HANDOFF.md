@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected callable ordering and primitive AND masks, 2026-09-23 UTC
+
+Resumed clean **d1a4c47f** and unchanged `body-throw`, `f1b3f6b8`.
+**8a6f33b5** proves immutable callable use inside an invocation's call body,
+while excluding its continuations. Exact unused-result suppression can be
+removed only after the existing independent inert-body proof succeeds. Calls,
+coercions, getters, captures and source throws remain outside that proof;
+refused expansion retains a valid invocation. Complete DOM admission is still
+required, including for inert operations without a supported host contract.
+
+Parallel **88bd5c80** admits bounded primitive invariant AND masks through the
+existing conversion and bitwise bounds. Complete reload/store checks,
+actual-write replay and budgets remain. The historical String mask and raw
+String/Boolean constructions now admit unchanged. All 121 previous source
+bodies survive; the older Number-mask expectation 87 was also corrected for
+previously landed direct-gap refinement, with an exact source observation.
+
+Focused host and arrays CTests and the bitand-index lit case pass. Three selected
+native sources pass **48 executions, 82 refusals and 24 Node/VM observations**;
+another **20 throw observations agree per engine**. No admission was left
+unexecuted. Full formatting passes **1126 C++, 157 Python, 114 web files**, with
+scoped checks after final test corrections. Eight final hashes match the devbox;
+24 generated C++ files contain no Script/VM protocol. All 233 existing iterator
+bodies and 86 positive metadata rows are unchanged. Full suites were skipped.
+
+**Next native boundary:** original `f1b3f6b8` now passes protected callable ordering but both policies
+refuse **DOM protected helper needs an independent inert-body proof**. Its
+captured `anchor.setAttribute('data-closed', 'yes')` is effectful. Preserve
+suppression while expanding it, or discharge it only after complete typed
+receiver, argument, no-throw and prefix/global/reentry proof. DOM type facts
+alone are insufficient: invalid attribute names throw. Saved primitive throw
+admission/emission, mutable exceptional state, multiple protected regions,
+implicit cleanup, nested custom iterators, unguarded Bootstrap defaults, the
+application driver and full native Bootstrap remain unfinished. No native
+execution of this throw source is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-protected-callable.md).
+
 ## Helper throw joins and primitive remainder divisors, 2026-09-22 UTC
 
 Resumed clean **444fc1bd** and unchanged `body-throw`, `f1b3f6b8`.
