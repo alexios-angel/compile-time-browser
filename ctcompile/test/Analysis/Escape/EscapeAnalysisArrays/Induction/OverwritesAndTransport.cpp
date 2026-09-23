@@ -655,14 +655,45 @@ void InductionCases::overwritesAndTransport() {
                        "  %large = ctjs.binary add %maximum, %i\n"
                        "  %position = ctjs.binary_static " +
                            kind + " %large, %one"));
-        for (const auto & value :
+        for (const std::string value :
              {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
               "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
               "#ctjs.bigint<\"1\">"}) {
-            reject("OR/XOR require integer Number masks and nonnegative final keys",
-                   replace(replace(bitwise, "  %a =",
-                                   "  %mask = ctjs.constant " + std::string(value) + "\n  %a ="),
-                           "%i, %one", "%i, %mask"));
+            const auto source =
+                replace(replace(bitwise, "  %a =", "  %mask = ctjs.constant " + value + "\n  %a ="),
+                        "%i, %one", "%i, %mask");
+            if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>") {
+                run({.what = "primitive OR/XOR masks preserve the historical exact own writes",
+                     .body = source,
+                     .arrays = isOr ? "a:[one,zero]" : "a:[zero,zero]",
+                     .reads = "a[0]=one; a[1]=zero",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("OR/XOR require bounded primitive masks and nonnegative final keys", source);
+            }
+        }
+        const auto stringReload = replace(replace(gapReload, "  %a =",
+                                                  "  %text = ctjs.constant #ctjs.string<\"1\"> "
+                                                  "{storage_test_id = \"text\"}\n  %a ="),
+                                          "[%zero, %x, %one, %x]", "[%zero, %x, %text, %x]");
+        run({.what = "primitive OR/XOR reloads retain their String origin in an unvisited gap",
+             .body = replace(stringReload, kind + " %i, %mask", kind + " %mask, %i"),
+             .arrays = "a:[zero,zero,text,zero]",
+             .reads = "a[2]=text; a[0]=zero; a[2]=text; a[2]=text",
+             .exit = "a -> {a}"},
+            "x");
+        reject("primitive OR/XOR reloads cannot conceal an overlapping write",
+               replace(replace(stringReload, "[%zero, %x, %text, %x]", "[%zero, %x, %zero, %text]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%three]"));
+        reject("primitive OR/XOR reloads retain the complete later-store census",
+               replace(stringReload,
+                       "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+        for (const std::string literal : {"#ctjs.undefined", "#ctjs.string<\"01\">",
+                                          "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"1\">"}) {
+            reject("primitive OR/XOR masks require bounded side-effect-free conversion",
+                   replace(stringReload, "#ctjs.string<\"1\">", literal));
         }
     }
     for (const std::string kind : {"bitand", "bitor"}) {

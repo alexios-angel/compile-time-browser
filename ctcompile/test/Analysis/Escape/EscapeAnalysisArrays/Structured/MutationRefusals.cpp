@@ -76,6 +76,48 @@ void StructuredCases::mutationRefusals() {
                    "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
     reject("structured primitive AND cannot borrow an object's conversion",
            replace(primitiveAnd, "bitand %i, %text", "bitand %i, %x"));
+    for (const std::string kind : {"bitor", "bitxor"}) {
+        const bool isOr = kind == "bitor";
+        const auto primitiveMask = replace(primitiveAnd, "bitand", kind);
+        for (const auto & literal : {"#ctjs.string<\"1\">", "#ctjs.boolean<true>"}) {
+            rows.push_back({.what = "structured primitive OR/XOR masks replay only actual writes",
+                            .body = replace(primitiveMask, "#ctjs.string<\"1\">", literal),
+                            .arrays = isOr ? "a:[x,zero]" : "a:[zero,zero]",
+                            .reads = "a[0]=x; a[1]=zero",
+                            .exit = isOr ? "a -> {a,x}" : "a -> {a}"});
+        }
+        for (const auto & literal : {"#ctjs.boolean<false>", "#ctjs.null"}) {
+            rows.push_back({.what = "structured zero primitive OR/XOR masks retain exact identity",
+                            .body = replace(replace(primitiveMask, "#ctjs.string<\"1\">", literal),
+                                            kind + " %i, %text", kind + " %text, %i"),
+                            .arrays = "a:[zero,zero]",
+                            .reads = "a[0]=zero; a[1]=zero",
+                            .exit = "a -> {a}"});
+        }
+        const auto stringReload = replace(
+            replace(replace(primitiveMask, "create_array [%x]", "create_array [%zero, %x, %text]"),
+                    "add %i, %one", "add %i, %two"),
+            "%position = ctjs.binary_static " + kind + " %i, %text",
+            "%two = ctjs.binary add %one, %one\n"
+            "    %mask = ctjs.get_property %base[%two]\n"
+            "    %position = ctjs.binary_static " +
+                kind + " %mask, %i");
+        rows.push_back({.what = "structured primitive OR/XOR reloads preserve String gap identity",
+                        .body = stringReload,
+                        .arrays = "a:[zero,zero,text,zero]",
+                        .reads = "a[2]=text; a[0]=zero; a[2]=text; a[2]=text",
+                        .exit = "a -> {a}"});
+        reject("structured primitive OR/XOR reloads cannot overlap their own writes",
+               replace(replace(stringReload, "create_array [%zero, %x, %text]",
+                               "create_array [%zero, %text, %x]"),
+                       "%mask = ctjs.get_property %base[%two]",
+                       "%mask = ctjs.get_property %base[%one]"));
+        reject("structured primitive OR/XOR reloads retain the complete later-store census",
+               replace(stringReload,
+                       "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+        reject("structured primitive OR/XOR cannot borrow an object's conversion",
+               replace(primitiveMask, kind + " %i, %text", kind + " %i, %x"));
+    }
     const auto stringRemainder = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n  %a ="),

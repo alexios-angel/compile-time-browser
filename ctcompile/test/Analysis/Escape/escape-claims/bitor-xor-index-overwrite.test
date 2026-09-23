@@ -139,7 +139,7 @@
 // CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj escapes:stored
@@ -188,6 +188,17 @@
 // CHECK: escape {{[0-9a-f]+}} 177 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 178 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 179 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 180 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 181 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 182 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 183 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 184 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 185 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 186 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 187 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 188 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 189 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function orWrites() {
@@ -1222,3 +1233,66 @@ twoPointXorLowCrossing();
 twoPointXorOverlappingReload();
 twoPointXorLaterOverwrite();
 twoPointXorInteriorWrite();
+function primitiveOrString() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i | "1"] = 0;
+    return a;
+}
+function primitiveXorStringCommuted() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a["1" ^ i] = 0;
+    return a;
+}
+function primitiveOrNull() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i | null] = 0;
+    return a;
+}
+function primitiveXorBoolean() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ^ true] = 0;
+    return a;
+}
+function primitiveXorNegative() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(~i) ^ "-1"] = 0;
+    return a;
+}
+function primitiveOrReload() {
+    var child = {}, a = [0, child, "1", child];
+    for (var i = 0; i < a.length; i += 2) a[a[2] | i] = 0;
+    return a;
+}
+function primitiveXorReload() {
+    var child = {}, a = [0, child, "1", child];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[2]] = 0;
+    return a;
+}
+function primitiveOrSavedChild() {
+    var child = {}, a = [0, child, "1", child], saved = a[1];
+    for (var i = 0; i < a.length; i += 2) a[i | a[2]] = 0;
+    return saved;
+}
+function primitiveXorOverlappingReload() {
+    var child = {}, a = [0, "1", child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i ^ a[1]] = 0;
+    return a;
+}
+function primitiveOrLaterOverwrite() {
+    var child = {}, a = [0, child, "1", child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i | a[2]] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+primitiveOrString();
+primitiveXorStringCommuted();
+primitiveOrNull();
+primitiveXorBoolean();
+primitiveXorNegative();
+primitiveOrReload();
+primitiveXorReload();
+primitiveOrSavedChild();
+primitiveXorOverlappingReload();
+primitiveOrLaterOverwrite();
