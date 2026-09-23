@@ -492,6 +492,56 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(negativeVaryingReload, "[%x, %three, %x]", "[%three, %zero, %x]"),
                    "%offset = ctjs.get_property %base[%one]",
                    "%offset = ctjs.get_property %base[%zero]"));
+    const auto singletonPower = replace(replace(unitPower, "[%one, %x]", "[%x, %x, %x]"),
+                                        "%position = ctjs.binary pow %i, %one",
+                                        "%part = ctjs.binary mod %i, %one\n"
+                                        "  %exponent = ctjs.binary add %part, %one\n"
+                                        "  %position = ctjs.binary pow %i, %exponent");
+    run({.what = "singleton exponent ranges reuse unit powers for nonunit bases",
+         .body = singletonPower,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto singletonZeroPower = replace(singletonPower,
+                                            "%exponent = ctjs.binary add %part, %one\n"
+                                            "  %position = ctjs.binary pow %i, %exponent",
+                                            "%power = ctjs.binary pow %i, %part\n"
+                                            "  %position = ctjs.binary sub %power, %one");
+    run({.what = "singleton zero exponent ranges retain unvisited children",
+         .body = singletonZeroPower,
+         .arrays = "a:[zero,x,x]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=x",
+         .exit = "a -> {a,x}"});
+    const auto singletonReload =
+        replace(replace(singletonZeroPower, "[%x, %x, %x]", "[%x, %one, %zero]"),
+                "%part = ctjs.binary mod %i, %one",
+                "%divisor = ctjs.get_property %base[%one]\n"
+                "  %part = ctjs.binary mod %i, %divisor");
+    run({.what = "singleton exponent proofs preserve disjoint producer reloads",
+         .body = singletonReload,
+         .arrays = "a:[zero,one,zero]",
+         .reads = "a[1]=one; a[0]=zero; a[1]=one; a[1]=one; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "singleton power overwrites preserve saved child identity",
+         .body = replace(replace(singletonPower, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    reject(
+        "singleton exponent producers retain the complete later-store census",
+        replace(singletonReload, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("singleton exponent producers cannot reload an overwritten element",
+           replace(replace(singletonReload, "[%x, %one, %zero]", "[%one, %x, %zero]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("a nonsingleton exponent cannot borrow a unit power proof",
+           replace(singletonPower, "mod %i, %one", "mod %i, %two"));
+    reject("a singleton exponent does not prove general interior powers",
+           replace(singletonPower, "add %part, %one", "add %part, %two"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

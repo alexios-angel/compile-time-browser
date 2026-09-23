@@ -343,6 +343,49 @@ void StructuredCases::mutationRefusals() {
                            "create_array [%three, %zero]"),
                    "%offset = ctjs.get_property %base[%one]",
                    "%offset = ctjs.get_property %base[%zero]"));
+    const auto singletonPower =
+        replace(replace(twoPointPower, "create_array [%x]", "create_array [%x, %x]"),
+                "%position = ctjs.binary pow %i, %two",
+                "%part = ctjs.binary mod %i, %one\n"
+                "    %exponent = ctjs.binary add %part, %one\n"
+                "    %position = ctjs.binary pow %i, %exponent");
+    rows.push_back({.what = "structured singleton exponents reuse unit powers for nonunit bases",
+                    .body = singletonPower,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto singletonZeroPower = replace(singletonPower,
+                                            "%exponent = ctjs.binary add %part, %one\n"
+                                            "    %position = ctjs.binary pow %i, %exponent",
+                                            "%power = ctjs.binary pow %i, %part\n"
+                                            "    %position = ctjs.binary sub %power, %one");
+    rows.push_back({.what = "structured singleton zero powers retain unvisited children",
+                    .body = singletonZeroPower,
+                    .arrays = "a:[zero,x,y]",
+                    .reads = "a[0]=zero; a[1]=x; a[2]=y",
+                    .exit = "a -> {a,x,y}"});
+    const auto singletonReload = replace(
+        replace(replace(singletonZeroPower, "create_array [%x, %x]", "create_array [%x, %one]"),
+                "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+        "%part = ctjs.binary mod %i, %one",
+        "%divisor = ctjs.get_property %base[%one]\n"
+        "    %part = ctjs.binary mod %i, %divisor");
+    rows.push_back({.what = "structured singleton exponent proofs retain disjoint reloads",
+                    .body = singletonReload,
+                    .arrays = "a:[zero,one,zero]",
+                    .reads = "a[1]=one; a[0]=zero; a[1]=one; a[1]=one; a[1]=one; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured singleton exponent producers retain later-store checks",
+           replace(singletonReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    reject("structured singleton exponent producers cannot reload overwritten elements",
+           replace(replace(singletonReload, "create_array [%x, %one]", "create_array [%one, %x]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("structured nonsingleton exponents cannot borrow unit power proofs",
+           replace(singletonPower, "mod %i, %one", "mod %i, %two"));
+    reject("structured singleton exponents cannot prove general interior powers",
+           replace(singletonPower, "add %part, %one", "add %part, %two"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

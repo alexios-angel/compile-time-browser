@@ -116,6 +116,17 @@
 // CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
 
+// A proved singleton exponent uses the existing invariant-exponent proof.
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -680,3 +691,55 @@ negativeUnitVaryingPower(); crossingUnitVaryingPower(); evenNegativeVaryingPower
 retainedNegativeVaryingGap(); reloadedNegativeVaryingPower(); laterNegativeVaryingStore();
 overlappingNegativeVaryingPower(); savedNegativeVaryingPower(); interiorZeroNegativeVaryingPower();
 fractionalNegativeVaryingPower(); nonunitNegativeVaryingPower(); negativeUnitVaryingKey();
+
+function singletonZeroPower() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1) - 1] = 0;
+    return a;
+}
+function singletonUnitPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1 + 1)] = 0;
+    return a;
+}
+function retainedSingletonPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1) - 1] = 0;
+    return a;
+}
+function savedSingletonPower() {
+    var child = {}, a = [child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1) - 1] = 0;
+    return saved;
+}
+function reloadedSingletonExponent() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % a[1]) - 1] = 0;
+    return a;
+}
+function laterSingletonExponentStore() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[i ** (i % a[1]) - 1] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingSingletonExponent() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % a[0]) - 1] = 0;
+    return a;
+}
+function nonsingletonPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 2 + 1)] = 0;
+    return a;
+}
+function negativeSingletonPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1 - 1)] = 0;
+    return a;
+}
+singletonZeroPower(); singletonUnitPower(); retainedSingletonPower(); savedSingletonPower();
+reloadedSingletonExponent(); laterSingletonExponentStore(); overlappingSingletonExponent();
+nonsingletonPower(); negativeSingletonPower();

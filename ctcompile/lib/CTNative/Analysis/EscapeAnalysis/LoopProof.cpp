@@ -351,12 +351,21 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             offsetOperand = 0;
         }
         if (!range) { return std::nullopt; }
-        const auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
+        auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
+        const auto exponent = !offset && power && offsetOperand == 1 &&
+                                      invariantFailure != ArrayContentsFailure::WorkLimit
+                                  ? self(self, expression->getOperand(1), depth + 1)
+                                  : std::nullopt;
+        // A syntactically varying exponent can still have one proved value.
+        // Reuse the invariant power transfer; its producers and reloads remain
+        // subject to the complete census and ordinary replay below.
+        if (exponent && endpointNumber(exponent->first) == endpointNumber(exponent->last)) {
+            offset = exponent->first;
+        }
         // Each transfer proves bounded primitive conversion; boundedNumberSum
         // separately excludes String concatenation for Add.
         if (!offset && power && offsetOperand == 1 &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
-            const auto exponent = self(self, expression->getOperand(1), depth + 1);
             if (!exponent || endpointNumber(range->first) < -1 || endpointNumber(range->last) > 1) {
                 return std::nullopt;
             }
