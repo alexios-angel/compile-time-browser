@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Selector reads in iterator closes and zero/unit power exponents, 2026-09-23 UTC
+
+Resumed clean **740279da** and retained selector source `f4005c21`.
+**1f353fa9** keeps its final `matches` call after both close writes in an exact
+unused-result suppression region. The existing public Style parser validates the
+literal selector after charging its bytes; complete typed DOM/Style reproof,
+private callable/frame checks, saved Boolean ownership and budgets remain.
+The original source, getter and order-sensitive missing-read variant execute
+unchanged. Invalid/computed selectors and ordinary throwing closes still refuse.
+
+Parallel **8ba1a605** proves powers of varying bounded nonunit bases when the
+exponent is exactly zero or one. It encloses the base and one, retaining existing
+whole-key refinement, complete reload/store census and actual-write replay.
+All 135 historical power source bodies/CHECKs survive; ten source cases were added.
+General powers remain separate.
+
+Three selected sources pass **48 native executions, 68 refusals and 24 Node/VM
+observations**. Focused host/arrays CTests and the exact power-index lit case pass.
+Nine final hashes match the devbox; all 24 generated C++ files retain a selector
+call and contain no Script/VM protocol or nullable-scalar fallback. Full formatting
+passes **1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** `unsupported-after-selector-effect` source `6d1b5000`
+still refuses **DOM protected helper needs an independent inert-body proof** in
+both policies. Its third write follows the selector; preserve that order and the
+saved Boolean while proving the complete exceptional sequence. Nonterminal
+exceptional state, multiple protected regions, implicit cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain unfinished. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-selector-close.md).
+
 ## Ordered iterator close writes and tight odd-power bounds, 2026-09-23 UTC
 
 Resumed clean **98a8f335** and retained two-write source `442af76b`.
