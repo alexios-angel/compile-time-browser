@@ -48,9 +48,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             ctjs::CallOp readCall, trailingCall, finalReadCall;
             llvm::SmallVector<mlir::Value> suffixValues;
             llvm::DenseSet<mlir::OpOperand *> suffixUses;
-            llvm::DenseSet<mlir::Value> terminalReads;
+            llvm::DenseSet<mlir::Value> suffixReads;
             llvm::SmallVector<ctjs::CallOp> consumedSelectors;
-            bool terminalSelector = false;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             for (mlir::Operation & operation : target.getBody().front()) {
                 if (!step()) { return false; }
@@ -92,19 +91,18 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     read.getArgs().size() == 1) {
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
-                    if (selectorLeaf && (selector || (terminalSelector && !finalMethod))) {
+                    if (selectorLeaf && (selector || !finalMethod)) {
                         if (finalMethod) { return false; }
-                        // Retain every terminal read in source order. Unused selectors
+                        // Retain every standalone read in source order. Unused selectors
                         // need exact suppression; all reads retain the complete use
                         // census and typed DOM proof below. A read within a pending
                         // write keeps the existing read-to-write proof instead.
                         suffixValues.append({sourceReadMethod.getResult(), read.getResult()});
                         suffixUses.insert(&read->getOpOperand(0));
                         if (selector) { suffixLeaves.insert(read); }
-                        terminalReads.insert(read.getResult());
+                        suffixReads.insert(read.getResult());
                         sourceReadMethod = {};
                         sourceReadCall = {};
-                        terminalSelector = true;
                     }
                     continue;
                 }
@@ -159,8 +157,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             {finalReadMethod.getResult(), finalReadCall.getResult()});
                         suffixUses.insert(&finalReadCall->getOpOperand(0));
                         suffixUses.insert(&leaf->getOpOperand(3));
-                    } else if (terminalReads.erase(leaf.getArgs()[1])) {
-                        // An earlier terminal read may feed one later write.
+                    } else if (suffixReads.erase(leaf.getArgs()[1])) {
+                        // An earlier standalone read may feed one later write.
                         // The complete census still rejects leaks and reuse.
                         suffixUses.insert(&leaf->getOpOperand(3));
                         auto read = leaf.getArgs()[1].getDefiningOp<ctjs::CallOp>();
