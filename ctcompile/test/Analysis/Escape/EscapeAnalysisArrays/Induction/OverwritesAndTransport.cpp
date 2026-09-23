@@ -3688,13 +3688,17 @@ void InductionCases::overwritesAndTransport() {
     reject("left-shift count zero still requires a single positive ToInt32 band",
            replace(zeroLeftBand, "%upper = ctjs.unary plus %maximum",
                    "%upper = ctjs.binary sub %maximum, %one"));
+    run({.what = "an invariant left-shift base preserves the original unwritten child",
+         .body = replace(leftShiftIndex, "shl %part, %one", "shl %one, %part"),
+         .arrays = "a:[x,zero,zero,one]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
     for (const auto & body :
          {replace(leftShiftReload, "%count = ctjs.get_property %base[%one]",
                   "%count = ctjs.get_property %base[%two]"),
           replace(leftShiftReload,
                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="),
           replace(carriedLeftShift, "^header(%base, %step, %s", "^header(%base, %step, %read"),
-          replace(leftShiftIndex, "shl %part, %one", "shl %one, %part"),
           replace(leftShiftIndex, "add %i, %two\n  cf.br", "add %i, %one\n  cf.br"),
           replace(leftShiftIndex, "shl %part, %one", "shl %i, %one"),
           replace(leftShiftIndex, "%part = ctjs.binary div %i, %two",
@@ -4678,10 +4682,15 @@ void InductionCases::overwritesAndTransport() {
            replace(unevenShift, "%position = ctjs.binary_static shr %i, %one",
                    "%part = ctjs.binary_static shr %i, %one\n"
                    "  %position = ctjs.binary div %part, %two"));
+    run({.what = "an invariant right-shift base preserves both original prefix writes",
+         .body = replace(rightShiftIndex, "shr %i, %one", "shr %one, %i"),
+         .arrays = "a:[zero,zero,one,one]",
+         .reads = "a[0]=x; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
     for (const auto & body :
          {replace(shiftReload, "%base[%three]", "%base[%one]"),
           replace(shiftReload, "  %step =", "  ctjs.set_property %base[%three], %two\n  %step ="),
-          replace(rightShiftIndex, "shr %i, %one", "shr %one, %i"),
           replace(rightShiftIndex, "shr %i, %one", "shr %i, %s"),
           replace(rightShiftIndex, "%position = ctjs.binary_static shr %i, %one",
                   "%part = ctjs.unary neg %i\n  %position = ctjs.binary_static ushr %part, %one"),
@@ -6504,6 +6513,134 @@ void InductionCases::overwritesAndTransport() {
         checkArrayContents(*module, expected);
         // The independent contents proof supports SCF. The legacy retention
         // census deliberately rejects every operation with nested regions.
+        budgets += checkArrayRetention(
+            *module,
+            {.what = expected.what, .body = expected.body, .discharged = "", .complete = false});
+        ++rows;
+    }
+
+    const auto invariantShiftBase = replace(replace(masked, "[%one, %x]", "[%zero, %x, %x]"),
+                                            "%position = ctjs.binary_static bitand %i, %one",
+                                            "%count = ctjs.binary mod %i, %two\n"
+                                            "  %position = ctjs.binary_static shl %one, %count");
+    run({.what = "invariant shift bases retain operand order with varying counts",
+         .body = invariantShiftBase,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "invariant shift bases use bounded primitive conversion",
+         .body = replace(replace(invariantShiftBase, "  %a =",
+                                 "  %shiftBase = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
+                         "shl %one, %count", "shl %shiftBase, %count"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "invariant unsigned shift bases retain every actual varying-count write",
+         .body = replace(replace(replace(replace(invariantShiftBase, "[%zero, %x, %x]",
+                                                 "[%zero, %x, %x, %zero, %x]"),
+                                         "  %a =", "  %four = ctjs.binary add %two, %two\n  %a ="),
+                                 "mod %i, %two", "mod %i, %three"),
+                         "shl %one, %count", "ushr %four, %count"),
+         .arrays = "a:[zero,zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero; a[3]=zero; a[4]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative invariant shift bases preserve signed right-shift semantics",
+         .body = replace(replace(replace(invariantShiftBase, "[%zero, %x, %x]", "[%x, %zero, %x]"),
+                                 "mod %i, %two", "mod %i, %three"),
+                         "%position = ctjs.binary_static shl %one, %count",
+                         "%four = ctjs.binary add %two, %two\n"
+                         "  %eight = ctjs.binary add %four, %four\n"
+                         "  %negative = ctjs.unary neg %eight\n"
+                         "  %part = ctjs.binary_static shr %negative, %count\n"
+                         "  %position = ctjs.binary_static bitand %part, %three"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying invariant-base shift counts wrap modulo thirty-two",
+         .body = replace(
+             replace(replace(invariantShiftBase, "[%zero, %x, %x]", "[%x, %x, %zero]"), "  %a =",
+                     "  %thirtyOne = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
+             "%count = ctjs.binary mod %i, %two\n"
+             "  %position = ctjs.binary_static shl %one, %count",
+             "%count = ctjs.binary add %i, %thirtyOne\n"
+             "  %part = ctjs.binary_static shl %one, %count\n"
+             "  %position = ctjs.binary_static ushr %part, %thirtyOne"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "invariant shift replay retains children outside actual writes",
+         .body = replace(invariantShiftBase, "[%zero, %x, %x]", "[%x, %x, %x]"),
+         .arrays = "a:[x,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "invariant shift replay preserves an overwritten saved child",
+         .body = replace(replace(invariantShiftBase, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[1]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto invariantShiftReload =
+        replace(replace(invariantShiftBase, "[%zero, %x, %x]", "[%one, %x, %x]"),
+                "%position = ctjs.binary_static shl %one, %count",
+                "%shiftBase = ctjs.get_property %base[%zero]\n"
+                "  %position = ctjs.binary_static shl %shiftBase, %count");
+    run({.what = "invariant shift bases independently prove their reload gap",
+         .body = invariantShiftReload,
+         .arrays = "a:[one,zero,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("invariant shift proofs retain every later producer store",
+           replace(invariantShiftReload,
+                   "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    reject("invariant shift bases cannot borrow an overwritten producer",
+           replace(replace(invariantShiftReload, "[%one, %x, %x]", "[%x, %one, %x]"),
+                   "%shiftBase = ctjs.get_property %base[%zero]",
+                   "%shiftBase = ctjs.get_property %base[%one]"));
+    reject("invariant shift count refinement retains fractional intermediate refusals",
+           replace(invariantShiftBase, "mod %i, %two", "div %i, %two"));
+    reject("invariant shift refinement retains the source base bound",
+           replace(replace(invariantShiftBase, "  %a =",
+                           "  %unbounded = ctjs.constant #ctjs.number<4751297606875873280>\n"
+                           "  %a ="),
+                   "shl %one, %count", "shl %unbounded, %count"));
+    reject("invariant shift bases retain fractional primitive refusals",
+           replace(replace(invariantShiftBase,
+                           "  %a =", "  %fraction = ctjs.binary div %three, %two\n  %a ="),
+                   "shl %one, %count", "shl %fraction, %count"));
+
+    const auto structuredShift =
+        replace(replace(structuredNumerator, "[%x, %zero, %x]", "[%zero, %x, %x]"),
+                "%divisor = ctjs.binary add %i, %one\n"
+                "    %position = ctjs.binary mod %two, %divisor",
+                "%count = ctjs.binary mod %i, %two\n"
+                "    %position = ctjs.binary_static shl %one, %count");
+    for (const auto & expected : {
+             contents_row{.what = "SCF invariant shift bases share the ordered count proof",
+                          .body = structuredShift,
+                          .arrays = "a:[zero,zero,zero]",
+                          .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                          .exit = "a -> {a}"},
+             contents_row{.what =
+                              "SCF invariant shift counts retain fractional intermediate refusals",
+                          .body = replace(structuredShift, "mod %i, %two", "div %i, %two"),
+                          .failure = ArrayContentsFailure::UnsupportedControlFlow},
+         }) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.body + "}\n", &context);
+        if (!module) {
+            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
+                 "the structured shift fixture did not parse");
+            continue;
+        }
+        checkArrayContents(*module, expected);
+        // Exact contents do not complete the legacy region-free retention census.
         budgets += checkArrayRetention(
             *module,
             {.what = expected.what, .body = expected.body, .discharged = "", .complete = false});

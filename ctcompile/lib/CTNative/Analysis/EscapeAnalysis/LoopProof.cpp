@@ -347,17 +347,17 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1);
-        if (!range && !shift && invariantFailure != ArrayContentsFailure::WorkLimit) {
+        if (!range && invariantFailure != ArrayContentsFailure::WorkLimit) {
             range = self(self, expression->getOperand(1), depth + 1);
             offsetOperand = 0;
         }
         if (!range) { return std::nullopt; }
         auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
-        if ((divide || remainder) && offsetOperand == 0) {
+        if ((divide || remainder || shift) && offsetOperand == 0) {
             if (!offset) { return std::nullopt; }
-            // An invariant numerator still needs its original operand order.
-            // Refine varying divisors to singleton values, then reuse the exact
-            // scalar transfer; poles and fractional quotients remain unproved.
+            // An invariant left operand still needs its original operand order.
+            // Refine varying divisors/counts to singleton values, then reuse the
+            // exact scalar transfer; bounds and fractional checks remain intact.
             if (endpointNumber(range->first) != endpointNumber(range->last)) {
                 refinableEnclosure = true;
                 return std::nullopt;
@@ -367,7 +367,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 return std::nullopt;
             }
             ContentsValue result{operand, ContentsKind::NonBigInt};
-            boundedNumberDivision(*offset, range->first, remainder, result);
+            if (shift) {
+                boundedNumberBitwise(*offset, range->first, addition.getKind(), result);
+            } else {
+                boundedNumberDivision(*offset, range->first, remainder, result);
+            }
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             return IndexRange{result, result, 1, range->mixedShift};
         }

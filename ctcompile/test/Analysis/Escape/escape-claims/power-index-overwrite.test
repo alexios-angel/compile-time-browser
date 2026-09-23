@@ -377,6 +377,18 @@
 // CHECK: escape {{[0-9a-f]+}} 323 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 324 {{[0-9]+}} obj escapes:stored
 
+// Invariant shift bases retain ordered conversion, count wrapping and reload gaps.
+// CHECK: escape {{[0-9a-f]+}} 325 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 326 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 327 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 328 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 329 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 330 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 331 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 332 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 333 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 334 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -2246,3 +2258,61 @@ invariantNumeratorDivision(); invariantNumeratorRemainder(); negativeInvariantNu
 retainedInvariantNumerator(); savedInvariantNumerator(); reloadInvariantNumerator();
 laterInvariantNumeratorStore(); overlappingInvariantNumerator(); poleInvariantNumerator();
 fractionalInvariantNumerator();
+
+function invariantShiftBase() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[1 << (i % 2)] = 0;
+    return a;
+}
+function invariantUnsignedShiftBase() {
+    var child = {}, a = [0, child, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[4 >>> (i % 3)] = 0;
+    return a;
+}
+function negativeInvariantShiftBase() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(-8 >> (i % 3)) & 3] = 0;
+    return a;
+}
+function wrappingInvariantShiftCount() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 << (i + 31)) >>> 31] = 0;
+    return a;
+}
+function retainedInvariantShiftBase() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[1 << (i % 2)] = 0;
+    return a;
+}
+function savedInvariantShiftBase() {
+    var child = {}, a = [0, child, child], before = a[1];
+    for (var i = 0; i < a.length; i++) a[1 << (i % 2)] = 0;
+    return before;
+}
+function reloadInvariantShiftBase() {
+    var child = {}, a = [1, child, child];
+    for (var i = 0; i < a.length; i++) a[a[0] << (i % 2)] = 0;
+    return a;
+}
+function laterInvariantShiftBaseStore() {
+    var child = {}, a = [1, child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[a[0] << (i % 2)] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingInvariantShiftBase() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[a[1] << (i % 2)] = 0;
+    return a;
+}
+function fractionalInvariantShiftCount() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[1 << (i / 2)] = 0;
+    return a;
+}
+invariantShiftBase(); invariantUnsignedShiftBase(); negativeInvariantShiftBase();
+wrappingInvariantShiftCount(); retainedInvariantShiftBase(); savedInvariantShiftBase();
+reloadInvariantShiftBase(); laterInvariantShiftBaseStore(); overlappingInvariantShiftBase();
+fractionalInvariantShiftCount();
