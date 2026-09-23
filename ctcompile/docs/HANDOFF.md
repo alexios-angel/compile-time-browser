@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Normal throwing getters and nested Number unary operations, 2026-09-23 UTC
+
+Resumed clean **d1cd1173** and retained getter source `3b17dc57`.
+**275be0ce** routes normal always-throwing `return` getters through the existing
+close propagation proof. Original payloads, DOM effects, exhaustion and saved-body
+suppression remain; stateless normal-only, observer, budget and private DOM
+reproof requirements still gate publication. Independent native review is complete
+and clean. Thirty historical expectations were promoted with their inputs intact.
+
+**9b2622d7** proves bitwise inputs from at most two original Number `+`/`-`
+operations, preserving sign parity. The identical baseline/final program
+`e6ad95781f5f333d` changes six child sites from all stored to **three confined and
+three stored**, each observed once with zero unresolved or unchecked instances.
+Property, arithmetic, mutation and source-identity proofs remain separate.
+
+Focused checks pass: **144 native executions, 52 refusals, 64 Node/VM observations,
+86 source-policy checks, exact host/arrays CTests and one selected lit case**.
+Formatting passes **1126 C++, 157 Python and 114 web files**; all six final
+code/test hashes match the devbox and all 72 generated C++ files have no Script
+namespace. No browser/runtime implementation changed. Full suites and full
+Bootstrap were skipped.
+
+**Next native boundary:** unchanged `return-getter-close`, source `7224b890`,
+refuses **DOM entry branch has incompatible scalar alternatives** under both
+policies. It combines a body `return 1`, an always-throwing getter and the Boolean
+exhaustion result; preserve all completion paths, the getter exception and DOM
+ordering. Mutable/mixed cleanup, nested custom iterators, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain. Longer unary
+chains, general computed Number proofs, unsafe String exponents, Strings over
+32 bytes, general powers and legacy SCF retention remain; the VM fractional-index
+discrepancy is separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-normal-getters-nested-unary.md).
+
 ## Branch-local throw payloads and unary Number Plus, 2026-09-23 UTC
 
 Resumed clean **c46ef2e9** and retained `b216ee20`. **f2a0fae3** projects a
