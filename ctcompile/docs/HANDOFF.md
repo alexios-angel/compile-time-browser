@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mutable cleanup exceptions and String unary inputs, 2026-09-23 UTC
+
+Resumed clean **e51d742c** and unchanged `return-mutable-throwing-close`, source
+`8bab7f24`. **01a14465** preserves normal cleanup exceptions with private mutable
+iterator state. Existing scalar arguments carry the current state; cleanup keeps
+its updates and DOM effects, then immediately throws its owning payload. The
+throwing close needs no result record or continuation state. Method/getter,
+updated-payload, return-expression and exhaustion checks pass. Independent native
+production review is complete and clean; mixed suppression remains a refusal.
+
+**8094f34b** reuses the bounded String conversion proof for original unary `+`/`-`
+Number inputs to bitwise operations. Source identity, the 64-operation limit,
+String grammar/size/exponent checks and separate property/arithmetic proofs remain.
+Identical source program `8b477d06a902c872` changes six child sites from all stored
+to **three confined and three stored**, each observed once with no unresolved or
+unchecked instances. All 126 historical source functions remain.
+
+Focused validation passes: **192 native executions, 44 refusals, 108 Node/VM
+observations, 32 source-policy checks, exact host/arrays CTests and one selected
+lit case**. Formatting passes **1126 C++, 157 Python and 114 web files**. All six
+final code/test hashes match the devbox; all 96 generated C++ files contain no
+Script namespace. No browser/runtime implementation changed. Full suites and
+full Bootstrap were skipped.
+
+**Next native boundary:** unchanged `mixed-body-throw-return-close`, source
+`24815b87`, refuses **DOM iterator primitive close requires saved-throw
+suppression** under both policies. One path saves a Boolean body exception;
+another saves a Boolean return. Cleanup writes `data-closed` then throws Number 2.
+Preserve the saved body exception on the protected path and propagate Number 2
+on the normal close, with original reads, writes and exhaustion ordering.
+Normal object-throwing getters, nested custom iterators, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain. Escape still
+excludes chains over 64, general computed Number proofs, unsafe String exponents,
+Strings over 32 bytes, general powers and legacy SCF retention. The VM
+fractional-index discrepancy remains separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-mutable-close-string-unary.md).
+
 ## Return completion paths and bounded unary chains, 2026-09-23 UTC
 
 Resumed clean **9108f946** and unchanged `return-getter-close`, source `7224b890`.
