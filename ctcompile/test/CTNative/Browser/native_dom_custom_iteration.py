@@ -2415,6 +2415,15 @@ def saved_throws(args, compilers, includes, libraries):
             "!error.value",
         ),
         (
+            "conditional-boolean-snapshot",
+            refusals()["body-throw-branch-boolean-snapshot"].replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                "anchor.setAttribute('data-closed', 'yes');",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+        ),
+        (
             "string",
             original.replace("throw 1;", "throw 'saved';"),
             "js_string",
@@ -2433,6 +2442,7 @@ def saved_throws(args, compilers, includes, libraries):
                 for (auto name : {next, yielded, closed, visited}) {
                     assert(target.remove_attribute(id, name));
                 }
+                @SETUP@
                 (void)target.take_writes();
                 bool caught = false;
                 try { (void)call(); }
@@ -2459,6 +2469,7 @@ def saved_throws(args, compilers, includes, libraries):
                        exhausted[1].name == yielded);
                 assert(target.read().attribute_value(id, next) == "true");
                 assert(!target.read().has_attribute(id, closed));
+                @NORMAL@
             }
         };
         exercise(doc, button, [&] { return @ENTRY@(alias); });
@@ -2466,8 +2477,9 @@ def saved_throws(args, compilers, includes, libraries):
 """
     executions = refused = observations = 0
     for label, text, kind, payload in cases:
-        snapshot = label == "boolean-snapshot"
-        js_kind = label.partition("-")[0]
+        conditional = label == "conditional-boolean-snapshot"
+        snapshot = conditional or label == "boolean-snapshot"
+        js_kind = "boolean" if conditional else label.partition("-")[0]
         script = text + """
 var savedThrow, savedExhausted;
 (function() {
@@ -2486,6 +2498,35 @@ var savedThrow, savedExhausted;
   savedExhausted = '' + customElements(anchor) + ':' + writes;
 })();
 """
+        if conditional:
+            script = (
+                script.replace(
+                    "var savedThrow, savedExhausted;",
+                    "var savedThrow, savedExhausted, savedNormal, savedPrior;",
+                )
+                .replace(
+                    "  try { customElements(anchor); }",
+                    "  saved.stop = 'yes';\n  try { customElements(anchor); }",
+                )
+                .replace(
+                    "})();",
+                    """
+  delete saved.stop;
+  delete saved['data-yielded'];
+  delete saved['data-visited'];
+  delete saved['data-closed'];
+  writes = '';
+  savedNormal = '' + customElements(anchor) + ':' + writes;
+  saved.stop = 'yes';
+  saved['data-closed'] = 'before';
+  delete saved['data-yielded'];
+  writes = '';
+  try { customElements(anchor); }
+  catch (error) { savedPrior = typeof error + ':' + error + ':' + writes; }
+})();
+""",
+                )
+            )
         expected = {
             "savedThrow": f"{js_kind}:"
             + {"number": "1", "boolean": "false", "string": "saved"}[js_kind]
@@ -2495,15 +2536,22 @@ var savedThrow, savedExhausted;
             "savedExhausted": ("true" if snapshot else "false")
             + ":data-next=true;data-yielded=yes;",
         }
+        if conditional:
+            expected.update(
+                savedNormal="true:data-next=false;data-yielded=yes;data-visited=yes;"
+                "data-next=true;data-yielded=yes;",
+                savedPrior="boolean:true:data-next=false;data-yielded=yes;data-visited=yes;"
+                "data-closed=yes;",
+            )
         node = args.work / f"saved-throw-{label}-node.js"
-        node.write_text(script + "console.log(savedThrow); console.log(savedExhausted);\n")
+        node.write_text(script + "".join(f"console.log({key});\n" for key in expected))
         assert dom.run([args.node, str(node)]).stdout.splitlines() == list(expected.values())
         vm = args.work / f"saved-throw-{label}-vm.js"
         vm.write_text(script)
         assert dom.run([args.reference, str(vm)]).stdout == "".join(
             f'{name}="{quote(value)}"\n' for name, value in sorted(expected.items())
         )
-        observations += 4
+        observations += 2 * len(expected)
         ir, contract = dom.prepare(
             args, f"saved-throw-{label}", text, 1, entry_name="customElements"
         )
@@ -2523,6 +2571,33 @@ var savedThrow, savedExhausted;
                     native,
                     name,
                     (checks + (OWNED_CHECKS if owned else ""))
+                    .replace(
+                        "@SETUP@",
+                        (
+                            'assert(target.set_attribute(id, target.atoms().intern("stop"), "yes"));'
+                            'if (repetition) { assert(target.set_attribute(id, closed, "before")); }'
+                            if conditional
+                            else ""
+                        ),
+                    )
+                    .replace(
+                        "@NORMAL@",
+                        (
+                            r"""
+                assert(target.remove_attribute(id, target.atoms().intern("stop")));
+                assert(target.remove_attribute(id, yielded));
+                assert(target.remove_attribute(id, visited));
+                (void)target.take_writes();
+                assert(static_cast<bool>(call()));
+                const auto normal = target.take_writes();
+                assert(normal.size() == 5 && normal[0].name == next && normal[1].name == yielded &&
+                       normal[2].name == visited && normal[3].name == next && normal[4].name == yielded);
+                assert(!target.read().has_attribute(id, closed));
+"""
+                            if conditional
+                            else ""
+                        ),
+                    )
                     .replace("@TYPE@", kind)
                     .replace("@PAYLOAD@", payload)
                     .replace("@VISITED@", "true" if snapshot else "false")

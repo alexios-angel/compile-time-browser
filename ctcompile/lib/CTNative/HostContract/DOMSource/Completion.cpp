@@ -26,8 +26,13 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         const Continuation * outer;
     };
     struct ExitProjection {
-        mlir::scf::IndexSwitchOp dispatch;
+        mlir::Operation * dispatch = nullptr;
         mlir::arith::IndexCastUIOp cast;
+        mlir::arith::CmpIOp comparison;
+        mlir::arith::ConstantOp literal;
+        mlir::Region * fallback = nullptr;
+        llvm::SmallVector<mlir::Region *> arms;
+        llvm::SmallVector<int64_t> cases;
         unsigned selector = 0;
         llvm::SmallVector<unsigned> outputs;
         llvm::SmallVector<bool> consumed;
@@ -147,20 +152,17 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             refuse("DOM helper loop exit selector is not an exact constant");
                             return {};
                         }
-                        auto dispatch = terminal.exit.dispatch;
-                        auto * selected = &dispatch.getDefaultRegion();
-                        for (auto [index, value] : llvm::enumerate(dispatch.getCases())) {
+                        auto * selected = terminal.exit.fallback;
+                        for (auto [index, value] : llvm::enumerate(terminal.exit.cases)) {
                             if (!step()) { return {}; }
-                            if (value == key.getInt()) {
-                                selected = &dispatch.getCaseRegions()[index];
-                            }
+                            if (value == key.getInt()) { selected = terminal.exit.arms[index]; }
                         }
                         selectedExit = selected;
                         if (terminal.exit.effectful) {
                             arguments[terminal.exit.selector] = ctjs::ConstantOp::create(
                                 at, condition.getLoc(),
                                 ctjs::BooleanAttr::get(function.getContext(),
-                                                       selected != &dispatch.getDefaultRegion()));
+                                                       selected != terminal.exit.fallback));
                             ++operationCount;
                         } else {
                             // Read the entire selected tuple before replacing any
@@ -301,17 +303,71 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     ExitProjection exit;
                     auto * next = loop->getNextNode();
                     if (!next || !step()) { return {}; }
-                    exit.cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(next);
-                    if (exit.cast) { next = next->getNextNode(); }
+                    // The structured throw path spells the same two-way exit
+                    // as an exact integer equality instead of index_switch.
+                    // Share its selector and complete selected-arm use census.
+                    mlir::Value selectorValue;
+                    exit.literal = llvm::dyn_cast<mlir::arith::ConstantOp>(next);
+                    if (exit.literal) { next = next->getNextNode(); }
                     if (!next || !step()) { return {}; }
-                    exit.dispatch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(next);
-                    if (!exit.dispatch ||
-                        (exit.cast && (exit.dispatch.getArg() != exit.cast.getOut() ||
-                                       !exit.cast->hasOneUse()))) {
-                        return {};
+                    exit.comparison = llvm::dyn_cast<mlir::arith::CmpIOp>(next);
+                    if (exit.comparison) {
+                        const auto predicate = exit.comparison.getPredicate();
+                        if ((predicate != mlir::arith::CmpIPredicate::eq &&
+                             predicate != mlir::arith::CmpIPredicate::ne) ||
+                            !exit.comparison->hasOneUse()) {
+                            return {};
+                        }
+                        next = next->getNextNode();
+                        if (!next || !step()) { return {}; }
+                        auto branch = llvm::dyn_cast<mlir::scf::IfOp>(next);
+                        if (!branch || branch.getCondition() != exit.comparison.getResult()) {
+                            return {};
+                        }
+                        selectorValue = exit.comparison.getLhs();
+                        auto constant =
+                            exit.comparison.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
+                        if (!constant) {
+                            selectorValue = exit.comparison.getRhs();
+                            constant =
+                                exit.comparison.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
+                        }
+                        auto key = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
+                                            : mlir::IntegerAttr{};
+                        if (!key || key.getValue().isNegative() ||
+                            key.getValue().getActiveBits() > 63 ||
+                            !dominance.dominates(constant.getResult(), exit.comparison) ||
+                            (!exit.literal && !values.contains(constant.getResult())) ||
+                            (exit.literal &&
+                             (constant != exit.literal || !constant->hasOneUse()))) {
+                            return {};
+                        }
+                        exit.dispatch = branch;
+                        const bool equal = predicate == mlir::arith::CmpIPredicate::eq;
+                        exit.arms.push_back(equal ? &branch.getThenRegion()
+                                                  : &branch.getElseRegion());
+                        exit.fallback = equal ? &branch.getElseRegion() : &branch.getThenRegion();
+                        exit.cases.push_back(key.getInt());
+                    } else {
+                        if (exit.literal) { return {}; }
+                        exit.cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(next);
+                        if (exit.cast) { next = next->getNextNode(); }
+                        if (!next || !step()) { return {}; }
+                        auto dispatch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(next);
+                        if (!dispatch || (exit.cast && (dispatch.getArg() != exit.cast.getOut() ||
+                                                        !exit.cast->hasOneUse()))) {
+                            return {};
+                        }
+                        exit.dispatch = dispatch;
+                        exit.fallback = &dispatch.getDefaultRegion();
+                        for (auto [index, key] : llvm::enumerate(dispatch.getCases())) {
+                            if (!step()) { return {}; }
+                            exit.cases.push_back(key);
+                            exit.arms.push_back(&dispatch.getCaseRegions()[index]);
+                        }
+                        selectorValue = exit.cast ? exit.cast.getIn() : dispatch.getArg();
                     }
-                    auto selector = llvm::dyn_cast<mlir::OpResult>(
-                        exit.cast ? exit.cast.getIn() : exit.dispatch.getArg());
+                    auto selector = llvm::dyn_cast<mlir::OpResult>(selectorValue);
                     if (!selector || selector.getOwner() != loop ||
                         !before.inactiveAfter[selector.getResultNumber()]) {
                         return {};
@@ -327,14 +383,14 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                         auto yield =
                             llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                        if (!yield || yield.getOperandTypes() != exit.dispatch.getResultTypes()) {
+                        if (!yield || yield.getOperandTypes() != exit.dispatch->getResultTypes()) {
                             return {};
                         }
                         exit.effectful |= !llvm::hasSingleElement(region.front());
                     }
                     // ponytail: a single case becomes an ordinary Boolean branch;
                     // more exit arms need a separately proved discriminator.
-                    if (exit.effectful && exit.dispatch.getCases().size() != 1) { return {}; }
+                    if (exit.effectful && exit.cases.size() != 1) { return {}; }
                     for (auto & region : exit.dispatch->getRegions()) {
                         if (!step()) { return {}; }
                         if (exit.effectful) { continue; }
@@ -357,8 +413,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             if (!step()) { return {}; }
                             auto * owner = use.getOwner();
                             if (index == exit.selector) {
-                                if (owner != (exit.cast ? exit.cast.getOperation()
-                                                        : exit.dispatch.getOperation())) {
+                                if (owner != (exit.cast         ? exit.cast.getOperation()
+                                              : exit.comparison ? exit.comparison.getOperation()
+                                                                : exit.dispatch)) {
                                     return {};
                                 }
                             } else if (!llvm::isa<mlir::scf::YieldOp>(owner) ||
@@ -370,7 +427,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (exit.effectful) { return exit; }
                     // Reuse only slots whose complete use census belongs to
                     // this dispatch. Each output needs its own compatible slot.
-                    for (mlir::Type type : exit.dispatch.getResultTypes()) {
+                    for (mlir::Type type : exit.dispatch->getResultTypes()) {
                         if (!step()) { return {}; }
                         std::optional<unsigned> output;
                         for (auto [index, result] : llvm::enumerate(loop.getResults())) {
@@ -440,20 +497,20 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     auto dispatch = before.exit.dispatch;
                     if (before.exit.effectful) {
                         auto choice = ctjs::TruthyOp::create(
-                            at, dispatch.getLoc(), copied.getResult(before.exit.selector));
+                            at, dispatch->getLoc(), copied.getResult(before.exit.selector));
                         auto branch = mlir::scf::IfOp::create(
-                            at, dispatch.getLoc(), dispatch.getResultTypes(), choice.getResult());
+                            at, dispatch->getLoc(), dispatch->getResultTypes(), choice.getResult());
                         operationCount += 2;
                         Terminal joined;
                         joined.kind = Terminal::yielded;
-                        for (auto [index, type] : llvm::enumerate(dispatch.getResultTypes())) {
+                        for (auto [index, type] : llvm::enumerate(dispatch->getResultTypes())) {
                             if (!step()) { return {}; }
                             joined.types.push_back(type);
                             joined.carried.push_back(static_cast<unsigned>(index));
                         }
                         for (auto [source, target] :
-                             llvm::zip(llvm::ArrayRef<mlir::Region *>{&dispatch.getCaseRegions()[0],
-                                                                      &dispatch.getDefaultRegion()},
+                             llvm::zip(llvm::ArrayRef<mlir::Region *>{before.exit.arms[0],
+                                                                      before.exit.fallback},
                                        branch->getRegions())) {
                             for (const auto & item : values.getValueMap()) {
                                 (void)item;
@@ -469,13 +526,13 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             auto result = self(self, source->front(), source->front().begin(), path,
                                                nested, nullptr, joined, depth + 1);
                             if (!result) { return {}; }
-                            mlir::scf::YieldOp::create(nested, dispatch.getLoc(), *result);
+                            mlir::scf::YieldOp::create(nested, dispatch->getLoc(), *result);
                             ++operationCount;
                         }
-                        values.map(dispatch.getResults(), branch.getResults());
+                        values.map(dispatch->getResults(), branch.getResults());
                     } else {
                         for (auto [result, output] :
-                             llvm::zip(dispatch.getResults(), before.exit.outputs)) {
+                             llvm::zip(dispatch->getResults(), before.exit.outputs)) {
                             if (!step()) { return {}; }
                             values.map(result, copied.getResult(output));
                         }
@@ -485,6 +542,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                     }
                     if (before.exit.cast) { visited.insert(before.exit.cast); }
+                    if (before.exit.comparison) { visited.insert(before.exit.comparison); }
+                    if (before.exit.literal) { visited.insert(before.exit.literal); }
                     visited.insert(dispatch);
                     cursor = dispatch->getIterator();
                 }

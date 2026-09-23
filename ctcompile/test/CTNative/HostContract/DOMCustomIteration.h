@@ -1961,7 +1961,37 @@ module {
     check(savedCompletion && zeroSavedCompletion,
           "saved completion payloads and a first-exit exhaustion parse");
     if (!savedCompletion || !zeroSavedCompletion) { return; }
-    for (auto fixture : {*savedCompletion, *zeroSavedCompletion}) {
+    const auto comparisonCompletion = [&](const std::string & original) {
+        auto text = replaced(original,
+                             "    %selector = arith.index_castui %loop#3 : i32 to index\n"
+                             "    %answer = scf.index_switch %selector -> !ctjs.value\n"
+                             "    case 7 {",
+                             "    %exitTag = arith.constant 7 : i32\n"
+                             "    %exitTest = arith.cmpi eq, %loop#3, %exitTag : i32\n"
+                             "    %answer = scf.if %exitTest -> (!ctjs.value) {");
+        return replaced(text, "    }\n    default {", "    } else {");
+    };
+    const auto comparedSource = comparisonCompletion(savedCompletionSource);
+    const auto comparedZeroSource = comparisonCompletion(zeroSavedCompletionSource);
+    const auto reversedComparisonSource =
+        replaced(comparedSource, "eq, %loop#3, %exitTag", "eq, %exitTag, %loop#3");
+    const auto unequalComparisonSource = replaced(
+        replaced(comparedSource, "%exitTag = arith.constant 7", "%exitTag = arith.constant 11"),
+        "cmpi eq,", "cmpi ne,");
+    const auto earlierComparisonSource =
+        replaced(replaced(comparedSource, "    %exitTag = arith.constant 7 : i32\n", ""),
+                 "%loop#3, %exitTag", "%loop#3, %normalTag");
+    llvm::SmallVector<mlir::OwningOpRef<mlir::ModuleOp>> comparisons;
+    llvm::SmallVector<mlir::ModuleOp> savedFixtures{*savedCompletion, *zeroSavedCompletion};
+    for (const auto & text : {comparedSource, comparedZeroSource, reversedComparisonSource,
+                              unequalComparisonSource, earlierComparisonSource}) {
+        auto parsed = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(parsed), "compared saved completion parses");
+        if (!parsed) { return; }
+        savedFixtures.push_back(*parsed);
+        comparisons.push_back(std::move(parsed));
+    }
+    for (auto fixture : savedFixtures) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             auto request = contract;
@@ -1985,7 +2015,8 @@ module {
                     auto payload = llvm::dyn_cast<mlir::OpResult>(yielded.getOperand(0));
                     auto loop = payload ? llvm::dyn_cast<mlir::scf::WhileOp>(payload.getOwner())
                                         : mlir::scf::WhileOp{};
-                    check(loop && payload.getResultNumber() == index + 1 &&
+                    const auto expectedSlot = fixture == *comparisons[3] ? 2 - index : index + 1;
+                    check(loop && payload.getResultNumber() == expectedSlot &&
                               loop->getBlock() == join->getBlock() && loop->isBeforeInBlock(join),
                           "each close arm yields its own value saved before the loop exit");
                     unsigned closes = 0, reads = 0;
@@ -2011,7 +2042,7 @@ module {
             if (!proof.proved()) { std::fprintf(stderr, "%s\n", proof.reason().str().c_str()); }
         }
     }
-    for (const auto & invalid : {
+    for (const auto & invalidOriginal : {
              replaced(savedCompletionSource, "%poison, %normalValue, %poison, %normalTag",
                       "%poison, %poison, %poison, %normalTag"),
              replaced(savedCompletionSource, "%poison, %poison, %returnValue, %breakTag",
@@ -2035,27 +2066,55 @@ module {
                       "      %observer = ctjs.truthy %breakCount\n"
                       "      scf.yield %count, %normalCount, %breakCount"),
          }) {
-        check(!invalid.empty() && invalid != savedCompletionSource,
-              "hostile saved payload changes the complete source");
-        if (invalid.empty()) { continue; }
-        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(fixture), "hostile selected payload parses");
-        if (!fixture) { continue; }
-        for (auto provider :
-             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-            auto request = contract;
-            request.provider = provider;
-            request.moduleSha256 = hostContractFingerprint(*fixture);
-            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
-            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
-            check(static_cast<bool>(failure), "selected or externally observed poison refuses");
-            if (failure) { llvm::consumeError(std::move(failure)); }
-            check(hostContractFingerprint(*fixture) == request.moduleSha256,
-                  "saved-payload refusal preserves the caller's original source");
-            request.moduleSha256 = hostContractFingerprint(*input);
-            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
-                  "saved-payload refusal publishes no partial DOM evidence");
+        for (const auto & invalid : {invalidOriginal, comparisonCompletion(invalidOriginal)}) {
+            check(!invalid.empty() && invalid != savedCompletionSource,
+                  "hostile saved payload changes the complete source");
+            if (invalid.empty()) { continue; }
+            auto fixture = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            check(static_cast<bool>(fixture), "hostile selected payload parses");
+            if (!fixture) { continue; }
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*fixture);
+                mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure), "selected or externally observed poison refuses");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+                check(hostContractFingerprint(*fixture) == request.moduleSha256,
+                      "saved-payload refusal preserves the caller's original source");
+                request.moduleSha256 = hostContractFingerprint(*input);
+                check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "saved-payload refusal publishes no partial DOM evidence");
+            }
         }
+    }
+    for (const auto & invalid : {
+             replaced(comparedSource, "%exitTag = arith.constant 7", "%exitTag = arith.constant 8"),
+             replaced(comparedSource, "cmpi eq,", "cmpi slt,"),
+             replaced(comparedSource, "    ctjs.frame_exit %frame",
+                      "    %extraTag = arith.cmpi eq, %loop#3, %normalTag : i32\n"
+                      "    ctjs.frame_exit %frame"),
+             replaced(comparedSource, "    ctjs.frame_exit %frame",
+                      "    %extraLiteral = arith.cmpi eq, %normalTag, %exitTag : i32\n"
+                      "    ctjs.frame_exit %frame"),
+             replaced(comparedSource, "    ctjs.frame_exit %frame",
+                      "    %extraComparison = arith.xori %exitTest, %exitTest : i1\n"
+                      "    ctjs.frame_exit %frame"),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved exit comparison parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(static_cast<bool>(failure),
+              "wrong or externally observed completion comparison refuses");
+        if (failure) { llvm::consumeError(std::move(failure)); }
+        request.moduleSha256 = hostContractFingerprint(*input);
+        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+              "unproved comparison publishes no partial DOM evidence");
     }
     // A numeric counter precedes two element slots: an inactive element must
     // keep a compatible alias, and each selected arm observes its own owner.
@@ -4766,6 +4825,8 @@ module {
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,
+                         *comparisons[0],
+                         *comparisons[3],
                          *elementCompletion,
                          *zeroElementCompletion,
                          *counted,
