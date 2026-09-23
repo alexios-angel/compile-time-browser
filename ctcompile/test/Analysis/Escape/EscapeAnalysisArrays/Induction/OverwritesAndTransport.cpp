@@ -266,11 +266,74 @@ void InductionCases::overwritesAndTransport() {
          {"#ctjs.number<4611686018427387904>", "#ctjs.number<13830554455654793216>",
           "#ctjs.number<4602678819172646912>", "#ctjs.number<9221120237041090560>",
           "#ctjs.undefined", "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
-        reject("power indices require exact zero/unit Number exponents",
-               replace(replace(unitPower,
-                               "  %a =", "  %exponent = ctjs.constant " + literal + "\n  %a ="),
-                       "pow %i, %one", "pow %i, %exponent"));
+        const auto body = replace(
+            replace(unitPower, "  %a =", "  %exponent = ctjs.constant " + literal + "\n  %a ="),
+            "pow %i, %one", "pow %i, %exponent");
+        if (literal == "#ctjs.number<4611686018427387904>") {
+            run({.what = "two bounded base values retain exact scalar power identities",
+                 .body = body,
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("two-point powers still require exact converted scalar results", body);
+        }
     }
+    const auto twoPointExponent = replace(replace(unitPower, "[%one, %x]", "[%zero, %x, %x]"),
+                                          "%position = ctjs.binary pow %i, %one",
+                                          "%exponent = ctjs.binary mod %i, %two\n"
+                                          "  %position = ctjs.binary pow %two, %exponent");
+    run({.what = "two exponent values retain nonunit base identities in source operand order",
+         .body = twoPointExponent,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto twoPointReload =
+        replace(replace(twoPointExponent, "[%zero, %x, %x]", "[%three, %x, %zero, %x]"),
+                "%position = ctjs.binary pow %two, %exponent",
+                "%powerBase = ctjs.get_property %base[%zero]\n"
+                "  %position = ctjs.binary pow %powerBase, %exponent");
+    run({.what = "two-point power images preserve gaps for invariant reloads",
+         .body = twoPointReload,
+         .arrays = "a:[three,zero,zero,zero]",
+         .reads = "a[0]=three; a[0]=three; a[0]=three; a[1]=zero; "
+                  "a[0]=three; a[2]=zero; a[0]=three; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "two-point power reloads retain the complete later-store census",
+        replace(twoPointReload, "  %step =", "  ctjs.set_property %base[%zero], %one\n  %step ="));
+    reject("two-point power reloads cannot overlap either exact image",
+           replace(replace(twoPointReload, "[%three, %x, %zero, %x]", "[%zero, %three, %zero, %x]"),
+                   "%powerBase = ctjs.get_property %base[%zero]",
+                   "%powerBase = ctjs.get_property %base[%one]"));
+    run({.what = "two-point powers retain pre-overwrite snapshots",
+         .body = replace(overwritten, "  ctjs.set_property %base[%i], %zero",
+                         "  %position = ctjs.binary pow %i, %two\n"
+                         "  ctjs.set_property %base[%position], %zero"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=one; a[1]=x",
+         .exit = "x -> {x}"});
+    const auto signedTwoPoint = replace(replace(replace(unitPower, "[%one, %x]", "[%x, %zero, %x]"),
+                                                "add %i, %one", "add %i, %two"),
+                                        "%position = ctjs.binary pow %i, %one",
+                                        "%powerBase = ctjs.binary sub %i, %one\n"
+                                        "  %power = ctjs.binary pow %powerBase, %three\n"
+                                        "  %position = ctjs.binary add %power, %one");
+    run({.what = "two signed base values preserve odd power images and their unwritten gap",
+         .body = signedTwoPoint,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("equal power endpoints cannot conceal an unproved interior base",
+           replace(replace(signedTwoPoint, "add %i, %two", "add %i, %one"),
+                   "pow %powerBase, %three", "pow %powerBase, %two"));
+    reject("two-point powers still refuse a nonidentity scalar endpoint",
+           replace(replace(twoPointExponent, "mod %i, %two", "mod %i, %three"), "add %i, %one",
+                   "add %i, %two"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

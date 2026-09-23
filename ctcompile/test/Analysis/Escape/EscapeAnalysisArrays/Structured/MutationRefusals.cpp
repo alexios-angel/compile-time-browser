@@ -172,6 +172,40 @@ void StructuredCases::mutationRefusals() {
            replace(parityPower, "add %parity, %one", "add %parity, %zero"));
     reject("structured powers refuse nonunit varying results",
            replace(unitPower, "pow %i, %one", "pow %i, %i"));
+    const auto twoPointPower =
+        replace(replace(unitPower, "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                "pow %i, %one", "pow %i, %two");
+    rows.push_back({.what = "structured two-point base powers retain exact scalar identities",
+                    .body = twoPointPower,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    const auto twoPointExponent =
+        replace(replace(twoPointPower, "create_array [%x]", "create_array [%zero, %x]"),
+                "%position = ctjs.binary pow %i, %two",
+                "%exponent = ctjs.binary mod %i, %two\n"
+                "    %position = ctjs.binary pow %two, %exponent");
+    rows.push_back({.what = "structured two-point exponents preserve source operand order",
+                    .body = twoPointExponent,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto twoPointReload =
+        replace(replace(twoPointExponent, "create_array [%zero, %x]", "create_array [%two, %x]"),
+                "%position = ctjs.binary pow %two, %exponent",
+                "%powerBase = ctjs.get_property %base[%zero]\n"
+                "    %position = ctjs.binary pow %powerBase, %exponent");
+    rows.push_back({.what = "structured two-point powers preserve invariant base reloads",
+                    .body = twoPointReload,
+                    .arrays = "a:[ctjs.binary,zero,zero]",
+                    .reads = "a[0]=ctjs.binary; a[0]=ctjs.binary; a[0]=ctjs.binary; a[1]=zero; "
+                             "a[0]=ctjs.binary; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured two-point powers retain the complete later-store census",
+           replace(twoPointReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
+    reject("structured two-point powers cannot borrow a third interior identity",
+           replace(twoPointPower, "create_array [%x]", "create_array [%x, %x]"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

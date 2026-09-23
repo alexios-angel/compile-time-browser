@@ -355,7 +355,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // Each transfer proves bounded primitive conversion; boundedNumberSum
         // separately excludes String concatenation for Add.
         if (!offset) { return std::nullopt; }
-        if (power) {
+        // At most two varying values need only their exact scalar power proofs;
+        // no interior value can introduce another extremum or unproved power.
+        const bool twoPointPower =
+            power && endpointNumber(range->last) - endpointNumber(range->first) <=
+                         static_cast<std::int64_t>(range->stride);
+        if (power && !twoPointPower) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
@@ -702,7 +707,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         // Keep the set of visited positions ordered even when the source
         // visits them backwards. The stride keeps its positive magnitude.
-        if (twoPointShift) {
+        if (twoPointShift || twoPointPower) {
             boundEndpointPair(*range);
         } else if (roundedIntervals) {
             // Each rounded increment is q or q+1. An integral average must

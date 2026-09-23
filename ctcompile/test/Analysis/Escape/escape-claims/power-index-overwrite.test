@@ -16,7 +16,7 @@
 // CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
@@ -58,6 +58,21 @@
 // CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
+
+
+// At most two varying values use exact scalar powers; interior values still need a range proof.
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function unit() {
@@ -353,3 +368,70 @@ negativeUnitParity(); negativeStringParity(); negativeExponentParity(); evenExpo
 oddExponentParity(); singletonExponentParity(); reloadedParityBase(); retainedParityChild();
 laterParityBaseStore(); overlappingParityBase(); negativeParityKey(); fractionalParityExponent();
 growingParityKey();
+
+function stringTwoPointPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** "2"] = 0;
+    return a;
+}
+function twoPointExponent() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[2 ** (i % 2)] = 0;
+    return a;
+}
+function reloadedTwoPointBase() {
+    var child = {}, a = [3, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[a[0] ** (i % 2)] = 0;
+    return a;
+}
+function retainedTwoPointGap() {
+    var child = {}, a = [3, child, child, child];
+    for (var i = 0; i < a.length; i++) a[a[0] ** (i % 2)] = 0;
+    return a;
+}
+function savedTwoPointPower() {
+    var child = {}, a = [child, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i ** 2] = 0;
+    return saved;
+}
+function laterTwoPointBaseStore() {
+    var child = {}, a = [3, child, 0, child];
+    for (var i = 0; i < a.length; i++) {
+        a[a[0] ** (i % 2)] = 0;
+        a[0] = 1;
+    }
+    return a;
+}
+function overlappingTwoPointBase() {
+    var child = {}, a = [0, 3, 0, child];
+    for (var i = 0; i < a.length; i++) a[a[1] ** (i % 2)] = 0;
+    return a;
+}
+function evenTwoPointPower() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 1) ** 2] = 0;
+    return a;
+}
+function oddTwoPointPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** 3] = 0;
+    return a;
+}
+function interiorPowerBase() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** 2] = 0;
+    return a;
+}
+function unprovedPowerEndpoint() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[2 ** (i % 3)] = 0;
+    return a;
+}
+function negativeTwoPointExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** -1] = 0;
+    return a;
+}
+stringTwoPointPower(); twoPointExponent(); reloadedTwoPointBase(); retainedTwoPointGap();
+savedTwoPointPower(); laterTwoPointBaseStore(); overlappingTwoPointBase(); evenTwoPointPower();
+oddTwoPointPower(); interiorPowerBase(); unprovedPowerEndpoint(); negativeTwoPointExponent();
