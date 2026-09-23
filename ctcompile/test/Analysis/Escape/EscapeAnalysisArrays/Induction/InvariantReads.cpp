@@ -615,7 +615,19 @@ void InductionCases::invariantReads() {
     for (const std::string bits :
          {"4751297606874824704", "13974669643729600512", "4751297606876816998",
           "9218868437227405312", "18442240474082181120", "9221120237041090560"}) {
-        reject("Number bitwise conversion retains finite original magnitude bounds",
+        if (bits == "13974669643729600512" || bits == "4751297606876816998") {
+            const bool retained = bits == "13974669643729600512";
+            run({.what = "wide Number conversion preserves original reads and retained children",
+                 .body = replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
+                                 "#ctjs.number<" + bits + ">"),
+                 .arrays = retained ? "keys:[textZero,textTwo]; a:[x,zero,zero]"
+                                    : "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = retained ? "a -> {a,x}" : "a -> {a}"},
+                retained ? "" : "x");
+            continue;
+        }
+        reject("Number bitwise conversion requires finite inputs and valid own-index results",
                replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
                        "#ctjs.number<" + bits + ">"));
     }
@@ -636,6 +648,105 @@ void InductionCases::invariantReads() {
         reject("Number table mutations remain visible before and after a read",
                replace(numberFractionalTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    const auto wideNumberTable =
+        replace(replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
+                        "#ctjs.number<4751297606876816998>"),
+                "#ctjs.number<4613712638259704627>", "#ctjs.number<4751297606878914150>");
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+          "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+          "shr %i, %textZero", "ushr %i, %textZero"}) {
+        run({.what = "wide finite Number operands masks and counts wrap only at bitwise consumers",
+             .body = replace(wideNumberTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    // 2^53 and its next representable Number still have distinct uint32 images.
+    run({.what = "wide Number conversion uses represented doubles across the precision boundary",
+         .body = replace(replace(wideNumberTable, "4751297606876816998", "4845873199050653696"),
+                         "4751297606878914150", "4845873199050653697"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string bits : {"9094988921128908188", "18318360957983683996",
+                                   "9218868437227405311", "9223372036854775808"}) {
+        run({.what = "huge finite Numbers and negative zero reduce before integer conversion",
+             .body = replace(wideNumberTable, "4751297606876816998", bits),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto wideNumberComplement =
+        replace(replace(numberComplementTable, "13834607695319426662", "13974669643732641382"),
+                "13839336474928165683", "13974669643734738534");
+    const auto wideNumberNegated =
+        replace(replace(negatedNumberTable, "4611235658464650854", "4751297606877865574"),
+                "4615964438073389875", "4751297606879962726");
+    for (const auto & source : {wideNumberComplement, wideNumberNegated}) {
+        run({.what = "wide negative literals and their original source Neg retain signed bits",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "wide varying Number shift counts retain their original five-bit images",
+         .body =
+             replace(replace(replace(replace(wideNumberTable, "[%x, %zero, %x]", "[%zero, %x, %x]"),
+                                     "4751297606876816998", "4751297606876397568"),
+                             "4751297606878914150", "4751297606877865574"),
+                     "bitor %slot, %zero", "shl %one, %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "wide Number conversion does not release a saved child alias",
+         .body = replace(replace(wideNumberTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    const auto selectedWideNumber =
+        replace(replace(selectedNumberFractional, "4606281698874543309", "4751297606876816998"),
+                "4613712638259704627", "4751297606878914150");
+    run({.what = "wide Number conversion retains the independent receiver reload gap",
+         .body = selectedWideNumber,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads =
+             "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    reject("wide Number conversion cannot overwrite its reloaded receiver",
+           replace(selectedWideNumber, "4751297606878914150", "4751297606877865574"));
+    reject("the representable Number below 2^53 keeps its negative signed bitwise result",
+           replace(wideNumberTable, "4751297606876816998", "4845873199050653695"));
+    for (const std::string expression :
+         {"unary plus %slot", "binary sub %slot, %zero", "binary mul %slot, %one",
+          "binary div %slot, %one", "binary add %slot, %zero"}) {
+        reject("wide Number arithmetic cannot borrow bitwise wrapping",
+               replace(wideNumberTable, "binary_static bitor %slot, %zero", expression));
+        reject("wide computed Number values still need independent provenance",
+               replace(wideNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                       "  %number = ctjs." + expression +
+                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+    }
+    reject("wide original Number keys do not become wrapped properties",
+           replace(wideNumberTable, "%base[%converted]", "%base[%slot]"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("wide Number table mutations remain visible before and after reads",
+               replace(wideNumberTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    for (const std::string bits :
+         {"9218868437227405312", "18442240474082181120", "9221120237041090560"}) {
+        reject("wide Number conversion still refuses nonfinite inputs",
+               replace(wideNumberTable, "4751297606876816998", bits));
     }
     reject("table conversion cannot invoke object coercion",
            replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));

@@ -102,6 +102,15 @@
 // CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj escapes:stored
 
+
+// Finite original Number bitwise conversion wraps without changing source values.
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -167,6 +176,19 @@
 // RECORD-LABEL: fn 77 entries 1 params 0 frame {{[0-9]+}} name mutatedNumberFractionalTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 78 entries 1 params 0 frame {{[0-9]+}} name wideNumberFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 79 entries 1 params 0 frame {{[0-9]+}} name wideNumberBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 80 entries 1 params 0 frame {{[0-9]+}} name wideNumberComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 81 entries 1 params 0 frame {{[0-9]+}} name wideNumberShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 82 entries 1 params 0 frame {{[0-9]+}} name savedWideNumberTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 83 entries 1 params 0 frame {{[0-9]+}} name mutatedWideNumberTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 84 entries 1 params 0 frame {{[0-9]+}} name nonfiniteWideNumberTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -458,6 +480,8 @@ fractionalBitwiseTableKey(); fractionalComplementTableKey(); fractionalShiftTabl
 unconvertedFractionalTableKey(); arithmeticFractionalTableKey(); mutatedFractionalTableKey();
 numberFractionalBitwiseTableKey(); numberFractionalComplementTableKey(); numberFractionalShiftTableKey();
 savedNumberFractionalTableChild(); mutatedNumberFractionalTableKey(); wideNumberFractionalTableKey();
+wideNumberBitwiseTableKey(); wideNumberComplementTableKey(); wideNumberShiftTableKey();
+savedWideNumberTableChild(); mutatedWideNumberTableKey(); nonfiniteWideNumberTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -628,6 +652,41 @@ function mutatedNumberFractionalTableKey() {
 }
 function wideNumberFractionalTableKey() {
     var child = {}, a = [child, 0, child], keys = [0.9, 4294967296.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+
+function wideNumberBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 4294967298.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function wideNumberComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-4294967297.9, -4294967299.9];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function wideNumberShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [4294967296.5, 4294967297.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedWideNumberTableChild() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 4294967298.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedWideNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 4294967298.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 4294967296.5;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function nonfiniteWideNumberTableKey() {
+    var child = {}, a = [child, 0, child], keys = [4294967296.9, 1e999];
     for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
     return a;
 }

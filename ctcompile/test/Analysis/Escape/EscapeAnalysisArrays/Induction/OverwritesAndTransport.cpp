@@ -6700,11 +6700,14 @@ void InductionCases::overwritesAndTransport() {
                    "%shiftBase = ctjs.get_property %base[%one]"));
     reject("invariant shift count refinement retains fractional intermediate refusals",
            replace(invariantShiftBase, "mod %i, %two", "div %i, %two"));
-    reject("invariant shift refinement retains the source base bound",
-           replace(replace(invariantShiftBase, "  %a =",
-                           "  %unbounded = ctjs.constant #ctjs.number<4751297606875873280>\n"
-                           "  %a ="),
-                   "shl %one, %count", "shl %unbounded, %count"));
+    run({.what = "wide invariant shift bases wrap without overwriting other children",
+         .body = replace(replace(invariantShiftBase, "  %a =",
+                                 "  %unbounded = ctjs.constant #ctjs.number<4751297606875873280>\n"
+                                 "  %a ="),
+                         "shl %one, %count", "shl %unbounded, %count"),
+         .arrays = "a:[zero,x,x]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=x",
+         .exit = "a -> {a,x}"});
     reject("invariant shift bases retain fractional primitive refusals",
            replace(replace(invariantShiftBase,
                            "  %a =", "  %fraction = ctjs.binary div %three, %two\n  %a ="),
