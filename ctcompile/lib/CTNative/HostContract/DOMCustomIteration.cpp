@@ -160,12 +160,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                               ? llvm::dyn_cast<ctjs::ThrowOp>(body.getBody().front().back())
                               : ctjs::ThrowOp{};
             if (accessor.getTarget() != object.getResult() || accessor.getName() != "return" ||
-                !undefined(accessor.getSetter()) || !thrown || protectedCloses.empty()) {
-                return error("DOM iterator getter requires a terminal suppressed throw");
+                !undefined(accessor.getSetter()) || !thrown) {
+                return error("DOM iterator getter requires a terminal throw");
             }
             // A getter that always throws never supplies a return method.
             // Model its invocation with the existing close callable, whose
-            // throw, confinement and every remaining suppression edge
+            // throw, confinement and every suppression or propagation edge
             // must all prove below before this private candidate can publish.
             if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
             mlir::OpBuilder at(accessor);

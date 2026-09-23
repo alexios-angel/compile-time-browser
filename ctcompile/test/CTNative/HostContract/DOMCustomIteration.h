@@ -2028,8 +2028,6 @@ module {
     }
     for (const auto & invalid : {
              getterReturn(primitiveAbruptSource),
-             getterReturn(throwingReturn(primitiveReturn(returningSource))),
-             getterReturn(throwingReturn(primitiveReturn(countedSource))),
              replaced(getterAbruptSource, "set %undefined", "set %finish"),
              replaced(getterAbruptSource, "define_accessor \"return\"", "define_accessor \"next\""),
              replaced(getterAbruptSource, "    %open =",
@@ -2042,17 +2040,25 @@ module {
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
         auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
-        check(static_cast<bool>(failure), "returning, unsuppressed or replaced getter refuses");
+        check(static_cast<bool>(failure), "returning, settable or replaced getter refuses");
         llvm::consumeError(std::move(failure));
     }
     auto normalThrowingReturn = mlir::parseSourceString<mlir::ModuleOp>(
         throwingReturn(primitiveReturn(returningSource)), &context);
     auto normalThrowingBreak = mlir::parseSourceString<mlir::ModuleOp>(
         throwingReturn(primitiveReturn(countedSource)), &context);
-    check(normalThrowingReturn && normalThrowingBreak,
+    auto normalGetterReturn = mlir::parseSourceString<mlir::ModuleOp>(
+        getterReturn(throwingReturn(primitiveReturn(returningSource))), &context);
+    auto normalGetterBreak = mlir::parseSourceString<mlir::ModuleOp>(
+        getterReturn(throwingReturn(primitiveReturn(countedSource))), &context);
+    check(normalThrowingReturn && normalThrowingBreak && normalGetterReturn && normalGetterBreak,
           "historical normal terminal-throw close controls parse unchanged");
-    if (!normalThrowingReturn || !normalThrowingBreak) { return; }
-    for (auto fixture : {*normalThrowingReturn, *normalThrowingBreak}) {
+    if (!normalThrowingReturn || !normalThrowingBreak || !normalGetterReturn ||
+        !normalGetterBreak) {
+        return;
+    }
+    for (auto fixture :
+         {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn, *normalGetterBreak}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
@@ -5346,6 +5352,8 @@ module {
                          *getterAbrupt,
                          *normalThrowingReturn,
                          *normalThrowingBreak,
+                         *normalGetterReturn,
+                         *normalGetterBreak,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,

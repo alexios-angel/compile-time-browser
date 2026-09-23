@@ -2838,6 +2838,13 @@ def saved_throws(args, compilers, includes, libraries):
             "yes",
         ),
         (
+            "number-getter-object-close",
+            refusals()["body-throw-close-getter"].replace("throw 2;", "throw anchor;"),
+            "js_num",
+            "error.value.value() == 1.0",
+            "yes",
+        ),
+        (
             "boolean",
             original.replace("throw 1;", "throw false;"),
             "js_boolean_t",
@@ -4336,6 +4343,7 @@ def saved_throws(args, compilers, includes, libraries):
             "number-primitive-close",
             "number-throwing-close",
             "number-getter-close",
+            "number-getter-object-close",
         )
         snapshot = conditional or label.startswith("boolean-snapshot") or numeric_snapshot
         js_kind = (
@@ -5526,6 +5534,10 @@ var savedThrow, savedExhausted;
         for label, text in read_close_cases[2:]
     )
     normal_cases += read_close_cases
+    normal_cases += tuple(
+        (label.replace("-close", "-getter-close"), text.replace("return() {", "get return() {"))
+        for label, text in read_close_cases
+    )
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
@@ -5540,13 +5552,18 @@ var savedThrow, savedExhausted;
             "feeding-first-read-write-close",
             "final-argument-read-write-close",
             "fourth-postselector-close",
+            "fourth-postselector-getter-close",
             "inside-first-write-read-write-close",
             "postwrite-close",
+            "postwrite-getter-close",
             "second-postwrite-close",
+            "second-postwrite-getter-close",
             "second-postwrite-selector-close",
+            "second-postwrite-selector-getter-close",
             "selector-before-first-write-close",
             "selector-branch-throw-close",
             "selector-branch-throw-read-close",
+            "selector-branch-throw-read-getter-close",
             "selector-final-argument-read-write-close",
             "selector-guarded-second-postread-close",
             "selector-guarded-second-read-close",
@@ -5560,18 +5577,27 @@ var savedThrow, savedExhausted;
             "selector-reused-second-write-close",
             "terminal-earlier-read-write-close",
             "terminal-match-close",
+            "terminal-match-getter-close",
             "terminal-match-read-close",
+            "terminal-match-read-getter-close",
             "terminal-postselector-close",
+            "terminal-postselector-getter-close",
             "terminal-read-sequence-close",
+            "terminal-read-sequence-getter-close",
             "terminal-read-write-close",
+            "terminal-read-write-getter-close",
             "terminal-selector-write-close",
             "terminal-write-close",
+            "terminal-write-getter-close",
             "third-postselector-close",
+            "third-postselector-getter-close",
             "third-postselector-read-close",
+            "third-postselector-read-getter-close",
             "third-postselector-result-close",
+            "third-postselector-result-getter-close",
             "throwing-close",
         )
-    }
+    } | {"normal-getter-close", "unknown-getter-throw"}
     admitted = 0
     for label, text in (
         (
