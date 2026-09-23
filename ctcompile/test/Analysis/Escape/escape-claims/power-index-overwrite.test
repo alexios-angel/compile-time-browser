@@ -244,6 +244,22 @@
 // CHECK: escape {{[0-9a-f]+}} 209 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 210 {{[0-9]+}} obj escapes:stored
 
+// Bounded varying masks reuse whole-key refinement and independent reload proofs.
+// CHECK: escape {{[0-9a-f]+}} 211 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 212 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 213 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 214 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 215 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 216 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 217 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 218 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 219 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 220 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 221 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 222 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 223 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 224 {{[0-9]+}} obj confined
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -1430,3 +1446,83 @@ function negativeSingletonMask() {
 singletonAndMask(); singletonOrMask(); singletonXorMask(); commutedSingletonMask();
 retainedSingletonMask(); savedSingletonMask(); reloadedSingletonMask(); laterSingletonMaskStore();
 overlappingSingletonMask(); varyingBitwiseMask(); negativeSingletonMask();
+
+function varyingAndMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (2 - i)] = 0;
+    return a;
+}
+function varyingOrMask() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[i | (2 - i)] = 0;
+    return a;
+}
+function varyingXorMask() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i ^ (2 - i)] = 0;
+    return a;
+}
+function commutedVaryingMask() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(2 - i) ^ i] = 0;
+    return a;
+}
+function retainedVaryingMask() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i & (2 - i)] = 0;
+    return a;
+}
+function savedVaryingMask() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i & (2 - i)] = 0;
+    return saved;
+}
+function reloadedVaryingMask() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) a[i ^ (a[1] - i)] = 0;
+    return a;
+}
+function laterVaryingMaskStore() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i ^ (a[1] - i)] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingVaryingMask() {
+    var child = {}, a = [2, 0, child];
+    for (var i = 0; i < a.length; i++) a[i ^ (a[0] - i)] = 0;
+    return a;
+}
+function fractionalVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (i / 2)] = 0;
+    return a;
+}
+function negativeVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i | -i] = 0;
+    return a;
+}
+function extendingVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ^ (3 - i)] = 0;
+    return a;
+}
+function dividedVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i ^ (2 - i)) / 2] = 0;
+    return a;
+}
+function convertedVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i * 1073741824) ^ ((2 - i) * 1073741824)) >>> 31] = 0;
+    return a;
+}
+
+varyingAndMask(); varyingOrMask(); varyingXorMask();
+commutedVaryingMask(); retainedVaryingMask(); savedVaryingMask();
+reloadedVaryingMask(); laterVaryingMaskStore(); overlappingVaryingMask();
+fractionalVaryingMask(); negativeVaryingMask(); extendingVaryingMask();
+dividedVaryingMask(); convertedVaryingMask();

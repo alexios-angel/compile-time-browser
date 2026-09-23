@@ -264,7 +264,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         return range;
     };
     std::pair<std::size_t, std::size_t> indexBounds{*start, last};
-    bool fractionalEnclosure = false;
+    bool refinableEnclosure = false;
     const auto indexRange = [&](auto && self, mlir::Value operand,
                                 unsigned depth) -> std::optional<IndexRange> {
         if (!spend()) {
@@ -365,6 +365,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 offset = range->first;
                 range = other;
                 offsetOperand = 1U - offsetOperand;
+            } else if (other && (bitAnd || bitOr || bitXor)) {
+                // Both operands are bounded but correlated. Split the whole key
+                // until the existing singleton-mask transfer proves each visit.
+                refinableEnclosure = true;
             }
         }
         const auto exponent = !offset && power && offsetOperand == 1 &&
@@ -741,7 +745,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // Correlated unions can include fractional quotients absent
                 // from every actual visit. Only subdivision may discharge this
                 // failure; no fractional value becomes an integer range fact.
-                fractionalEnclosure |= divisor && *divisor != 0 && range->mixedShift;
+                refinableEnclosure |= divisor && *divisor != 0 && range->mixedShift;
                 return std::nullopt;
             }
             range->stride = singleton ? 1 : range->stride / *divisor;
@@ -828,11 +832,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 return false;
             }
             indexBounds = {begin, end};
-            fractionalEnclosure = false;
+            refinableEnclosure = false;
             const auto actual = indexRange(indexRange, key, 0);
             if (guardReloads.size() != reloadCount ||
                 (!actual &&
-                 (!fractionalEnclosure || invariantFailure == ArrayContentsFailure::WorkLimit))) {
+                 (!refinableEnclosure || invariantFailure == ArrayContentsFailure::WorkLimit))) {
                 return false;
             }
             if (actual && accepts(*actual)) { return true; }
@@ -850,9 +854,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (&operation == block->getTerminator()) { continue; }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 if (block != body) { return unsupported; }
-                fractionalEnclosure = false;
+                refinableEnclosure = false;
                 if (auto range = indexRange(indexRange, store.getKey(), 0);
-                    range || (fractionalEnclosure && *start < size)) {
+                    range || (refinableEnclosure && *start < size)) {
                     if (*start < size) {
                         const auto ownBounds = [&](const IndexRange & candidate) {
                             return candidate.first.integerNumber && candidate.last.integerNumber &&

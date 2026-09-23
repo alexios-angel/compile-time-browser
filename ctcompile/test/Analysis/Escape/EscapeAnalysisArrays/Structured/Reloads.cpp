@@ -217,8 +217,11 @@ void StructuredCases::reloads() {
                     .arrays = "a:[zero,y]",
                     .reads = "a[0]=zero; a[1]=y",
                     .exit = "a -> {a,y}"});
-    reject("structured masks cannot borrow a varying operand",
-           replace(masked, "bitand %i, %one", "bitand %i, %i"));
+    rows.push_back({.what = "structured varying AND operands preserve exact visited children",
+                    .body = replace(masked, "bitand %i, %one", "bitand %i, %i"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
     const auto fixedZeroAnd = replace(masked, "%position = ctjs.binary_static bitand %i, %one",
                                       "%mask = ctjs.binary add %one, %one\n"
                                       "    %position = ctjs.binary_static bitand %i, %mask");
@@ -353,8 +356,11 @@ void StructuredCases::reloads() {
         }
         reject("structured OR/XOR reject an enclosure beyond the guard allocation",
                replace(bitwise, "[%x]", "[%x, %y]"));
-        reject("structured OR/XOR require an invariant mask",
-               replace(bitwise, "%i, %one", "%i, %i"));
+        rows.push_back({.what = "structured varying OR/XOR operands retain only unwritten children",
+                        .body = replace(bitwise, "%i, %one", "%i, %i"),
+                        .arrays = isOr ? "a:[zero,zero]" : "a:[zero,y]",
+                        .reads = isOr ? "a[0]=zero; a[1]=zero" : "a[0]=zero; a[1]=y",
+                        .exit = isOr ? "a -> {a}" : "a -> {a,y}"});
     }
     for (const std::string kind : {"bitand", "bitor"}) {
         const bool isAnd = kind == "bitand";

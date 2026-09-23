@@ -716,8 +716,46 @@ void StructuredCases::mutationRefusals() {
     reject("structured singleton masks retain the complete later-store census",
            replace(singletonMaskReload,
                    "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
-    reject("structured varying masks cannot borrow a singleton fact",
-           replace(singletonMask, "pow %one, %i", "pow %zero, %i"));
+    rows.push_back({.what = "structured varying masks refine visits and retain unwritten children",
+                    .body = replace(singletonMask, "pow %one, %i", "pow %zero, %i"),
+                    .arrays = "a:[zero,x,zero]",
+                    .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+                    .exit = "a -> {a,x}"});
+    const auto varyingMask =
+        replace(replace(singletonMask, "  %a =",
+                        "  %two = ctjs.binary add %one, %one {storage_test_id = \"two\"}\n  %a ="),
+                "pow %one, %i", "sub %two, %i");
+    for (const std::string kind : {"bitand", "bitor", "bitxor"}) {
+        auto body = replace(varyingMask, "bitand %count, %i", kind + " %count, %i");
+        if (kind != "bitand") {
+            body =
+                replace(body, "create_array [%x, %x]",
+                        kind == "bitor" ? "create_array [%zero, %x]" : "create_array [%x, %zero]");
+            body = replace(body, "ctjs.append %zero to %a", "ctjs.append %x to %a");
+        }
+        rows.push_back({.what = "structured varying masks preserve actual writes and operand order",
+                        .body = body,
+                        .arrays = "a:[zero,zero,zero]",
+                        .reads = kind == "bitxor" ? "a[0]=x; a[1]=zero; a[2]=zero"
+                                                  : "a[0]=zero; a[1]=zero; a[2]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto varyingMaskReload =
+        replace(replace(varyingMask, "ctjs.append %zero to %a", "ctjs.append %two to %a"),
+                "%count = ctjs.binary sub %two, %i",
+                "%limit = ctjs.get_property %base[%two]\n"
+                "    %count = ctjs.binary sub %limit, %i");
+    rows.push_back({.what = "structured varying masks independently prove producer reload gaps",
+                    .body = varyingMaskReload,
+                    .arrays = "a:[zero,zero,two]",
+                    .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two",
+                    .exit = "a -> {a}"});
+    reject("structured varying masks retain the complete later-store census",
+           replace(varyingMaskReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured varying masks reject negative final keys",
+           replace(replace(varyingMask, "sub %two, %i", "sub %zero, %i"), "bitand %count, %i",
+                   "bitor %count, %i"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

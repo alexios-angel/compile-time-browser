@@ -1020,12 +1020,73 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(singletonMaskReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
                    "%powerUnit = ctjs.get_property %base[%two]",
                    "%powerUnit = ctjs.get_property %base[%zero]"));
-    reject("genuinely varying masks cannot borrow a singleton fact",
-           replace(singletonMask, "pow %one, %i", "pow %zero, %i"));
+    run({.what = "varying masks refine correlated visits without overwriting the retained child",
+         .body = replace(singletonMask, "pow %one, %i", "pow %zero, %i"),
+         .arrays = "a:[zero,x,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
     reject("singleton masks still require nonnegative own keys",
            replace(singletonMask, "%position = ctjs.binary_static bitand %i, %count",
                    "%negativeMask = ctjs.unary neg %count\n"
                    "  %position = ctjs.binary_static bitor %i, %negativeMask"));
+    const auto varyingMask = replace(singletonMask, "pow %one, %i", "sub %two, %i");
+    for (const std::string kind : {"bitand", "bitor", "bitxor"}) {
+        auto body = replace(varyingMask, "bitand %i, %count", kind + " %i, %count");
+        if (kind == "bitor") {
+            body = replace(body, "[%x, %x, %zero]", "[%zero, %x, %x]");
+        } else if (kind == "bitxor") {
+            body = replace(body, "[%x, %x, %zero]", "[%x, %zero, %x]");
+        }
+        for (const bool commuted : {false, true}) {
+            run({.what = "bounded varying masks refine both operand orders before actual replay",
+                 .body =
+                     commuted ? replace(body, kind + " %i, %count", kind + " %count, %i") : body,
+                 .arrays = "a:[zero,zero,zero]",
+                 .reads = kind == "bitxor" ? "a[0]=x; a[1]=zero; a[2]=zero"
+                                           : "a[0]=zero; a[1]=zero; a[2]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+    }
+    run({.what = "varying mask refinement retains children outside actual writes",
+         .body = replace(varyingMask, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "varying mask replay retains a child saved before its overwrite",
+         .body = replace(replace(varyingMask, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto varyingMaskReload =
+        replace(replace(replace(varyingMask, "[%x, %x, %zero]", "[%x, %two, %x]"),
+                        "%count = ctjs.binary sub %two, %i",
+                        "%limit = ctjs.get_property %base[%one]\n"
+                        "  %count = ctjs.binary sub %limit, %i"),
+                "bitand %i, %count", "bitxor %i, %count");
+    run({.what = "varying masks independently refine a reload inside the conservative footprint",
+         .body = varyingMaskReload,
+         .arrays = "a:[zero,two,zero]",
+         .reads = "a[1]=two; a[0]=x; a[1]=two; a[1]=two; a[1]=two; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("varying mask refinement rejects an actually overwritten producer reload",
+           replace(replace(varyingMaskReload, "[%x, %two, %x]", "[%two, %zero, %x]"),
+                   "%limit = ctjs.get_property %base[%one]",
+                   "%limit = ctjs.get_property %base[%zero]"));
+    reject("varying masks retain the complete later-store census",
+           replace(varyingMaskReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("varying masks still reject a fractional operand",
+           replace(varyingMask, "sub %two, %i", "div %i, %two"));
+    reject("varying masks cannot create negative properties",
+           replace(replace(varyingMask, "sub %two, %i", "sub %zero, %i"), "bitand %i, %count",
+                   "bitor %i, %count"));
+    reject("varying mask endpoint refinement cannot extend the guard array",
+           replace(replace(varyingMask, "sub %two, %i", "sub %three, %i"), "bitand %i, %count",
+                   "bitxor %i, %count"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :
@@ -1448,8 +1509,12 @@ void InductionCases::overwritesAndTransport() {
         replace(fixedAndReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
     reject("clearing the fixed upper AND bit cannot preserve the translated own bound",
            replace(fixedAnd, "4624633867356078080", "4619567317775286272"));
-    reject("two varying operands cannot supply an invariant mask",
-           replace(masked, "bitand %i, %one", "bitand %i, %i"));
+    run({.what = "correlated varying AND operands preserve every actual overwrite",
+         .body = replace(masked, "bitand %i, %one", "bitand %i, %i"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
     for (const std::string value :
          {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
           "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
@@ -1628,7 +1693,13 @@ void InductionCases::overwritesAndTransport() {
         }
         reject("OR/XOR bounds cannot miss a store beyond the guard array",
                replace(bitwise, "[%one, %x]", "[%one, %x, %zero]"));
-        reject("OR/XOR require one invariant operand", replace(bitwise, "%i, %one", "%i, %i"));
+        run({.what =
+                 "correlated varying OR/XOR operands preserve actual writes and retained children",
+             .body = replace(bitwise, "%i, %one", "%i, %i"),
+             .arrays = isOr ? "a:[zero,zero]" : "a:[zero,x]",
+             .reads = isOr ? "a[0]=zero; a[1]=zero" : "a[0]=zero; a[1]=x",
+             .exit = isOr ? "a -> {a}" : "a -> {a,x}"},
+            isOr ? "x" : "");
         reject("OR/XOR refuse varying inputs crossing converted zero",
                replace(bitwise, "%position = ctjs.binary_static " + kind + " %i, %one",
                        "%negative = ctjs.unary neg %i\n"
