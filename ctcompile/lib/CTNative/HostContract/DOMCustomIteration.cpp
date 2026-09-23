@@ -1170,6 +1170,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         helper.body.erase();
     }
     bool primitiveClose = false;
+    ctjs::ThrowOp suppressedThrow;
     // Projecting these records cannot invoke getters, consult a prototype or
     // lose evaluation of a field producer. Complete DOM proof checks values.
     for (auto & [name, store] : slots) {
@@ -1197,21 +1198,23 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         auto returned = llvm::dyn_cast<ctjs::ReturnOp>(block.back());
+        auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(block.back());
         auto record = returned ? returned.getValue().getDefiningOp<ctjs::CreateObjectOp>()
                                : ctjs::CreateObjectOp{};
-        auto literal =
-            returned ? returned.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+        auto result = returned ? returned.getValue() : thrown ? thrown.getValue() : mlir::Value{};
+        auto literal = result ? result.getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
         if (name == "return" && literal &&
             llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
                       ctjs::UndefinedAttr>(literal.getValue())) {
             // A saved throw ignores the close result. After completion
             // normalization, every surviving call must still be suppressed.
             primitiveClose = true;
+            suppressedThrow = thrown;
         } else if (!record || record->getBlock() != &block) {
             return error("DOM iterator method must return one fresh own-field record");
         }
         llvm::StringSet<> fields;
-        for (mlir::Operation * user : returned.getValue().getUsers()) {
+        for (mlir::Operation * user : result.getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             if (!record) { continue; }
             if (user == returned || llvm::isa<ctjs::RootOp>(user)) { continue; }
@@ -1226,7 +1229,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (name == "next" && (!fields.contains("done") || !fields.contains("value"))) {
             return error("DOM next result requires own done and value fields");
         }
-        if (!stateInitials.empty()) {
+        if (!stateInitials.empty() || thrown) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             unsigned count = 0;
             const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
@@ -1244,6 +1247,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     return error("DOM iterator state method escapes its own slot");
                 }
             }
+        }
+        if (!stateInitials.empty()) {
+            auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             if (!work.checkBody(body, false, true, true)) { return error(work.reason); }
             if (!capturedState.empty()) {
                 const auto nested = body.walk([&](ctjs::CreateClosureOp) {
@@ -1412,7 +1418,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!guarded) { return error("DOM iterator item requires its not-done continuation"); }
     }
 
-    if (!stateInitials.empty()) {
+    if (!stateInitials.empty() || suppressedThrow) {
         for (mlir::Operation * user : object->getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             if (user != open &&
@@ -2018,6 +2024,64 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto yield = llvm::cast<mlir::scf::YieldOp>(branch.getThenRegion().front().front());
         branch.replaceAllUsesWith(yield.getOperands());
         branch.erase();
+    }
+    if (suppressedThrow) {
+        // Completion must remove the inactive eager-array transport too.
+        // A surviving holder/method alias could otherwise call the rewritten
+        // body without suppression after cell or method resolution.
+        auto holder = emittedNext.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getObject();
+        for (mlir::Operation * user : holder.getUsers()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (auto root = llvm::dyn_cast<ctjs::RootOp>(user); root && root.getValue() == holder) {
+                continue;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                store && store.getObject() == holder && store.getValue() != holder &&
+                (ctjs::constantKey(store.getKey()) == "next" ||
+                 ctjs::constantKey(store.getKey()) == "return")) {
+                continue;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (method && method.getObject() == holder && call.getReceiver() == holder) {
+                    continue;
+                }
+            }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+            if (!read || (ctjs::constantKey(read.getKey()) != "next" &&
+                          ctjs::constantKey(read.getKey()) != "return")) {
+                return error("DOM throwing close holder retains an unproved observer");
+            }
+            for (mlir::Operation * observer : read->getUsers()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                if (llvm::isa<ctjs::RootOp>(observer)) { continue; }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(observer);
+                if (!call || call.getCallee() != read || call.getReceiver() != holder ||
+                    (call != emittedNext && !llvm::isa<ctjs::InvokeOp>(call->getParentOp()))) {
+                    return error("DOM throwing close method retains an unproved observer");
+                }
+            }
+        }
+        // Every remaining call has exact unused-result suppression, and the
+        // method has no other observer. Preserve all payload producers and
+        // effects; its terminal literal throw is equivalent to a discarded
+        // primitive return here. Complete helper/DOM proof still checks them.
+        // ponytail: terminal literals only; conditional throws need explicit
+        // completion proof, and mutable state still needs exceptional transport.
+        mlir::Value frame;
+        for (mlir::Operation & operation : *suppressedThrow->getBlock()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
+                frame = enter.getContext();
+            } else if (llvm::isa<ctjs::FrameExitOp>(operation)) {
+                frame = {};
+            }
+        }
+        if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
+        mlir::OpBuilder at(suppressedThrow);
+        if (frame) { ctjs::FrameExitOp::create(at, suppressedThrow.getLoc(), frame); }
+        ctjs::ReturnOp::create(at, suppressedThrow.getLoc(), suppressedThrow.getValue());
+        suppressedThrow.erase();
     }
     for (mlir::Operation * user : emittedNext->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }

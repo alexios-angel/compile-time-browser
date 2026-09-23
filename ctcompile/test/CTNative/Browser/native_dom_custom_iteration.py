@@ -2416,6 +2416,13 @@ def saved_throws(args, compilers, includes, libraries):
             "yes",
         ),
         (
+            "number-throwing-close",
+            refusals()["body-throw-close-throws"],
+            "js_num",
+            "error.value.value() == 1.0",
+            "yes",
+        ),
+        (
             "boolean",
             original.replace("throw 1;", "throw false;"),
             "js_boolean_t",
@@ -2449,6 +2456,13 @@ def saved_throws(args, compilers, includes, libraries):
         (
             "boolean-snapshot-primitive-close",
             refusals()["body-throw-boolean-snapshot"].replace("return {};", "return 2;"),
+            "js_boolean_t",
+            "!error.value",
+            "yes",
+        ),
+        (
+            "boolean-snapshot-throwing-close",
+            refusals()["body-throw-boolean-snapshot"].replace("return {};", "throw 2;"),
             "js_boolean_t",
             "!error.value",
             "yes",
@@ -2551,7 +2565,11 @@ def saved_throws(args, compilers, includes, libraries):
     for label, text, kind, payload, closed in cases:
         mixed = label == "conditional-boolean-throw-or-return"
         conditional = label.startswith("conditional-")
-        numeric_snapshot = kind == "js_num" and label not in ("number", "number-primitive-close")
+        numeric_snapshot = kind == "js_num" and label not in (
+            "number",
+            "number-primitive-close",
+            "number-throwing-close",
+        )
         snapshot = conditional or label.startswith("boolean-snapshot") or numeric_snapshot
         js_kind = (
             "number" if numeric_snapshot else "boolean" if conditional else label.partition("-")[0]
@@ -2789,8 +2807,10 @@ var savedThrow, savedExhausted;
                     in (
                         "number",
                         "number-primitive-close",
+                        "number-throwing-close",
                         "conditional-boolean-read",
                         "boolean-snapshot-primitive-close",
+                        "boolean-snapshot-throwing-close",
                     )
                     or numeric_snapshot
                 ):
@@ -2820,6 +2840,25 @@ var savedThrow, savedExhausted;
                             success=False,
                         )
                         refused += 1
+    throwing_close = refusals()["body-throw-close-throws"]
+    for label, text in (
+        ("invalid-close-name", throwing_close.replace("data-closed", "bad name")),
+        ("unknown-close-throw", throwing_close.replace("throw 2;", "throw anchor;")),
+    ):
+        ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
+        contract.update(initial_intrinsics=INTRINSICS)
+        for owned in (False, True):
+            manifest = dict(contract, provider="ctbrowser-dom-session-v1") if owned else contract
+            for optimize in (False, True):
+                dom.lower(
+                    args,
+                    ir,
+                    manifest,
+                    f"{label}-{owned}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                )
+                refused += 1
     print(
         f"Saved primitive DOM throw: {executions} native executions, {refused} refusals, "
         f"{observations} Node/VM observations"
@@ -2974,6 +3013,7 @@ def main():
             "body-throw-number-snapshot",
             "body-throw-branch-number-snapshot",
             "body-throw-close-primitive",
+            "body-throw-close-throws",
         ):
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")

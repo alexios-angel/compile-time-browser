@@ -1818,8 +1818,121 @@ module {
         check(closes == 1 && throws == 1 && mlir::succeeded(mlir::verify(*input)),
               "exhaustion elides close while the saved-throw close remains");
     }
-    for (const auto & invalid :
-         {primitiveReturn(returningSource), primitiveReturn(countedSource)}) {
+    const auto throwingReturn = [&](const std::string & input) {
+        return replaced(input,
+                        "    %result = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                        "    ctjs.return %result",
+                        "    %closeFrame = ctjs.frame_enter 1\n"
+                        "    %result = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                        "    ctjs.throw %result");
+    };
+    const auto throwingAbruptSource = throwingReturn(primitiveAbruptSource);
+    check(!throwingAbruptSource.empty(), "throwing close fixture replacement matched");
+    if (throwingAbruptSource.empty()) { return; }
+    for (auto provider :
+         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(throwingAbruptSource, &context);
+        check(static_cast<bool>(input), "literal throwing close with live frame parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.provider = provider;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(!failure, "confined terminal close throw retains saved-throw suppression");
+        if (failure) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+            continue;
+        }
+        unsigned throws = 0;
+        input->walk([&](ctjs::ThrowOp thrown) {
+            ++throws;
+            auto value = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
+            check(value && llvm::cast<ctjs::NumberAttr>(value.getValue()).getDouble() == 1,
+                  "close throw cannot replace the original saved exception");
+        });
+        auto close = input->lookupSymbol<ctjs::FuncOp>("return$3");
+        auto returned = close ? llvm::dyn_cast<ctjs::ReturnOp>(close.getBody().front().back())
+                              : ctjs::ReturnOp{};
+        check(throws == 1 && returned &&
+                  llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()) &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "suppressed literal returns only after closing its own frame");
+        failure = expandDOMHelpers(*input, request.entry, completeBudget);
+        check(!failure, "rewritten throwing close passes complete helper proof");
+        if (failure) { llvm::consumeError(std::move(failure)); }
+    }
+    for (const auto & invalid : {
+             replaced(throwingAbruptSource, "    %returnName =",
+                      "    %duplicate = ctjs.create_closure %callee[3] this %undefined\n"
+                      "    %returnName ="),
+             replaced(throwingAbruptSource, "    %returnName =",
+                      "    %direct = ctjs.call_direct @return$3(%undefined, %undefined, %finish)\n"
+                      "    %returnName ="),
+             replaced(throwingAbruptSource, "    %returnName =",
+                      "    ctjs.store_global \"escaped-close\", %finish\n    %returnName ="),
+             replaced(replaced(throwingAbruptSource, "    %open =",
+                               "    %savedClose = ctjs.get_property %holder[%returnName]\n"
+                               "    %closeCell = ctjs.create_cell %savedClose\n    %open ="),
+                      "    ctjs.frame_exit %frame",
+                      "    %loadedClose = ctjs.cell_get %closeCell\n"
+                      "    %extraClose = ctjs.call %loadedClose(%undefined)\n"
+                      "    ctjs.frame_exit %frame"),
+             replaced(throwingAbruptSource, "    ctjs.throw %result", "    ctjs.throw %this"),
+             replaced(throwingAbruptSource, "    ctjs.frame_exit %frame", R"MLIR(
+    %holderAlias = scf.if %test -> !ctjs.value {
+      scf.yield %holder : !ctjs.value
+    } else {
+      scf.yield %holder : !ctjs.value
+    }
+    %savedMethod = ctjs.get_property %holderAlias[%returnName]
+    %methodCell = ctjs.create_cell %savedMethod
+    %loadedMethod = ctjs.cell_get %methodCell
+    %aliasedClose = ctjs.call %loadedMethod(%holderAlias)
+    ctjs.frame_exit %frame)MLIR"),
+             replaced(throwingAbruptSource, "    ctjs.frame_exit %frame", R"MLIR(
+    %holderAlias = scf.if %test -> !ctjs.value {
+      scf.yield %holder : !ctjs.value
+    } else {
+      scf.yield %holder : !ctjs.value
+    }
+    %other = ctjs.create_object
+    ctjs.set_property %other[%returnName], %holderAlias
+    %storedHolder = ctjs.get_property %other[%returnName]
+    %savedMethod = ctjs.get_property %storedHolder[%returnName]
+    %methodCell = ctjs.create_cell %savedMethod
+    %loadedMethod = ctjs.cell_get %methodCell
+    %aliasedClose = ctjs.call %loadedMethod(%storedHolder)
+    ctjs.frame_exit %frame)MLIR"),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unproved throwing close observer parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(static_cast<bool>(failure), "shared, escaped or nonliteral throwing close refuses");
+        llvm::consumeError(std::move(failure));
+    }
+    for (const auto & invalid : {
+             replaced(throwingAbruptSource, "    ctjs.throw %result",
+                      "    %extraFrame = ctjs.frame_enter 1\n    ctjs.throw %result"),
+             replaced(throwingAbruptSource, "    ctjs.throw %result",
+                      "    ctjs.frame_exit %closeFrame\n    ctjs.frame_exit %closeFrame\n"
+                      "    ctjs.throw %result"),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "malformed close frame control parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        if (!failure) { failure = expandDOMHelpers(*input, request.entry, completeBudget); }
+        check(static_cast<bool>(failure), "suppressed close still requires complete frame proof");
+        llvm::consumeError(std::move(failure));
+    }
+    for (const auto & invalid : {primitiveReturn(returningSource), primitiveReturn(countedSource),
+                                 throwingReturn(primitiveReturn(returningSource)),
+                                 throwingReturn(primitiveReturn(countedSource))}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(input), "normal primitive close control parses");
         if (!input) { continue; }
