@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Compared iterator exits and additive offsets, 2026-09-23 UTC
+
+Resumed clean **51f90cf6** and retained conditional Boolean throw `9c10be3d`.
+**ba5e3163** recognizes exact integer equality/inequality followed by a conditional
+as a loop-exit dispatch. It reuses the existing selected-arm use census, source
+order, dominance and budget checks; observed inactive values still refuse.
+An independent conditional witness with a literal close value now executes,
+preserving pre-close Boolean payloads, natural exhaustion and DOM write order.
+The original conditional source remains unchanged and refuses its larger
+protected close helper; it has not been promoted.
+
+Parallel **c30db6aa** removes the redundant Number-only guard for additive
+invariant offsets. Existing bounded numeric conversion admits Boolean/null;
+String addition still refuses because it concatenates. Reload/store checks,
+actual-write replay and budgets remain. All 22 historical offset source bodies
+and CHECKs are unchanged; eight controls were appended.
+
+Focused host and arrays CTests and the exact offset-index lit case pass.
+Five throw sources pass **80 native executions, 12 refusals and 24 Node/VM
+observations**; three prior iterator sources pass **48 executions, 80 refusals
+and 24 Node/VM observations**, with no nonexecuted admissions. Five historical
+throw oracles agree on **20 observations per engine**. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Seven final hashes match the devbox;
+64 generated C++ files contain no Script/VM or nullable-scalar fallback.
+All 233 historical iterator bodies and 86 metadata rows remain unchanged.
+Full suites were skipped; no browser/shared implementation changed.
+
+**Next native boundary:** original conditional `9c10be3d` now refuses
+**DOM protected helper needs an independent inert-body proof**. Its close
+method reads `hasAttribute('data-visited')` before `setAttribute`; preserve
+suppression while proving both calls and their order. Mixed throw/return
+`43ab2b64` still refuses **DOM helper completion observes an inactive value**.
+Mutable Number snapshots, throwing/primitive close methods, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-compared-completion.md).
+
 ## Saved primitive iterator throws and subtraction offsets, 2026-09-23 UTC
 
 Resumed clean **9729cf46** and unchanged `body-throw`, `f1b3f6b8`.
