@@ -384,6 +384,69 @@ void InductionCases::overwritesAndTransport() {
          .arrays = "a:[zero,zero,zero]",
          .reads = "a[0]=x; a[0]=x; a[1]=zero; a[2]=zero",
          .exit = "x -> {x}"});
+    const auto varyingPower =
+        replace(replace(unitPower, "[%one, %x]", "[%x, %x]"), "pow %i, %one", "pow %i, %i");
+    run({.what = "two varying power operands retain zero-to-zero and unvisited children",
+         .body = varyingPower,
+         .arrays = "a:[x,zero]",
+         .reads = "a[0]=x; a[1]=zero",
+         .exit = "a -> {a,x}"});
+    const auto positiveVaryingPower = replace(varyingPower, "%position = ctjs.binary pow %i, %i",
+                                              "%exponent = ctjs.binary add %i, %one\n"
+                                              "  %position = ctjs.binary pow %i, %exponent");
+    run({.what = "two varying bounded operands prove every zero/unit power write",
+         .body = positiveVaryingPower,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto varyingOddPower =
+        replace(signedUnitOdd, "%power = ctjs.binary pow %powerBase, %three",
+                "%even = ctjs.binary mul %i, %two\n"
+                "  %exponent = ctjs.binary add %even, %one\n"
+                "  %power = ctjs.binary pow %powerBase, %exponent");
+    run({.what = "two varying signed-unit operands preserve odd powers across zero",
+         .body = varyingOddPower,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "an even varying exponent proves nonnegative signed-unit powers",
+         .body = replace(signedUnitEven, "%power = ctjs.binary pow %powerBase, %two",
+                         "%exponent = ctjs.binary mul %i, %two\n"
+                         "  %power = ctjs.binary pow %powerBase, %exponent"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto varyingReload = replace(replace(positiveVaryingPower, "[%x, %x]", "[%x, %x, %one]"),
+                                       "%exponent = ctjs.binary add %i, %one\n"
+                                       "  %position = ctjs.binary pow %i, %exponent",
+                                       "%powerBase = ctjs.binary mod %i, %two\n"
+                                       "  %unit = ctjs.get_property %base[%two]\n"
+                                       "  %exponent = ctjs.binary add %i, %unit\n"
+                                       "  %position = ctjs.binary pow %powerBase, %exponent");
+    run({.what = "two varying power operands keep invariant reloads outside all writes",
+         .body = varyingReload,
+         .arrays = "a:[zero,zero,one]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "two varying power operands retain the complete later-store census",
+        replace(varyingReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("two varying power operands cannot hide an overwritten reload",
+           replace(replace(varyingReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
+                   "%unit = ctjs.get_property %base[%two]",
+                   "%unit = ctjs.get_property %base[%zero]"));
+    reject("two varying powers still refuse general bases",
+           replace(varyingPower, "[%x, %x]", "[%x, %x, %x]"));
+    reject("two varying powers need nonnegative exponent bounds",
+           replace(positiveVaryingPower, "add %i, %one\n", "sub %i, %one\n"));
+    reject("two varying powers cannot borrow fractional exponents",
+           replace(positiveVaryingPower, "add %i, %one\n", "div %i, %two\n"));
+    reject("two varying signed powers must still produce own nonnegative keys",
+           replace(varyingOddPower, "add %power, %one", "add %power, %zero"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

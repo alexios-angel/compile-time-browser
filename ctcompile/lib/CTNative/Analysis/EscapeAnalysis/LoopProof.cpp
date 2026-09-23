@@ -198,7 +198,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
     // ponytail: one header/body pair, with writes only to its current,
     // invariant or bounded own element. Other mutations need a
-    // termination proof; each index operation must have one varying operand.
+    // termination proof; powers alone may have two independently bounded operands.
     // Primitive kinds and every element still pass the ordinary operation transfers.
     llvm::SmallDenseSet<std::size_t, 4> guardStores;
     struct StoreRange {
@@ -354,6 +354,27 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
         // Each transfer proves bounded primitive conversion; boundedNumberSum
         // separately excludes String concatenation for Add.
+        if (!offset && power && offsetOperand == 1 &&
+            invariantFailure != ArrayContentsFailure::WorkLimit) {
+            const auto exponent = self(self, expression->getOperand(1), depth + 1);
+            if (!exponent || !exponent->first.integerNumber || endpointNumber(range->first) < -1 ||
+                endpointNumber(range->last) > 1) {
+                return std::nullopt;
+            }
+            // Every combination is an exact scalar identity. An odd exponent
+            // can retain a negative unit; zero to zero must still include one.
+            const bool odd = *exponent->first.integerNumber % 2 != 0 ||
+                             (endpointNumber(exponent->first) != endpointNumber(exponent->last) &&
+                              exponent->stride % 2 != 0);
+            ContentsValue first{operand, ContentsKind::NonBigInt, 0};
+            if (range->first.negativeIntegerNumber && odd) {
+                first.integerNumber.reset();
+                first.negativeIntegerNumber = 1;
+            }
+            // ponytail: independent ranges lose correlation; bounded whole-key
+            // refinement checks reload gaps, while replay records actual writes.
+            return IndexRange{first, {operand, ContentsKind::NonBigInt, 1}, 1, true};
+        }
         if (!offset) { return std::nullopt; }
         // At most two varying values need only their exact scalar power proofs;
         // no interior value can introduce another extremum or unproved power.

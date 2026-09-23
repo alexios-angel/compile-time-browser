@@ -170,8 +170,11 @@ void StructuredCases::mutationRefusals() {
                    "%powerBase = ctjs.get_property %base[%zero]"));
     reject("structured negative powers cannot create own negative array elements",
            replace(parityPower, "add %parity, %one", "add %parity, %zero"));
-    reject("structured powers refuse nonunit varying results",
-           replace(unitPower, "pow %i, %one", "pow %i, %i"));
+    rows.push_back({.what = "structured varying powers retain zero-to-zero and unvisited children",
+                    .body = replace(unitPower, "pow %i, %one", "pow %i, %i"),
+                    .arrays = "a:[x,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a,x}"});
     const auto twoPointPower =
         replace(replace(unitPower, "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
                 "pow %i, %one", "pow %i, %two");
@@ -248,6 +251,59 @@ void StructuredCases::mutationRefusals() {
            replace(signedUnitEven, "%position = ctjs.binary pow %powerBase, %two",
                    "%negative = ctjs.unary neg %two\n"
                    "    %position = ctjs.binary pow %powerBase, %negative"));
+    const auto varyingPower = replace(unitPower, "%position = ctjs.binary pow %i, %one",
+                                      "%exponent = ctjs.binary add %i, %one\n"
+                                      "    %position = ctjs.binary pow %i, %exponent");
+    rows.push_back({.what = "structured powers accept two bounded varying operands",
+                    .body = varyingPower,
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero",
+                    .exit = "a -> {a}"});
+    const auto varyingOddPower =
+        replace(signedUnitOdd, "%power = ctjs.binary pow %powerBase, %three",
+                "%even = ctjs.binary mul %i, %two\n"
+                "    %exponent = ctjs.binary add %even, %one\n"
+                "    %power = ctjs.binary pow %powerBase, %exponent");
+    rows.push_back({.what = "structured varying odd powers preserve signed-unit writes",
+                    .body = varyingOddPower,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured varying even powers include the interior zero",
+                    .body = replace(signedUnitEven, "%position = ctjs.binary pow %powerBase, %two",
+                                    "%exponent = ctjs.binary mul %i, %two\n"
+                                    "    %position = ctjs.binary pow %powerBase, %exponent"),
+                    .arrays = "a:[zero,zero,y]",
+                    .reads = "a[0]=x; a[1]=zero; a[2]=y",
+                    .exit = "a -> {a,y}"});
+    const auto varyingReload = replace(signedUnitReload,
+                                       "%powerBase = ctjs.binary sub %i, %one\n"
+                                       "    %exponent = ctjs.get_property %base[%two]\n"
+                                       "    %position = ctjs.binary pow %powerBase, %exponent",
+                                       "%powerBase = ctjs.binary mod %i, %two\n"
+                                       "    %unit = ctjs.get_property %base[%two]\n"
+                                       "    %exponent = ctjs.binary add %i, %unit\n"
+                                       "    %position = ctjs.binary pow %powerBase, %exponent");
+    rows.push_back({.what = "structured varying powers keep disjoint invariant exponent reloads",
+                    .body = varyingReload,
+                    .arrays = "a:[zero,zero,ctjs.binary]",
+                    .reads = "a[2]=ctjs.binary; a[0]=zero; a[2]=ctjs.binary; a[1]=zero; "
+                             "a[2]=ctjs.binary; a[2]=ctjs.binary",
+                    .exit = "a -> {a}"});
+    reject("structured varying powers retain the complete later-store census",
+           replace(varyingReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured varying powers cannot hide overlapping exponent reloads",
+           replace(replace(varyingReload, "create_array [%x, %y]", "create_array [%two, %y]"),
+                   "%unit = ctjs.get_property %base[%two]",
+                   "%unit = ctjs.get_property %base[%zero]"));
+    reject("structured varying powers still refuse a nonunit base",
+           replace(varyingPower, "create_array [%x]", "create_array [%x, %x]"));
+    reject("structured varying powers retain nonnegative exponent bounds",
+           replace(varyingPower, "%exponent = ctjs.binary add %i, %one",
+                   "%exponent = ctjs.binary sub %i, %one"));
+    reject("structured varying powers cannot borrow fractional exponent bounds",
+           replace(varyingOddPower, "mul %i, %two", "div %i, %two"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
