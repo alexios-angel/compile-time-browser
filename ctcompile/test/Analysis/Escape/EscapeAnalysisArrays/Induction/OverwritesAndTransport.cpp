@@ -4960,6 +4960,77 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(boundedRemainderReload, "[%x, %x, %large,", "[%x, %large, %x,"),
                    "%offset = ctjs.get_property %base[%two]",
                    "%offset = ctjs.get_property %base[%one]"));
+    const auto mixedPowerExponent = replace(
+        replace(replace(replace(replace(scaledIndex, "[%one, %x]",
+                                        "[%x, %x, %zero, %zero, %zero, %zero, %zero, %zero]"),
+                                "^header(%a, %zero, %zero", "^header(%a, %one, %zero"),
+                        "add %i, %one\n  cf.br", "add %i, %three\n  cf.br"),
+                "  %a =", "  %five = ctjs.binary add %two, %three\n  %a ="),
+        "%position = ctjs.binary mul %i, %one",
+        "%residue = ctjs.binary mod %i, %five\n"
+        "  %exponent = ctjs.binary sub %residue, %one\n"
+        "  %position = ctjs.binary pow %zero, %exponent");
+    run({.what = "mixed exponent bounds exclude an unvisited zero-base pole",
+         .body = mixedPowerExponent,
+         .arrays = "a:[zero,zero,zero,zero,zero,zero,zero,zero]",
+         .reads = "a[1]=zero; a[4]=zero; a[7]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto mixedPowerBase =
+        replace(replace(replace(replace(mixedPowerExponent,
+                                        "[%x, %x, %zero, %zero, %zero, %zero, %zero, %zero]",
+                                        "[%x, %x, %zero, %zero, %zero, %zero, %zero, %zero, "
+                                        "%zero, %zero, %zero, %zero, %zero]"),
+                                "  %five =", "  %four = ctjs.binary add %one, %three\n  %five ="),
+                        "^header(%a, %one, %zero", "^header(%a, %four, %zero"),
+                "add %i, %three\n  cf.br", "add %i, %four\n  cf.br");
+    const auto mixedUnitBases =
+        replace(replace(mixedPowerBase, "sub %residue, %one", "sub %residue, %three"),
+                "pow %zero, %exponent", "pow %exponent, %two");
+    run({.what = "mixed base bounds refine to actual signed-unit power identities",
+         .body = mixedUnitBases,
+         .arrays = "a:[zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero]",
+         .reads = "a[4]=zero; a[8]=zero; a[12]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "mixed power refinement retains children outside actual writes",
+         .body = replace(mixedPowerExponent, "[%x, %x, %zero,", "[%x, %x, %x,"),
+         .arrays = "a:[zero,zero,x,zero,zero,zero,zero,zero]",
+         .reads = "a[1]=zero; a[4]=zero; a[7]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "mixed power refinement retains the original child snapshot",
+         .body = replace(replace(mixedPowerExponent, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero,zero,zero,zero,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[4]=zero; a[7]=zero",
+         .exit = "x -> {x}"});
+    const auto mixedPowerReload =
+        replace(replace(mixedPowerExponent, "[%x, %x, %zero,", "[%x, %x, %one,"),
+                "%exponent = ctjs.binary sub %residue, %one",
+                "%offset = ctjs.get_property %base[%two]\n"
+                "  %exponent = ctjs.binary sub %residue, %offset");
+    run({.what = "mixed power bounds independently reprove disjoint reload gaps",
+         .body = mixedPowerReload,
+         .arrays = "a:[zero,zero,one,zero,zero,zero,zero,zero]",
+         .reads = "a[2]=one; a[1]=zero; a[2]=one; a[4]=zero; a[2]=one; a[7]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("mixed power refinement retains every later producer store",
+           replace(mixedPowerReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("mixed power refinement rejects actual reload overlap",
+           replace(replace(mixedPowerReload, "[%x, %x, %one,", "[%x, %one, %x,"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%one]"));
+    reject("mixed power refinement cannot erase an actual pole",
+           replace(mixedPowerExponent, "sub %residue, %one", "sub %residue, %two"));
+    reject("mixed power refinement cannot prove an actual general power",
+           replace(mixedUnitBases, "sub %residue, %three", "sub %residue, %two"));
+    reject("mixed power refinement retains fractional exponent intermediates",
+           replace(mixedPowerExponent, "%position = ctjs.binary pow %zero, %exponent",
+                   "%fraction = ctjs.binary div %exponent, %two\n"
+                   "  %position = ctjs.binary pow %zero, %fraction"));
     const auto varyingSum = replace(replace(scaledIndex, "[%one, %x]", "[%zero, %x, %zero]"),
                                     "%position = ctjs.binary mul %i, %one",
                                     "%offset = ctjs.binary sub %one, %i\n"

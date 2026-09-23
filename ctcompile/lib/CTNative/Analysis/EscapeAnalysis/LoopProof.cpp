@@ -488,6 +488,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // enclosure for every interior visit.
             if (!number || *number > 1 ||
                 (offsetOperand == 0 && *number == 0 && !range->first.integerNumber)) {
+                // A mixed lattice may include unvisited bases or poles; only
+                // subdivision through the same scalar identities can remove them.
+                refinableEnclosure |= range->mixedShift;
                 return std::nullopt;
             }
             if (offsetOperand == 0 || *number == 0) { range->stride = 1; }

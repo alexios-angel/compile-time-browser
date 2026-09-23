@@ -342,6 +342,19 @@
 // CHECK: escape {{[0-9a-f]+}} 293 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 294 {{[0-9]+}} obj escapes:stored
 
+
+// Mixed power enclosures must discharge unvisited poles and bases with exact scalar identities.
+// CHECK: escape {{[0-9a-f]+}} 295 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 296 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 297 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 298 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 299 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 300 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 301 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 302 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 303 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 304 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -2022,3 +2035,77 @@ function laterRemainderSumStore() {
 boundedRemainderSum(); boundedRemainderProduct(); boundedRemainderDifference();
 retainedRemainderSum(); savedRemainderSum(); unboundedRemainderSum();
 fractionalRemainderSum(); reloadedRemainderSum(); laterRemainderSumStore();
+
+function mixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 1)] = 0;
+    return a;
+}
+
+function mixedPowerBase() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (var i = 4; i < a.length; i += 4) a[((i % 5) - 3) ** 2] = 0;
+    return a;
+}
+
+function retainedMixedPowerExponent() {
+    var child = {}, a = [child, child, child, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 1)] = 0;
+    return a;
+}
+
+function savedMixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0], saved = a[0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 1)] = 0;
+    return saved;
+}
+
+function reloadedMixedPowerExponent() {
+    var child = {}, a = [child, child, 1, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - a[2])] = 0;
+    return a;
+}
+
+function laterMixedPowerExponentStore() {
+    var child = {}, a = [child, child, 1, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) {
+        a[0 ** ((i % 5) - a[2])] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+
+function overlappingMixedPowerExponent() {
+    var child = {}, a = [child, 1, child, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - a[1])] = 0;
+    return a;
+}
+
+function poleMixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 2)] = 0;
+    return a;
+}
+
+function generalMixedPowerBase() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (var i = 4; i < a.length; i += 4) a[((i % 5) - 2) ** 2] = 0;
+    return a;
+}
+
+function fractionalMixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** (((i % 5) - 1) / 2)] = 0;
+    return a;
+}
+
+mixedPowerExponent();
+mixedPowerBase();
+retainedMixedPowerExponent();
+savedMixedPowerExponent();
+reloadedMixedPowerExponent();
+laterMixedPowerExponentStore();
+overlappingMixedPowerExponent();
+poleMixedPowerExponent();
+generalMixedPowerBase();
+fractionalMixedPowerExponent();
