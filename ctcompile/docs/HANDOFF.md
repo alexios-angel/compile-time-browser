@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## DOM exception ownership and unary table snapshots, 2026-09-23 UTC
+
+Resumed clean **eea1416d**, exact `return-object-getter-close` (`67bd3ad9`) and
+frozen escape source `887fae3b` from the previous handoff and journal.
+**ee80c923** identifies the actual native blocker: **DOM thrown element requires
+an owner that outlives the exception**. Both existing providers guarantee a live
+document only through the synchronous call. An escaping borrowed node can survive
+document destruction during unwinding; it remains refused. Suppressed node cleanup
+still preserves the saved primitive exception, writes and exhaustion.
+
+**b8024348** preserves unary `+`/`-` bitwise conversion after table reads. A small
+read-time ToUint32 snapshot stays separate from arithmetic and property-key facts;
+original identities, mutation checks, parsing bounds and the 64-edge limit remain.
+The identical source/program `887fae3b` / `1997b7ecdba6adcf` changes seven child
+sites from all Stored to **four Confined and three Stored**. All are observed once
+with zero unresolved or unchecked instances. The original fractional-property
+Node/VM discrepancy remains separate and statically Stored.
+
+Focused validation passes: **32 native executions, 12 refusals, 8 Node/VM
+observations, exact host/arrays CTests and one selected lit case**. Formatting
+passes **1126 C++, 157 Python and 114 web files**. All 16 generated C++ files have
+no Script namespace. Native and escape independent reviews are complete and clean.
+No browser/runtime implementation changed; full suites and full Bootstrap were skipped.
+
+**Next:** native node exceptions need an actual confined catch or caller/owner proof
+covering exception lifetime; copying `element_ref` cannot supply it. Protected
+state observers, nested iterators, unguarded Bootstrap defaults and the application
+driver remain. Escape's measured next source is `ffcfb029`, `(keys[i % 2] - 0) | 0`:
+its child remains Stored and needs an independent arithmetic-result proof. Do not
+reuse modulo bits as an exact Number. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundaries](handoff/2026-09-23-node-exception-unary-snapshots.md).
+
 ## Mutable cleanup completion projection, 2026-09-23 UTC
 
 Resumed clean **517a0878** and unchanged `mixed-body-throw-return-mutable-close`,
