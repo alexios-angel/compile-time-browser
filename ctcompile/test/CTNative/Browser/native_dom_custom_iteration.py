@@ -2541,6 +2541,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
         "anchor.setAttribute('data-closed', first);",
     )
+    selector_guarded_second_write_source = selector_reused_second_write_source.replace(
+        "anchor.setAttribute('data-closed', first); anchor.matches",
+        "if (first) anchor.setAttribute('data-closed', first); anchor.matches",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3464,6 +3468,30 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-second-value-close",
+            selector_guarded_second_write_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-second-value-getter-close",
+            selector_guarded_second_write_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-second-value-order-close",
+            selector_guarded_second_write_source.replace(
+                "anchor.setAttribute('data-closed', false); const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', false);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
             selector_reused_second_write_source.replace("throw false;", "throw first;"),
             "js_boolean_t",
@@ -3537,7 +3565,10 @@ def saved_throws(args, compilers, includes, libraries):
         terminal_match_read = "-terminal-match-read-" in label
         terminal_write = "-terminal-match-read-sequence-write-" in label
         terminal_write_value = "-terminal-match-read-sequence-write-value-" in label
-        selector_reused_second_write = "-write-selector-reused-second-value-" in label
+        selector_guarded_second_write = "-write-selector-guarded-second-value-" in label
+        selector_reused_second_write = (
+            selector_guarded_second_write or "-write-selector-reused-second-value-" in label
+        )
         selector_inside_first_argument = (
             selector_reused_second_write
             or "-write-selector-before-first-value-" in label
@@ -3611,6 +3642,10 @@ def saved_throws(args, compilers, includes, libraries):
         if selector_inside_first_argument:
             close_writes = "matches=[data-closed=false]:false;" + close_writes.replace(
                 "data-closed=true;", "data-closed=false;", 1
+            )
+        if selector_guarded_second_write:
+            close_writes = close_writes.replace(
+                "data-closed=false;data-closed=false;", "data-closed=false;", 1
             )
         if before_first_selector_read:
             read_name = terminal_sequence[0]
@@ -3804,6 +3839,10 @@ var savedThrow, savedExhausted;
 """,
                 )
             )
+        if selector_guarded_second_write:
+            script = script.replace(
+                "saved['data-closed'] = 'before';", "saved['data-closed'] = 'false';"
+            )
         if following_writes:
             read_count = sum(read_name is not None for _, _, read_name in following_writes)
             read_count += terminal_read
@@ -3947,6 +3986,12 @@ var savedThrow, savedExhausted;
                 + ":data-next=false;data-yielded=yes;data-visited=yes;"
                 + close_writes,
             )
+        if selector_guarded_second_write:
+            expected["savedPrior"] = expected["savedPrior"].replace(
+                "matches=[data-closed=false]:false;data-closed=false;matches=[data-closed=false]:true;",
+                "matches=[data-closed=false]:true;data-closed=true;data-closed=true;matches=[data-closed=false]:false;",
+                1,
+            )
         if before_first_write_read and terminal_sequence[0] == "data-closed":
             expected["savedPrior"] = (
                 expected["savedPrior"]
@@ -4024,6 +4069,16 @@ var savedThrow, savedExhausted;
                     selected_checks = selected_checks.replace(
                         'attribute_value(id, after_terminal) == "false"',
                         'attribute_value(id, after_terminal) == (repetition ? "true" : "false")',
+                    )
+                if selector_guarded_second_write:
+                    selected_checks = selected_checks.replace(
+                        "@WRITE_COUNT@", "(7 + repetition)"
+                    ).replace(
+                        "@SECOND_CLOSE@",
+                        "assert(writes[4 + repetition].name == closed);"
+                        "assert(writes[5 + repetition].name == closed);"
+                        "if (repetition) { assert(writes[4].name == closed); }"
+                        "assert(writes.back().name == after_terminal);",
                     )
                 selected_includes, selected_libraries = includes, libraries
                 if selecting:
@@ -4210,7 +4265,7 @@ var savedThrow, savedExhausted;
                         "@SETUP@",
                         (
                             'assert(target.set_attribute(id, target.atoms().intern("stop"), "yes"));'
-                            'if (repetition) { assert(target.set_attribute(id, closed, "before")); }'
+                            f'if (repetition) {{ assert(target.set_attribute(id, closed, "{"false" if selector_guarded_second_write else "before"}")); }}'
                             if conditional
                             else ""
                         )
@@ -4422,6 +4477,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-second-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-second-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-second-value-order-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
@@ -6027,10 +6085,73 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-selector-guards-second-write",
-            selector_reused_second_write_source.replace(
-                "anchor.setAttribute('data-closed', first); anchor.matches",
-                "if (first) anchor.setAttribute('data-closed', first); anchor.matches",
+            "normal-selector-guarded-second-write-close",
+            selector_guarded_second_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-guarded-second-write-close",
+            selector_guarded_second_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-guarded-second-write-selector",
+            selector_guarded_second_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]');",
+                "const first = anchor.matches('[');",
+            ),
+        ),
+        (
+            "dynamic-selector-guarded-second-write-selector",
+            selector_guarded_second_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]');",
+                "const first = anchor.matches(anchor);",
+            ),
+        ),
+        (
+            "bad-selector-guarded-second-write-receiver",
+            selector_guarded_second_write_source.replace(
+                "if (first) anchor.setAttribute('data-closed', first);",
+                "if (first) (0).setAttribute('data-closed', first);",
+            ),
+        ),
+        (
+            "invalid-selector-guarded-second-write-arity",
+            selector_guarded_second_write_source.replace(
+                "if (first) anchor.setAttribute('data-closed', first);",
+                "if (first) anchor.setAttribute('data-closed', first, false);",
+            ),
+        ),
+        (
+            "unsupported-selector-guarded-second-write-extra-use",
+            selector_guarded_second_write_source.replace(
+                "if (first) anchor.setAttribute('data-closed', first);",
+                "if (first) { external(first); anchor.setAttribute('data-closed', first); }",
+            ),
+        ),
+        (
+            "invalid-selector-guarded-second-write-name",
+            selector_guarded_second_write_source.replace(
+                "if (first) anchor.setAttribute('data-closed', first);",
+                "if (first) anchor.setAttribute('bad name', first);",
+            ),
+        ),
+        (
+            "unsupported-selector-guarded-second-write-name-use",
+            selector_guarded_second_write_source.replace(
+                "if (first) anchor.setAttribute('data-closed', first);",
+                "if (first) anchor.setAttribute(first, first);",
+            ),
+        ),
+        (
+            "unsupported-selector-guards-second-write-read",
+            selector_guarded_second_write_source.replace(
+                "if (first) anchor.setAttribute('data-closed', first);",
+                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
             ),
         ),
         (

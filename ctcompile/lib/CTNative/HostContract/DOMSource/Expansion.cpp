@@ -84,6 +84,70 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                                 ctjs::CompareOp, ctjs::TruthyOp>(operation)) {
                     continue;
                 }
+                if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
+                    truth && protectedLeaf && !secondLeaf &&
+                    suffixReads.contains(truth.getValue()) && truth.getResult().hasOneUse()) {
+                    auto guard =
+                        llvm::dyn_cast<mlir::scf::IfOp>(*truth.getResult().getUsers().begin());
+                    if (!guard || guard->getBlock() != truth->getBlock()) { return false; }
+                    suffixValues.push_back(truth.getResult());
+                    suffixUses.insert(&truth->getOpOperand(0));
+                    suffixUses.insert(&guard->getOpOperand(0));
+                    continue;
+                }
+                if (auto guard = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    auto truth = guard.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                    if (!protectedLeaf || secondLeaf || secondMethod || trailingMethod ||
+                        finalReadMethod || selectorMethod || !truth ||
+                        !suffixReads.contains(truth.getValue()) || guard.getNumResults() ||
+                        !guard.getThenRegion().hasOneBlock() ||
+                        guard.getThenRegion().front().getNumArguments()) {
+                        return false;
+                    }
+                    if (!guard.getElseRegion().empty()) {
+                        if (!guard.getElseRegion().hasOneBlock()) { return false; }
+                        auto & arm = guard.getElseRegion().front();
+                        auto yield = llvm::hasSingleElement(arm)
+                                         ? llvm::dyn_cast<mlir::scf::YieldOp>(arm.front())
+                                         : mlir::scf::YieldOp{};
+                        if (arm.getNumArguments() || !yield || !yield.getResults().empty()) {
+                            return false;
+                        }
+                    }
+                    // ponytail: one guarded second write using saved reads; branch-local
+                    // reads and effects need their own order and exceptional-edge proof.
+                    for (mlir::Operation & nested : guard.getThenRegion().front()) {
+                        if (!step()) { return false; }
+                        if (llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::RootOp>(
+                                nested)) {
+                            continue;
+                        }
+                        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
+                            read && !secondMethod &&
+                            ctjs::constantKey(read.getKey()) == "setAttribute") {
+                            secondMethod = read;
+                            continue;
+                        }
+                        if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(nested);
+                            leaf && secondMethod && !secondLeaf &&
+                            leaf.getCallee() == secondMethod.getResult() &&
+                            leaf.getReceiver() == secondMethod.getObject() &&
+                            leaf.getArgs().size() == 2 && suffixReads.contains(leaf.getArgs()[1])) {
+                            if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) {
+                                return false;
+                            }
+                            secondLeaf = leaf;
+                            continue;
+                        }
+                        if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(nested);
+                            yield && yield.getResults().empty() && secondLeaf) {
+                            continue;
+                        }
+                        return false;
+                    }
+                    if (!secondLeaf) { return false; }
+                    continue;
+                }
                 auto & writeMethod = protectedLeaf ? secondMethod : method;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                     read && !writeMethod && !secondLeaf &&

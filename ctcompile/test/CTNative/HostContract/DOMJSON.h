@@ -750,6 +750,24 @@ module {
     const auto reusedSecondSelector = replaced(
         selectorBeforeSecondWrite, "ctjs.call %finalMethod(%element, %finalName, %finalPresent)",
         "ctjs.call %finalMethod(%element, %finalName, %afterPresent)");
+    const auto secondReadStart = reusedInitialRead.find("    %afterReadKey =");
+    const auto secondRead = reusedInitialRead.substr(
+        secondReadStart, reusedInitialRead.find("    %secondEffect =") - secondReadStart);
+    const auto conditionalRead =
+        replaced(replaced(replaced(reusedInitialRead, secondRead, ""), "    %secondKey =",
+                          "    %closeCondition = ctjs.truthy %present\n"
+                          "    scf.if %closeCondition {\n    %secondKey ="),
+                 "    %answer = ctjs.create_object",
+                 "    scf.yield\n    }\n    %answer = ctjs.create_object");
+    const auto conditionalSelector =
+        moveReadBefore(replaced(replaced(conditionalRead, "#ctjs.string<\"hasAttribute\">",
+                                         "#ctjs.string<\"matches\">"),
+                                "data-visited", "[data-visited]"),
+                       "    %readKey =", "    %effect =", "    %attribute =");
+    const auto conditionalDistinct =
+        replaced(replaced(conditionalSelector, "    %attribute =", secondRead + "    %attribute ="),
+                 "ctjs.call %secondMethod(%element, %secondName, %present)",
+                 "ctjs.call %secondMethod(%element, %secondName, %afterPresent)");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -1970,6 +1988,115 @@ module {
                   "incomplete shared snapshot proof withholds all evidence");
         }
     }
+    for (const auto & [valid, typed] : {
+             std::pair{conditionalSelector, true},
+             std::pair{conditionalRead, true},
+             std::pair{conditionalDistinct, true},
+             std::pair{replaced(conditionalSelector, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(conditionalSelector,
+                                "%secondName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%secondName = ctjs.constant #ctjs.string<\"bad name\">"),
+                       false},
+             std::pair{
+                 replaced(replaced(conditionalSelector, "ctjs.get_property %element[%secondKey]",
+                                   "ctjs.get_property %text[%secondKey]"),
+                          "ctjs.call %secondMethod(%element, %secondName, %present)",
+                          "ctjs.call %secondMethod(%text, %secondName, %present)"),
+                 false},
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "conditional cleanup snapshot fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "saved Boolean keeps the second cleanup write conditional");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+            continue;
+        }
+        ctjs::CallOp snapshot, firstWrite, secondWrite;
+        unsigned reads = 0, writes = 0;
+        input->walk([&](ctjs::CallOp call) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!method) { return; }
+            if (ctjs::constantKey(method.getKey()) == "setAttribute") {
+                (++writes == 1 ? firstWrite : secondWrite) = call;
+            } else {
+                ++reads;
+                const auto name = ctjs::constantKey(call.getArgs()[0]);
+                if (name == "data-visited" || name == "[data-visited]") { snapshot = call; }
+            }
+        });
+        const bool distinct = valid == conditionalDistinct;
+        check(snapshot && firstWrite && secondWrite && reads == (distinct ? 2u : 1u) &&
+                  writes == 2 && mlir::succeeded(mlir::verify(*input)),
+              "conditional expansion keeps every read once and both original writes");
+        if (!snapshot || !firstWrite || !secondWrite) { continue; }
+        auto first = llvm::dyn_cast<ctjs::InvokeOp>(firstWrite->getParentOp());
+        auto second = llvm::dyn_cast<ctjs::InvokeOp>(secondWrite->getParentOp());
+        auto guard =
+            second ? llvm::dyn_cast<mlir::scf::IfOp>(second->getParentOp()) : mlir::scf::IfOp{};
+        auto truth =
+            guard ? guard.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
+        auto firstMethod = firstWrite.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        auto secondMethod = secondWrite.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        auto valueRead = secondWrite.getArgs()[1].getDefiningOp<ctjs::CallOp>();
+        check(first && guard && truth && truth.getValue() == snapshot.getResult() &&
+                  truth.getResult().hasOneUse() && !guard.getNumResults() &&
+                  guard.getElseRegion().empty() && guard->getBlock() == first->getBlock() &&
+                  snapshot->getBlock() == first->getBlock() &&
+                  llvm::isa<mlir::scf::IfOp>(first->getParentOp()) &&
+                  snapshot->isBeforeInBlock(first) && first->isBeforeInBlock(truth) &&
+                  truth->isBeforeInBlock(guard) &&
+                  second->getParentRegion() == &guard.getThenRegion() &&
+                  secondMethod->getBlock() == second->getBlock() &&
+                  secondMethod->isBeforeInBlock(second) &&
+                  firstWrite.getArgs()[1] == snapshot.getResult() && valueRead &&
+                  (distinct ? valueRead != snapshot : valueRead == snapshot),
+              "saved snapshot guards the ordered second lookup and suppression at its source arm");
+        const bool beforeLookup = valid.find("%present =") < valid.find("%attribute =");
+        check(snapshot->getBlock() == firstMethod->getBlock() &&
+                  (beforeLookup ? snapshot->isBeforeInBlock(firstMethod)
+                                : firstMethod->isBeforeInBlock(snapshot)),
+              "guard snapshot retains its original position around the first write lookup");
+        unsigned uses = 0;
+        for (mlir::OpOperand & use : snapshot.getResult().getUses()) {
+            ++uses;
+            check((use.getOwner() == truth && use.getOperandNumber() == 0) ||
+                      ((use.getOwner() == firstWrite ||
+                        (!distinct && use.getOwner() == secondWrite)) &&
+                       use.getOperandNumber() == 3),
+                  "every snapshot use is its original write value or exact guard");
+        }
+        check(uses == (distinct ? 2u : 3u), "conditional snapshot has a complete use census");
+        auto bound = contract;
+        bound.entry = "entry$0";
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            bound.provider = provider;
+            DOMEntryAnalysis proof(*input, bound);
+            check(proof.proved() == typed,
+                  "guarded writes require complete DOM receiver and valid-name reproof");
+            if (!typed) {
+                check(noEvidence(*input, proof), "invalid guarded write publishes no evidence");
+                continue;
+            }
+            if (!proof.proved()) { continue; }
+            input->walk([&](ctjs::CallOp call) {
+                check(proof.call(call), "every conditional cleanup call has typed evidence");
+            });
+            check(proof.invocation(first) && proof.invocation(second) &&
+                      DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
+                  "both conditional suppressions reproduce complete typed proof");
+            for (unsigned budget : {0u, proof.steps() - 1}) {
+                DOMEntryAnalysis limited(*input, bound, budget);
+                check(limited.exhausted() && noEvidence(*input, limited),
+                      "incomplete conditional cleanup proof publishes no partial evidence");
+            }
+        }
+    }
     for (const auto & budgetSource : {protectedRead,
                                       trailingRead,
                                       secondWrite,
@@ -2019,7 +2146,10 @@ module {
                                       ignoredEarlySelector,
                                       reusedInitialSelector,
                                       reusedInitialRead,
-                                      reusedSecondSelector}) {
+                                      reusedSecondSelector,
+                                      conditionalSelector,
+                                      conditionalRead,
+                                      conditionalDistinct}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -2040,7 +2170,27 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(reusedInitialSelector, "[data-visited]", "["),
+         {replaced(conditionalSelector, "[data-visited]", "["),
+          replaced(conditionalSelector, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %element)"),
+          replaced(conditionalSelector, "ctjs.truthy %present", "ctjs.truthy %element"),
+          replaced(conditionalSelector, "ctjs.truthy %present", "ctjs.truthy %effect"),
+          replaced(conditionalSelector, "    %answer = ctjs.create_object",
+                   "    ctjs.store_global \"leaked\", %present\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(conditionalSelector, "    %secondKey =", secondRead + "    %secondKey ="),
+          replaced(conditionalSelector, "    scf.yield\n    }\n",
+                   "    scf.yield\n    } else {\n"
+                   "    ctjs.store_global \"leaked\", %present\n    scf.yield\n    }\n"),
+          replaced(replaced(conditionalSelector,
+                            "    %secondKey =", "    scf.if %closeCondition {\n    %secondKey ="),
+                   "    scf.yield\n    }\n", "    scf.yield\n    }\n    scf.yield\n    }\n"),
+          replaced(conditionalSelector, "    %secondEffect =",
+                   "    %extra = ctjs.call %secondMethod(%element, %secondName, %present)\n"
+                   "    %secondEffect ="),
+          replaced(conditionalSelector, "    %secondEffect =",
+                   "    ctjs.store_global \"leaked\", %present\n    %secondEffect ="),
+          replaced(reusedInitialSelector, "[data-visited]", "["),
           replaced(reusedInitialSelector, "#ctjs.string<\"[data-visited]\">", "#ctjs.number<0>"),
           replaced(reusedInitialSelector, "ctjs.call %readMethod(%element, %readName)",
                    "ctjs.call %readMethod(%element, %readName, %name)"),
