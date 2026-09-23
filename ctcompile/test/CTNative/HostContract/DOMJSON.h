@@ -605,6 +605,12 @@ module {
         replaced(terminalRead, "%terminalReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
                  "%terminalReadKey = ctjs.constant #ctjs.string<\"matches\">"),
         "data-terminal", "[data-terminal]");
+    const auto terminalMatchRead = replaced(terminalMatch, "%answer = ctjs.create_object", R"MLIR(
+    %afterTerminalKey = ctjs.constant #ctjs.string<"hasAttribute">
+    %afterTerminalName = ctjs.constant #ctjs.string<"data-after-terminal">
+    %afterTerminalMethod = ctjs.get_property %element[%afterTerminalKey]
+    %afterTerminalPresent = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)
+    %answer = ctjs.create_object)MLIR");
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
@@ -662,6 +668,20 @@ module {
              std::pair{fifthRead, true},
              std::pair{terminalRead, true},
              std::pair{terminalMatch, true},
+             std::pair{terminalMatchRead, true},
+             std::pair{replaced(terminalMatchRead, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(terminalMatchRead, "[data-terminal]", "["), false},
+             std::pair{replaced(terminalMatchRead, "#ctjs.string<\"data-after-terminal\">",
+                                "#ctjs.number<0>"),
+                       false},
+             std::pair{replaced(replaced(terminalMatchRead,
+                                         "ctjs.get_property %element[%afterTerminalKey]",
+                                         "ctjs.get_property %text[%afterTerminalKey]"),
+                                "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
+                                "ctjs.call %afterTerminalMethod(%text, %afterTerminalName)"),
+                       false},
              std::pair{replaced(terminalMatch, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -850,6 +870,7 @@ module {
         const bool selectedWrites = valid.find("%finalName, %selected)") != std::string::npos;
         const bool finalReads = valid.find("%finalReadKey") != std::string::npos;
         const bool terminalReads = valid.find("%terminalReadKey") != std::string::npos;
+        const bool afterTerminalReads = valid.find("%afterTerminalKey") != std::string::npos;
         const bool terminalMatches =
             valid.find("%terminalReadKey = ctjs.constant #ctjs.string<\"matches\">") !=
             std::string::npos;
@@ -942,6 +963,17 @@ module {
                               llvm::isa<mlir::scf::IfOp>(call->getParentOp()),
                           "unused terminal read follows every write and selector at its guard");
                 }
+                if (ctjs::constantKey(call.getArgs()[0]) == "data-after-terminal") {
+                    unsigned preceding = 0;
+                    for (ctjs::InvokeOp invoke : call->getBlock()->getOps<ctjs::InvokeOp>()) {
+                        preceding += invoke->isBeforeInBlock(method);
+                    }
+                    check(
+                        preceding == 6 && call.getResult().use_empty() &&
+                            method->isBeforeInBlock(call) &&
+                            llvm::isa<mlir::scf::IfOp>(call->getParentOp()),
+                        "final attribute read follows both selectors and all writes at its guard");
+                }
                 if (secondWrites && ctjs::constantKey(call.getArgs()[0]) == "data-closed") {
                     bool followsWrite = false;
                     for (ctjs::InvokeOp invoke : call->getBlock()->getOps<ctjs::InvokeOp>()) {
@@ -984,7 +1016,8 @@ module {
                           static_cast<unsigned>(secondWrites) +
                           static_cast<unsigned>(selectorReads) + static_cast<unsigned>(finalReads) +
                           static_cast<unsigned>(finalWrites) + suffixWrites + suffixReads +
-                          static_cast<unsigned>(terminalReads) &&
+                          static_cast<unsigned>(terminalReads) +
+                          static_cast<unsigned>(afterTerminalReads) &&
                   allocations == 0 && mlir::succeeded(mlir::verify(*input)),
               "protected expansion retains call-plus-exit and only elides unused objects");
         auto bound = contract;
@@ -1033,9 +1066,9 @@ module {
             }
         }
     }
-    for (const auto & budgetSource :
-         {protectedRead, trailingRead, secondWrite, selectorRead, finalWrite, selectedWrite,
-          finalRead, fourthWrite, fourthRead, fifthRead, terminalRead, terminalMatch}) {
+    for (const auto & budgetSource : {protectedRead, trailingRead, secondWrite, selectorRead,
+                                      finalWrite, selectedWrite, finalRead, fourthWrite, fourthRead,
+                                      fifthRead, terminalRead, terminalMatch, terminalMatchRead}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1056,7 +1089,23 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(terminalMatch, "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+         {replaced(terminalMatchRead,
+                   "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
+                   "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
+          replaced(terminalMatchRead, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
+          replaced(terminalMatchRead, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %terminalPresent"),
+          replaced(terminalMatchRead, "%answer = ctjs.create_object",
+                   "%lateMethod = ctjs.get_property %element[%finalKey]\n"
+                   "    %late = ctjs.call %lateMethod(%element, %name, %afterTerminalPresent)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(terminalMatchRead, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(terminalMatch, "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
                    "ctjs.call %terminalReadMethod(%text, %terminalReadName)"),
           replaced(terminalMatch, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
