@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Standalone cleanup selectors and binary table conversions, 2026-09-23 UTC
+
+Resumed clean **1038e634** and retained source `c1ea55cf` from the prior
+handoff. **8232f054** lets initial cleanup writes consume standalone saved
+DOM reads before their method lookups. Every initial selector is validated,
+including ignored reads; complete uses, source order/guard, typed DOM/Style
+reproof and the original body exception remain. The original, getter and order
+variants execute. A historical host test caught an unfinished method lookup
+being overwritten during selection; a shared guard retains that refusal.
+Independent rereview found no remaining issues.
+
+**58cce74f** reuses bounded primitive conversion for numeric binary
+operations on invariant table values. String addition keeps its existing proof;
+original table values, mutation checks, receiver reload gaps and actual-write
+replay remain unchanged. Five previously stored child sites become confined;
+five controls remain stored. Noncanonical numeric spellings remain unproved.
+
+Final focused checks pass: **48 native executions, 76 refusals, 24 Node/VM
+observations, exact host/arrays CTests and one table-key lit case**. Source
+preflight passes 26 checks. Native execution was repeated after the unfinished
+method guard; two new-layout raw ordering assertions were also corrected.
+Historical inputs were preserved. Formatting passes **1126 C++, 157 Python,
+114 web files**; six final code/test hashes match the devbox. No browser
+implementation changed; Claude stayed uncertain. Full suites were skipped.
+
+**Next native boundary:** retained `unsupported-selector-reused-by-second-write`,
+source `8f5b1ef8`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. It reuses the first standalone selector Boolean in
+the second cleanup write. Preserve the original snapshot, both writes and the
+original body exception. Broader single-write cleanup, nonterminal exceptional
+state, multiple protected regions, implicit cleanup, nested custom iterators,
+unguarded Bootstrap defaults, the application driver, full native Bootstrap,
+general powers and legacy SCF retention remain unfinished. No full-Bootstrap
+coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-standalone-selectors-binary-table-conversions.md).
+
 ## Initial cleanup selectors and explicit table conversions, 2026-09-23 UTC
 
 Resumed clean **2889faa9** and retained source `95420a67` from the prior
