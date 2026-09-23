@@ -370,8 +370,19 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // separately excludes String concatenation for Add.
         if (!offset && power && offsetOperand == 1 &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
-            if (!exponent || endpointNumber(range->first) < -1 || endpointNumber(range->last) > 1) {
-                return std::nullopt;
+            if (!exponent) { return std::nullopt; }
+            if (endpointNumber(range->first) < -1 || endpointNumber(range->last) > 1) {
+                if (exponent->first.integerNumber != 0 || exponent->last.integerNumber != 1) {
+                    return std::nullopt;
+                }
+                // Every bounded base to exponent zero or one is exactly one or
+                // itself. Enclose both images; whole-key refinement below keeps
+                // reloads in correlated gaps, and replay records actual writes.
+                const ContentsValue unit{operand, ContentsKind::NonBigInt, 1};
+                range->first.original = operand;
+                range->last.original = operand;
+                return IndexRange{endpointNumber(range->first) < 1 ? range->first : unit,
+                                  endpointNumber(range->last) > 1 ? range->last : unit, 1, true};
             }
             // A signed-unit lattice may skip zero. Negative exponents are exact
             // only when every possible base is a unit, including interior visits.

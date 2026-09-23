@@ -424,8 +424,12 @@ void StructuredCases::mutationRefusals() {
            replace(replace(singletonBaseReload, "create_array [%x, %x]", "create_array [%two, %x]"),
                    "%offset = ctjs.get_property %base[%two]",
                    "%offset = ctjs.get_property %base[%zero]"));
-    reject("structured nonsingleton nonunit bases cannot borrow the invariant proof",
-           replace(singletonBasePower, "mod %i, %one", "mod %i, %two"));
+    rows.push_back(
+        {.what = "structured nonunit bases preserve zero/unit powers and unvisited children",
+         .body = replace(singletonBasePower, "mod %i, %one", "mod %i, %two"),
+         .arrays = "a:[zero,x,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
     reject("structured singleton nonunit bases do not prove general powers",
            replace(singletonBasePower, "%exponent = ctjs.binary mod %i, %two",
                    "%exponent = ctjs.binary add %i, %one"));
@@ -475,6 +479,47 @@ void StructuredCases::mutationRefusals() {
            replace(tightOddPower, "add %even, %one", "sub %even, %three"));
     reject("structured odd-power bounds need integral exponent lattices",
            replace(tightOddPower, "mul %i, %two", "div %i, %two"));
+    const auto zeroUnitExponent =
+        replace(replace(replace(singletonBasePower, "mod %i, %one", "mod %i, %two"),
+                        "create_array [%x, %x]", "create_array [%x, %zero]"),
+                "ctjs.append %zero to %a", "ctjs.append %x to %a");
+    rows.push_back({.what = "structured zero/unit exponents preserve exact varying nonunit powers",
+                    .body = zeroUnitExponent,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured zero/unit exponents preserve negative nonunit bases",
+                    .body = replace(replace(replace(zeroUnitExponent, "ctjs.append %x to %a",
+                                                    "ctjs.append %x to %a\n"
+                                                    "  ctjs.append %zero to %a"),
+                                            "add %part, %two", "sub %part, %two"),
+                                    "sub %power, %one", "sub %one, %power"),
+                    .arrays = "a:[zero,zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero; a[3]=zero",
+                    .exit = "a -> {a}"});
+    const auto zeroUnitReload =
+        replace(replace(zeroUnitExponent, "create_array [%x, %zero]", "create_array [%x, %two]"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%one]\n"
+                "    %exponent = ctjs.binary mod %i, %divisor");
+    rows.push_back({.what = "structured zero/unit powers refine correlated gaps before reloads",
+                    .body = zeroUnitReload,
+                    .arrays = "a:[zero,ctjs.binary,zero]",
+                    .reads = "a[1]=ctjs.binary; a[0]=zero; a[1]=ctjs.binary; a[1]=ctjs.binary; "
+                             "a[1]=ctjs.binary; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured zero/unit powers retain the complete later-store census",
+           replace(zeroUnitReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="));
+    reject("structured zero/unit powers cannot reload an overwritten divisor",
+           replace(replace(zeroUnitReload, "create_array [%x, %two]", "create_array [%two, %x]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("structured zero/unit powers require integral varying exponents",
+           replace(zeroUnitExponent, "%exponent = ctjs.binary mod %i, %two",
+                   "%exponent = ctjs.binary div %i, %two"));
+    reject("structured zero/unit powers require every output to be an own element",
+           replace(zeroUnitExponent, "sub %power, %one", "sub %power, %zero"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

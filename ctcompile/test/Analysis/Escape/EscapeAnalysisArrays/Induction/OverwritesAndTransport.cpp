@@ -585,8 +585,11 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(singletonBaseReload, "[%x, %x, %two]", "[%two, %x, %zero]"),
                    "%offset = ctjs.get_property %base[%two]",
                    "%offset = ctjs.get_property %base[%zero]"));
-    reject("nonsingleton nonunit bases cannot borrow the invariant-base proof",
-           replace(singletonBasePower, "mod %i, %one", "mod %i, %two"));
+    run({.what = "varying nonunit bases retain unvisited children with zero/unit exponents",
+         .body = replace(singletonBasePower, "mod %i, %one", "mod %i, %two"),
+         .arrays = "a:[zero,x,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
     reject("singleton nonunit bases do not prove general powers",
            replace(singletonBasePower, "%exponent = ctjs.binary mod %i, %two",
                    "%exponent = ctjs.binary add %i, %one"));
@@ -643,6 +646,54 @@ void InductionCases::overwritesAndTransport() {
            replace(tightOddPower, "add %even, %one", "sub %even, %three"));
     reject("tight odd-power bounds still require integral exponent lattices",
            replace(tightOddPower, "mul %i, %two", "div %i, %two"));
+    const auto zeroUnitExponent =
+        replace(replace(singletonBasePower, "mod %i, %one", "mod %i, %two"), "[%x, %x, %zero]",
+                "[%x, %zero, %x]");
+    run({.what = "zero/unit exponent ranges preserve exact varying nonunit powers",
+         .body = zeroUnitExponent,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying nonunit power overwrites preserve saved child identity",
+         .body = replace(replace(zeroUnitExponent, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    run({.what = "zero/unit exponent ranges preserve negative nonunit bases",
+         .body =
+             replace(replace(replace(zeroUnitExponent, "[%x, %zero, %x]", "[%x, %zero, %x, %zero]"),
+                             "add %part, %two", "sub %part, %two"),
+                     "sub %power, %one", "sub %one, %power"),
+         .arrays = "a:[zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto zeroUnitReload =
+        replace(replace(zeroUnitExponent, "[%x, %zero, %x]", "[%x, %two, %x]"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%one]\n"
+                "  %exponent = ctjs.binary mod %i, %divisor");
+    run({.what = "zero/unit powers refine correlated gaps before accepting reloads",
+         .body = zeroUnitReload,
+         .arrays = "a:[zero,two,zero]",
+         .reads = "a[1]=two; a[0]=zero; a[1]=two; a[1]=two; a[1]=two; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "zero/unit powers retain the complete later-store census",
+        replace(zeroUnitReload, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
+    reject("zero/unit powers cannot reload an overwritten exponent divisor",
+           replace(replace(zeroUnitReload, "[%x, %two, %x]", "[%two, %x, %x]"),
+                   "%divisor = ctjs.get_property %base[%one]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("zero/unit powers still require integral varying exponents",
+           replace(zeroUnitExponent, "%exponent = ctjs.binary mod %i, %two",
+                   "%exponent = ctjs.binary div %i, %two"));
+    reject("zero/unit powers still require every output to be an own element",
+           replace(zeroUnitExponent, "add %part, %two", "add %part, %three"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :
