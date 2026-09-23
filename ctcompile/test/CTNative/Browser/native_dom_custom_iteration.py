@@ -2521,6 +2521,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-after-terminal', present);",
         "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
     )
+    selector_final_argument_read_source = terminal_write_selector_value_source.replace(
+        "anchor.setAttribute('data-after-terminal', present);",
+        "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3324,6 +3328,30 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-final-argument-value-close",
+            selector_final_argument_read_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-final-argument-value-getter-close",
+            selector_final_argument_read_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-final-argument-value-order-close",
+            selector_final_argument_read_source.replace(
+                "anchor.setAttribute('data-closed', false); const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', false);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -3390,12 +3418,17 @@ def saved_throws(args, compilers, includes, libraries):
         terminal_match_read = "-terminal-match-read-" in label
         terminal_write = "-terminal-match-read-sequence-write-" in label
         terminal_write_value = "-terminal-match-read-sequence-write-value-" in label
-        terminal_selector_value = "-write-selector-value-" in label
+        selector_final_argument_read = "-write-selector-final-argument-value-" in label
+        terminal_selector_value = selector_final_argument_read or "-write-selector-value-" in label
         before_selector_read = "-write-before-selector-value-" in label
         before_first_selector_read = "-write-before-first-selector-value-" in label
         before_second_write_read = "-write-before-second-write-value-" in label
-        final_argument_read = "-write-final-argument-value-" in label
-        feeding_first_read = final_argument_read or "-write-feeding-first-value-" in label
+        final_argument_read = (
+            selector_final_argument_read or "-write-final-argument-value-" in label
+        )
+        feeding_first_read = (
+            "-write-final-argument-value-" in label or "-write-feeding-first-value-" in label
+        )
         before_first_write_read = (
             feeding_first_read
             or "-write-before-first-write-value-" in label
@@ -4190,6 +4223,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-final-argument-value-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-final-argument-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-final-argument-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-final-argument-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-final-argument-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-final-argument-value-order-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -5472,10 +5508,80 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-saved-selector-through-final-write-argument-read",
-            terminal_write_selector_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
+            "normal-selector-final-argument-read-write-close",
+            selector_final_argument_read_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-final-argument-read-write-close",
+            selector_final_argument_read_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-final-argument-read-write-name",
+            selector_final_argument_read_source.replace(
                 "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                "anchor.setAttribute('bad name', (anchor.hasAttribute('data-closed'), present));",
+            ),
+        ),
+        (
+            "bad-selector-final-argument-read-write-receiver",
+            selector_final_argument_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                "(0).setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+            ),
+        ),
+        (
+            "invalid-selector-final-argument-read-write-arity",
+            selector_final_argument_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present), false);",
+            ),
+        ),
+        (
+            "bad-selector-final-argument-read-write-read-receiver",
+            selector_final_argument_read_source.replace(
+                "const present = anchor.matches('[data-closed=false]')",
+                "const present = (0).matches('[data-closed=false]')",
+            ),
+        ),
+        (
+            "bad-selector-final-argument-read-write-ignored-receiver",
+            selector_final_argument_read_source.replace(
+                "anchor.hasAttribute('data-closed'), present));",
+                "(0).hasAttribute('data-closed'), present));",
+            ),
+        ),
+        (
+            "unsupported-selector-final-argument-read-write-reuse",
+            selector_final_argument_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present)); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+            ),
+        ),
+        (
+            "unsupported-selector-final-argument-read-write-extra-use",
+            selector_final_argument_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                "external(present); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+            ),
+        ),
+        (
+            "invalid-selector-final-argument-read-selector",
+            selector_final_argument_read_source.replace(
+                "const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[');",
+            ),
+        ),
+        (
+            "unsupported-selector-inside-final-write-argument-read",
+            selector_final_argument_read_source.replace(
+                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
             ),
         ),
         (

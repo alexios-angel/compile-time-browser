@@ -691,6 +691,12 @@ module {
     const auto earlyReadThroughFinalArgument =
         replaced(replaced(readThroughFinalArgument, savedRead, ""),
                  "    %effect =", savedRead + "    %effect =");
+    const auto selectorThroughFinalArgument =
+        replaced(terminalReadValue, "ctjs.call %lateMethod(%element, %lateName, %latePresent)",
+                 "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)");
+    const auto alternateSelectorThroughFinalArgument =
+        replaced(alternatingReadValue, "ctjs.call %lateMethod(%element, %lateName, %latePresent)",
+                 "ctjs.call %lateMethod(%element, %lateName, %alternateTerminalPresent)");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -840,6 +846,25 @@ module {
                  true},
              std::pair{readThroughFinalArgument, true},
              std::pair{earlyReadThroughFinalArgument, true},
+             std::pair{selectorThroughFinalArgument, true},
+             std::pair{alternateSelectorThroughFinalArgument, true},
+             std::pair{replaced(selectorThroughFinalArgument,
+                                "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(selectorThroughFinalArgument, "[data-closed]", "["), false},
+             std::pair{replaced(alternateSelectorThroughFinalArgument, "[data-terminal]", "["),
+                       false},
+             std::pair{replaced(replaced(selectorThroughFinalArgument,
+                                         "ctjs.get_property %element[%terminalReadKey]",
+                                         "ctjs.get_property %text[%terminalReadKey]"),
+                                "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                                "ctjs.call %terminalReadMethod(%text, %terminalReadName)"),
+                       false},
+             std::pair{replaced(selectorThroughFinalArgument,
+                                "%lateReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%lateReadName = ctjs.constant #ctjs.number<0>"),
+                       false},
              std::pair{replaced(earlyReadThroughFinalArgument,
                                 "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
@@ -1366,7 +1391,7 @@ module {
                         auto readMethod = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                         const auto readName = ctjs::constantKey(read.getArgs()[0]);
                         const bool argumentRead =
-                            lateReads && savedTerminalValue &&
+                            lateReads && (savedTerminalValue || savedSelectorValue) &&
                             (readName == "data-closed" || (!typed && readName.empty()));
                         check(argumentRead ? method->isBeforeInBlock(readMethod) &&
                                                  readMethod->isBeforeInBlock(read) &&
@@ -1605,7 +1630,9 @@ module {
                                       readAfterFirstFeeding,
                                       readAfterSecondFeeding,
                                       readThroughFinalArgument,
-                                      earlyReadThroughFinalArgument}) {
+                                      earlyReadThroughFinalArgument,
+                                      selectorThroughFinalArgument,
+                                      alternateSelectorThroughFinalArgument}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1753,6 +1780,31 @@ module {
                    "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
                    "ctjs.call %lateMethod(%element, %lateName, %present)"),
           replaced(readThroughFinalArgument, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(selectorThroughFinalArgument, "[data-terminal]", "["),
+          replaced(alternateSelectorThroughFinalArgument, "[data-alternate-terminal]", "["),
+          replaced(selectorThroughFinalArgument, "#ctjs.string<\"[data-terminal]\">",
+                   "#ctjs.number<0>"),
+          replaced(selectorThroughFinalArgument, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %terminalPresent"),
+          replaced(selectorThroughFinalArgument, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %latePresent\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(appendWrite(selectorThroughFinalArgument, finalWrite, "reuse"),
+                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                   "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
+          replaced(selectorThroughFinalArgument, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %terminalReadMethod(%element, %terminalReadName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(selectorThroughFinalArgument,
+                   "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                   "ctjs.call %terminalReadMethod(%element, %terminalReadName, %name)"),
+          replaced(selectorThroughFinalArgument,
+                   "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)",
+                   "ctjs.call %lateMethod(%element, %terminalPresent, %terminalPresent)"),
+          replaced(selectorThroughFinalArgument, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
                    "        ctjs.store_global \"effect\", %error"),
           replaced(readBeforeFirstSelector, "%answer = ctjs.create_object",

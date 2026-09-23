@@ -171,8 +171,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     leaf.getReceiver() == finalMethod.getObject() && leaf.getArgs().size() == 2) {
                     if (!selectFeedingRead(leaf, finalReadMethod, finalReadCall)) { return false; }
                     if (finalReadMethod &&
-                        (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult() ||
-                         ctjs::constantKey(finalReadMethod.getKey()) != "hasAttribute")) {
+                        (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult())) {
                         return false;
                     }
                     // Each consumed suffix read belongs to one following write.
@@ -184,6 +183,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             {finalReadMethod.getResult(), finalReadCall.getResult()});
                         suffixUses.insert(&finalReadCall->getOpOperand(0));
                         suffixUses.insert(&leaf->getOpOperand(3));
+                        if (suffixLeaves.erase(finalReadCall)) {
+                            consumedSelectors.push_back(finalReadCall);
+                        }
                     } else if (suffixReads.erase(leaf.getArgs()[1])) {
                         // An earlier standalone read may feed one later write.
                         // The complete census still rejects leaks and reuse.
