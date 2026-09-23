@@ -2063,6 +2063,76 @@ module {
     auto effectful = mlir::parseSourceString<mlir::ModuleOp>(effectfulSource, &context);
     check(static_cast<bool>(effectful), "effectful loop completion parses");
     if (!effectful) { return; }
+    const auto conditionalPrimitiveSource =
+        replaced(primitiveReturn(effectfulSource),
+                 "      %returnClose = ctjs.call %close(%undefined, %record, %normal)\n",
+                 R"MLIR(      %abrupt = ctjs.constant #ctjs.boolean<true>
+      "ctjs.invoke"() ({
+        %closedAbrupt = ctjs.call %close(%undefined, %record, %abrupt)
+        ctjs.invoke_exit %closedAbrupt state()
+      }, {
+      ^normalClose(%ignored: !ctjs.value):
+        ctjs.invoke_yield()
+      }, {
+      ^caughtClose(%caught: !ctjs.value):
+        ctjs.invoke_yield()
+      }) : () -> ()
+      scf.execute_region {
+        ctjs.throw %returnRead
+      } {no_inline}
+)MLIR");
+    for (const auto & specimen :
+         {conditionalPrimitiveSource, throwingReturn(conditionalPrimitiveSource)}) {
+        auto fixture = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
+        check(static_cast<bool>(fixture), "conditional suppressed close fixture parses");
+        if (!fixture) { return; }
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*fixture);
+            mlir::OwningOpRef<mlir::ModuleOp> input(fixture->clone());
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(!failure, "selected exhaustion proves done without changing the saved throw");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            unsigned closes = 0;
+            input->walk([&](ctjs::CallOp call) {
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (!method || ctjs::constantKey(method.getKey()) != "return") { return; }
+                ++closes;
+                check(llvm::isa<ctjs::InvokeOp>(call->getParentOp()),
+                      "conditional primitive close remains suppressed");
+            });
+            check(closes == 1 && mlir::succeeded(mlir::verify(*input)),
+                  "only the saved-throw exit calls return");
+            failure = expandDOMHelpers(*input, request.entry, completeBudget);
+            check(!failure, "conditional suppressed close expands");
+            if (failure) {
+                llvm::consumeError(std::move(failure));
+                continue;
+            }
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(DOMEntryAnalysis(*input, request).proved(),
+                  "conditional close retains complete DOM reproof");
+        }
+        auto conflicting = mlir::parseSourceString<mlir::ModuleOp>(
+            replaced(specimen, "%again = arith.constant true", "%again = arith.constant false"),
+            &context);
+        check(static_cast<bool>(conflicting), "conflicting done facts parse");
+        if (!conflicting) { return; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*conflicting);
+        auto failure = normalizeDOMCustomIteration(*conflicting, request, completeBudget);
+        check(static_cast<bool>(failure), "an ordinary early exit cannot borrow exhaustion's done");
+        if (failure) {
+            check(llvm::toString(std::move(failure)).find("saved-throw suppression") !=
+                      std::string::npos,
+                  "conflicting exit facts retain normal result validation");
+        }
+    }
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         auto request = contract;

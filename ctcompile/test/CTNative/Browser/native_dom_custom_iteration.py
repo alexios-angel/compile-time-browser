@@ -2461,6 +2461,20 @@ def saved_throws(args, compilers, includes, libraries):
             "true",
         ),
         (
+            "conditional-boolean-primitive-close",
+            conditional_source.replace("return {};", "return 2;"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-throwing-close",
+            conditional_source.replace("return {};", "throw 2;"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
             "boolean-snapshot-primitive-close",
             refusals()["body-throw-boolean-snapshot"].replace("return {};", "return 2;"),
             "js_boolean_t",
@@ -2828,6 +2842,8 @@ var savedThrow, savedExhausted;
                         "number-throwing-close",
                         "number-getter-close",
                         "conditional-boolean-read",
+                        "conditional-boolean-primitive-close",
+                        "conditional-boolean-throwing-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -2865,6 +2881,16 @@ var savedThrow, savedExhausted;
     for label, text in (
         ("invalid-close-name", throwing_close.replace("data-closed", "bad name")),
         ("unknown-close-throw", throwing_close.replace("throw 2;", "throw anchor;")),
+        ("normal-primitive-close", refusals()["primitive-return-result"]),
+        (
+            "return-primitive-close",
+            BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace("return {};", "return 2;"),
+        ),
+        ("normal-throwing-close", source(True).replace("return {};", "throw 2;")),
+        (
+            "return-throwing-close",
+            BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace("return {};", "throw 2;"),
+        ),
         (
             "normal-getter-close",
             getter_close.replace("throw 1;", "node.setAttribute('data-visited', 'yes');"),

@@ -36,6 +36,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         unsigned selector = 0;
         llvm::SmallVector<unsigned> outputs;
         llvm::SmallVector<bool> consumed;
+        llvm::DenseMap<mlir::Region *, llvm::SmallVector<ctjs::BooleanAttr>> booleans{};
         bool effectful = false;
     };
     struct Terminal {
@@ -163,6 +164,21 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                         selectedExit = selected;
                         if (terminal.exit.effectful) {
+                            // Keep only Boolean facts shared by every path to
+                            // this exit, before padding any inactive tuple slots.
+                            auto [facts, first] = terminal.exit.booleans.try_emplace(selected);
+                            for (auto [index, value] : llvm::enumerate(arguments)) {
+                                if (!step()) { return {}; }
+                                auto literal = value.getDefiningOp<ctjs::ConstantOp>();
+                                auto boolean =
+                                    literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
+                                            : ctjs::BooleanAttr{};
+                                if (first) {
+                                    facts->second.push_back(boolean);
+                                } else if (facts->second[index] != boolean) {
+                                    facts->second[index] = {};
+                                }
+                            }
                             mlir::Attribute discriminator =
                                 terminal.exit.cases.size() == 1
                                     ? mlir::Attribute(ctjs::BooleanAttr::get(function.getContext(),
@@ -509,6 +525,19 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 values.map(loop.getResults(), copied.getResults());
                 if (before.exit.dispatch) {
                     auto dispatch = before.exit.dispatch;
+                    const auto refineExit = [&](mlir::Region * source, mlir::IRMapping & path,
+                                                mlir::OpBuilder & nested) {
+                        auto facts = before.exit.booleans.find(source);
+                        if (facts == before.exit.booleans.end()) { return true; }
+                        for (auto [index, boolean] : llvm::enumerate(facts->second)) {
+                            if (!step()) { return false; }
+                            if (!boolean) { continue; }
+                            auto value = ctjs::ConstantOp::create(nested, loop.getLoc(), boolean);
+                            path.map(loop.getResult(index), value.getResult());
+                            ++operationCount;
+                        }
+                        return true;
+                    };
                     if (before.exit.effectful && before.exit.cases.size() > 1) {
                         // Keep each exit's exact tuple until its continuation has
                         // selected the live payload. Joining here would expose
@@ -531,6 +560,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                     if (!step()) { return {}; }
                                 }
                                 mlir::IRMapping path(values);
+                                if (!refineExit(source, path, nested)) { return {}; }
                                 return self(self, source->front(), source->front().begin(), path,
                                             nested, &tail, terminal, depth + index + 1);
                             };
@@ -592,6 +622,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             mlir::IRMapping path(values);
                             auto & output = target.emplaceBlock();
                             mlir::OpBuilder nested(&output, output.begin());
+                            if (!refineExit(source, path, nested)) { return {}; }
                             auto result = self(self, source->front(), source->front().begin(), path,
                                                nested, nullptr, joined, depth + 1);
                             if (!result) { return {}; }
