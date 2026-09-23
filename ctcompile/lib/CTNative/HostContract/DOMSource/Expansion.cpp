@@ -114,7 +114,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             return false;
                         }
                     }
-                    // ponytail: one guarded second write and one branch-local read;
+                    // ponytail: one guarded second write with branch-local reads;
                     // further effects need their own order and exceptional-edge proof.
                     for (mlir::Operation & nested : guard.getThenRegion().front()) {
                         if (!step()) { return false; }
@@ -129,9 +129,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             continue;
                         }
                         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
-                            read && !trailingMethod && !secondLeaf &&
+                            read && !secondLeaf &&
                             (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
                              ctjs::constantKey(read.getKey()) == "matches")) {
+                            if (trailingMethod) {
+                                if (!trailingCall) { return false; }
+                                suffixValues.append(
+                                    {trailingMethod.getResult(), trailingCall.getResult()});
+                                suffixUses.insert(&trailingCall->getOpOperand(0));
+                                suffixReads.insert(trailingCall.getResult());
+                                trailingCall = {};
+                            }
                             trailingMethod = read;
                             continue;
                         }
