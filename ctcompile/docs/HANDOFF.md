@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Initial cleanup selectors and explicit table conversions, 2026-09-23 UTC
+
+Resumed clean **2889faa9** and retained source `95420a67` from the prior
+handoff. **68e4614f** accepts `matches` in either initial protected cleanup
+write's arguments through existing ordered read tracking. Literal validation
+covers every moved selector, including saved or ignored reads. Complete uses,
+source guard/order, private typed DOM/Style reproof, original body exceptions
+and budgets remain. Original, getter and order variants execute. Independent
+native review found no issues.
+
+**9fee9698** proves explicit unary `+`, `-` and `~` conversions of exact
+primitives selected from invariant, distinct tables. Existing bounded conversion
+and ordinary replay preserve primitive identity, mutation checks and receiver
+reload gaps. Five previously stored child sites become confined; seven controls
+stay stored. Noncanonical conversions such as `+'00'` remain unproved.
+
+Focused validation passes: **26 source preflight checks, 48 native executions,
+76 refusals, 24 Node/VM observations, exact host/arrays CTests and one table-key
+lit case**. Final formatting passes **1126 C++, 157 Python, 114 web files**;
+six final code/test hashes match the devbox. The host test initially mistook the
+new initial selector for a later selector in an existing order assertion. Only
+that assertion changed before the successful host rerun; dedicated initial
+selector checks remain. Native and escape executions were not replayed.
+Historical sources/oracles and raw literals are preserved. No browser
+implementation changed; Claude stayed uncertain. Full suites were skipped.
+
+**Next native boundary:** retained `unsupported-selector-before-first-write`,
+source `c1ea55cf`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the saved selector evaluated before the
+first write's method lookup, selector validity/order and original body exception.
+Broader single-write selector cleanup, nonterminal exceptional state, multiple
+protected regions, implicit cleanup, nested custom iterators, unguarded Bootstrap
+defaults, the application driver, full native Bootstrap, general powers and legacy
+SCF retention remain unfinished. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-initial-selector-table-conversions.md).
+
 ## Cleanup argument selectors and String table keys, 2026-09-23 UTC
 
 Resumed clean **7d714efb** and retained source `b3cd2859` from the prior
