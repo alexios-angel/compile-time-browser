@@ -245,8 +245,9 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     auto origin = input.origin();
     if (!origin) { return std::nullopt; }
     bool negate = false;
-    // ponytail: at most two source Plus/Neg operations; longer chains need charged provenance.
-    for (unsigned depth = 0; depth < 2; ++depth) {
+    // ponytail: cap literal-only provenance at 64 operations, matching loop proofs.
+    // Unbounded chains need charged traversal; loads and arithmetic still stop here.
+    for (unsigned depth = 0; depth < 64; ++depth) {
         auto unary = origin.getDefiningOp<ctjs::UnaryOp>();
         if (!unary ||
             (unary.getKind() != ctjs::UnaryKind::Neg && unary.getKind() != ctjs::UnaryKind::Plus)) {

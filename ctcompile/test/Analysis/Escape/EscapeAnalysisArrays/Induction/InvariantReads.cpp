@@ -771,10 +771,14 @@ void InductionCases::invariantReads() {
              .exit = "a -> {a}"},
             "x");
     }
-    reject("a third fractional unary needs charged source provenance",
-           replace(nestedNumberTable, "  %innerZero = ctjs.unary plus %rawZero",
-                   "  %third = ctjs.unary plus %rawZero\n"
-                   "  %innerZero = ctjs.unary plus %third"));
+    run({.what = "three original Number unary operations preserve literal provenance",
+         .body = replace(nestedNumberTable, "  %innerZero = ctjs.unary plus %rawZero",
+                         "  %third = ctjs.unary plus %rawZero\n"
+                         "  %innerZero = ctjs.unary plus %third"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     reject(
         "nested unary Number proof cannot convert String origins",
         replace(nestedNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
@@ -786,6 +790,52 @@ void InductionCases::invariantReads() {
     reject(
         "nested unary Number bitwise proof does not supply fractional arithmetic facts",
         replace(nestedNumberTable, "binary_static bitor %slot, %zero", "binary sub %slot, %zero"));
+    const auto unaryChainTable = [&](unsigned length, const std::string & kind) {
+        auto source = plusNumberTable;
+        for (const std::string suffix : {"Zero", "Two"}) {
+            std::string chain;
+            std::string operand = "%raw" + suffix;
+            for (unsigned i = 1; i < length; ++i) {
+                const std::string result = "%chain" + suffix + std::to_string(i);
+                chain += "  " + result + " = ctjs.unary " + kind + " " + operand + "\n";
+                operand = result;
+            }
+            chain += "  %text" + suffix + " = ctjs.unary " + kind + " " + operand;
+            source =
+                replace(source, "  %text" + suffix + " = ctjs.unary plus %raw" + suffix, chain);
+        }
+        if (kind == "neg" && length % 2 != 0) {
+            source = replace(replace(source, "4606281698874543309", "13829653735729319117"),
+                             "4613712638259704627", "13837084675114480435");
+        }
+        return source;
+    };
+    for (const unsigned length : {7U, 64U}) {
+        for (const std::string kind : {"plus", "neg"}) {
+            run({.what = "bounded original Number unary chains preserve sign parity",
+                 .body = unaryChainTable(length, kind),
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+    }
+    const auto longNumberTable = unaryChainTable(64, "plus");
+    reject("Number unary provenance stops after 64 source operations", unaryChainTable(65, "plus"));
+    reject("long unary Number provenance cannot convert String origins",
+           replace(longNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    reject("long unary Number provenance cannot cross an unknown operand",
+           replace(longNumberTable, "unary plus %rawZero", "unary plus %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("long unary Number bitwise proof keeps fractional property keys unchanged",
+           replace(longNumberTable, "%base[%converted]", "%base[%slot]"));
+    reject("long unary Number bitwise proof cannot supply fractional arithmetic facts",
+           replace(longNumberTable, "binary_static bitor %slot, %zero", "binary sub %slot, %zero"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("long unary Number table mutations remain visible before and after reads",
+               replace(longNumberTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     const auto wideNumberTable =
         replace(replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
                         "#ctjs.number<4751297606876816998>"),
