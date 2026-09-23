@@ -6363,6 +6363,152 @@ void InductionCases::overwritesAndTransport() {
     reject(
         "crossing mask refinement retains the complete later-store census",
         replace(crossingMask, "  %step =", "  ctjs.set_property %base[%one], %thirty\n  %step ="));
+
+    const auto invariantNumeratorRemainder =
+        replace(replace(masked, "[%one, %x]", "[%x, %zero, %x]"),
+                "%position = ctjs.binary_static bitand %i, %one",
+                "%divisor = ctjs.binary add %i, %one\n"
+                "  %position = ctjs.binary mod %two, %divisor");
+    run({.what = "invariant numerators preserve remainder operand order through refinement",
+         .body = invariantNumeratorRemainder,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative invariant numerators retain the remainder sign before negation",
+         .body = replace(invariantNumeratorRemainder, "%position = ctjs.binary mod %two, %divisor",
+                         "%negative = ctjs.unary neg %two\n"
+                         "  %part = ctjs.binary mod %negative, %divisor\n"
+                         "  %position = ctjs.unary neg %part"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "invariant remainder numerators preserve negative divisor semantics",
+         .body = replace(invariantNumeratorRemainder, "%position = ctjs.binary mod %two, %divisor",
+                         "%negative = ctjs.unary neg %divisor\n"
+                         "  %position = ctjs.binary mod %two, %negative"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "zero invariant numerators divide by every proved nonzero divisor",
+         .body =
+             replace(replace(invariantNumeratorRemainder, "[%x, %zero, %x]", "[%x, %zero, %zero]"),
+                     "mod %two, %divisor", "div %zero, %divisor"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto invariantNumeratorDivision =
+        replace(replace(replace(invariantNumeratorRemainder, "[%x, %zero, %x]",
+                                "[%zero, %zero, %x, %x, %zero, %zero, %x]"),
+                        "  %a =", "  %six = ctjs.binary add %three, %three\n  %a ="),
+                "%divisor = ctjs.binary add %i, %one\n"
+                "  %position = ctjs.binary mod %two, %divisor",
+                "%part = ctjs.binary mod %i, %three\n"
+                "  %divisor = ctjs.binary add %part, %one\n"
+                "  %position = ctjs.binary div %six, %divisor");
+    run({.what = "invariant numerators divide only by exact visited singleton divisors",
+         .body = invariantNumeratorDivision,
+         .arrays = "a:[zero,zero,zero,zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero; a[3]=zero; "
+                  "a[4]=zero; a[5]=zero; a[6]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "invariant numerator replay retains children outside actual writes",
+         .body = replace(invariantNumeratorRemainder, "[%x, %zero, %x]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,x,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "invariant numerator replay preserves an overwritten saved child",
+         .body = replace(replace(invariantNumeratorRemainder, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto invariantNumeratorReload =
+        replace(replace(invariantNumeratorRemainder, "[%x, %zero, %x]", "[%x, %one, %x]"),
+                "%divisor = ctjs.binary add %i, %one",
+                "%unit = ctjs.get_property %base[%one]\n"
+                "  %divisor = ctjs.binary add %i, %unit");
+    run({.what = "invariant numerators independently prove every divisor reload gap",
+         .body = invariantNumeratorReload,
+         .arrays = "a:[zero,one,zero]",
+         .reads = "a[1]=one; a[0]=zero; a[1]=one; a[1]=one; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "reloaded invariant numerators retain their own independent gap proof",
+         .body = replace(replace(invariantNumeratorRemainder, "[%x, %zero, %x]", "[%x, %two, %x]"),
+                         "%position = ctjs.binary mod %two, %divisor",
+                         "%numerator = ctjs.get_property %base[%one]\n"
+                         "  %position = ctjs.binary mod %numerator, %divisor"),
+         .arrays = "a:[zero,two,zero]",
+         .reads = "a[1]=two; a[0]=zero; a[1]=two; a[1]=two; a[1]=two; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("invariant numerator proofs retain every later producer store",
+           replace(invariantNumeratorReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("invariant numerators cannot borrow an overwritten divisor producer",
+           replace(replace(invariantNumeratorReload, "[%x, %one, %x]", "[%one, %x, %x]"),
+                   "%unit = ctjs.get_property %base[%one]",
+                   "%unit = ctjs.get_property %base[%zero]"));
+    reject("invariant numerator remainder still refuses a visited zero divisor",
+           replace(invariantNumeratorRemainder, "mod %two, %divisor", "mod %two, %i"));
+    reject("invariant numerator division still refuses a visited fractional quotient",
+           replace(invariantNumeratorRemainder, "mod %two, %divisor", "div %two, %divisor"));
+    reject("invariant numerator refinement retains each intermediate arithmetic bound",
+           replace(replace(invariantNumeratorRemainder, "  %a =",
+                           "  %unbounded = ctjs.constant "
+                           "#ctjs.number<4751297606875873280>\n  %a ="),
+                   "mod %two, %divisor", "mod %unbounded, %divisor"));
+
+    const auto structuredNumerator =
+        invariantNumeratorRemainder.substr(0, invariantNumeratorRemainder.find("  cf.br ^header")) +
+        "  %finalIndex = scf.while (%index = %zero) : (!ctjs.value) -> !ctjs.value {\n"
+        "    %key = ctjs.constant #ctjs.string<\"length\">\n"
+        "    %length = ctjs.get_property %a[%key]\n"
+        "    %less = ctjs.compare lt %index, %length\n"
+        "    %flag = ctjs.truthy %less\n"
+        "    scf.condition(%flag) %index : !ctjs.value\n"
+        "  } do {\n"
+        "  ^bb0(%i: !ctjs.value):\n"
+        "    %divisor = ctjs.binary add %i, %one\n"
+        "    %position = ctjs.binary mod %two, %divisor\n"
+        "    ctjs.set_property %a[%position], %zero\n"
+        "    %read = ctjs.get_property %a[%i]\n"
+        "    %step = ctjs.binary_static add %i, %one\n"
+        "    scf.yield %step : !ctjs.value\n"
+        "  }\n"
+        "  ctjs.return %a\n";
+    for (const auto & expected : {
+             contents_row{.what = "SCF invariant numerators use the shared ordered divisor proof",
+                          .body = structuredNumerator,
+                          .arrays = "a:[zero,zero,zero]",
+                          .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                          .exit = "a -> {a}"},
+             contents_row{
+                 .what = "SCF invariant numerators retain exact fractional quotient refusals",
+                 .body = replace(structuredNumerator, "mod %two, %divisor", "div %two, %divisor"),
+                 .failure = ArrayContentsFailure::UnsupportedControlFlow},
+         }) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.body + "}\n", &context);
+        if (!module) {
+            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
+                 "the structured numerator fixture did not parse");
+            continue;
+        }
+        checkArrayContents(*module, expected);
+        // The independent contents proof supports SCF. The legacy retention
+        // census deliberately rejects every operation with nested regions.
+        budgets += checkArrayRetention(
+            *module,
+            {.what = expected.what, .body = expected.body, .discharged = "", .complete = false});
+        ++rows;
+    }
 }
 
 } // namespace ctcompile::test::escape::arrays::induction_detail

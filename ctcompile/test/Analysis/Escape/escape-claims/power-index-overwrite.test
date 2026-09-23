@@ -366,6 +366,17 @@
 // CHECK: escape {{[0-9a-f]+}} 313 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 314 {{[0-9]+}} obj escapes:stored
 
+// CHECK: escape {{[0-9a-f]+}} 315 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 316 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 317 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 318 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 319 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 320 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 321 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 322 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 323 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 324 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -2177,3 +2188,61 @@ function threePointProduct() {
 twoPointProduct(); reverseTwoPointProduct(); retainedTwoPointProduct(); savedTwoPointProduct();
 reloadTwoPointProduct(); laterTwoPointProductStore(); overlappingTwoPointProduct();
 unboundedTwoPointProduct(); fractionalTwoPointProduct(); threePointProduct();
+
+function invariantNumeratorDivision() {
+    var child = {}, a = [0, 0, child, child, 0, 0, child];
+    for (var i = 0; i < a.length; i++) a[6 / ((i % 3) + 1)] = 0;
+    return a;
+}
+function invariantNumeratorRemainder() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + 1)] = 0;
+    return a;
+}
+function negativeInvariantNumerator() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[-(-2 % (i + 1))] = 0;
+    return a;
+}
+function retainedInvariantNumerator() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + 1)] = 0;
+    return a;
+}
+function savedInvariantNumerator() {
+    var child = {}, a = [child, 0, child], before = a[0];
+    for (var i = 0; i < a.length; i++) a[2 % (i + 1)] = 0;
+    return before;
+}
+function reloadInvariantNumerator() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + a[1])] = 0;
+    return a;
+}
+function laterInvariantNumeratorStore() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) {
+        a[2 % (i + a[1])] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingInvariantNumerator() {
+    var child = {}, a = [1, child, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + a[0])] = 0;
+    return a;
+}
+function poleInvariantNumerator() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[2 % i] = 0;
+    return a;
+}
+function fractionalInvariantNumerator() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[2 / (i + 1)] = 0;
+    return a;
+}
+invariantNumeratorDivision(); invariantNumeratorRemainder(); negativeInvariantNumerator();
+retainedInvariantNumerator(); savedInvariantNumerator(); reloadInvariantNumerator();
+laterInvariantNumeratorStore(); overlappingInvariantNumerator(); poleInvariantNumerator();
+fractionalInvariantNumerator();

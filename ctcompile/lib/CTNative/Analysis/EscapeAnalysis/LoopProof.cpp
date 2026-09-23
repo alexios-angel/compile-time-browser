@@ -347,13 +347,30 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1);
-        if (!range && !divide && !remainder && !shift &&
-            invariantFailure != ArrayContentsFailure::WorkLimit) {
+        if (!range && !shift && invariantFailure != ArrayContentsFailure::WorkLimit) {
             range = self(self, expression->getOperand(1), depth + 1);
             offsetOperand = 0;
         }
         if (!range) { return std::nullopt; }
         auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
+        if ((divide || remainder) && offsetOperand == 0) {
+            if (!offset) { return std::nullopt; }
+            // An invariant numerator still needs its original operand order.
+            // Refine varying divisors to singleton values, then reuse the exact
+            // scalar transfer; poles and fractional quotients remain unproved.
+            if (endpointNumber(range->first) != endpointNumber(range->last)) {
+                refinableEnclosure = true;
+                return std::nullopt;
+            }
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return std::nullopt;
+            }
+            ContentsValue result{operand, ContentsKind::NonBigInt};
+            boundedNumberDivision(*offset, range->first, remainder, result);
+            if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+            return IndexRange{result, result, 1, range->mixedShift};
+        }
         // A varying offset, factor, divisor, shift count or mask may have one exact bounded value.
         // Reuse its range proof; every producer and reload remains in the census.
         if (!offset &&
