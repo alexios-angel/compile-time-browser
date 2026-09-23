@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Suppressed iterator return getters and signed-unit power ranges, 2026-09-23 UTC
+
+Resumed clean **155fd28b** and original getter close `68ea7208`.
+**807cd24b** admits its unchanged body: the return getter writes `data-closed=yes`
+and throws 2, while the saved body exception remains Number 1. An exact own
+accessor with no setter and a terminal throw uses the existing private close
+callable proof. Literal payload, closure and holder confinement, source order,
+exhaustion, suppression and complete DOM reproof remain required. A Boolean
+snapshot getter also executes. Returning getters and ordinary closes still refuse.
+
+Parallel **5d6676f4** proves positive integer powers over bases `-1, 0, 1`.
+Even powers include the interior zero despite equal endpoint results; odd powers
+preserve all three values. Existing scalar transfer, invariant reload/store census
+and actual-write replay remain. All 65 historical source bodies survive; source 63
+now proves unchanged, with twelve controls added. General powers remain refused.
+
+The two affected getter sources pass **32 native executions, 48 refusals and
+eight Node/VM observations**. Focused host/arrays CTests and the exact power-index
+lit case pass. All seven final code/test hashes match the devbox; sixteen generated
+C++ files contain no Script/VM protocol or nullable-scalar fallback. Full formatting
+passes **1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** conditional primitive close `1fe1a3e8`, then throwing
+close `fd04cbc3`, still refuse **DOM iterator primitive close requires saved-throw
+suppression** in both policies. Prove the correlation between completion and done
+state without losing the saved Boolean or permitting an ordinary primitive close.
+Mutable throwing-close state, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-getter-close.md).
+
 ## Suppressed iterator close throws and two-value power indices, 2026-09-23 UTC
 
 Resumed clean **6d6d026d** and original throwing close `fa88f9d6`.
