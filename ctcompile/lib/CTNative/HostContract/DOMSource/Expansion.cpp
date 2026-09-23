@@ -1,4 +1,5 @@
 #include "Proof.hpp"
+#include "ctbrowser/style/css/parser.hpp"
 
 namespace ctcompile::ctnative::dom_source_detail {
 
@@ -7,6 +8,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                            llvm::MutableArrayRef<Capture> captures, unsigned depth) {
     ctjs::InvokeOp protectedInvocation;
     ctjs::CallOp protectedLeaf, secondLeaf, selectorLeaf, finalLeaf;
+    bool selectorFeedsWrite = false;
     ctjs::CreateObjectOp discardedResult;
     llvm::DenseSet<mlir::Operation *> discardedFields;
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
@@ -147,6 +149,22 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 (selectorMethod && !selectorLeaf) || (finalMethod && !finalLeaf)) {
                 return false;
             }
+            selectorFeedsWrite =
+                selectorLeaf && finalLeaf && finalLeaf.getArgs()[1] == selectorLeaf.getResult();
+            if (selectorFeedsWrite) {
+                auto literal = selectorLeaf.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+                auto selector = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
+                                        : ctjs::StringAttr{};
+                if (!selector) { return false; }
+                for (std::size_t i = 0; i < selector.getValue().size(); ++i) {
+                    if (!step()) { return false; }
+                }
+                ctbrowser::atom_table atoms;
+                bool invalid = false;
+                const std::string_view text{selector.getValue().data(), selector.getValue().size()};
+                (void)ctbrowser::style::css::parse_selector_text(text, atoms, invalid);
+                if (invalid) { return false; }
+            }
             for (mlir::Value value : llvm::SmallVector<mlir::Value>{
                      method.getResult(), protectedLeaf.getResult(),
                      discardedResult ? discardedResult.getResult() : mlir::Value{},
@@ -181,6 +199,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                          use.getOwner() == secondLeaf && use.getOperandNumber() == 0) ||
                         (selectorMethod && value == selectorMethod.getResult() &&
                          use.getOwner() == selectorLeaf && use.getOperandNumber() == 0) ||
+                        (selectorFeedsWrite && value == selectorLeaf.getResult() &&
+                         use.getOwner() == finalLeaf && use.getOperandNumber() == 3) ||
                         (finalMethod && value == finalMethod.getResult() &&
                          use.getOwner() == finalLeaf && use.getOperandNumber() == 0) ||
                         (discardedResult && value == discardedResult.getResult() &&
@@ -204,6 +224,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             secondLeaf = {};
             selectorLeaf = {};
             finalLeaf = {};
+            selectorFeedsWrite = false;
             discardedResult = {};
             discardedFields.clear();
             // Only an independently inert body may discharge suppression.
@@ -289,7 +310,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             } else {
                 if (&operation == protectedLeaf) { at.setInsertionPoint(call); }
                 ctjs::InvokeOp trailingInvocation;
-                if (&operation == secondLeaf || &operation == selectorLeaf ||
+                // A consumed selector remains an ordered read at this guard.
+                // Its literal syntax was checked above; complete typed reproof
+                // must still exclude receiver failure, coercion and reentry.
+                if (&operation == secondLeaf ||
+                    (&operation == selectorLeaf && !selectorFeedsWrite) ||
                     &operation == finalLeaf) {
                     // Splitting suppression is valid only after complete DOM
                     // reproof excludes source exceptions from EVERY call.

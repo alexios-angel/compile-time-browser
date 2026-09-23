@@ -570,6 +570,9 @@ module {
     %finalMethod = ctjs.get_property %element[%finalKey]
     %finalEffect = ctjs.call %finalMethod(%element, %finalName, %finalValue)
     %answer = ctjs.create_object)MLIR");
+    const auto selectedWrite =
+        replaced(finalWrite, "ctjs.call %finalMethod(%element, %finalName, %finalValue)",
+                 "ctjs.call %finalMethod(%element, %finalName, %selected)");
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
@@ -620,6 +623,21 @@ module {
              std::pair{secondWrite, true},
              std::pair{selectorRead, true},
              std::pair{finalWrite, true},
+             std::pair{selectedWrite, true},
+             std::pair{replaced(selectedWrite, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(selectedWrite, "data-final", "bad name"), false},
+             std::pair{replaced(replaced(selectedWrite, "ctjs.get_property %element[%selectorKey]",
+                                         "ctjs.get_property %text[%selectorKey]"),
+                                "ctjs.call %selectorMethod(%element, %selectorText)",
+                                "ctjs.call %selectorMethod(%text, %selectorText)"),
+                       false},
+             std::pair{replaced(replaced(selectedWrite, "ctjs.get_property %element[%finalKey]",
+                                         "ctjs.get_property %text[%finalKey]"),
+                                "ctjs.call %finalMethod(%element, %finalName, %selected)",
+                                "ctjs.call %finalMethod(%text, %finalName, %selected)"),
+                       false},
              std::pair{replaced(finalWrite, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -732,6 +750,7 @@ module {
         const bool secondWrites = valid.find("%secondKey") != std::string::npos;
         const bool selectorReads = valid.find("%selectorKey") != std::string::npos;
         const bool finalWrites = valid.find("%finalKey") != std::string::npos;
+        const bool selectedWrites = valid.find("%finalName, %selected)") != std::string::npos;
         if (finalWrites) {
             input->walk([&](ctjs::InvokeOp invoke) {
                 auto call = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
@@ -741,8 +760,19 @@ module {
                 for (ctjs::InvokeOp prior : invoke->getBlock()->getOps<ctjs::InvokeOp>()) {
                     preceding += prior->isBeforeInBlock(method);
                 }
-                check(preceding == 3 && llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
+                check(preceding == (selectedWrites ? 2u : 3u) &&
+                          llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
                       "final write follows the selector and both prior writes at the source guard");
+                if (selectedWrites) {
+                    auto selected = call.getArgs()[1].getDefiningOp<ctjs::CallOp>();
+                    auto selector = selected
+                                        ? selected.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                        : ctjs::GetPropertyOp{};
+                    check(selector && ctjs::constantKey(selector.getKey()) == "matches" &&
+                              selected->getBlock() == invoke->getBlock() &&
+                              selected->isBeforeInBlock(method),
+                          "final write consumes the ordered selector Boolean directly");
+                }
             });
         }
         if (selectorReads) {
@@ -796,7 +826,7 @@ module {
             });
         }
         check(invocations == 1u + static_cast<unsigned>(secondWrites) +
-                                 static_cast<unsigned>(selectorReads) +
+                                 static_cast<unsigned>(selectorReads && !selectedWrites) +
                                  static_cast<unsigned>(finalWrites) &&
                   calls == 1u + static_cast<unsigned>(reads) +
                                static_cast<unsigned>(trailingReads) +
@@ -834,7 +864,12 @@ module {
             });
             input->walk([&](ctjs::CallOp call) {
                 if (llvm::isa<ctjs::InvokeOp>(call->getParentOp())) { return; }
-                check(proof.call(call) && proof.call(call)->kind == HostDOMMethod::hasAttribute,
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                const bool selector = ctjs::constantKey(method.getKey()) == "matches";
+                check(proof.call(call) &&
+                          proof.call(call)->kind ==
+                              (selector ? HostDOMMethod::matches : HostDOMMethod::hasAttribute) &&
+                          (!selector || selectedWrites),
                       "the moved read has exact typed no-source-throw evidence");
             });
             check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
@@ -847,7 +882,7 @@ module {
         }
     }
     for (const auto & budgetSource :
-         {protectedRead, trailingRead, secondWrite, selectorRead, finalWrite}) {
+         {protectedRead, trailingRead, secondWrite, selectorRead, finalWrite, selectedWrite}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -868,12 +903,21 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(finalWrite, "ctjs.call %finalMethod(%element, %finalName, %finalValue)",
+         {replaced(selectedWrite, "[data-closed]", "["),
+          replaced(selectedWrite, "ctjs.call %selectorMethod(%element, %selectorText)",
+                   "ctjs.call %selectorMethod(%element, %element)"),
+          replaced(selectedWrite, "ctjs.call %finalMethod(%element, %finalName, %selected)",
+                   "ctjs.call %finalMethod(%element, %selected, %selected)"),
+          replaced(selectedWrite, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %selected"),
+          replaced(selectedWrite, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %selected\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(finalWrite, "ctjs.call %finalMethod(%element, %finalName, %finalValue)",
                    "ctjs.call %finalMethod(%text, %finalName, %finalValue)"),
           replaced(finalWrite, "ctjs.call %finalMethod(%element, %finalName, %finalValue)",
                    "ctjs.call %finalMethod(%element, %finalName)"),
-          replaced(finalWrite, "ctjs.call %finalMethod(%element, %finalName, %finalValue)",
-                   "ctjs.call %finalMethod(%element, %finalName, %selected)"),
           replaced(finalWrite, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %finalEffect"),
