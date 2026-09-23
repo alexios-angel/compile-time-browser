@@ -40,8 +40,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
         // ponytail: two writes with feeding reads, one matches, then read/write pairs
-        // and unused terminal reads/selectors; other effects need their exceptional
-        // edges represented.
+        // and unused reads/selectors interleaved with writes; other effects need
+        // their exceptional edges represented.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
             ctjs::GetPropertyOp selectorMethod, finalMethod, finalReadMethod;
@@ -133,7 +133,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     continue;
                 }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-                    read && selectorLeaf && !finalMethod && !terminalSelector &&
+                    read && selectorLeaf && !finalMethod &&
                     ctjs::constantKey(read.getKey()) == "setAttribute") {
                     finalMethod = read;
                     continue;
