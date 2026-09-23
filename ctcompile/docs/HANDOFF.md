@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Branch-local cleanup reads and radix conversions, 2026-09-23 UTC
+
+Resumed clean **ebf753aa** and retained source `164962d0` from the previous
+handoff. **a7b6a1de** admits one branch-local `hasAttribute` or literal `matches`
+read in the guarded second cleanup write. The saved condition, read/lookup/write
+order and original body exception remain; complete use checks, typed DOM/Style
+reproof and budgets still gate publication. Original, getter, order and selector
+variants execute. Independent native and escape reviews found no actionable issues.
+
+**bd312a19** extends shared bounded numeric conversion to unsigned hexadecimal,
+octal and binary Strings through public Core helpers. The 32-byte limit, exact
+magnitude bound, original String/property spelling and mutation checks remain.
+The six measured source sites change from all stored to **three confined and
+three stored**; all six are observed by the interpreter oracle. Historical
+source bodies and raw IR inputs remain. No browser or runtime code changed.
+
+Focused checks: **64 native executions, 88 refusals, 32 Node/VM observations,
+28 source preflight checks, exact host/arrays CTests and one table-key lit case**.
+An interruption lost native final stdout; recovery verified its artifacts and
+only reran the final refusal. Formatting passes **1126 C++, 157 Python and
+114 web files**. Full suites were skipped.
+
+**Next native boundary:** `unsupported-selector-guards-second-write-two-reads`,
+source `04f5317c`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve both branch-local reads, their original
+guard/order and the body exception. Broader cleanup/control flow, nested custom
+iterators, unguarded Bootstrap defaults, the application driver, full native
+Bootstrap, general powers and legacy SCF retention remain unfinished. Numeric
+conversion still refuses fractional/exponent grammars and Strings over 32 bytes.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-branch-local-cleanup-radix-conversions.md).
+
 ## Guarded cleanup writes and bounded decimal conversions, 2026-09-23 UTC
 
 Resumed clean **f3f6f9b2** and retained source `c90a81f2` from the prior
