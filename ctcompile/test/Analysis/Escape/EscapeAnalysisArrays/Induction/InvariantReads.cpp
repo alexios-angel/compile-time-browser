@@ -519,6 +519,16 @@ void InductionCases::invariantReads() {
     for (const std::string text :
          {".", "0.9junk", "1e-999junk", "1e9999999999", "1e-2147483616", "Infinity", "NaN",
           "4294967295.5", "-4294967295.5", "0.0000000000000000000000000000000"}) {
+        if (text == "Infinity" || text == "NaN") {
+            run({.what = "exact nonfinite token keeps the historical fractional table body",
+                 .body = replace(fractionalTable, "#ctjs.string<\"0.9\">",
+                                 "#ctjs.string<\"" + text + "\">"),
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+            continue;
+        }
         reject("bitwise conversion keeps complete grammar exponent and magnitude bounds",
                replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"" + text + "\">"));
     }
@@ -885,6 +895,16 @@ void InductionCases::invariantReads() {
     for (const std::string text :
          {"1e999junk", "1e2147483616", "1e-2147483616", "Infinity", "NaN", "0x10000000000000801",
           "4294967296.9", "1000000000000000000000000000e9999"}) {
+        if (text == "Infinity" || text == "NaN") {
+            run({.what = "exact nonfinite token keeps the historical overflow table body",
+                 .body = replace(overflowStringTable, "#ctjs.string<\"1e999\">",
+                                 "#ctjs.string<\"" + text + "\">"),
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+            continue;
+        }
         reject("bitwise overflow proof keeps grammar exponent radix and source-size guards",
                replace(overflowStringTable, "#ctjs.string<\"1e999\">",
                        "#ctjs.string<\"" + text + "\">"));
@@ -904,6 +924,68 @@ void InductionCases::invariantReads() {
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject("overflow conversion preserves table mutations before and after reads",
                replace(overflowStringTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    const auto nonfiniteStringTable =
+        replace(overflowStringTable, "#ctjs.string<\"1e999\">", "#ctjs.string<\"Infinity\">");
+    for (const std::string text : {"Infinity", "+Infinity", "-Infinity", "NaN", " Infinity ",
+                                   " +Infinity ", " -Infinity ", " NaN "}) {
+        run({.what = "exact nonfinite tokens convert to zero bits without changing String values",
+             .body = replace(nonfiniteStringTable, "#ctjs.string<\"Infinity\">",
+                             "#ctjs.string<\"" + text + "\">"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitxor %slot, %zero", "shl %slot, %zero", "shr %slot, %zero",
+          "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero", "shr %i, %textZero",
+          "ushr %i, %textZero"}) {
+        run({.what = "nonfinite String operands masks and counts share Core conversion",
+             .body = replace(nonfiniteStringTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "nonfinite String complement preserves its signed intermediate",
+         .body =
+             replace(nonfiniteStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                     "  %complement = ctjs.unary bitnot %slot\n"
+                     "  %converted = ctjs.unary bitnot %complement"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "nonfinite String conversion preserves a saved child",
+         .body = replace(replace(nonfiniteStringTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    for (const std::string text : {"infinity", "INFINITY", "nan", "+NaN", "-NaN", "Infinityx",
+                                   "NaNx", "Inf", "Infinity                         "}) {
+        reject("nonfinite String proof requires exact tokens within the source-byte bound",
+               replace(nonfiniteStringTable, "#ctjs.string<\"Infinity\">",
+                       "#ctjs.string<\"" + text + "\">"));
+    }
+    for (const std::string expression :
+         {"unary plus %slot", "unary neg %slot", "binary sub %slot, %zero",
+          "binary mul %slot, %one", "binary div %slot, %one", "binary add %slot, %zero"}) {
+        reject("nonfinite String arithmetic cannot borrow zero bitwise facts",
+               replace(nonfiniteStringTable, "binary_static bitor %slot, %zero", expression));
+        reject("computed nonfinite String conversions need independent provenance",
+               replace(nonfiniteStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                       "  %number = ctjs." + expression +
+                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+    }
+    reject("nonfinite String properties retain their original spelling",
+           replace(nonfiniteStringTable, "%base[%converted]", "%base[%slot]"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("nonfinite String conversion preserves table mutations before and after reads",
+               replace(nonfiniteStringTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
     reject("table conversion cannot invoke object coercion",

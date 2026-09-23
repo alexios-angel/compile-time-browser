@@ -148,6 +148,11 @@ std::optional<double> boundedStringNumber(const ContentsValue & input) {
     // Validate the whole grammar before Core handles overflow/underflow.
     if (text.size() > 32) { return std::nullopt; }
     llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
+    // Only these exact tokens may supply a nonfinite conversion proof. Other
+    // spellings that Core converts to NaN still require validated grammar below.
+    if (digits == "Infinity" || digits == "+Infinity" || digits == "-Infinity" || digits == "NaN") {
+        return ctbrowser::string_to_number({text.data(), text.size()});
+    }
     int radix = 10;
     if (digits.consume_front_insensitive("0x")) {
         radix = 16;

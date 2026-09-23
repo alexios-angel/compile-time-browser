@@ -127,6 +127,14 @@
 // CHECK: escape {{[0-9a-f]+}} 95 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 96 {{[0-9]+}} obj escapes:stored
 
+// Exact nonfinite String tokens convert only at bitwise consumers.
+// CHECK: escape {{[0-9a-f]+}} 97 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 98 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 99 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -231,6 +239,19 @@
 // RECORD-LABEL: fn 95 entries 1 params 0 frame {{[0-9]+}} name mutatedOverflowStringTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 96 entries 1 params 0 frame {{[0-9]+}} name unconvertedOverflowStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 97 entries 1 params 0 frame {{[0-9]+}} name infinityStringBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 98 entries 1 params 0 frame {{[0-9]+}} name negativeInfinityStringTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 99 entries 1 params 0 frame {{[0-9]+}} name nanStringShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 100 entries 1 params 0 frame {{[0-9]+}} name savedInfinityStringTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 101 entries 1 params 0 frame {{[0-9]+}} name mutatedInfinityStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 102 entries 1 params 0 frame {{[0-9]+}} name unconvertedInfinityStringTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -528,6 +549,12 @@ nonfiniteNumberBitwiseTableKey(); negatedNonfiniteNumberTableKey(); nonfiniteNum
 savedNonfiniteNumberTableChild(); mutatedNonfiniteNumberTableKey(); unconvertedNonfiniteNumberTableKey();
 overflowStringBitwiseTableKey(); negativeOverflowStringTableKey(); overflowStringShiftTableKey();
 savedOverflowStringTableChild(); mutatedOverflowStringTableKey(); unconvertedOverflowStringTableKey();
+infinityStringBitwiseTableKey();
+negativeInfinityStringTableKey();
+nanStringShiftTableKey();
+savedInfinityStringTableChild();
+mutatedInfinityStringTableKey();
+unconvertedInfinityStringTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -803,6 +830,41 @@ function mutatedOverflowStringTableKey() {
 }
 function unconvertedOverflowStringTableKey() {
     var child = {}, a = [child, 0, child], keys = ["1e999", "2"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+
+function infinityStringBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function negativeInfinityStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["-Infinity", "2.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] >>> 0] = 0;
+    return a;
+}
+function nanStringShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = ["NaN", "1.9"];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedInfinityStringTableChild() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2.9"];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedInfinityStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2.9"];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = "Infinity";
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function unconvertedInfinityStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["Infinity", "2"];
     for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
     return a;
 }
