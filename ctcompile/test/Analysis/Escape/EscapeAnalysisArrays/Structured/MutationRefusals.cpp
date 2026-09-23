@@ -1046,6 +1046,52 @@ void StructuredCases::mutationRefusals() {
              .reads = "a[0]=zero; a[1]=zero",
              .exit = "a -> {a}"});
     }
+    const auto varyingProduct =
+        replace(replace(replace(replace(scaledIndex, "  %a =",
+                                        "  %two = ctjs.binary add %one, %one "
+                                        "{storage_test_id = \"two\"}\n  %a ="),
+                                "create_array [%x]", "create_array [%x, %y]"),
+                        "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+                "%position = ctjs.binary mul %i, %one",
+                "%factor = ctjs.binary sub %two, %i\n"
+                "    %position = ctjs.binary mul %i, %factor");
+    for (const auto & expression : {"mul %i, %factor", "mul %factor, %i"}) {
+        rows.push_back(
+            {.what = "structured varying products include interior maxima in source order",
+             .body = replace(varyingProduct, "mul %i, %factor", expression),
+             .arrays = "a:[zero,zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+             .exit = "a -> {a}"});
+    }
+    rows.push_back(
+        {.what = "structured varying products retain actual unvisited children",
+         .body = replace(varyingProduct, "ctjs.append %zero to %a", "ctjs.append %y to %a"),
+         .arrays = "a:[zero,zero,y]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=y",
+         .exit = "a -> {a,y}"});
+    const auto productReload =
+        replace(replace(varyingProduct, "ctjs.append %zero to %a", "ctjs.append %two to %a"),
+                "%factor = ctjs.binary sub %two, %i",
+                "%bound = ctjs.get_property %base[%two]\n"
+                "    %factor = ctjs.binary sub %bound, %i");
+    rows.push_back({.what = "structured varying products independently prove producer reload gaps",
+                    .body = productReload,
+                    .arrays = "a:[zero,zero,two]",
+                    .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two",
+                    .exit = "a -> {a}"});
+    reject("structured varying products retain every later producer store",
+           replace(productReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured varying products cannot reload an overwritten interior maximum",
+           replace(
+               replace(replace(productReload, "create_array [%x, %y]", "create_array [%x, %two]"),
+                       "ctjs.append %two to %a", "ctjs.append %zero to %a"),
+               "%bound = ctjs.get_property %base[%two]", "%bound = ctjs.get_property %base[%one]"));
+    reject("structured product endpoints cannot conceal interior array growth",
+           replace(replace(replace(varyingProduct, "create_array [%x, %y]",
+                                   "create_array [%x, %y, %x]"),
+                           "  %a =", "  %four = ctjs.binary add %two, %two\n  %a ="),
+                   "sub %two, %i", "sub %four, %i"));
     const auto scaledVisit =
         replace(replace(replace(replace(scaledIndex, "  %a =",
                                         "  %two = ctjs.binary add %one, %one "

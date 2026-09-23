@@ -4893,6 +4893,72 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
     }
+    const auto varyingProduct = replace(replace(scaledIndex, "[%one, %x]", "[%x, %x, %zero]"),
+                                        "%position = ctjs.binary mul %i, %one",
+                                        "%factor = ctjs.binary sub %two, %i\n"
+                                        "  %position = ctjs.binary mul %i, %factor");
+    for (const auto & expression : {"mul %i, %factor", "mul %factor, %i"}) {
+        run({.what = "bounded varying products include interior maxima in either source order",
+             .body = replace(varyingProduct, "mul %i, %factor", expression),
+             .arrays = "a:[zero,zero,zero]",
+             .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "varying product replay preserves every unvisited child",
+         .body = replace(varyingProduct, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "varying products retain a saved overwritten child",
+         .body = replace(replace(varyingProduct, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[1]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    run({.what = "varying signed products include the interior zero despite equal endpoints",
+         .body = replace(replace(varyingProduct, "sub %two, %i", "sub %i, %one"), "mul %i, %factor",
+                         "mul %factor, %factor"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto productReload = replace(replace(varyingProduct, "[%x, %x, %zero]", "[%x, %x, %two]"),
+                                       "%factor = ctjs.binary sub %two, %i",
+                                       "%bound = ctjs.get_property %base[%two]\n"
+                                       "  %factor = ctjs.binary sub %bound, %i");
+    run({.what = "varying products independently prove producer reload gaps",
+         .body = productReload,
+         .arrays = "a:[zero,zero,two]",
+         .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "varying products retain every later producer store",
+        replace(productReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("varying products cannot reload an overwritten interior maximum",
+           replace(replace(productReload, "[%x, %x, %two]", "[%x, %two, %zero]"),
+                   "%bound = ctjs.get_property %base[%two]",
+                   "%bound = ctjs.get_property %base[%one]"));
+    reject("varying product endpoints cannot conceal interior array growth",
+           replace(replace(replace(varyingProduct, "[%x, %x, %zero]", "[%x, %x, %x, %x]"),
+                           "  %a =", "  %four = ctjs.binary add %two, %two\n  %a ="),
+                   "sub %two, %i", "sub %four, %i"));
+    reject("varying products cannot borrow a fractional intermediate",
+           replace(varyingProduct,
+                   "%factor = ctjs.binary sub %two, %i\n"
+                   "  %position = ctjs.binary mul %i, %factor",
+                   "%part = ctjs.binary div %i, %two\n"
+                   "  %factor = ctjs.binary sub %two, %part\n"
+                   "  %position = ctjs.binary mul %part, %factor"));
+    reject("varying products retain intermediate bounds before a final zero factor",
+           replace(replace(varyingProduct, "  %a =",
+                           "  %huge = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
+                   "%position = ctjs.binary mul %i, %factor",
+                   "%part = ctjs.binary mul %i, %huge\n"
+                   "  %product = ctjs.binary mul %part, %factor\n"
+                   "  %position = ctjs.binary mul %product, %zero"));
     const auto scaledVisit = replace(
         replace(replace(scaledIndex, "[%one, %x]", "[%x, %one]"), "mul %i, %one", "mul %i, %two"),
         "add %i, %one", "add %i, %two");

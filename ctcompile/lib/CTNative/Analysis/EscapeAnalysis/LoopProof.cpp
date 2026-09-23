@@ -353,9 +353,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (!range) { return std::nullopt; }
         auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
-        // A varying offset, divisor, shift count or mask may have one exact bounded value.
+        // A varying offset, factor, divisor, shift count or mask may have one exact bounded value.
         // Reuse its range proof; every producer and reload remains in the census.
-        if (!offset && (subtract || divide || remainder || shift || bitAnd || bitOr || bitXor) &&
+        if (!offset &&
+            (subtract || multiply || divide || remainder || shift || bitAnd || bitOr || bitXor) &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
             const auto other = self(self, expression->getOperand(offsetOperand), depth + 1);
             if (other && endpointNumber(other->first) == endpointNumber(other->last)) {
