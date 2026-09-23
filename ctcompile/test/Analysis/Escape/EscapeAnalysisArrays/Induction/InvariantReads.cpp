@@ -824,6 +824,88 @@ void InductionCases::invariantReads() {
                replace(nonfiniteNumberTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto overflowStringTable =
+        replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"1e999\">");
+    for (const std::string text : {"1e999", "-1e999", "+1e999", ".1e999", "1.e999", "1e2147483615",
+                                   " 1e999 ", "100000000000000000000000000e9999"}) {
+        run({.what = "validated decimal overflow converts to zero bits without changing Strings",
+             .body = replace(overflowStringTable, "#ctjs.string<\"1e999\">",
+                             "#ctjs.string<\"" + text + "\">"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+          "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+          "shr %i, %textZero", "ushr %i, %textZero"}) {
+        run({.what = "overflow String operands masks and counts share Core bitwise conversion",
+             .body = replace(overflowStringTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "complements preserve signed bitwise intermediates from decimal overflow",
+         .body =
+             replace(overflowStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                     "  %complement = ctjs.unary bitnot %slot\n"
+                     "  %converted = ctjs.unary bitnot %complement"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "overflow String shift counts convert while preserving the table",
+         .body = replace(replace(replace(overflowStringTable, "[%x, %zero, %x]", "[%zero, %x, %x]"),
+                                 "#ctjs.string<\"2.9\">", "#ctjs.string<\"1.9\">"),
+                         "bitor %slot, %zero", "shl %one, %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "decimal overflow conversion does not release a saved child",
+         .body = replace(replace(overflowStringTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    const auto selectedOverflowString =
+        replace(selectedFractional, "#ctjs.string<\"0.9\">", "#ctjs.string<\"1e999\">");
+    run({.what = "decimal overflow conversion retains the receiver reload gap",
+         .body = selectedOverflowString,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads =
+             "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    reject("overflow String keys cannot overwrite a reloaded table receiver",
+           replace(selectedOverflowString, "#ctjs.string<\"2.9\">", "#ctjs.string<\"1.9\">"));
+    for (const std::string text :
+         {"1e999junk", "1e2147483616", "1e-2147483616", "Infinity", "NaN", "0x10000000000000801",
+          "4294967296.9", "1000000000000000000000000000e9999"}) {
+        reject("bitwise overflow proof keeps grammar exponent radix and source-size guards",
+               replace(overflowStringTable, "#ctjs.string<\"1e999\">",
+                       "#ctjs.string<\"" + text + "\">"));
+    }
+    for (const std::string expression :
+         {"unary plus %slot", "unary neg %slot", "binary sub %slot, %zero",
+          "binary mul %slot, %one", "binary div %slot, %one", "binary add %slot, %zero"}) {
+        reject("decimal overflow arithmetic cannot borrow zero bitwise facts",
+               replace(overflowStringTable, "binary_static bitor %slot, %zero", expression));
+        reject("computed overflow still requires its own provenance proof",
+               replace(overflowStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                       "  %number = ctjs." + expression +
+                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+    }
+    reject("overflow String properties retain their original spelling",
+           replace(overflowStringTable, "%base[%converted]", "%base[%slot]"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("overflow conversion preserves table mutations before and after reads",
+               replace(overflowStringTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     reject("table conversion cannot invoke object coercion",
            replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
     reject("table conversion cannot read a missing own element",
