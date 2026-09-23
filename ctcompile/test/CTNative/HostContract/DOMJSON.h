@@ -510,6 +510,90 @@ module {
                   "discharged inert call still requires complete DOM entry reproof");
         }
     }
+    const auto protectedAttribute =
+        replaced(protectedHolder, "%answer = ctjs.compare strict_eq %element, %element", R"MLIR(
+    %attributeKey = ctjs.constant #ctjs.string<"setAttribute">
+    %name = ctjs.constant #ctjs.string<"data-closed">
+    %text = ctjs.constant #ctjs.string<"yes">
+    %attribute = ctjs.get_property %element[%attributeKey]
+    %effect = ctjs.call %attribute(%element, %name, %text)
+    %answer = ctjs.create_object)MLIR");
+    const auto capturedAttribute = replaced(
+        replaced(replaced(protectedAttribute, "%helper = ctjs.create_closure %callee[1] this %u",
+                          "%cell = ctjs.create_cell %element\n"
+                          "    %helper = ctjs.create_closure %callee[1] this %u captures %cell"),
+                 "ctjs.call %method(%holder, %element)", "ctjs.call %method(%holder)"),
+        "ctjs.func private @same$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+        "%element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {",
+        "ctjs.func private @same$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> "
+        "!ctjs.value attributes {upvalue_count = 1 : i32} {\n"
+        "    %element = ctjs.load_upvalue %callee[0]");
+    for (const auto & valid : {protectedAttribute, capturedAttribute,
+                               replaced(protectedAttribute, "ctjs.call %method(%holder, %element)",
+                                        "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                               replaced(protectedAttribute, "data-closed", "bad name")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "protected attribute helper fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "one effectful attribute call expands with its suppression intact");
+        if (error) {
+            llvm::consumeError(std::move(error));
+            continue;
+        }
+        unsigned invocations = 0, calls = 0, allocations = 0;
+        input->walk([&](ctjs::InvokeOp invoke) {
+            ++invocations;
+            auto call = llvm::dyn_cast<ctjs::CallOp>(invoke.getBody().front().front());
+            auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                               : ctjs::GetPropertyOp{};
+            check(method && method->getBlock() == invoke->getBlock() &&
+                      method->isBeforeInBlock(invoke) &&
+                      ctjs::constantKey(method.getKey()) == "setAttribute" &&
+                      call.getReceiver() == method.getObject(),
+                  "original attribute call stays protected under the original guard");
+        });
+        input->walk([&](ctjs::CallOp) { ++calls; });
+        input->walk([&](ctjs::CreateObjectOp) { ++allocations; });
+        check(invocations == 1 && calls == 1 && allocations == 0 &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "protected expansion retains call-plus-exit and only elides unused objects");
+        auto bound = contract;
+        bound.entry = "entry$0";
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            bound.provider = provider;
+            // Normalization supplies no no-throw authority, even for a valid
+            // name. Typed suppression and saved-throw emission are separate.
+            check(!DOMEntryAnalysis(*input, bound).proved(),
+                  "effectful suppression still needs complete typed DOM admission");
+        }
+    }
+    for (const auto & invalid :
+         {replaced(protectedAttribute, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %text"),
+          replaced(protectedAttribute, "%answer = ctjs.create_object",
+                   "%second = ctjs.call %attribute(%element, %name, %text)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(protectedAttribute, "%answer = ctjs.create_object",
+                   "%answer = ctjs.get_property %element[%name]"),
+          replaced(protectedAttribute, "%answer = ctjs.create_object",
+                   "%answer = ctjs.unary typeof %effect"),
+          replaced(protectedAttribute, "ctjs.call %attribute(%element, %name, %text)",
+                   "ctjs.call %attribute(%text, %name, %text)"),
+          replaced(protectedAttribute, "setAttribute", "unknownMethod")}) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsupported protected attribute fixture parses");
+        if (!input) { continue; }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(error),
+              "extra calls, object observations, getters and receiver changes refuse");
+        if (error) { llvm::consumeError(std::move(error)); }
+        check(mlir::succeeded(mlir::verify(*input)),
+              "refused attribute expansion retains a valid protected source");
+    }
     for (const auto & invalid :
          {replaced(protectedHolder, "    ctjs.set_property %holder[%key], %helper\n", ""),
           replaced(protectedHolder, "      %method =",

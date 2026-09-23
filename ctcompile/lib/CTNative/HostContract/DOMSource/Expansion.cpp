@@ -5,6 +5,9 @@ namespace ctcompile::ctnative::dom_source_detail {
 bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Operation * call,
                            mlir::ValueRange arguments, mlir::Value receiver, mlir::Value callee,
                            llvm::MutableArrayRef<Capture> captures, unsigned depth) {
+    ctjs::InvokeOp protectedInvocation;
+    ctjs::CallOp protectedLeaf;
+    ctjs::CreateObjectOp discardedResult;
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
         if (!step()) { return false; }
         auto & called = invocation.getBody();
@@ -28,20 +31,78 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             !emptyContinuation(unwind)) {
             return refuse("DOM protected helper requires exact unused-result suppression");
         }
-        // Reuse the independent inert-body census: it proves every path for
-        // arbitrary inputs, excluding calls, coercions, getters and throws.
-        // A normal helper body proof alone cannot discharge suppression.
-        // Effectful browser helpers need a separate typed no-throw proof.
-        if (!proveUnusedBody(target)) {
-            return refuse("DOM protected helper needs an independent inert-body proof");
+        // Keep the one effectful call protected. Moving its method lookup
+        // requires the caller's complete typed DOM reproof: only the initial
+        // Element method can justify that lookup, never an arbitrary getter.
+        // ponytail: one straight-line attribute call; larger protected bodies
+        // need a representation that preserves all their exceptional edges.
+        const auto attributeLeaf = [&] {
+            ctjs::GetPropertyOp method;
+            auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
+            for (mlir::Operation & operation : target.getBody().front()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                              ctjs::ReturnOp>(operation)) {
+                    continue;
+                }
+                if (llvm::isa<ctjs::LoadUpvalueOp>(operation) && !protectedLeaf) { continue; }
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                    read && !method && !protectedLeaf &&
+                    ctjs::constantKey(read.getKey()) == "setAttribute") {
+                    method = read;
+                    continue;
+                }
+                if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
+                    leaf && method && !protectedLeaf && leaf.getCallee() == method.getResult() &&
+                    leaf.getReceiver() == method.getObject() && leaf.getArgs().size() == 2) {
+                    protectedLeaf = leaf;
+                    continue;
+                }
+                if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
+                    object && protectedLeaf && !discardedResult && result &&
+                    result.getValue() == object.getResult()) {
+                    discardedResult = object;
+                    continue;
+                }
+                return false;
+            }
+            if (!protectedLeaf || !discardedResult) { return false; }
+            for (mlir::Value value :
+                 {method.getResult(), protectedLeaf.getResult(), discardedResult.getResult()}) {
+                for (mlir::OpOperand & use : value.getUses()) {
+                    if (!step()) { return false; }
+                    if (auto root = llvm::dyn_cast<ctjs::RootOp>(use.getOwner());
+                        root && use.getOperandNumber() == 1) {
+                        continue;
+                    }
+                    if ((value == method.getResult() && use.getOwner() == protectedLeaf &&
+                         use.getOperandNumber() == 0) ||
+                        (value == discardedResult.getResult() && use.getOwner() == result)) {
+                        continue;
+                    }
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (attributeLeaf()) {
+            protectedInvocation = invocation;
+        } else {
+            if (!reason.empty()) { return false; }
+            protectedLeaf = {};
+            discardedResult = {};
+            // Only an independently inert body may discharge suppression.
+            if (!proveUnusedBody(target)) {
+                return refuse("DOM protected helper needs an independent inert-body proof");
+            }
+            if (!step() || !step()) { return false; }
+            call->moveBefore(invocation);
+            invocation.erase();
         }
-        if (!step() || !step()) { return false; }
-        call->moveBefore(invocation);
-        invocation.erase();
     }
     auto & block = function.getBody().front();
     auto & body = target.getBody().front();
-    mlir::OpBuilder at(call);
+    mlir::OpBuilder at(protectedInvocation ? protectedInvocation.getOperation() : call);
     mlir::IRMapping mapping;
     mapping.map(body.getArgument(ctjs::arg_callee), callee);
     mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
@@ -66,6 +127,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
                 continue;
             }
+            // The empty allocation's only observation was the discarded
+            // helper result. This is allocation elision, not a no-throw fact.
+            if (discardedResult && &operation == discardedResult) { continue; }
             if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
                 // Substitute at each invocation, including branch-local
                 // loads, never bind a shared body to its first caller.
@@ -81,7 +145,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 mapping.map(load.getResult(), value);
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                call->getResult(0).replaceAllUsesWith(mapping.lookup(result.getValue()));
+                call->getResult(0).replaceAllUsesWith(
+                    mapping.lookup(protectedLeaf ? protectedLeaf.getResult() : result.getValue()));
             } else if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
                 mlir::OperationState state(operation.getLoc(), operation.getName());
                 for (mlir::Value operand : operation.getOperands()) {
@@ -149,6 +214,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         return true;
     };
     if (!cloneBody(cloneBody, body, at)) { return false; }
+    if (protectedLeaf) {
+        // Commit the replacement only after the charged clone succeeds.
+        // The caller immediately erases the old call, restoring call+exit.
+        mapping.lookup(protectedLeaf.getResult()).getDefiningOp()->moveBefore(call);
+    }
     return true;
 }
 
