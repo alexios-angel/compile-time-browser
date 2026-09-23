@@ -351,9 +351,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (!range) { return std::nullopt; }
         const auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
-        // Multiplication, division and remainder use bounded primitive conversion below.
+        // Multiplication, division, remainder and AND use bounded primitive conversion below.
         // Other operations retain Number operands; String Add concatenates.
-        if (!offset || (!multiply && !divide && !remainder && !offset->integerNumber &&
+        if (!offset || (!multiply && !divide && !remainder && !bitAnd && !offset->integerNumber &&
                         !offset->negativeIntegerNumber && !boundedNumber(offset->origin()) &&
                         !boundedNumber(offset->origin(), true))) {
             return std::nullopt;

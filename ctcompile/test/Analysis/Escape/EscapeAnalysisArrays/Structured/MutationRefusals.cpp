@@ -33,6 +33,49 @@ void StructuredCases::mutationRefusals() {
                                              "    ctjs.set_property %base[%position], %zero\n"
                                              "    %read ="),
                                      "ctjs.return %result", "ctjs.return %a");
+    const auto primitiveAnd = replace(
+        replace(scaledIndex, "  %a =",
+                "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
+        "binary mul %i, %one", "binary_static bitand %i, %text");
+    for (const auto & literal :
+         {"#ctjs.string<\"1\">", "#ctjs.string<\"-1\">", "#ctjs.boolean<true>"}) {
+        rows.push_back({.what = "structured primitive AND masks preserve both exact own positions",
+                        .body = replace(primitiveAnd, "#ctjs.string<\"1\">", literal),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=zero; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    for (const auto & literal : {"#ctjs.boolean<false>", "#ctjs.null"}) {
+        rows.push_back({.what = "structured zero primitive AND masks retain the unvisited child",
+                        .body = replace(replace(primitiveAnd, "#ctjs.string<\"1\">", literal),
+                                        "bitand %i, %text", "bitand %text, %i"),
+                        .arrays = "a:[zero,y]",
+                        .reads = "a[0]=zero; a[1]=y",
+                        .exit = "a -> {a,y}"});
+    }
+    const auto stringAndReload =
+        replace(replace(replace(primitiveAnd, "create_array [%x]", "create_array [%x, %y, %text]"),
+                        "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+                "%position = ctjs.binary_static bitand %i, %text",
+                "%two = ctjs.binary add %one, %one\n"
+                "    %mask = ctjs.get_property %base[%two]\n"
+                "    %position = ctjs.binary_static bitand %mask, %i");
+    rows.push_back({.what = "structured commuted AND reloads retain their primitive String origin",
+                    .body = stringAndReload,
+                    .arrays = "a:[zero,zero,text,zero]",
+                    .reads = "a[2]=text; a[0]=zero; a[2]=text; a[1]=zero; a[2]=text; a[2]=text; "
+                             "a[2]=text; a[3]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured primitive AND reloads cannot overlap their own writes",
+           replace(replace(stringAndReload, "create_array [%x, %y, %text]",
+                           "create_array [%x, %text, %y]"),
+                   "%mask = ctjs.get_property %base[%two]",
+                   "%mask = ctjs.get_property %base[%one]"));
+    reject("structured primitive AND reloads retain the complete later-store census",
+           replace(stringAndReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured primitive AND cannot borrow an object's conversion",
+           replace(primitiveAnd, "bitand %i, %text", "bitand %i, %x"));
     const auto stringRemainder = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"2\"> {storage_test_id = \"text\"}\n  %a ="),

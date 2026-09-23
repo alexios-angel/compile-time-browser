@@ -481,9 +481,39 @@ void InductionCases::overwritesAndTransport() {
                  .reads = negativeOne ? "a[0]=zero; a[1]=zero" : "a[0]=zero; a[1]=x",
                  .exit = negativeOne ? "a -> {a}" : "a -> {a,x}"},
                 negativeOne ? "x" : "");
+        } else if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>") {
+            run({.what = "primitive AND masks preserve the historical exact own writes",
+                 .body = source,
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
         } else {
-            reject("masks require exact integer Numbers", source);
+            reject("AND masks require bounded side-effect-free Number conversion", source);
         }
+    }
+    const auto stringAndReload = replace(replace(maskedReload, "  %a =",
+                                                 "  %text = ctjs.constant #ctjs.string<\"1\"> "
+                                                 "{storage_test_id = \"text\"}\n  %a ="),
+                                         "[%x, %x, %one, %zero]", "[%x, %x, %text, %zero]");
+    run({.what = "primitive AND reloads retain the original String outside the write range",
+         .body = stringAndReload,
+         .arrays = "a:[zero,zero,text,zero]",
+         .reads = "a[2]=text; a[0]=zero; a[2]=text; a[1]=zero; a[2]=text; a[2]=text; "
+                  "a[2]=text; a[3]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("primitive AND reloads cannot conceal an overlapping write",
+           replace(replace(stringAndReload, "[%x, %x, %text, %zero]", "[%x, %text, %x, %zero]"),
+                   "%mask = ctjs.get_property %base[%two]",
+                   "%mask = ctjs.get_property %base[%one]"));
+    reject(
+        "primitive AND reloads retain the complete later-store census",
+        replace(stringAndReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    for (const std::string literal : {"#ctjs.undefined", "#ctjs.string<\"01\">",
+                                      "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"1\">"}) {
+        reject("primitive AND masks require bounded side-effect-free conversion",
+               replace(stringAndReload, "#ctjs.string<\"1\">", literal));
     }
     for (const auto & bits : {"4613937818241073152", "13830554455654793216"}) {
         auto inputGap =
