@@ -120,105 +120,105 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             guard.getThenRegion().front().getNumArguments()) {
                             return false;
                         }
-                        if (!guard.getElseRegion().empty()) {
-                            if (!guard.getElseRegion().hasOneBlock()) { return false; }
-                            auto & arm = guard.getElseRegion().front();
-                            auto yield = llvm::hasSingleElement(arm)
-                                             ? llvm::dyn_cast<mlir::scf::YieldOp>(arm.front())
-                                             : mlir::scf::YieldOp{};
-                            if (arm.getNumArguments() || !yield || !yield.getResults().empty()) {
+                        // ponytail: bounded cleanup guards; other control flow still
+                        // needs its exceptional edges represented.
+                        for (auto & arm : guard->getRegions()) {
+                            if (arm.empty()) { continue; }
+                            if (!arm.hasOneBlock() || arm.front().getNumArguments()) {
                                 return false;
                             }
+                            ctjs::GetPropertyOp guardedMethod;
+                            for (mlir::Operation & nested : arm.front()) {
+                                if (!step()) { return false; }
+                                if (llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::RootOp>(
+                                        nested)) {
+                                    continue;
+                                }
+                                if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(nested)) {
+                                    if (guardedMethod || !retainTrailingRead() ||
+                                        !suffixReads.contains(truth.getValue()) ||
+                                        !truth.getResult().hasOneUse()) {
+                                        return false;
+                                    }
+                                    auto branch = llvm::dyn_cast<mlir::scf::IfOp>(
+                                        *truth.getResult().getUsers().begin());
+                                    if (!branch || branch->getBlock() != truth->getBlock()) {
+                                        return false;
+                                    }
+                                    suffixValues.push_back(truth.getResult());
+                                    suffixUses.insert(&truth->getOpOperand(0));
+                                    suffixUses.insert(&branch->getOpOperand(0));
+                                    continue;
+                                }
+                                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(nested)) {
+                                    if (guardedMethod || trailingMethod ||
+                                        !self(self, branch, guardDepth + 1)) {
+                                        return false;
+                                    }
+                                    continue;
+                                }
+                                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
+                                    read && !guardedMethod &&
+                                    ctjs::constantKey(read.getKey()) == "setAttribute") {
+                                    guardedMethod = read;
+                                    continue;
+                                }
+                                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
+                                    read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
+                                             ctjs::constantKey(read.getKey()) == "matches")) {
+                                    if (!retainTrailingRead()) { return false; }
+                                    trailingMethod = read;
+                                    continue;
+                                }
+                                if (auto read = llvm::dyn_cast<ctjs::CallOp>(nested);
+                                    read && trailingMethod && !trailingCall &&
+                                    read.getCallee() == trailingMethod.getResult() &&
+                                    read.getReceiver() == trailingMethod.getObject() &&
+                                    read.getArgs().size() == 1) {
+                                    trailingCall = read;
+                                    // This read stays inside the branch, but leaves suppression.
+                                    // The shared selector and typed DOM proofs must exclude throws.
+                                    if (ctjs::constantKey(trailingMethod.getKey()) == "matches") {
+                                        consumedSelectors.push_back(read);
+                                    }
+                                    continue;
+                                }
+                                if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(nested);
+                                    leaf && guardedMethod &&
+                                    leaf.getCallee() == guardedMethod.getResult() &&
+                                    leaf.getReceiver() == guardedMethod.getObject() &&
+                                    leaf.getArgs().size() == 2 &&
+                                    (secondLeaf || trailingCall ||
+                                     suffixReads.contains(leaf.getArgs()[1]))) {
+                                    if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) {
+                                        return false;
+                                    }
+                                    if (!secondLeaf) {
+                                        secondMethod = guardedMethod;
+                                        secondLeaf = leaf;
+                                    } else {
+                                        suffixValues.append(
+                                            {guardedMethod.getResult(), leaf.getResult()});
+                                        suffixUses.insert(&leaf->getOpOperand(0));
+                                        suffixLeaves.insert(leaf);
+                                    }
+                                    guardedMethod = {};
+                                    // Later branch-local reads may replace trailingCall.
+                                    // Keep this write's use of the original snapshot.
+                                    suffixUses.insert(&leaf->getOpOperand(3));
+                                    continue;
+                                }
+                                if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(nested);
+                                    yield && yield.getResults().empty() && secondLeaf) {
+                                    continue;
+                                }
+                                return false;
+                            }
+                            // A completed read stays in the use census, but a pending
+                            // method/read pair must never cross into the sibling arm.
+                            if (guardedMethod || !retainTrailingRead()) { return false; }
                         }
-                        // ponytail: bounded guards with empty else arms; other control
-                        // flow still needs its exceptional edges represented.
-                        ctjs::GetPropertyOp guardedMethod;
-                        for (mlir::Operation & nested : guard.getThenRegion().front()) {
-                            if (!step()) { return false; }
-                            if (llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::RootOp>(
-                                    nested)) {
-                                continue;
-                            }
-                            if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(nested)) {
-                                if (guardedMethod || !retainTrailingRead() ||
-                                    !suffixReads.contains(truth.getValue()) ||
-                                    !truth.getResult().hasOneUse()) {
-                                    return false;
-                                }
-                                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(
-                                    *truth.getResult().getUsers().begin());
-                                if (!branch || branch->getBlock() != truth->getBlock()) {
-                                    return false;
-                                }
-                                suffixValues.push_back(truth.getResult());
-                                suffixUses.insert(&truth->getOpOperand(0));
-                                suffixUses.insert(&branch->getOpOperand(0));
-                                continue;
-                            }
-                            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(nested)) {
-                                if (guardedMethod || trailingMethod ||
-                                    !self(self, branch, guardDepth + 1)) {
-                                    return false;
-                                }
-                                continue;
-                            }
-                            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
-                                read && !guardedMethod &&
-                                ctjs::constantKey(read.getKey()) == "setAttribute") {
-                                guardedMethod = read;
-                                continue;
-                            }
-                            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
-                                read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
-                                         ctjs::constantKey(read.getKey()) == "matches")) {
-                                if (!retainTrailingRead()) { return false; }
-                                trailingMethod = read;
-                                continue;
-                            }
-                            if (auto read = llvm::dyn_cast<ctjs::CallOp>(nested);
-                                read && trailingMethod && !trailingCall &&
-                                read.getCallee() == trailingMethod.getResult() &&
-                                read.getReceiver() == trailingMethod.getObject() &&
-                                read.getArgs().size() == 1) {
-                                trailingCall = read;
-                                // This read stays inside the branch, but leaves suppression.
-                                // The shared selector and typed DOM proofs must exclude throws.
-                                if (ctjs::constantKey(trailingMethod.getKey()) == "matches") {
-                                    consumedSelectors.push_back(read);
-                                }
-                                continue;
-                            }
-                            if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(nested);
-                                leaf && guardedMethod &&
-                                leaf.getCallee() == guardedMethod.getResult() &&
-                                leaf.getReceiver() == guardedMethod.getObject() &&
-                                leaf.getArgs().size() == 2 &&
-                                (trailingCall || suffixReads.contains(leaf.getArgs()[1]))) {
-                                if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) {
-                                    return false;
-                                }
-                                if (!secondLeaf) {
-                                    secondMethod = guardedMethod;
-                                    secondLeaf = leaf;
-                                } else {
-                                    suffixValues.append(
-                                        {guardedMethod.getResult(), leaf.getResult()});
-                                    suffixUses.insert(&leaf->getOpOperand(0));
-                                    suffixLeaves.insert(leaf);
-                                }
-                                guardedMethod = {};
-                                // Later branch-local reads may replace trailingCall.
-                                // Keep this write's use of the original snapshot.
-                                suffixUses.insert(&leaf->getOpOperand(3));
-                                continue;
-                            }
-                            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(nested);
-                                yield && yield.getResults().empty() && secondLeaf) {
-                                continue;
-                            }
-                            return false;
-                        }
-                        return secondLeaf && !guardedMethod && retainTrailingRead();
+                        return bool(secondLeaf);
                     };
                     if (!scanGuard(scanGuard, guard, 0)) { return false; }
                     continue;

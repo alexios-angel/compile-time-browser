@@ -879,6 +879,34 @@ module {
     const auto conditionalNestedElse =
         replaced(conditionalNestedWrite, "    scf.yield\n    }\n",
                  "    scf.yield\n    } else {\n    scf.yield\n    }\n");
+    const auto conditionalElseWrite =
+        replaced(conditionalNestedElse, "    } else {\n    scf.yield",
+                 "    } else {\n"
+                 "    %elseName = ctjs.constant #ctjs.string<\"data-else\">\n"
+                 "    %elseValue = ctjs.constant #ctjs.boolean<false>\n"
+                 "    %elseMethod = ctjs.get_property %element[%secondKey]\n"
+                 "    %elseEffect = ctjs.call %elseMethod(%element, %elseName, %elseValue)\n"
+                 "    scf.yield");
+    const auto conditionalElseRead =
+        replaced(replaced(conditionalElseWrite, "    %elseMethod =",
+                          "    %elseReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">\n"
+                          "    %elseReadName = ctjs.constant #ctjs.string<\"data-else-read\">\n"
+                          "    %elseReadMethod = ctjs.get_property %element[%elseReadKey]\n"
+                          "    %elsePresent = ctjs.call %elseReadMethod(%element, %elseReadName)\n"
+                          "    %elseMethod ="),
+                 "ctjs.call %elseMethod(%element, %elseName, %elseValue)",
+                 "ctjs.call %elseMethod(%element, %elseName, %elsePresent)");
+    const auto conditionalElseSelector = replaced(
+        replaced(conditionalElseRead, "%elseReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                 "%elseReadKey = ctjs.constant #ctjs.string<\"matches\">"),
+        "#ctjs.string<\"data-else-read\">", "#ctjs.string<\"[data-else-read]\">");
+    const auto conditionalElseNested =
+        replaced(replaced(conditionalElseRead, "    %elseMethod =",
+                          "    %elseCondition = ctjs.truthy %elsePresent\n"
+                          "    scf.if %elseCondition {\n    %elseMethod ="),
+                 "    %elseEffect = ctjs.call %elseMethod(%element, %elseName, %elsePresent)\n",
+                 "    %elseEffect = ctjs.call %elseMethod(%element, %elseName, %elsePresent)\n"
+                 "    scf.yield\n    }\n");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -2426,6 +2454,24 @@ module {
              std::pair{conditionalNestedSelector, true},
              std::pair{conditionalDeeperWrite, true},
              std::pair{conditionalNestedElse, true},
+             std::pair{conditionalElseWrite, true},
+             std::pair{conditionalElseRead, true},
+             std::pair{conditionalElseSelector, true},
+             std::pair{conditionalElseNested, true},
+             std::pair{replaced(conditionalElseWrite,
+                                "ctjs.call %elseMethod(%element, %elseName, %elseValue)",
+                                "ctjs.call %elseMethod(%element, %elseName, %present)"),
+                       true},
+             std::pair{replaced(conditionalElseRead, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(conditionalElseWrite, "data-else", "bad name"), false},
+             std::pair{replaced(replaced(conditionalElseSelector,
+                                         "ctjs.get_property %element[%elseReadKey]",
+                                         "ctjs.get_property %text[%elseReadKey]"),
+                                "ctjs.call %elseReadMethod(%element, %elseReadName)",
+                                "ctjs.call %elseReadMethod(%text, %elseReadName)"),
+                       false},
              std::pair{replaced(conditionalNestedWrite,
                                 "ctjs.call %thirdMethod(%element, %thirdName, %afterPresent)",
                                 "ctjs.call %thirdMethod(%element, %thirdName, %present)"),
@@ -2467,6 +2513,10 @@ module {
                     for (mlir::Value argument : call.getArgs()) {
                         event += " " + ctjs::constantKey(argument).str() + ":" +
                                  std::to_string(producers.lookup(argument));
+                        if (auto literal = argument.getDefiningOp<ctjs::ConstantOp>()) {
+                            llvm::raw_string_ostream output(event);
+                            literal.getValue().print(output);
+                        }
                     }
                 } else if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
                     if (!producers.contains(truth.getValue())) { return; }
@@ -2478,13 +2528,16 @@ module {
                 } else {
                     return;
                 }
-                unsigned depth = 0;
-                for (auto * parent = operation->getParentOp(); parent;
-                     parent = parent->getParentOp()) {
-                    depth += llvm::isa<mlir::scf::IfOp>(parent);
+                std::string arms;
+                for (auto * child = operation; child->getParentOp(); child = child->getParentOp()) {
+                    if (auto parent = llvm::dyn_cast<mlir::scf::IfOp>(child->getParentOp())) {
+                        arms.insert(arms.begin(),
+                                    child->getParentRegion() == &parent.getThenRegion() ? 'T'
+                                                                                        : 'E');
+                    }
                 }
-                if (events.empty()) { baseDepth = depth; }
-                events.push_back(std::to_string(depth - baseDepth) + " " + event);
+                if (events.empty()) { baseDepth = static_cast<unsigned>(arms.size()); }
+                events.push_back(arms.substr(baseDepth) + " " + event);
                 if (operation->getNumResults() == 1) {
                     producers[operation->getResult(0)] = static_cast<unsigned>(events.size());
                 }
@@ -2492,16 +2545,22 @@ module {
             return events;
         };
         const auto original = trace(input->lookupSymbol<ctjs::FuncOp>("same$1"));
+        unsigned originalCalls = 0, originalWrites = 0;
+        input->lookupSymbol<ctjs::FuncOp>("same$1").walk([&](ctjs::CallOp call) {
+            ++originalCalls;
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            originalWrites += method && ctjs::constantKey(method.getKey()) == "setAttribute";
+        });
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
         check(!error, "nested cleanup guards preserve independently protected writes");
         if (error) {
             std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
             continue;
         }
-        check(
-            !original.empty() && original == trace(input->lookupSymbol<ctjs::FuncOp>("entry$0")) &&
-                mlir::succeeded(mlir::verify(*input)),
-            "nested expansion retains exact lookup/read/write order, guard depth and saved values");
+        check(!original.empty() &&
+                  original == trace(input->lookupSymbol<ctjs::FuncOp>("entry$0")) &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "nested expansion retains lookup/read/write order, source arms and saved values");
         unsigned calls = 0, invocations = 0;
         input->walk([&](ctjs::CallOp call) {
             ++calls;
@@ -2528,7 +2587,8 @@ module {
                       "each nested write keeps exact unused-result and exception suppression");
             }
         });
-        check(calls == 6 && invocations == 3, "nested expansion keeps all reads and three writes");
+        check(calls == originalCalls && invocations == originalWrites,
+              "nested expansion keeps every original read and protected write");
         auto bound = contract;
         bound.entry = "entry$0";
         bound.moduleSha256 = hostContractFingerprint(*input);
@@ -2654,7 +2714,10 @@ module {
                                       conditionalFourthWrite,
                                       conditionalNestedWrite,
                                       conditionalNestedSelector,
-                                      conditionalDeeperWrite}) {
+                                      conditionalDeeperWrite,
+                                      conditionalElseWrite,
+                                      conditionalElseSelector,
+                                      conditionalElseNested}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -2675,7 +2738,24 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(conditionalNestedSelector, "[data-third-guard]", "["),
+         {replaced(conditionalElseSelector, "[data-else-read]", "["),
+          replaced(conditionalElseSelector, "#ctjs.string<\"[data-else-read]\">",
+                   "#ctjs.number<0>"),
+          replaced(conditionalElseWrite, "    %elseEffect =",
+                   "    ctjs.store_global \"leaked\", %elseMethod\n    %elseEffect ="),
+          replaced(conditionalElseRead, "    %elseMethod =",
+                   "    ctjs.store_global \"leaked\", %elsePresent\n    %elseMethod ="),
+          replaced(conditionalElseWrite, "ctjs.call %elseMethod(%element, %elseName, %elseValue)",
+                   "ctjs.call %elseMethod(%text, %elseName, %elseValue)"),
+          replaced(conditionalElseWrite, "ctjs.call %elseMethod(%element, %elseName, %elseValue)",
+                   "ctjs.call %elseMethod(%element, %elseName, %elseValue, %name)"),
+          replaced(conditionalElseWrite,
+                   "    %elseEffect = ctjs.call %elseMethod(%element, %elseName, %elseValue)\n",
+                   ""),
+          replaced(conditionalElseRead,
+                   "    %elsePresent = ctjs.call %elseReadMethod(%element, %elseReadName)\n",
+                   "    %elsePresent = ctjs.constant #ctjs.boolean<false>\n"),
+          replaced(conditionalNestedSelector, "[data-third-guard]", "["),
           replaced(conditionalNestedSelector, "#ctjs.string<\"[data-third-guard]\">",
                    "#ctjs.number<0>"),
           replaced(conditionalNestedWrite, "ctjs.truthy %guardPresent", "ctjs.truthy %element"),
