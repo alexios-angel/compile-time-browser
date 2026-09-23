@@ -90,11 +90,12 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     read.getArgs().size() == 1) {
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
-                    if (selectorLeaf && (terminalSelector || selector)) {
+                    if (selectorLeaf && (selector || (terminalSelector && !finalMethod))) {
                         if (finalMethod) { return false; }
                         // Retain every terminal read in source order. Only selectors
                         // need exact suppression; all reads retain the complete use
-                        // census and typed DOM proof below.
+                        // census and typed DOM proof below. A read within a pending
+                        // write keeps the existing read-to-write proof instead.
                         suffixValues.append({sourceReadMethod.getResult(), read.getResult()});
                         suffixUses.insert(&read->getOpOperand(0));
                         if (selector) { suffixLeaves.insert(read); }
