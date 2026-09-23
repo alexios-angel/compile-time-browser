@@ -1310,10 +1310,24 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator suppression must close its original record");
         }
     }
-    // ponytail: mutable state across a caught close needs exceptional-state
-    // transport; immutable captures already retain their ordinary DOM effects.
+    // The captured cells and receiver are private. A terminal saved throw
+    // cannot observe the close's final state, but the method still receives
+    // current state and must retain every effect before throwing resumes.
+    // ponytail: only an immediate saved throw; later observers need explicit
+    // exceptional-state transport instead of discarding the method result.
     if (!protectedCloses.empty() && !stateInitials.empty()) {
-        return error("DOM iterator protected close needs a mutable-state proof");
+        for (auto & [invocation, call] : protectedCloses) {
+            (void)call;
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto terminal =
+                llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(invocation->getNextNode());
+            if (!terminal || !terminal.getNoInline() || terminal.getNumResults() ||
+                !terminal.getRegion().hasOneBlock() ||
+                !llvm::hasSingleElement(terminal.getRegion().front()) ||
+                !llvm::isa<ctjs::ThrowOp>(terminal.getRegion().front().front())) {
+                return error("DOM iterator protected state requires an immediate saved throw");
+            }
+        }
     }
     // A return can reduce the traversal to one next call and put closes in
     // separate completion arms. Every close must remain after the complete
@@ -1667,7 +1681,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     auto call = llvm::cast<ctjs::CallOp>(copied.getBody().front().front());
                     call.getCalleeMutable().assign(method.getResult());
                     call.getReceiverMutable().assign(holder);
-                    call.getArgsMutable().clear();
+                    call.getArgsMutable().assign(mlir::ValueRange(state).drop_front());
                 }
                 continue;
             }

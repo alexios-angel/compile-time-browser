@@ -537,8 +537,20 @@ module {
     %effect = ctjs.call %attribute(%element, %name, %present))MLIR");
     };
     const auto protectedRead = readThenWrite(protectedAttribute);
+    const auto discardedState =
+        replaced(protectedAttribute, "%answer = ctjs.create_object",
+                 "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
+    const auto scalarState = replaced(discardedState, "%effect = ctjs.call", R"MLIR(
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %advanced = ctjs.binary add %one, %one
+    %effect = ctjs.call)MLIR");
     for (const auto & [valid, typed] : {
              std::pair{protectedAttribute, true},
+             std::pair{discardedState, true},
+             std::pair{scalarState, true},
+             std::pair{replaced(scalarState, "ctjs.binary add %one, %one",
+                                "ctjs.binary add %element, %element"),
+                       false},
              std::pair{capturedAttribute, true},
              std::pair{replaced(protectedAttribute, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
@@ -683,9 +695,13 @@ module {
           replaced(protectedRead, "%answer = ctjs.create_object",
                    "ctjs.store_global \"leaked\", %present\n"
                    "    %answer = ctjs.create_object"),
-          replaced(protectedAttribute, "%answer = ctjs.create_object",
-                   "%answer = ctjs.create_object\n"
-                   "    ctjs.set_property %answer[%name], %text"),
+          replaced(discardedState, "ctjs.set_property %answer[%name], %text",
+                   "ctjs.set_property %answer[%element], %text"),
+          replaced(discardedState, "ctjs.set_property %answer[%name], %text",
+                   "ctjs.set_property %answer[%name], %answer"),
+          replaced(discardedState, "#ctjs.string<\"data-closed\">", "#ctjs.string<\"__proto__\">"),
+          replaced(scalarState, "ctjs.binary add %one, %one",
+                   "ctjs.call %attribute(%element, %name, %text)"),
           replaced(protectedAttribute, "%answer = ctjs.create_object",
                    "%second = ctjs.call %attribute(%element, %name, %text)\n"
                    "    %answer = ctjs.create_object"),

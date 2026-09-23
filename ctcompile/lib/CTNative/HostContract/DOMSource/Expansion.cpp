@@ -8,6 +8,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     ctjs::InvokeOp protectedInvocation;
     ctjs::CallOp protectedLeaf;
     ctjs::CreateObjectOp discardedResult;
+    llvm::DenseSet<mlir::Operation *> discardedFields;
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
         if (!step()) { return false; }
         auto & called = invocation.getBody();
@@ -48,6 +49,12 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     continue;
                 }
                 if (llvm::isa<ctjs::LoadUpvalueOp>(operation) && !protectedLeaf) { continue; }
+                // These producers remain under the source guard. Complete
+                // typed DOM reproof must exclude coercion, throws and reentry.
+                if (!protectedLeaf && llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
+                                                ctjs::CompareOp, ctjs::TruthyOp>(operation)) {
+                    continue;
+                }
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                     read && !method && !protectedLeaf &&
                     ctjs::constantKey(read.getKey()) == "setAttribute") {
@@ -79,6 +86,14 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     discardedResult = object;
                     continue;
                 }
+                if (auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
+                    field && discardedResult && field.getObject() == discardedResult &&
+                    ctjs::ordinaryKey(ctjs::constantKey(field.getKey()))) {
+                    // A fresh unused data record has no observer. Retain its
+                    // producers even though its stores and allocation vanish.
+                    discardedFields.insert(field);
+                    continue;
+                }
                 return false;
             }
             if (!protectedLeaf || !discardedResult ||
@@ -105,6 +120,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         (value == discardedResult.getResult() && use.getOwner() == result)) {
                         continue;
                     }
+                    if (value == discardedResult.getResult() && use.getOperandNumber() == 0 &&
+                        discardedFields.contains(use.getOwner())) {
+                        continue;
+                    }
                     return false;
                 }
             }
@@ -116,6 +135,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (!reason.empty()) { return false; }
             protectedLeaf = {};
             discardedResult = {};
+            discardedFields.clear();
             // Only an independently inert body may discharge suppression.
             if (!proveUnusedBody(target)) {
                 return refuse("DOM protected helper needs an independent inert-body proof");
@@ -152,9 +172,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
                 continue;
             }
-            // The empty allocation's only observation was the discarded
+            // The fresh record's only observation was the discarded
             // helper result. This is allocation elision, not a no-throw fact.
             if (discardedResult && &operation == discardedResult) { continue; }
+            if (discardedFields.contains(&operation)) { continue; }
             if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
                 // Substitute at each invocation, including branch-local
                 // loads, never bind a shared body to its first caller.

@@ -1617,48 +1617,63 @@ module {
                  "    %closed = ctjs.call %close(%undefined, %record, %normal)\n"
                  "    ctjs.frame_exit %frame\n    ctjs.return %loop\n",
                  abruptTail);
+    const auto abruptStateSource =
+        replaced(abruptSource, "    %holder = ctjs.create_object",
+                 "    %holder = ctjs.create_object\n"
+                 "    %stateKey = ctjs.constant #ctjs.string<\"state\">\n"
+                 "    %stateZero = ctjs.constant #ctjs.number<0>\n"
+                 "    ctjs.set_property %holder[%stateKey], %stateZero");
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(abruptSource, &context);
-        check(static_cast<bool>(input), "independent protected custom close parses");
-        if (!input) { continue; }
-        auto request = contract;
-        request.provider = provider;
-        request.moduleSha256 = hostContractFingerprint(*input);
-        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
-        check(!failure, "protected custom close retains its original abrupt completion");
-        if (failure) {
-            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
-            continue;
+        for (const auto & specimen : {abruptSource, abruptStateSource}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
+            check(static_cast<bool>(input), "independent protected custom close parses");
+            if (!input) { continue; }
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(!failure, "protected custom close retains its original abrupt completion");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            check(mlir::succeeded(mlir::verify(*input)), "protected custom close remains valid IR");
+            unsigned invokes = 0, throws = 0, protectedReturns = 0, protocolCalls = 0;
+            input->walk([&](ctjs::InvokeOp invocation) {
+                ++invokes;
+                check(invocation.getNumResults() == 0 &&
+                          invocation.getNormalBody().front().getArgument(0).use_empty() &&
+                          invocation.getUnwindBody().front().getArgument(0).use_empty(),
+                      "close outcomes retain unused result and caught payload");
+            });
+            input->walk([&](ctjs::ThrowOp thrown) {
+                ++throws;
+                auto saved = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
+                check(saved && llvm::isa<ctjs::NumberAttr>(saved.getValue()) &&
+                          llvm::cast<ctjs::NumberAttr>(saved.getValue()).getDouble() == 1,
+                      "protected close preserves the saved Number exception");
+            });
+            input->walk([&](ctjs::CallOp call) {
+                auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                protectedReturns += get && ctjs::constantKey(get.getKey()) == "return" &&
+                                    static_cast<bool>(call->getParentOfType<ctjs::InvokeOp>());
+                auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                protocolCalls += load && load.getName().starts_with("__ctbrowser_");
+            });
+            if (specimen == abruptStateSource) {
+                input->walk([&](ctjs::InvokeOp invocation) {
+                    auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
+                    check(call.getArgs().size() == 1,
+                          "terminal protected close receives its private current state");
+                });
+            }
+            check(invokes == 1 && throws == 1 && protectedReturns == 1 && protocolCalls == 0,
+                  "one suppressed return call and one saved throw replace the VM protocol");
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "structural protocol proof does not publish unproved native throw evidence");
         }
-        check(mlir::succeeded(mlir::verify(*input)), "protected custom close remains valid IR");
-        unsigned invokes = 0, throws = 0, protectedReturns = 0, protocolCalls = 0;
-        input->walk([&](ctjs::InvokeOp invocation) {
-            ++invokes;
-            check(invocation.getNumResults() == 0 &&
-                      invocation.getNormalBody().front().getArgument(0).use_empty() &&
-                      invocation.getUnwindBody().front().getArgument(0).use_empty(),
-                  "close outcomes retain unused result and caught payload");
-        });
-        input->walk([&](ctjs::ThrowOp thrown) {
-            ++throws;
-            auto saved = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
-            check(saved && llvm::isa<ctjs::NumberAttr>(saved.getValue()) &&
-                      llvm::cast<ctjs::NumberAttr>(saved.getValue()).getDouble() == 1,
-                  "protected close preserves the saved Number exception");
-        });
-        input->walk([&](ctjs::CallOp call) {
-            auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            protectedReturns += get && ctjs::constantKey(get.getKey()) == "return" &&
-                                static_cast<bool>(call->getParentOfType<ctjs::InvokeOp>());
-            auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            protocolCalls += load && load.getName().starts_with("__ctbrowser_");
-        });
-        check(invokes == 1 && throws == 1 && protectedReturns == 1 && protocolCalls == 0,
-              "one suppressed return call and one saved throw replace the VM protocol");
-        request.moduleSha256 = hostContractFingerprint(*input);
-        check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
-              "structural protocol proof does not publish unproved native throw evidence");
     }
     for (const auto & invalid :
          {replaced(abruptSource, "ctjs.call %close(%undefined, %record, %abrupt)",
@@ -1672,11 +1687,13 @@ module {
           replaced(abruptSource, "      %inactive = ub.poison",
                    "      ctjs.store_global \"afterThrow\", %one\n"
                    "      %inactive = ub.poison"),
-          replaced(abruptSource, "    %holder = ctjs.create_object",
-                   "    %holder = ctjs.create_object\n"
-                   "    %stateKey = ctjs.constant #ctjs.string<\"state\">\n"
-                   "    %stateZero = ctjs.constant #ctjs.number<0>\n"
-                   "    ctjs.set_property %holder[%stateKey], %stateZero")}) {
+          replaced(abruptStateSource, "      scf.execute_region {",
+                   "      %observed = ctjs.get_property %holder[%stateKey]\n"
+                   "      scf.execute_region {"),
+          replaced(abruptStateSource, "        ctjs.throw %one", "        scf.yield"),
+          replaced(abruptStateSource, "      scf.execute_region {",
+                   "      ctjs.store_global \"between\", %one\n"
+                   "      scf.execute_region {")}) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
         check(static_cast<bool>(input), "hostile protected custom close parses");
         if (!input) { continue; }
@@ -4881,7 +4898,11 @@ module {
     }
     // Locate the completion threshold instead of baking in today's scan count.
     // Sample early, middle and last incomplete budgets on fresh private clones.
+    auto abruptState = mlir::parseSourceString<mlir::ModuleOp>(abruptStateSource, &context);
+    check(static_cast<bool>(abruptState), "terminal state budget specimen parses");
+    if (!abruptState) { return; }
     for (auto fixture : {*original,
+                         *abruptState,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,

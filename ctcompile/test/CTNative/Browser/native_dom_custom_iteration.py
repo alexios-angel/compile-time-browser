@@ -2463,6 +2463,30 @@ def saved_throws(args, compilers, includes, libraries):
             'error.value.value() == "saved"',
             "yes",
         ),
+        (
+            "number-snapshot",
+            refusals()["body-throw-number-snapshot"],
+            "js_num",
+            "error.value.value() == 3.0",
+            "yes",
+        ),
+        (
+            "conditional-number-snapshot",
+            refusals()["body-throw-branch-number-snapshot"],
+            "js_num",
+            "error.value.value() == 3.0",
+            "yes",
+        ),
+        (
+            "number-close-observes-state",
+            refusals()["body-throw-number-snapshot"].replace(
+                "anchor.setAttribute('data-closed', 'yes');",
+                "anchor.setAttribute('data-closed', count === 13);",
+            ),
+            "js_num",
+            "error.value.value() == 3.0",
+            "true",
+        ),
     )
     checks = r"""
         (void)pressed;
@@ -2497,7 +2521,7 @@ def saved_throws(args, compilers, includes, libraries):
                 }
                 assert(target.remove_attribute(id, closed));
                 (void)target.take_writes();
-                assert(static_cast<bool>(call()) == @VISITED@);
+                assert(@EXHAUSTED@);
                 const auto exhausted = target.take_writes();
                 assert(exhausted.size() == 2 && exhausted[0].name == next &&
                        exhausted[1].name == yielded);
@@ -2513,8 +2537,11 @@ def saved_throws(args, compilers, includes, libraries):
     for label, text, kind, payload, closed in cases:
         mixed = label == "conditional-boolean-throw-or-return"
         conditional = label.startswith("conditional-")
-        snapshot = conditional or label == "boolean-snapshot"
-        js_kind = "boolean" if conditional else label.partition("-")[0]
+        numeric_snapshot = kind == "js_num" and label != "number"
+        snapshot = conditional or label == "boolean-snapshot" or numeric_snapshot
+        js_kind = (
+            "number" if numeric_snapshot else "boolean" if conditional else label.partition("-")[0]
+        )
         script = text + """
 var savedThrow, savedExhausted;
 (function() {
@@ -2600,19 +2627,23 @@ var savedThrow, savedExhausted;
             )
         expected = {
             "savedThrow": f"{js_kind}:"
-            + {"number": "1", "boolean": "false", "string": "saved"}[js_kind]
+            + (
+                "3"
+                if numeric_snapshot
+                else {"number": "1", "boolean": "false", "string": "saved"}[js_kind]
+            )
             + ":data-next=false;data-yielded=yes;"
             + ("data-visited=yes;" if snapshot else "")
             + f"data-closed={closed};",
-            "savedExhausted": ("true" if snapshot else "false")
+            "savedExhausted": ("0" if numeric_snapshot else "true" if snapshot else "false")
             + ":data-next=true;data-yielded=yes;",
         }
         if conditional:
             expected.update(
-                savedNormal="true:data-next=false;data-yielded=yes;data-visited=yes;"
-                "data-next=true;data-yielded=yes;",
-                savedPrior="boolean:true:data-next=false;data-yielded=yes;data-visited=yes;"
-                f"data-closed={closed};",
+                savedNormal=("1" if numeric_snapshot else "true")
+                + ":data-next=false;data-yielded=yes;data-visited=yes;data-next=true;data-yielded=yes;",
+                savedPrior=("number:3" if numeric_snapshot else "boolean:true")
+                + f":data-next=false;data-yielded=yes;data-visited=yes;data-closed={closed};",
             )
         if mixed:
             expected.update(
@@ -2674,7 +2705,7 @@ var savedThrow, savedExhausted;
                 assert(target.remove_attribute(id, yielded));
                 assert(target.remove_attribute(id, visited));
                 (void)target.take_writes();
-                assert(static_cast<bool>(call()));
+                assert(@NATURAL@);
                 const auto normal = target.take_writes();
                 assert(normal.size() == 5 && normal[0].name == next && normal[1].name == yielded &&
                        normal[2].name == visited && normal[3].name == next && normal[4].name == yielded);
@@ -2715,6 +2746,22 @@ var savedThrow, savedExhausted;
                     .replace("@TYPE@", kind)
                     .replace("@PAYLOAD@", payload)
                     .replace("@CLOSED@", closed)
+                    .replace(
+                        "@EXHAUSTED@",
+                        (
+                            "call().value() == 0.0"
+                            if numeric_snapshot
+                            else "static_cast<bool>(call()) == @VISITED@"
+                        ),
+                    )
+                    .replace(
+                        "@NATURAL@",
+                        (
+                            "call().value() == 1.0"
+                            if numeric_snapshot
+                            else "static_cast<bool>(call())"
+                        ),
+                    )
                     .replace("@VISITED@", "true" if snapshot else "false")
                     .replace("@WRITE_COUNT@", "4" if snapshot else "3")
                     .replace("@CLOSED_INDEX@", "3" if snapshot else "2"),
@@ -2723,7 +2770,7 @@ var savedThrow, savedExhausted;
                     libraries,
                 )
                 executions += 2 * len(compilers)
-                if label in ("number", "conditional-boolean-read"):
+                if label in ("number", "conditional-boolean-read") or numeric_snapshot:
                     for suffix, bad, budget in (
                         ("budget", manifest, 0),
                         ("missing-element", dict(manifest, element_parameters=[]), None),
@@ -2901,6 +2948,8 @@ def main():
             "body-throw-boolean-snapshot",
             "body-throw-branch-boolean-snapshot",
             "body-throw-or-return-snapshot",
+            "body-throw-number-snapshot",
+            "body-throw-branch-number-snapshot",
         ):
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
