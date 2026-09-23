@@ -205,9 +205,9 @@ void InductionCases::signedArithmetic() {
            replace(stringSub, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
     for (const std::string text :
          {"02", "+2", "-2", "2.0", "2e0", " 2", "0x2", "4294967295", "NaN"}) {
-        if (text == "02" || text == "+2" || text == " 2" || text == "4294967295") {
+        if (text == "02" || text == "+2" || text == " 2" || text == "0x2" || text == "4294967295") {
             run({.what =
-                     "bounded decimal conversion preserves original reads and retained children",
+                     "bounded numeric conversion preserves original reads and retained children",
                  .body =
                      replace(stringSub, "#ctjs.string<\"2\">", "#ctjs.string<\"" + text + "\">"),
                  .arrays = "a:[one,x]",
@@ -692,9 +692,10 @@ void InductionCases::signedArithmetic() {
         }
         for (const std::string invalid :
              {"0", "01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
-            if ((operation == "div" && (invalid == "01" || invalid == "+1" || invalid == " 1")) ||
+            if ((operation == "div" &&
+                 (invalid == "01" || invalid == "+1" || invalid == " 1" || invalid == "0x1")) ||
                 (operation == "mod" && invalid == "4294967295")) {
-                run({.what = "bounded decimal conversion preserves original reads and retained "
+                run({.what = "bounded numeric conversion preserves original reads and retained "
                              "children",
                      .body = replace(stringRight, "#ctjs.string<\"" + text + "\">",
                                      "#ctjs.string<\"" + invalid + "\">"),

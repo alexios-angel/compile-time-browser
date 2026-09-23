@@ -70,6 +70,14 @@
 // CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj escapes:stored
 
+// Unsigned radix conversion preserves String spelling and exact table writes.
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -82,6 +90,18 @@
 // RECORD-LABEL: fn 53 entries 1 params 0 frame {{[0-9]+}} name unconvertedDecimalTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 54 entries 1 params 0 frame {{[0-9]+}} name mutatedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 55 entries 1 params 0 frame {{[0-9]+}} name hexConvertedTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 56 entries 1 params 0 frame {{[0-9]+}} name binaryConvertedTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 57 entries 1 params 0 frame {{[0-9]+}} name spacedOctalTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 58 entries 1 params 0 frame {{[0-9]+}} name malformedRadixTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 59 entries 1 params 0 frame {{[0-9]+}} name unconvertedRadixTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 60 entries 1 params 0 frame {{[0-9]+}} name mutatedRadixTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -362,9 +382,11 @@ function mixedBigintArithmeticTableKey() {
     for (var i = 0; i < a.length; i++) a[keys[i % 2] + 0] = 0;
     return a;
 }
-// Run the decimal cases before the intentional mixed-BigInt TypeError below.
+// Run the decimal/radix cases before the intentional mixed-BigInt TypeError below.
 decimalConvertedTableKey(); signedDecimalTableKey(); spacedDecimalTableKey();
 malformedDecimalTableKey(); unconvertedDecimalTableKey(); mutatedDecimalTableKey();
+hexConvertedTableKey(); binaryConvertedTableKey(); spacedOctalTableKey();
+malformedRadixTableKey(); unconvertedRadixTableKey(); mutatedRadixTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -397,6 +419,40 @@ function mutatedDecimalTableKey() {
     var child = {}, a = [child, 0, child], keys = ['00', '+02'];
     for (var i = 0; i < a.length; i++) {
         keys[1] = '00';
+        a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
+
+function hexConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '0X2'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function binaryConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0B0', '0b10'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function spacedOctalTableKey() {
+    var child = {}, a = [child, 0, child], keys = [' 0o0 ', '0O2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0] = 0;
+    return a;
+}
+function malformedRadixTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '+0x2'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedRadixTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '0X2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mutatedRadixTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0x0', '0X2'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '0x0';
         a[+keys[i % 2]] = 0;
     }
     return a;

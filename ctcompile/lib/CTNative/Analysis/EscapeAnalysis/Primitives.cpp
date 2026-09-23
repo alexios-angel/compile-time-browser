@@ -1,4 +1,5 @@
 #include "Contents.hpp"
+#include "ctbrowser/core/algorithms.hpp"
 #include "ctbrowser/core/number_format.hpp"
 
 namespace ctcompile::ctnative::escape_detail {
@@ -146,14 +147,24 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
             literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
         if (!string) { return std::nullopt; }
         const auto text = string.getValue();
-        // ponytail: at most 32 source bytes, empty or signed decimal digits after
+        // ponytail: at most 32 source bytes, decimal or unsigned radix digits after
         // JS whitespace trimming. Wider/other numeric grammars need charged proof.
         if (text.size() > 32) { return std::nullopt; }
         llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
-        if ((digits.consume_front("+") || digits.consume_front("-")) && digits.empty()) {
+        int radix = 10;
+        if (digits.consume_front_insensitive("0x")) {
+            radix = 16;
+        } else if (digits.consume_front_insensitive("0o")) {
+            radix = 8;
+        } else if (digits.consume_front_insensitive("0b")) {
+            radix = 2;
+        } else if ((digits.consume_front("+") || digits.consume_front("-")) && digits.empty()) {
             return std::nullopt;
         }
-        if (!llvm::all_of(digits, [](char c) { return c >= '0' && c <= '9'; })) {
+        if ((radix != 10 && digits.empty()) || !llvm::all_of(digits, [radix](char c) {
+                const auto digit = ctbrowser::hex_value(c);
+                return digit >= 0 && digit < radix;
+            })) {
             return std::nullopt;
         }
         const double converted = ctbrowser::string_to_number({text.data(), text.size()});

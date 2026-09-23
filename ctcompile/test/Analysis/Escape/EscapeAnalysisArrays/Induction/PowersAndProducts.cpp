@@ -165,9 +165,9 @@ void InductionCases::powersAndProducts() {
                      .reads = "a[0]=one; a[1]=x",
                      .exit = "x -> {x}"});
             } else {
-                if (invalid == "01" || invalid == "+1" || invalid == " 1" ||
+                if (invalid == "01" || invalid == "+1" || invalid == " 1" || invalid == "0x1" ||
                     (!stringBase && invalid == "4294967295")) {
-                    run({.what = "bounded decimal conversion preserves original reads and retained "
+                    run({.what = "bounded numeric conversion preserves original reads and retained "
                                  "children",
                          .body = body,
                          .arrays = "a:[one,x]; seed:[]",
@@ -439,8 +439,9 @@ void InductionCases::powersAndProducts() {
         }
         for (const std::string text :
              {"01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
-            if (text == "01" || text == "+1" || text == " 1" || text == "4294967295") {
-                run({.what = "bounded decimal conversion preserves original reads and retained "
+            if (text == "01" || text == "+1" || text == " 1" || text == "0x1" ||
+                text == "4294967295") {
+                run({.what = "bounded numeric conversion preserves original reads and retained "
                              "children",
                      .body = replace(stringChild, "#ctjs.string<\"1\">",
                                      "#ctjs.string<\"" + text + "\">"),

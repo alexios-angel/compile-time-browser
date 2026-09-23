@@ -284,8 +284,76 @@ void InductionCases::invariantReads() {
     }
     for (const std::string text : {"+", "-", "--0", "+-0", "-+0", "1e-999junk", "0x0", "0.0", "0e0",
                                    "000000000000000000000000000000000"}) {
-        reject("conversion validates the whole bounded decimal grammar before Core parsing",
-               replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">"));
+        const auto source =
+            replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">");
+        if (text == "0x0") {
+            run({.what = "bounded radix conversion preserves the original historical String",
+                 .body = source,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("conversion validates the whole bounded numeric grammar before Core parsing",
+                   source);
+        }
+    }
+    const auto radixTable =
+        replace(replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0x0\">"),
+                "#ctjs.string<\"2\">", "#ctjs.string<\"0X2\">");
+    for (const std::string expression :
+         {"unary plus %slot", "binary sub %slot, %zero", "binary mul %slot, %one",
+          "binary div %slot, %one", "binary mod %slot, %three", "binary pow %slot, %one",
+          "binary_static bitand %slot, %two", "binary_static bitor %slot, %zero",
+          "binary_static bitxor %slot, %zero", "binary_static shl %slot, %zero",
+          "binary_static shr %slot, %zero", "binary_static ushr %slot, %zero"}) {
+        run({.what = "radix conversion attaches only to numeric results and keeps table identity",
+             .body = replace(radixTable, "unary plus %slot", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string text :
+         {"0X00", "0b0", "0B00", "0o0", "0O00", " 0x0 ", "0x000000000000000000000000000000"}) {
+        run({.what = "unsigned radix prefixes retain the original bounded String spelling",
+             .body = replace(radixTable, "#ctjs.string<\"0x0\">", "#ctjs.string<\"" + text + "\">"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("unsigned radix Strings remain ordinary properties without conversion",
+               replace(stringTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    run({.what = "the largest bounded radix Number retains exact low-bit conversion",
+         .body =
+             replace(replace(radixTable, "#ctjs.string<\"0X2\">", "#ctjs.string<\"0xffffffff\">"),
+                     "unary plus %slot", "binary_static bitand %slot, %two"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string text :
+         {"+0x0", "-0x0", "+0o0", "-0b0", "0x", "0o", "0b", "0xg", "0o8", "0b2", "0x0.0", "0x0p0",
+          "0x0junk", "0x0n", "0x_0", "0x100000000", "0x0000000000000000000000000000000"}) {
+        reject("radix conversion validates sign digits complete spelling size and Number bounds",
+               replace(radixTable, "#ctjs.string<\"0x0\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    run({.what = "radix table overwrites preserve a child saved before conversion",
+         .body = replace(replace(radixTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    reject("radix conversion cannot make an earlier String Add numeric",
+           replace(radixTable, "  %converted = ctjs.unary plus %slot",
+                   "  %text = ctjs.binary add %slot, %zero\n"
+                   "  %converted = ctjs.unary plus %text"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject(
+            "radix table mutations remain visible before and after each original read",
+            replace(radixTable, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
     reject("table conversion cannot invoke object coercion",
            replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
