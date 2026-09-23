@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Terminal iterator-close reads and singleton shift counts, 2026-09-23 UTC
+
+Resumed clean **3df6cedd** and retained terminal-read source `51fc580e`.
+**0714925c** keeps a final unused `hasAttribute` after the close's selector and
+ordered writes. The existing complete use census rejects observed results;
+ordered cloning, exact write suppression, typed DOM/Style reproof, saved Boolean
+ownership and budgets remain. The original source, getter, missing-read and
+order-sensitive variants execute unchanged.
+
+Parallel **b57811e7** reuses the singleton RHS range proof for signed, unsigned
+and left shift counts. Existing conversion/masking, complete reload/store census,
+independent reload-gap proof and actual-write replay remain. Fourteen raw and
+eleven source controls were added; all 188 historical source bodies and
+expectations are unchanged.
+
+Four selected sources pass **64 native executions, 96 refusals and 32 Node/VM
+observations**. Exact host/arrays CTests and the selected power-index lit case pass.
+Seven final source hashes match the devbox; all 32 generated C++ files retain the
+terminal read after every write, without Script/VM or nullable fallback.
+Full formatting passes **1126 C++, 157 Python, 114 web files**. Full suites were
+skipped; no browser/runtime implementation changed.
+
+**Next native boundary:** retained `unsupported-terminal-postselector-match`
+source `5f783ab2` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the second `matches` call after all writes,
+used as the ignored close throw, together with the original saved body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap and general powers remain.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-read-close.md).
+
 ## Ordered iterator-close suffixes and singleton divisors, 2026-09-23 UTC
 
 Resumed clean **382d1677** and retained fourth-write source `c6857b84`.
