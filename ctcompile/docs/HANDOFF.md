@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected attribute expansion and primitive OR/XOR masks, 2026-09-23 UTC
+
+Resumed clean **16d0dea5** and unchanged `body-throw`, `f1b3f6b8`.
+**7cc06580** expands the exact captured attribute helper while keeping its
+single DOM call inside the original suppression region. Literal/capture/method
+preparation stays under the original guard; only the unused empty return object
+is elided. Complete typed DOM reproof must justify the moved method lookup.
+Suppression is not discharged, and no new native throw execution is claimed.
+
+Parallel **bab3f790** admits bounded primitive invariant OR/XOR masks through
+existing conversion, endpoint bounds, reload/store checks and actual-write
+replay. Four historical raw String/Boolean constructions now admit unchanged.
+All 179 previous source bodies survive. Historical Number expectation 134 was
+corrected for earlier direct-gap refinement, with an exact Node witness.
+
+Focused host and arrays CTests and the exact OR/XOR lit case pass. Three selected
+native sources pass **48 executions, 82 refusals and 24 Node/VM observations**;
+**20 saved-throw/effect observations agree per engine**. No admission was left
+unexecuted. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+Six final code/test hashes match the devbox; 24 generated C++ files contain no
+Script/VM protocol. All 233 historical iterator bodies and 86 positive metadata
+rows are unchanged. Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** original `f1b3f6b8` now passes helper expansion but
+both policies refuse **DOM URI invocation requires complete unnested
+continuations**. Add complete typed admission for the zero-result suppressed
+attribute call, preserving receiver, arguments, source order and failure
+behavior. Discharging suppression additionally requires the public DOM
+attribute-name validator; String facts alone are insufficient. Typed saved
+primitive throw emission and prefix/global/reentry proof remain. Mutable
+exceptional state, multiple protected regions, implicit cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-protected-attribute.md).
+
 ## Protected callable ordering and primitive AND masks, 2026-09-23 UTC
 
 Resumed clean **d1a4c47f** and unchanged `body-throw`, `f1b3f6b8`.
