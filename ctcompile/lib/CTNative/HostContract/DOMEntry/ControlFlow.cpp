@@ -27,6 +27,13 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
         }
         if (!spend() || !spend()) { return false; }
+        if (hasKind(thrown.getValue(), Kind::element) ||
+            hasKind(thrown.getValue(), Kind::nullableElement)) {
+            // The host owns nodes only through this invocation. An escaping
+            // exception can survive destruction of that document during unwind.
+            refusal = "DOM thrown element requires an owner that outlives the exception";
+            return false;
+        }
         if ((!hasKind(thrown.getValue(), Kind::number) &&
              !hasKind(thrown.getValue(), Kind::boolean) &&
              !hasKind(thrown.getValue(), Kind::string) &&

@@ -8185,6 +8185,15 @@ var savedThrow, savedExhausted;
             for label, text in mixed_close_cases
             if "-mutable-" in label
         )
+        + tuple(
+            (
+                f"return-object-{kind}-close",
+                refusals()[f"body-throw-close-{suffix}"]
+                .replace("throw 1;", "return 1;")
+                .replace("throw 2;", "throw anchor;"),
+            )
+            for kind, suffix in (("getter", "getter"), ("method", "throws"))
+        )
     ):
         accepted = label in accepted_normal_closes
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
@@ -8192,7 +8201,7 @@ var savedThrow, savedExhausted;
         for owned in (False, True):
             manifest = dict(contract, provider="ctbrowser-dom-session-v1") if owned else contract
             for optimize in (False, True):
-                dom.lower(
+                result = dom.lower(
                     args,
                     ir,
                     manifest,
@@ -8200,6 +8209,10 @@ var savedThrow, savedExhausted;
                     optimize=optimize,
                     success=accepted,
                 )
+                if label in ("return-object-getter-close", "return-object-method-close"):
+                    assert (
+                        "DOM thrown element requires an owner that outlives the exception" in result
+                    )
                 refused += not accepted
                 admitted += accepted
     print(

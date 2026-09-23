@@ -3597,6 +3597,17 @@ module {
         DOMEntryAnalysis proof(*input, bound);
         check(!proof.proved() && proof.savedThrows().empty() && !proof.entry(),
               "unproved payloads, regions, continuations and late effects publish no throw proof");
+        if (invalid.find("ctjs.throw %element") != std::string::npos) {
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                bound.provider = provider;
+                DOMEntryAnalysis lifetime(*input, bound);
+                check(!lifetime.proved() && lifetime.savedThrows().empty() && !lifetime.entry() &&
+                          lifetime.reason() ==
+                              "DOM thrown element requires an owner that outlives the exception",
+                      "a synchronous document owner cannot authorize an escaping node exception");
+            }
+        }
     }
 }
 
