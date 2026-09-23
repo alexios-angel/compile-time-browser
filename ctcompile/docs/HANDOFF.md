@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected attribute reads and zero/unit power indices, 2026-09-23 UTC
+
+Resumed clean **cdd54063** and retained conditional Boolean throw `9c10be3d`.
+**bb25b945** proves one exact `hasAttribute` read feeding a protected
+`setAttribute`. Both method lookups and the read retain their source order and
+original guard. Complete DOM reproof establishes receiver and primitive facts;
+a valid literal name and String/Boolean value discharge the write suppression
+through existing lowering. The original conditional source now executes unchanged,
+including saved pre-close payloads, both guard outcomes, exhaustion and reentry.
+The prior literal witness remains, with an additional false-read variant.
+
+Parallel **6e1a2eeb** proves power indices with invariant exponent zero or one
+through existing bounded conversion and power transfer. Unit exponents preserve
+the index lattice; zero exponents write only index one, including `0 ** 0`.
+Complete reload/store census, actual-write replay and budgets remain unchanged.
+General powers remain refused. Historical raw tests are preserved; a new
+17-function source fixture checks exact observations and conservative refusals.
+
+Focused host and arrays CTests and the exact power-index lit case pass.
+Seven throw sources pass **112 native executions, 24 refusals and 40 Node/VM
+observations**; three prior sources pass **48 executions, 78 refusals and
+24 Node/VM observations**, with no nonexecuted admissions. Five historical throw
+oracles agree on **20 observations per engine**. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Eight final hashes match the devbox;
+80 generated C++ files contain no Script/VM or nullable-scalar fallback.
+All 233 historical iterator bodies and 86 metadata rows remain unchanged.
+Full suites were skipped; no browser/shared implementation changed.
+
+**Next native boundary:** unchanged mixed throw/return `43ab2b64` still refuses
+**DOM helper completion observes an inactive value** in both policies. Prove its
+selected completion slots without losing saved payloads or source effects.
+Mutable Number snapshots, throwing/primitive close methods, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-protected-attribute-read.md).
+
 ## Compared iterator exits and additive offsets, 2026-09-23 UTC
 
 Resumed clean **51f90cf6** and retained conditional Boolean throw `9c10be3d`.
