@@ -228,7 +228,7 @@
 // CHECK: escape {{[0-9a-f]+}} 195 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 196 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 197 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 198 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 198 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 199 {{[0-9]+}} obj escapes:stored
 
 // Singleton bitwise masks retain both operand orders and every producer check.
@@ -259,6 +259,19 @@
 // CHECK: escape {{[0-9a-f]+}} 222 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 223 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 224 {{[0-9]+}} obj confined
+
+// Varying shift counts refine whole keys before exact own-write replay.
+// CHECK: escape {{[0-9a-f]+}} 225 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 226 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 227 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 228 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 229 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 230 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 231 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 232 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 233 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 234 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 235 {{[0-9]+}} obj confined
 
 //--- source.js
 function unit() {
@@ -1526,3 +1539,77 @@ commutedVaryingMask(); retainedVaryingMask(); savedVaryingMask();
 reloadedVaryingMask(); laterVaryingMaskStore(); overlappingVaryingMask();
 fractionalVaryingMask(); negativeVaryingMask(); extendingVaryingMask();
 dividedVaryingMask(); convertedVaryingMask();
+
+function varyingRightShift() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i >> (2 - i)] = 0;
+    return a;
+}
+
+function varyingUnsignedShift() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i >>> (2 - i)] = 0;
+    return a;
+}
+
+function varyingLeftShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) << (2 - i)] = 0;
+    return a;
+}
+
+function retainedVaryingShift() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i >> (2 - i)] = 0;
+    return a;
+}
+
+function savedVaryingShift() {
+    var child = {}, a = [child, 1, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i >> (2 - i)] = 0;
+    return saved;
+}
+
+function reloadedVaryingShift() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) a[i >> (a[1] - i)] = 0;
+    return a;
+}
+
+function laterVaryingShiftStore() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i >> (a[1] - i)] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+
+function overlappingVaryingShift() {
+    var child = {}, a = [2, 0, child];
+    for (var i = 0; i < a.length; i++) a[i >> (a[0] - i)] = 0;
+    return a;
+}
+
+function fractionalVaryingShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (i / 2)] = 0;
+    return a;
+}
+
+function negativeVaryingShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[-i >> (2 - i)] = 0;
+    return a;
+}
+
+function wrappedVaryingShift() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (i + 32)] = 0;
+    return a;
+}
+
+varyingRightShift(); varyingUnsignedShift(); varyingLeftShift();
+retainedVaryingShift(); savedVaryingShift(); reloadedVaryingShift();
+laterVaryingShiftStore(); overlappingVaryingShift(); fractionalVaryingShift();
+negativeVaryingShift(); wrappedVaryingShift();

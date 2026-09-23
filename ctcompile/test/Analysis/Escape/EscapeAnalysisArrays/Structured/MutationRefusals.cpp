@@ -698,8 +698,43 @@ void StructuredCases::mutationRefusals() {
     reject("structured singleton shift counts retain the complete later-store census",
            replace(singletonShiftReload,
                    "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
-    reject("structured varying shift counts cannot borrow a singleton fact",
-           replace(singletonShift, "pow %one, %i", "pow %zero, %i"));
+    rows.push_back({.what = "structured varying shift counts refine exact visits before replay",
+                    .body = replace(singletonShift, "pow %one, %i", "pow %zero, %i"),
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto varyingShift = replace(replace(replace(singletonShift, "  %a =",
+                                                      "  %two = ctjs.binary add %one, %one "
+                                                      "{storage_test_id = \"two\"}\n  %a ="),
+                                              "create_array [%x, %x]", "create_array [%x, %one]"),
+                                      "pow %one, %i", "sub %two, %i");
+    const auto varyingShiftChildren =
+        replace(varyingShift, "ctjs.append %zero to %a", "ctjs.append %x to %a");
+    for (const std::string kind : {"shr", "ushr"}) {
+        rows.push_back(
+            {.what = "structured varying shift counts preserve exact disjoint writes",
+             .body = replace(varyingShiftChildren, "shr %i, %count", kind + " %i, %count"),
+             .arrays = "a:[zero,one,zero]",
+             .reads = "a[0]=zero; a[1]=one; a[2]=zero",
+             .exit = "a -> {a}"});
+    }
+    const auto varyingShiftReload =
+        replace(replace(varyingShiftChildren, "create_array [%x, %one]", "create_array [%x, %two]"),
+                "%count = ctjs.binary sub %two, %i",
+                "%limit = ctjs.get_property %base[%one]\n"
+                "    %count = ctjs.binary sub %limit, %i");
+    rows.push_back({.what = "structured varying shifts independently refine producer reload gaps",
+                    .body = varyingShiftReload,
+                    .arrays = "a:[zero,two,zero]",
+                    .reads = "a[1]=two; a[0]=zero; a[1]=two; a[1]=two; a[1]=two; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured varying shifts retain every later producer store",
+           replace(varyingShiftReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    reject("structured varying shifts refuse an actual negative key",
+           replace(varyingShift, "%position = ctjs.binary_static shr %i, %count",
+                   "%negative = ctjs.unary neg %i\n"
+                   "    %position = ctjs.binary_static shr %negative, %count"));
     const auto singletonMask = replace(singletonShift, "shr %i, %count", "bitand %count, %i");
     rows.push_back({.what = "structured commuted singleton masks retain ordinary write replay",
                     .body = singletonMask,

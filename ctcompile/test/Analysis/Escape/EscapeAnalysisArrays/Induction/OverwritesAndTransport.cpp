@@ -966,10 +966,78 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(singletonShiftReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
                    "%powerUnit = ctjs.get_property %base[%two]",
                    "%powerUnit = ctjs.get_property %base[%zero]"));
-    reject("multiple possible shift counts cannot borrow a singleton fact",
-           replace(singletonShift, "pow %one, %i", "pow %zero, %i"));
+    run({.what = "varying shift counts refine exact visits before replay",
+         .body = replace(singletonShift, "pow %one, %i", "pow %zero, %i"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
     reject("singleton left-shift counts still require every write to be own",
            replace(singletonShift, "shr %i, %count", "shl %i, %count"));
+    const auto varyingShift = replace(replace(singletonShift, "[%x, %x, %zero]", "[%x, %one, %x]"),
+                                      "pow %one, %i", "sub %two, %i");
+    for (const std::string kind : {"shr", "ushr"}) {
+        run({.what = "bounded varying shift counts preserve exact disjoint writes",
+             .body = replace(varyingShift, "shr %i, %count", kind + " %i, %count"),
+             .arrays = "a:[zero,one,zero]",
+             .reads = "a[0]=zero; a[1]=one; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "varying left-shift counts preserve source operand order",
+         .body = replace(replace(varyingShift, "[%x, %one, %x]", "[%x, %x, %zero]"),
+                         "%position = ctjs.binary_static shr %i, %count",
+                         "%half = ctjs.binary_static shr %i, %one\n"
+                         "  %position = ctjs.binary_static shl %half, %count"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying negative counts retain modulo32 conversion",
+         .body = replace(singletonShift, "pow %one, %i", "sub %i, %one"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying shift replay retains children outside actual writes",
+         .body = replace(varyingShift, "[%x, %one, %x]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,x,zero]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "varying shift replay preserves a saved overwritten child",
+         .body = replace(replace(varyingShift, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,one,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=one; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto varyingShiftReload =
+        replace(replace(varyingShift, "[%x, %one, %x]", "[%x, %two, %x]"),
+                "%count = ctjs.binary sub %two, %i",
+                "%limit = ctjs.get_property %base[%one]\n"
+                "  %count = ctjs.binary sub %limit, %i");
+    run({.what = "varying shifts independently refine reload gaps inside their enclosure",
+         .body = varyingShiftReload,
+         .arrays = "a:[zero,two,zero]",
+         .reads = "a[1]=two; a[0]=zero; a[1]=two; a[1]=two; a[1]=two; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("varying shifts retain the complete later-store census",
+           replace(varyingShiftReload,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("varying shifts reject an actually overwritten count producer",
+           replace(replace(varyingShiftReload, "[%x, %two, %x]", "[%two, %zero, %x]"),
+                   "%limit = ctjs.get_property %base[%one]",
+                   "%limit = ctjs.get_property %base[%zero]"));
+    reject("varying shifts refuse fractional count bounds",
+           replace(varyingShift, "sub %two, %i", "div %i, %two"));
+    reject("varying shift refinement cannot extend the array",
+           replace(replace(varyingShift, "sub %two, %i", "add %two, %i"), "shr %i, %count",
+                   "shl %i, %count"));
+    reject("varying shift refinement cannot create a negative property",
+           replace(varyingShift, "%position = ctjs.binary_static shr %i, %count",
+                   "%negative = ctjs.unary neg %i\n"
+                   "  %position = ctjs.binary_static shr %negative, %count"));
     const auto singletonMask = replace(singletonShift, "shr %i, %count", "bitand %i, %count");
     for (const std::string kind : {"bitand", "bitor", "bitxor"}) {
         const bool isAnd = kind == "bitand", isOr = kind == "bitor";
