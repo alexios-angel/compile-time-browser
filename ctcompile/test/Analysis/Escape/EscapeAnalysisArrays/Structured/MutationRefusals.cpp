@@ -65,8 +65,38 @@ void StructuredCases::mutationRefusals() {
                    "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
     reject("structured power exponents cannot overlap their write footprint",
            replace(powerReload, "create_array [%zero]", "create_array [%one]"));
-    reject("structured powers cannot commute a changing exponent",
-           replace(unitPower, "pow %i, %one", "pow %one, %i"));
+    rows.push_back({.what = "structured unit-base powers retain the unwritten child",
+                    .body = replace(unitPower, "pow %i, %one", "pow %one, %i"),
+                    .arrays = "a:[x,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a,x}"});
+    const auto unitBase = replace(unitPower, "pow %i, %one", "pow %one, %i");
+    const auto baseReload = replace(replace(unitBase, "create_array [%x]", "create_array [%one]"),
+                                    "%position = ctjs.binary pow %one, %i",
+                                    "%powerBase = ctjs.get_property %base[%zero]\n"
+                                    "    %position = ctjs.binary pow %powerBase, %i");
+    rows.push_back({.what = "structured unit bases reload outside their singleton footprint",
+                    .body = baseReload,
+                    .arrays = "a:[one,zero]",
+                    .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured unit bases preserve negative exponent bounds",
+                    .body = replace(unitBase, "%position = ctjs.binary pow %one, %i",
+                                    "%exponent = ctjs.unary neg %i\n"
+                                    "    %position = ctjs.binary pow %one, %exponent"),
+                    .arrays = "a:[x,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a,x}"});
+    reject("structured unit-base reloads retain the complete later-store census",
+           replace(baseReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
+    reject("structured unit-base reloads cannot overlap their write footprint",
+           replace(replace(replace(baseReload, "create_array [%one]", "create_array [%x]"),
+                           "ctjs.append %y to %a", "ctjs.append %one to %a"),
+                   "%powerBase = ctjs.get_property %base[%zero]",
+                   "%powerBase = ctjs.get_property %base[%one]"));
+    reject("structured powers do not generalize a unit base to zero",
+           replace(unitBase, "pow %one, %i", "pow %zero, %i"));
     reject("structured powers refuse nonunit varying results",
            replace(unitPower, "pow %i, %one", "pow %i, %i"));
     const auto primitiveAnd = replace(

@@ -92,8 +92,66 @@ void InductionCases::overwritesAndTransport() {
            replace(powerReload, "[%zero, %x]", "[%one, %x]"));
     reject("power exponent reloads retain the complete later-store census",
            replace(powerReload, "  %step =", "  ctjs.set_property %base[%zero], %one\n  %step ="));
-    reject("power operands cannot commute the changing exponent",
-           replace(unitPower, "pow %i, %one", "pow %one, %i"));
+    run({.what = "a unit base maps each bounded exponent to the singleton own index",
+         .body = replace(unitPower, "pow %i, %one", "pow %one, %i"),
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto unitBase = replace(unitPower, "pow %i, %one", "pow %one, %i");
+    for (const std::string literal : {"#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
+        run({.what = "unit bases preserve exact primitive conversion",
+             .body = replace(replace(unitBase, "  %a =",
+                                     "  %powerBase = ctjs.constant " + literal + "\n  %a ="),
+                             "pow %one, %i", "pow %powerBase, %i"),
+             .arrays = "a:[one,zero]",
+             .reads = "a[0]=one; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const auto & expression : {"ctjs.unary neg %i", "ctjs.binary sub %i, %one"}) {
+        run({.what = "unit bases preserve negative and zero-crossing exponent bounds",
+             .body = replace(unitBase, "%position = ctjs.binary pow %one, %i",
+                             "%exponent = " + std::string(expression) +
+                                 "\n  %position = ctjs.binary pow %one, %exponent"),
+             .arrays = "a:[one,zero]",
+             .reads = "a[0]=one; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto baseReload = replace(unitBase, "%position = ctjs.binary pow %one, %i",
+                                    "%powerBase = ctjs.get_property %base[%zero]\n"
+                                    "  %position = ctjs.binary pow %powerBase, %i");
+    run({.what = "unit bases reload outside the singleton write footprint",
+         .body = baseReload,
+         .arrays = "a:[one,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "unit-base writes retain a child saved before its overwrite",
+         .body = replace(replace(unitBase, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[one,zero]",
+         .reads = "a[1]=x; a[0]=one; a[1]=zero",
+         .exit = "x -> {x}"});
+    reject("unit-base reloads retain the complete later-store census",
+           replace(baseReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    reject("unit-base reloads cannot overlap the singleton write footprint",
+           replace(replace(baseReload, "[%one, %x]", "[%x, %one]"),
+                   "%powerBase = ctjs.get_property %base[%zero]",
+                   "%powerBase = ctjs.get_property %base[%one]"));
+    for (const std::string literal :
+         {"#ctjs.number<0>", "#ctjs.number<4611686018427387904>",
+          "#ctjs.number<13830554455654793216>", "#ctjs.null", "#ctjs.undefined",
+          "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
+        reject("varying power exponents require a converted unit Number base",
+               replace(replace(unitBase,
+                               "  %a =", "  %powerBase = ctjs.constant " + literal + "\n  %a ="),
+                       "pow %one, %i", "pow %powerBase, %i"));
+    }
+    reject("a unit-base proof cannot borrow an object conversion",
+           replace(unitBase, "pow %one, %i", "pow %x, %i"));
     reject("power exponents cannot borrow an object conversion",
            replace(unitPower, "pow %i, %one", "pow %i, %x"));
     for (const std::string literal :

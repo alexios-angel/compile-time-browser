@@ -345,7 +345,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1);
-        if (!range && !divide && !remainder && !power && !shift &&
+        if (!range && !divide && !remainder && !shift &&
             invariantFailure != ArrayContentsFailure::WorkLimit) {
             range = self(self, expression->getOperand(1), depth + 1);
             offsetOperand = 0;
@@ -360,11 +360,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            // ponytail: only zero/unit exponents; wider powers need an exact
-            // Number result and an enclosure for every interior visit.
-            const auto exponent = boundedConvertedNumber(*offset);
-            if (!exponent || *exponent > 1) { return std::nullopt; }
-            if (*exponent == 0) { range->stride = 1; }
+            // ponytail: only zero/unit exponents or a unit base. Every bounded
+            // Number exponent, including negative values, maps a unit base to
+            // one. Wider powers need an enclosure for every interior visit.
+            const auto number = boundedConvertedNumber(*offset);
+            if (offsetOperand == 0 ? number != 1 : !number || *number > 1) { return std::nullopt; }
+            if (offsetOperand == 0 || *number == 0) { range->stride = 1; }
         }
         if (remainder) {
             if (!spend()) {
@@ -643,7 +644,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             } else if (multiply) {
                 boundedNumberProduct(*endpoint, *offset, result);
             } else if (power) {
-                boundedNumberPower(*endpoint, *offset, result);
+                if (offsetOperand == 0) {
+                    boundedNumberPower(*offset, *endpoint, result);
+                } else {
+                    boundedNumberPower(*endpoint, *offset, result);
+                }
             } else if (subtract) {
                 if (offsetOperand == 0) {
                     boundedNumberDifference(*offset, *endpoint, result);
