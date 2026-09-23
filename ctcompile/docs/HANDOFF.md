@@ -22,6 +22,45 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Cleanup argument selectors and String table keys, 2026-09-23 UTC
+
+Resumed clean **7d714efb** and retained source `b3cd2859` from the prior
+handoff. **4db46d60** removes one restriction on selectors evaluated inside a
+protected cleanup write's arguments. Existing ordered read tracking preserves
+the saved Boolean, ignored selector, original body exception and complete use
+checks. Literal-selector validation, typed DOM/Style reproof, suppression and
+budgets remain. Original, getter and order variants execute. Independent native
+review found no actionable issues.
+
+**cea41194** proves canonical String keys from invariant, distinct tables,
+including mixed Number/String and nested table lookups. The existing own-index
+conversion applies only at property boundaries; arithmetic retains Number proofs
+and ordinary replay preserves String identity. Four previously stored child sites
+become confined; six source controls remain stored. Mutation checks, receiver
+reload gaps and actual-write replay remain unchanged.
+
+Focused validation passes: **26 source preflight checks, 48 native executions,
+76 refusals, 24 distinct Node/VM observations, exact host/arrays CTests and one
+table-key lit case**. Formatting passes **1126 C++, 157 Python, 114 web files**;
+six final code/test hashes match the devbox. Two historical raw refusal inputs
+now have admission assertions. A new order assertion needed to distinguish the
+saved selector from the ignored argument selector; only the remaining third
+native case and refusals were resumed. Its eight Node/VM observations repeated.
+Production stayed unchanged after first builds. Historical sources/oracles and
+raw literal bodies remain. No browser implementation changed; Claude stayed
+uncertain. Full suites were skipped.
+
+**Next native boundary:** retained `unsupported-selector-inside-first-write-argument`,
+source `95420a67`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. It uses `matches` to feed the first protected write.
+Preserve selector validity, write order and the original body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap, general powers and legacy SCF
+retention remain unfinished. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-argument-selectors-string-table-keys.md).
+
 ## Saved selector arguments and independent table keys, 2026-09-23 UTC
 
 Resumed clean **7754eba6** and retained source `c9ccc672`, recovering the
