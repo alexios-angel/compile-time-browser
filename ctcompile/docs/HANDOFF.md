@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Terminal iterator-close read values and correlated powers, 2026-09-23 UTC
+
+Resumed clean **dde07a16** and retained read-to-write source `b1b67287`.
+**0024c099** preserves a final `hasAttribute` Boolean inside the pending
+`setAttribute` after terminal selectors. Existing complete use checks, typed
+DOM/Style reproof, source guard/order, saved exception and budgets remain.
+The unchanged original, getter and reordered-read variant execute.
+
+Parallel **81a3673d** uses bounded whole-key subdivision for correlated powers,
+requiring existing exact scalar identities at every accepted subrange. Complete
+reload/store checks, independent reload gaps and actual-write replay remain.
+Eleven raw and ten source controls were added; all 245 historical source bodies
+are unchanged. Two raw refusals and CHECK109 were promoted after exact Node
+write/read/own-key/identity witnesses. General powers remain unproved.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. Seven final hashes match
+the devbox; all 24 generated C++ files retain the final read-to-write Boolean
+without Script/VM or nullable fallback. Full formatting passes **1126 C++,
+157 Python, 114 web files**. Two new SCF expectation labels were corrected;
+production was unchanged. The parent completed rate-limited source/raw work;
+the escape agent independently reviewed the native change. Full suites were
+skipped, and no browser implementation changed. Claude status stayed uncertain.
+
+**Next native boundary:** retained `unsupported-terminal-read-write-earlier-value`
+source `378326b6` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the earlier saved `hasAttribute` Boolean
+across an intervening ignored read, then feed it to `data-after-terminal`, while
+the original body exception wins. Single-write selector cleanup, nonterminal
+exceptional state, multiple protected regions, implicit cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver, full native
+Bootstrap and general powers remain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-read-values.md).
+
 ## Writes after terminal iterator-close reads and varying divisors, 2026-09-23 UTC
 
 Resumed clean **8d66dca6** and retained terminal-read/write source `ce6d790d`.
