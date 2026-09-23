@@ -19,7 +19,7 @@
 // CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj confined
-// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
@@ -79,6 +79,15 @@
 // CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function quotientShift() {
@@ -491,3 +500,49 @@ function jumpLaterStore() {
 }
 
 jumpUpper(); jumpLower(); jumpOutputInterior(); jumpModuloCount(); jumpNegativeCount(); jumpFixedLowBits(); jumpEvenConstant(); jumpOddConstant(); jumpZeroCount(); jumpRemaining(); jumpSaved(); jumpOverlap(); jumpLaterStore();
+
+function primitiveNegativeCount() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2) << "-31"] = 0;
+    return a;
+}
+function primitiveBooleanCount() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2) << true] = 0;
+    return a;
+}
+function primitiveNullCount() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i << null] = 0;
+    return a;
+}
+function primitiveReloadCount() {
+    var child = {}, a = [child, "1", child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2) << a[1]] = 0;
+    return a;
+}
+function primitiveRetainedChild() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2) << "1"] = 0;
+    return a;
+}
+function primitiveSavedChild() {
+    var child = {}, a = [child, 0, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2) << "1"] = 0;
+    return saved;
+}
+function primitiveNoncanonicalCount() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i / 2) << "01"] = 0;
+    return a;
+}
+function primitiveLaterStore() {
+    var child = {}, a = [child, "1", child, 0];
+    for (var i = 0; i < a.length; i += 2) {
+        a[(i / 2) << a[1]] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+primitiveNegativeCount(); primitiveBooleanCount(); primitiveNullCount(); primitiveReloadCount();
+primitiveRetainedChild(); primitiveSavedChild(); primitiveNoncanonicalCount(); primitiveLaterStore();

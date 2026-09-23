@@ -37,6 +37,17 @@ void StructuredCases::mutationRefusals() {
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
         "binary mul %i, %one", "binary_static bitand %i, %text");
+    for (const std::string kind : {"shl", "shr", "ushr"}) {
+        for (const std::string literal : {"#ctjs.string<\"0\">", "#ctjs.string<\"32\">",
+                                          "#ctjs.boolean<false>", "#ctjs.null"}) {
+            rows.push_back({.what = "structured primitive zero counts preserve exact shift writes",
+                            .body = replace(replace(primitiveAnd, "#ctjs.string<\"1\">", literal),
+                                            "bitand %i, %text", kind + " %i, %text"),
+                            .arrays = "a:[zero,zero]",
+                            .reads = "a[0]=zero; a[1]=zero",
+                            .exit = "a -> {a}"});
+        }
+    }
     for (const auto & literal :
          {"#ctjs.string<\"1\">", "#ctjs.string<\"-1\">", "#ctjs.boolean<true>"}) {
         rows.push_back({.what = "structured primitive AND masks preserve both exact own positions",

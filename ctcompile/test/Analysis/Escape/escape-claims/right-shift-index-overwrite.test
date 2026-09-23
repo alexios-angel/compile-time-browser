@@ -20,7 +20,7 @@
 // CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj confined
-// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj confined
@@ -176,6 +176,15 @@
 // CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 160 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 161 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 162 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 163 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 164 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 165 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 166 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function signedShift() {
@@ -1068,3 +1077,49 @@ function crossingMaskLaterStore() {
 }
 crossingMaskXor(); crossingMaskOr(); crossingMaskAnd(); crossingMaskNegative();
 crossingMaskRetained(); crossingMaskSaved(); crossingMaskOverlap(); crossingMaskLaterStore();
+
+function primitiveModuloCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "33"] = 0;
+    return a;
+}
+function primitiveBooleanCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> true] = 0;
+    return a;
+}
+function primitiveFalseCount() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i >>> false] = 0;
+    return a;
+}
+function primitiveReloadCount() {
+    var child = {}, a = [child, child, 0, "1"];
+    for (var i = 0; i < a.length; i += 2) a[i >>> a[3]] = 0;
+    return a;
+}
+function primitiveRetainedChild() {
+    var child = {}, a = [child, child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "1"] = 0;
+    return a;
+}
+function primitiveSavedChild() {
+    var child = {}, a = [child, child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "1"] = 0;
+    return saved;
+}
+function primitiveNoncanonicalCount() {
+    var child = {}, a = [child, child, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[i >>> "01"] = 0;
+    return a;
+}
+function primitiveLaterStore() {
+    var child = {}, a = [child, child, 0, "1"];
+    for (var i = 0; i < a.length; i += 2) {
+        a[i >>> a[3]] = 0;
+        a[3] = 0;
+    }
+    return a;
+}
+primitiveModuloCount(); primitiveBooleanCount(); primitiveFalseCount(); primitiveReloadCount();
+primitiveRetainedChild(); primitiveSavedChild(); primitiveNoncanonicalCount(); primitiveLaterStore();

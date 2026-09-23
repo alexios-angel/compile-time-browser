@@ -2458,6 +2458,65 @@ void InductionCases::overwritesAndTransport() {
         "x");
     const auto rightShiftIndex =
         replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
+    for (const std::string kind : {"shl", "shr", "ushr"}) {
+        const bool left = kind == "shl";
+        const auto primitiveShift =
+            replace(replace(left ? leftShiftIndex : rightShiftIndex, "  %a =",
+                            "  %text = ctjs.constant #ctjs.string<\"1\"> "
+                            "{storage_test_id = \"text\"}\n  %a ="),
+                    left ? "shl %part, %one" : "shr %i, %one",
+                    kind + (left ? " %part, %text" : " %i, %text"));
+        for (const std::string literal : {"#ctjs.string<\"1\">", "#ctjs.string<\"33\">",
+                                          "#ctjs.string<\"-31\">", "#ctjs.boolean<true>"}) {
+            run({.what = "primitive shift counts preserve bounded modulo32 own positions",
+                 .body = replace(primitiveShift, "#ctjs.string<\"1\">", literal),
+                 .arrays = left ? "a:[zero,one,zero,one]" : "a:[zero,zero,one,one]",
+                 .reads = left ? "a[0]=zero; a[2]=zero" : "a[0]=zero; a[2]=one",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+        run({.what = "primitive shift replay retains an unwritten child",
+             .body = replace(primitiveShift, left ? "[%x, %one, %x, %one]" : "[%x, %x, %one, %one]",
+                             "[%x, %x, %x, %one]"),
+             .arrays = left ? "a:[zero,x,zero,one]" : "a:[zero,zero,x,one]",
+             .reads = left ? "a[0]=zero; a[2]=zero" : "a[0]=zero; a[2]=x",
+             .exit = "a -> {a,x}"});
+        run({.what = "primitive shift replay preserves a pre-loop child snapshot",
+             .body = replace(replace(primitiveShift, "  cf.br ^header(%a,",
+                                     "  %before = ctjs.get_property %a[%zero]\n"
+                                     "  cf.br ^header(%a,"),
+                             "ctjs.return %a", "ctjs.return %before"),
+             .arrays = left ? "a:[zero,one,zero,one]" : "a:[zero,zero,one,one]",
+             .reads = left ? "a[0]=x; a[0]=zero; a[2]=zero" : "a[0]=x; a[0]=zero; a[2]=one",
+             .exit = "x -> {x}"});
+        const auto reloaded =
+            replace(replace(primitiveShift, left ? "[%x, %one, %x, %one]" : "[%x, %x, %one, %one]",
+                            left ? "[%x, %text, %x, %one]" : "[%x, %x, %one, %text]"),
+                    "%position = ctjs.binary_static " + kind,
+                    "%count = ctjs.get_property %base[" + std::string(left ? "%one" : "%three") +
+                        "]\n  %position = ctjs.binary_static " + kind);
+        const auto countReload = replace(reloaded, left ? "shl %part, %text" : kind + " %i, %text",
+                                         left ? "shl %part, %count" : kind + " %i, %count");
+        run({.what = "primitive shift counts reload only outside actual writes",
+             .body = countReload,
+             .arrays = left ? "a:[zero,text,zero,one]" : "a:[zero,zero,one,text]",
+             .reads = left ? "a[1]=text; a[0]=zero; a[1]=text; a[2]=zero"
+                           : "a[3]=text; a[0]=zero; a[3]=text; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+        reject("primitive shift reloads retain the complete later-store census",
+               replace(countReload, "  %step =",
+                       "  ctjs.set_property %base[" + std::string(left ? "%one" : "%three") +
+                           "], %one\n  %step ="));
+        reject("primitive shifts cannot borrow an object's conversion",
+               replace(primitiveShift, left ? "shl %part, %text" : kind + " %i, %text",
+                       left ? "shl %part, %x" : kind + " %i, %x"));
+        for (const std::string literal : {"#ctjs.undefined", "#ctjs.string<\"01\">",
+                                          "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"1\">"}) {
+            reject("primitive shift counts retain canonical conversion and magnitude bounds",
+                   replace(primitiveShift, "#ctjs.string<\"1\">", literal));
+        }
+    }
     for (const auto & kind : {"shr", "ushr"}) {
         const auto body =
             replace(rightShiftIndex, "binary_static shr", std::string{"binary_static "} + kind);
