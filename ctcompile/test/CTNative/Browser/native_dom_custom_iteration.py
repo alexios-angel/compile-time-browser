@@ -2423,6 +2423,13 @@ def saved_throws(args, compilers, includes, libraries):
             "yes",
         ),
         (
+            "number-getter-close",
+            refusals()["body-throw-close-getter"],
+            "js_num",
+            "error.value.value() == 1.0",
+            "yes",
+        ),
+        (
             "boolean",
             original.replace("throw 1;", "throw false;"),
             "js_boolean_t",
@@ -2466,6 +2473,16 @@ def saved_throws(args, compilers, includes, libraries):
             "js_boolean_t",
             "!error.value",
             "yes",
+        ),
+        (
+            "boolean-snapshot-getter-close",
+            refusals()["body-throw-boolean-snapshot"]
+            .replace("return() {", "get return() {")
+            .replace("return {};", "throw 2;")
+            .replace("'data-closed', 'yes'", "'data-closed', 'getter'"),
+            "js_boolean_t",
+            "!error.value",
+            "getter",
         ),
         (
             "conditional-boolean-missing-read",
@@ -2569,6 +2586,7 @@ def saved_throws(args, compilers, includes, libraries):
             "number",
             "number-primitive-close",
             "number-throwing-close",
+            "number-getter-close",
         )
         snapshot = conditional or label.startswith("boolean-snapshot") or numeric_snapshot
         js_kind = (
@@ -2808,9 +2826,11 @@ var savedThrow, savedExhausted;
                         "number",
                         "number-primitive-close",
                         "number-throwing-close",
+                        "number-getter-close",
                         "conditional-boolean-read",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
+                        "boolean-snapshot-getter-close",
                     )
                     or numeric_snapshot
                 ):
@@ -2841,9 +2861,17 @@ var savedThrow, savedExhausted;
                         )
                         refused += 1
     throwing_close = refusals()["body-throw-close-throws"]
+    getter_close = refusals()["body-throw-close-getter"]
     for label, text in (
         ("invalid-close-name", throwing_close.replace("data-closed", "bad name")),
         ("unknown-close-throw", throwing_close.replace("throw 2;", "throw anchor;")),
+        (
+            "normal-getter-close",
+            getter_close.replace("throw 1;", "node.setAttribute('data-visited', 'yes');"),
+        ),
+        ("return-getter-close", getter_close.replace("throw 1;", "return 1;")),
+        ("returning-getter-close", getter_close.replace("throw 2;", "return {};")),
+        ("unknown-getter-throw", getter_close.replace("throw 2;", "throw anchor;")),
     ):
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -3014,6 +3042,7 @@ def main():
             "body-throw-branch-number-snapshot",
             "body-throw-close-primitive",
             "body-throw-close-throws",
+            "body-throw-close-getter",
         ):
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")

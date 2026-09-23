@@ -135,13 +135,45 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (object->getBlock() != open->getBlock() || !object->isBeforeInBlock(open)) {
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
+    const auto targetOf = [&](ctjs::CreateClosureOp closure) {
+        ctjs::FuncOp found;
+        for (auto function : candidate.getOps<ctjs::FuncOp>()) {
+            if (!spend()) { return ctjs::FuncOp{}; }
+            if (functionIndex(function) == static_cast<unsigned>(closure.getFunction())) {
+                if (found) { return ctjs::FuncOp{}; }
+                found = function;
+            }
+        }
+        return found;
+    };
     llvm::StringMap<ctjs::SetPropertyOp> slots;
     llvm::SmallVector<ctjs::SetPropertyOp> stateSlots;
     llvm::StringMap<unsigned> stateIndices;
     ctjs::SetPropertyOp iteratorSlot;
-    for (mlir::Operation * user : object->getUsers()) {
+    for (mlir::Operation * user : llvm::make_early_inc_range(object->getUsers())) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+        if (auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(user)) {
+            auto getter = accessor.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
+            auto body = getter ? targetOf(getter) : ctjs::FuncOp{};
+            auto thrown = body && body.getBody().hasOneBlock() && !body.getBody().front().empty()
+                              ? llvm::dyn_cast<ctjs::ThrowOp>(body.getBody().front().back())
+                              : ctjs::ThrowOp{};
+            if (accessor.getTarget() != object.getResult() || accessor.getName() != "return" ||
+                !undefined(accessor.getSetter()) || !thrown || protectedCloses.empty()) {
+                return error("DOM iterator getter requires a terminal suppressed throw");
+            }
+            // A getter that always throws never supplies a return method.
+            // Model its invocation with the existing close callable, whose
+            // literal throw, confinement and every remaining suppression edge
+            // must all prove below before this private candidate can publish.
+            if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
+            mlir::OpBuilder at(accessor);
+            auto key = ctjs::ConstantOp::create(
+                at, accessor.getLoc(), ctjs::StringAttr::get(candidate.getContext(), "return"));
+            store = ctjs::SetPropertyOp::create(at, accessor.getLoc(), object, key, getter);
+            accessor.erase();
+        }
         if (!store) { continue; }
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         if (store.getObject() != object.getResult() || store->getBlock() != object->getBlock() ||
@@ -188,17 +220,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (!iteratorSlot || !slots.contains("next")) {
         return error("DOM custom iterator lacks its own iterator and next methods");
     }
-    const auto targetOf = [&](ctjs::CreateClosureOp closure) {
-        ctjs::FuncOp found;
-        for (auto function : candidate.getOps<ctjs::FuncOp>()) {
-            if (!spend()) { return ctjs::FuncOp{}; }
-            if (functionIndex(function) == static_cast<unsigned>(closure.getFunction())) {
-                if (found) { return ctjs::FuncOp{}; }
-                found = function;
-            }
-        }
-        return found;
-    };
     auto identity = iteratorSlot.getValue().getDefiningOp<ctjs::CreateClosureOp>();
     auto identityBody = targetOf(identity);
     if (!identityBody || identityBody->hasAttr("ctjs.skipped") ||

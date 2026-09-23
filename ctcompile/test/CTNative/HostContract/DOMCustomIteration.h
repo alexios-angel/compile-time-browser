@@ -1829,37 +1829,48 @@ module {
     const auto throwingAbruptSource = throwingReturn(primitiveAbruptSource);
     check(!throwingAbruptSource.empty(), "throwing close fixture replacement matched");
     if (throwingAbruptSource.empty()) { return; }
-    for (auto provider :
-         {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(throwingAbruptSource, &context);
-        check(static_cast<bool>(input), "literal throwing close with live frame parses");
-        if (!input) { continue; }
-        auto request = contract;
-        request.provider = provider;
-        request.moduleSha256 = hostContractFingerprint(*input);
-        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
-        check(!failure, "confined terminal close throw retains saved-throw suppression");
-        if (failure) {
-            std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
-            continue;
+    const auto getterReturn = [&](const std::string & input) {
+        return replaced(
+            input, "    ctjs.set_property %holder[%returnName], %finish",
+            "    ctjs.define_accessor \"return\" on %holder get %finish set %undefined");
+    };
+    const auto getterAbruptSource = getterReturn(throwingAbruptSource);
+    auto getterAbrupt = mlir::parseSourceString<mlir::ModuleOp>(getterAbruptSource, &context);
+    check(static_cast<bool>(getterAbrupt), "throwing return getter parses");
+    if (!getterAbrupt) { return; }
+    for (const auto & source : {throwingAbruptSource, getterAbruptSource}) {
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+            check(static_cast<bool>(input), "literal throwing close with live frame parses");
+            if (!input) { continue; }
+            auto request = contract;
+            request.provider = provider;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(!failure, "confined terminal close throw retains saved-throw suppression");
+            if (failure) {
+                std::fprintf(stderr, "%s\n", llvm::toString(std::move(failure)).c_str());
+                continue;
+            }
+            unsigned throws = 0;
+            input->walk([&](ctjs::ThrowOp thrown) {
+                ++throws;
+                auto value = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
+                check(value && llvm::cast<ctjs::NumberAttr>(value.getValue()).getDouble() == 1,
+                      "close throw cannot replace the original saved exception");
+            });
+            auto close = input->lookupSymbol<ctjs::FuncOp>("return$3");
+            auto returned = close ? llvm::dyn_cast<ctjs::ReturnOp>(close.getBody().front().back())
+                                  : ctjs::ReturnOp{};
+            check(throws == 1 && returned &&
+                      llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()) &&
+                      mlir::succeeded(mlir::verify(*input)),
+                  "suppressed literal returns only after closing its own frame");
+            failure = expandDOMHelpers(*input, request.entry, completeBudget);
+            check(!failure, "rewritten throwing close passes complete helper proof");
+            if (failure) { llvm::consumeError(std::move(failure)); }
         }
-        unsigned throws = 0;
-        input->walk([&](ctjs::ThrowOp thrown) {
-            ++throws;
-            auto value = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
-            check(value && llvm::cast<ctjs::NumberAttr>(value.getValue()).getDouble() == 1,
-                  "close throw cannot replace the original saved exception");
-        });
-        auto close = input->lookupSymbol<ctjs::FuncOp>("return$3");
-        auto returned = close ? llvm::dyn_cast<ctjs::ReturnOp>(close.getBody().front().back())
-                              : ctjs::ReturnOp{};
-        check(throws == 1 && returned &&
-                  llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()) &&
-                  mlir::succeeded(mlir::verify(*input)),
-              "suppressed literal returns only after closing its own frame");
-        failure = expandDOMHelpers(*input, request.entry, completeBudget);
-        check(!failure, "rewritten throwing close passes complete helper proof");
-        if (failure) { llvm::consumeError(std::move(failure)); }
     }
     for (const auto & invalid : {
              replaced(throwingAbruptSource, "    %returnName =",
@@ -1904,14 +1915,18 @@ module {
     %aliasedClose = ctjs.call %loadedMethod(%storedHolder)
     ctjs.frame_exit %frame)MLIR"),
          }) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
-        check(static_cast<bool>(input), "unproved throwing close observer parses");
-        if (!input) { continue; }
-        auto request = contract;
-        request.moduleSha256 = hostContractFingerprint(*input);
-        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
-        check(static_cast<bool>(failure), "shared, escaped or nonliteral throwing close refuses");
-        llvm::consumeError(std::move(failure));
+        for (const auto & source : {invalid, getterReturn(invalid)}) {
+            check(!source.empty(), "throwing method/getter control replacement matched");
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+            check(static_cast<bool>(input), "unproved throwing close observer parses");
+            if (!input) { continue; }
+            auto request = contract;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure),
+                  "shared, escaped or nonliteral throwing close refuses");
+            llvm::consumeError(std::move(failure));
+        }
     }
     for (const auto & invalid : {
              replaced(throwingAbruptSource, "    ctjs.throw %result",
@@ -1928,6 +1943,25 @@ module {
         auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
         if (!failure) { failure = expandDOMHelpers(*input, request.entry, completeBudget); }
         check(static_cast<bool>(failure), "suppressed close still requires complete frame proof");
+        llvm::consumeError(std::move(failure));
+    }
+    for (const auto & invalid : {
+             getterReturn(primitiveAbruptSource),
+             getterReturn(throwingReturn(primitiveReturn(returningSource))),
+             getterReturn(throwingReturn(primitiveReturn(countedSource))),
+             replaced(getterAbruptSource, "set %undefined", "set %finish"),
+             replaced(getterAbruptSource, "define_accessor \"return\"", "define_accessor \"next\""),
+             replaced(getterAbruptSource, "    %open =",
+                      "    ctjs.set_property %holder[%returnName], %finish\n    %open ="),
+         }) {
+        check(!invalid.empty(), "unsupported getter control replacement matched");
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        check(static_cast<bool>(input), "unsupported getter control parses");
+        if (!input) { continue; }
+        auto request = contract;
+        request.moduleSha256 = hostContractFingerprint(*input);
+        auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+        check(static_cast<bool>(failure), "returning, unsuppressed or replaced getter refuses");
         llvm::consumeError(std::move(failure));
     }
     for (const auto & invalid : {primitiveReturn(returningSource), primitiveReturn(countedSource),
@@ -5099,6 +5133,7 @@ module {
     for (auto fixture : {*original,
                          *abruptState,
                          *primitiveAbrupt,
+                         *getterAbrupt,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,
