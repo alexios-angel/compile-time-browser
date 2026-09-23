@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared cleanup snapshots and BigInt table keys, 2026-09-23 UTC
+
+Resumed clean **e998a46a** and retained source `8f5b1ef8` from the prior
+handoff. **6f9b4f46** retains a proved DOM read for multiple protected cleanup
+writes. The same Boolean snapshot feeds each write without repeating the read.
+Complete uses, selector validity, source guard/order, typed DOM/Style reproof,
+original body exceptions and budgets remain. Original, getter and order variants
+execute; the exact cleanup-throw variant `448e7e71` also executes. Twenty-two
+historical raw reuse refusals now have admission assertions with unchanged inputs.
+
+**846522b9** uses the existing own-index proof for primitive table keys,
+including BigInt, at property boundaries. Numeric operations retain their separate
+proofs; original table values, mutation checks, receiver gaps and actual-write
+replay remain. Three previously stored child sites become confined; three controls
+remain stored. No browser or runtime implementation changed.
+
+Focused checks pass: **64 native executions, 88 refusals, 32 Node/VM observations,
+28 unique source preflight checks, exact host/arrays CTests and one table-key lit
+case**. Formatting passes **1126 C++, 157 Python, 114 web files**; six final
+code/test hashes match the devbox. All 32 generated C++ files contain no Script
+namespace. Source/raw/escape agents worked in parallel; repeated interruptions
+and rate limits required parent completion from checkpoints. Parent review is
+complete; no completed independent review is claimed. Full suites were skipped.
+
+**Next native boundary:** retained `unsupported-selector-guards-second-write`,
+source `c90a81f2`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve a saved selector controlling the second
+cleanup write, its original guard/order and the original body exception.
+Single-write cleanup, nonterminal exceptional state, multiple protected regions,
+implicit cleanup, nested custom iterators, unguarded Bootstrap defaults, the
+application driver, full native Bootstrap, general powers and legacy SCF
+retention remain unfinished. Noncanonical String numeric conversions need the
+shared `boundedConvertedNumber` proof and its existing callers/tests; a table-only
+parser would be incomplete. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-shared-cleanup-snapshots-bigint-table-keys.md).
+
 ## Standalone cleanup selectors and binary table conversions, 2026-09-23 UTC
 
 Resumed clean **1038e634** and retained source `c1ea55cf` from the prior
