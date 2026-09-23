@@ -383,6 +383,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsKind kind = ContentsKind::NonBigInt;
                 std::optional<std::size_t> integerNumber;
                 std::optional<std::size_t> negativeIntegerNumber;
+                std::optional<std::uint32_t> convertedBits;
+                unsigned unaryDepth = 0;
                 switch (unary.getKind()) {
                 case ctjs::UnaryKind::Not:
                 case ctjs::UnaryKind::Void: break;
@@ -438,6 +440,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         if ((integerNumber || negativeIntegerNumber) && !spend()) {
                             return refuse(ArrayContentsFailure::WorkLimit, &op);
                         }
+                        unaryDepth = std::min(input.unaryDepth + 1, 65U);
+                        if (!integerNumber && !negativeIntegerNumber && unaryDepth <= 64) {
+                            // ToUint32(-x) is -ToUint32(x) modulo 2^32. Keep
+                            // the read-time conversion without inventing an exact
+                            // Number for subsequent arithmetic or property access.
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            convertedBits = boundedConvertedBits(input);
+                            if (convertedBits && unary.getKind() == ctjs::UnaryKind::Neg) {
+                                *convertedBits = 0U - *convertedBits;
+                            }
+                        }
                     } else {
                         ContentsValue result;
                         boundedNumberComplement(input, result);
@@ -451,8 +464,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                state.values[unary.getResult()] = {unary.getResult(), kind, integerNumber,
-                                                   negativeIntegerNumber};
+                state.values[unary.getResult()] = {
+                    unary.getResult(), kind,          integerNumber, negativeIntegerNumber,
+                    std::nullopt,      convertedBits, unaryDepth};
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {

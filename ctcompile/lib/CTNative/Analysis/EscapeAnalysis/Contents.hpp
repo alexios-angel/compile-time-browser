@@ -48,6 +48,9 @@ struct ContentsValue {
     std::optional<std::size_t> negativeIntegerNumber = std::nullopt;
     // An indexed ASCII String read keeps its character and its own SSA identity.
     std::optional<unsigned char> asciiCharacter = std::nullopt;
+    // Result-only ToUint32 snapshot; never an arithmetic value or property key.
+    std::optional<std::uint32_t> convertedBits = std::nullopt;
+    unsigned unaryDepth = 0;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
     bool nonBigInt() const {

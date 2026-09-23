@@ -588,9 +588,9 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
         if (narrowModule && wideModule) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
-            // BitNot now proves an exact result for this original fractional Number.
-            // Each result charges its producer, snapshot and exact Number fact.
-            const unsigned perResult = kind == ctjs::UnaryKind::BitNot ? 3u : 2u;
+            // Each unary result charges its producer, scalar snapshot and either
+            // the exact BitNot Number or the Plus/Neg bitwise conversion fact.
+            constexpr unsigned perResult = 3;
             if (!narrow.complete || !expanded.complete ||
                 expanded.work != narrow.work + 32 * perResult) {
                 fail(row{.what = "arithmetic snapshots charge every primitive origin",

@@ -546,10 +546,21 @@ void InductionCases::invariantReads() {
           "binary div %slot, %one", "binary add %slot, %zero"}) {
         reject("fractional arithmetic does not borrow bitwise truncation",
                replace(fractionalTable, "binary_static bitor %slot, %zero", expression));
-        reject("an outer bitwise operation cannot truncate an unproved arithmetic intermediate",
-               replace(fractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
-                       "  %number = ctjs." + expression +
-                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+        const auto converted =
+            replace(fractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                    "  %number = ctjs." + expression +
+                        "\n  %converted = ctjs.binary_static bitor %number, %zero");
+        if (expression == "unary plus %slot") {
+            run({.what = "original table unary Plus supplies its own bitwise conversion",
+                 .body = converted,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("an outer bitwise operation cannot truncate an unproved arithmetic intermediate",
+                   converted);
+        }
     }
     reject("fractional String properties preserve their original spelling",
            replace(fractionalTable, "%base[%converted]", "%base[%slot]"));
@@ -655,14 +666,72 @@ void InductionCases::invariantReads() {
           "binary div %slot, %one", "binary add %slot, %zero"}) {
         reject("Number arithmetic cannot borrow bitwise truncation",
                replace(numberFractionalTable, "binary_static bitor %slot, %zero", expression));
-        reject("Number bitwise conversion cannot borrow unproved arithmetic provenance",
-               replace(numberFractionalTable,
-                       "  %converted = ctjs.binary_static bitor %slot, %zero",
-                       "  %number = ctjs." + expression +
-                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+        const auto converted =
+            replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                    "  %number = ctjs." + expression +
+                        "\n  %converted = ctjs.binary_static bitor %number, %zero");
+        if (expression == "unary plus %slot") {
+            run({.what = "Number Plus after a table read keeps its bitwise conversion snapshot",
+                 .body = converted,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("Number bitwise conversion cannot borrow unproved arithmetic provenance",
+                   converted);
+        }
     }
     reject("Number fractional properties retain their exact original key",
            replace(numberFractionalTable, "%base[%converted]", "%base[%slot]"));
+    const auto afterReadTable =
+        replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                "  %number = ctjs.unary plus %slot\n"
+                "  %converted = ctjs.binary_static bitor %number, %zero");
+    for (const std::string kind : {"plus", "neg"}) {
+        auto source = replace(afterReadTable, "unary plus %slot", "unary " + kind + " %slot");
+        if (kind == "neg") {
+            source = replace(replace(source, "4606281698874543309", "13829653735729319117"),
+                             "4613712638259704627", "13837084675114480435");
+        }
+        run({.what = "unary table-read conversion preserves signed fractional bitwise inputs",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("a converted-bit snapshot is not a fractional own property key",
+               replace(source, "%base[%converted]", "%base[%number]"));
+        reject("a converted-bit snapshot is not an exact arithmetic Number",
+               replace(source, "binary_static bitor %number, %zero", "binary sub %number, %zero"));
+        for (const std::string before : {"  %pick =", "  %step ="}) {
+            reject(
+                "unary table snapshots cannot hide a mutation around the read",
+                replace(source, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
+        }
+    }
+    run({.what = "unary conversion after a String table read preserves bounded parsing",
+         .body =
+             replace(afterReadTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a saved unary read keeps its conversion after the source table changes",
+         .body = replace(
+             replace(
+                 numberFractionalTable, "  cf.br ^header",
+                 "  %savedRead = ctjs.get_property %keys[%zero]\n"
+                 "  %savedNumber = ctjs.unary plus %savedRead {storage_test_id = \"savedNumber\"}\n"
+                 "  %snapshots = ctjs.create_array [%savedNumber, %textTwo] {storage_test_id = "
+                 "\"snapshots\"}\n"
+                 "  ctjs.set_property %keys[%zero], %textTwo\n  cf.br ^header"),
+             "%keys[%pick]", "%snapshots[%pick]"),
+         .arrays = "keys:[textTwo,textTwo]; a:[zero,zero,zero]; snapshots:[savedNumber,textTwo]",
+         .reads = "keys[0]=textZero; snapshots[0]=savedNumber; snapshots[1]=textTwo; "
+                  "snapshots[0]=savedNumber",
+         .exit = "a -> {a}"},
+        "x");
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject("Number table mutations remain visible before and after a read",
                replace(numberFractionalTable, before,
@@ -1036,10 +1105,20 @@ void InductionCases::invariantReads() {
           "binary div %slot, %one", "binary add %slot, %zero"}) {
         reject("wide Number arithmetic cannot borrow bitwise wrapping",
                replace(wideNumberTable, "binary_static bitor %slot, %zero", expression));
-        reject("wide computed Number values still need independent provenance",
-               replace(wideNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
-                       "  %number = ctjs." + expression +
-                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+        const auto converted =
+            replace(wideNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                    "  %number = ctjs." + expression +
+                        "\n  %converted = ctjs.binary_static bitor %number, %zero");
+        if (expression == "unary plus %slot") {
+            run({.what = "original table unary Plus supplies its own bitwise conversion",
+                 .body = converted,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("wide computed Number values still need independent provenance", converted);
+        }
     }
     reject("wide original Number keys do not become wrapped properties",
            replace(wideNumberTable, "%base[%converted]", "%base[%slot]"));
@@ -1117,10 +1196,20 @@ void InductionCases::invariantReads() {
           "binary div %slot, %one", "binary add %slot, %zero"}) {
         reject("nonfinite arithmetic cannot borrow zero bitwise facts",
                replace(nonfiniteNumberTable, "binary_static bitor %slot, %zero", expression));
-        reject("nonfinite computed results retain separate provenance requirements",
-               replace(nonfiniteNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
-                       "  %number = ctjs." + expression +
-                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+        const auto converted =
+            replace(nonfiniteNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                    "  %number = ctjs." + expression +
+                        "\n  %converted = ctjs.binary_static bitor %number, %zero");
+        if (expression == "unary plus %slot") {
+            run({.what = "original table unary Plus supplies its own bitwise conversion",
+                 .body = converted,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("nonfinite computed results retain separate provenance requirements", converted);
+        }
     }
     reject("nonfinite original Number properties retain their spelling",
            replace(nonfiniteNumberTable, "%base[%converted]", "%base[%slot]"));
@@ -1209,10 +1298,20 @@ void InductionCases::invariantReads() {
           "binary mul %slot, %one", "binary div %slot, %one", "binary add %slot, %zero"}) {
         reject("decimal overflow arithmetic cannot borrow zero bitwise facts",
                replace(overflowStringTable, "binary_static bitor %slot, %zero", expression));
-        reject("computed overflow still requires its own provenance proof",
-               replace(overflowStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
-                       "  %number = ctjs." + expression +
-                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+        const auto converted =
+            replace(overflowStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                    "  %number = ctjs." + expression +
+                        "\n  %converted = ctjs.binary_static bitor %number, %zero");
+        if (expression == "unary plus %slot") {
+            run({.what = "original table unary Plus supplies its own bitwise conversion",
+                 .body = converted,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("computed overflow still requires its own provenance proof", converted);
+        }
     }
     reject("overflow String properties retain their original spelling",
            replace(overflowStringTable, "%base[%converted]", "%base[%slot]"));
@@ -1271,10 +1370,20 @@ void InductionCases::invariantReads() {
           "binary mul %slot, %one", "binary div %slot, %one", "binary add %slot, %zero"}) {
         reject("nonfinite String arithmetic cannot borrow zero bitwise facts",
                replace(nonfiniteStringTable, "binary_static bitor %slot, %zero", expression));
-        reject("computed nonfinite String conversions need independent provenance",
-               replace(nonfiniteStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
-                       "  %number = ctjs." + expression +
-                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+        const auto converted =
+            replace(nonfiniteStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                    "  %number = ctjs." + expression +
+                        "\n  %converted = ctjs.binary_static bitor %number, %zero");
+        if (expression == "unary plus %slot") {
+            run({.what = "original table unary Plus supplies its own bitwise conversion",
+                 .body = converted,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("computed nonfinite String conversions need independent provenance", converted);
+        }
     }
     reject("nonfinite String properties retain their original spelling",
            replace(nonfiniteStringTable, "%base[%converted]", "%base[%slot]"));
@@ -1323,10 +1432,21 @@ void InductionCases::invariantReads() {
           "binary pow %slot, %zero", "binary add %slot, %zero"}) {
         reject("wide String arithmetic retains its bounded exact Number proof",
                replace(wideStringTable, "binary_static bitor %slot, %zero", expression));
-        reject("computed wide String arithmetic cannot borrow literal bitwise provenance",
-               replace(wideStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
-                       "  %number = ctjs." + expression +
-                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+        const auto converted =
+            replace(wideStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                    "  %number = ctjs." + expression +
+                        "\n  %converted = ctjs.binary_static bitor %number, %zero");
+        if (expression == "unary plus %slot") {
+            run({.what = "original table unary Plus supplies its own bitwise conversion",
+                 .body = converted,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("computed wide String arithmetic cannot borrow literal bitwise provenance",
+                   converted);
+        }
     }
     reject("wide String properties retain their original spelling",
            replace(wideStringTable, "%base[%converted]", "%base[%slot]"));

@@ -339,10 +339,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                               unary.getKind() != ctjs::UnaryKind::BitNot)) {
                 return std::nullopt;
             }
-            auto range =
-                self(self, unary.getOperand(), depth + 1,
-                     unary.getKind() == ctjs::UnaryKind::BitNot ? IndexUse::BitwiseConversion
-                                                                : IndexUse::Conversion);
+            auto range = self(self, unary.getOperand(), depth + 1,
+                              unary.getKind() == ctjs::UnaryKind::BitNot ||
+                                      use == IndexUse::BitwiseConversion
+                                  ? IndexUse::BitwiseConversion
+                                  : IndexUse::Conversion);
             if (!range) { return std::nullopt; }
             const bool wrappingComplement = unary.getKind() == ctjs::UnaryKind::BitNot &&
                                             signedBand(range->first) != signedBand(range->last);
@@ -355,8 +356,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 const auto period = std::gcd(range->stride, std::size_t{4294967296ULL});
                 return convertedLattice(operand, period, ~numberBits(range->first) % period);
             }
-            // The recursive range already proves exact bounded Numbers. Negation
-            // changes their sign and order; both signed zeros remain own key zero.
+            // The range proves exact Numbers, or equivalent modulo-2^32 inputs
+            // for a bitwise consumer. Negation changes their sign and order;
+            // both signed zeros remain own key zero.
             for (ContentsValue * endpoint : {&range->first, &range->last}) {
                 if (!spend()) {
                     invariantFailure = ArrayContentsFailure::WorkLimit;

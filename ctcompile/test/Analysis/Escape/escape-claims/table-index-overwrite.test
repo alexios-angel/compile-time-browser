@@ -194,6 +194,16 @@
 // CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj confined
 
+
+// Unary conversion after a table read preserves read-time bits, not property keys.
+// CHECK: escape {{[0-9a-f]+}} 142 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 143 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 144 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 145 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 146 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 147 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 148 {{[0-9]+}} obj escapes:stored
+
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 // RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
@@ -399,6 +409,21 @@
 // RECORD-LABEL: fn 141 entries 1 params 0 frame {{[0-9]+}} name localUnaryUndefinedNumberShiftTableKey
 // RECORD: site 5 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 
+// RECORD-LABEL: fn 142 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberPlus
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 143 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberNeg
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 144 entries 1 params 0 frame {{[0-9]+}} name afterReadStringPlus
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 145 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberCount
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 146 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadPlus
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 147 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadPlus
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 148 entries 1 params 0 frame {{[0-9]+}} name originalPropertyAfterReadPlus
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+
 //--- source.js
 function varyingTableKey() {
     var child = {}, a = [child, 0, child], keys = [0, 2];
@@ -459,6 +484,14 @@ function overwrittenTableReceiver() {
     for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
     return a;
 }
+afterReadNumberPlus();
+afterReadNumberNeg();
+afterReadStringPlus();
+afterReadNumberCount();
+savedAfterReadPlus();
+mutatedAfterReadPlus();
+originalPropertyAfterReadPlus();
+
 varyingTableKey(); reversedTableKey(); selectedTableKey(); retainedTableKey();
 savedTableChild(); mutatedTableKey(); mutatedTableAlias(); resizedTableKey();
 guardTableKey(); overwrittenTableReceiver();
@@ -1279,5 +1312,45 @@ function localUnaryUndefinedNumberShiftTableKey() {
     var undefined;
     var child = {}, a = [0, child, child], keys = [+(+undefined), 1];
     for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+
+function afterReadNumberPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(+keys[i % 2]) | 0] = 0;
+    return a;
+}
+function afterReadNumberNeg() {
+    var child = {}, a = [child, 0, child], keys = [-0.9, -2.9];
+    for (var i = 0; i < a.length; i++) a[(-keys[i % 2]) | 0] = 0;
+    return a;
+}
+function afterReadStringPlus() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[(+keys[i % 2]) | 0] = 0;
+    return a;
+}
+function afterReadNumberCount() {
+    var child = {}, a = [0, child, child], keys = [0.5, 1.9];
+    for (var i = 0; i < a.length; i++) a[1 << (+keys[i % 2])] = 0;
+    return a;
+}
+function savedAfterReadPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(+keys[i % 2]) | 0] = 0;
+    return saved;
+}
+function mutatedAfterReadPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.5;
+        a[(+keys[i % 2]) | 0] = 0;
+    }
+    return a;
+}
+function originalPropertyAfterReadPlus() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
     return a;
 }

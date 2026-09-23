@@ -233,6 +233,7 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
 // Bitwise conversion accepts an original Number or bounded String. Arithmetic and
 // property keys still require their separate exact Number/spelling proofs.
 std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
+    if (input.convertedBits) { return input.convertedBits; }
     if (const auto positive = boundedConvertedNumber(input)) {
         return static_cast<std::uint32_t>(*positive);
     }
