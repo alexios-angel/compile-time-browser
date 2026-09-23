@@ -738,6 +738,18 @@ module {
                        "    %terminalReadKey =", "    %afterTerminalKey =", "    %attribute =");
     const auto ignoredEarlySelector =
         replaced(earlySavedSelector, "%lateName, %terminalPresent)", "%lateName, %latePresent)");
+    const auto reusedInitialSelector = replaced(
+        selectorBeforeFirstWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+        "ctjs.call %secondMethod(%element, %secondName, %present)");
+    const auto reusedArgumentSelector = replaced(
+        firstWriteSelector, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+        "ctjs.call %secondMethod(%element, %secondName, %present)");
+    const auto reusedInitialRead =
+        replaced(secondWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                 "ctjs.call %secondMethod(%element, %secondName, %present)");
+    const auto reusedSecondSelector = replaced(
+        selectorBeforeSecondWrite, "ctjs.call %finalMethod(%element, %finalName, %finalPresent)",
+        "ctjs.call %finalMethod(%element, %finalName, %afterPresent)");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -1820,6 +1832,144 @@ module {
             }
         }
     }
+    // Reusing a snapshot keeps one read and every protected write in source order.
+    for (const auto & valid : {
+             reusedInitialSelector,
+             reusedArgumentSelector,
+             reusedInitialRead,
+             reusedSecondSelector,
+             replaced(reusedInitialSelector, "ctjs.call %method(%holder, %element)",
+                      "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+             replaced(appendWrite(earlySavedSelector, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
+             replaced(appendWrite(readBeforeSecondWrite, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(readBeforeSecondWrite,
+                      "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                      "ctjs.call %secondMethod(%element, %secondName, %afterTerminalPresent)"),
+             replaced(appendWrite(readBeforeFirstWrite, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(readBeforeFirstWrite,
+                      "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                      "ctjs.call %secondMethod(%element, %secondName, %afterTerminalPresent)"),
+             replaced(readBeforeFirstWrite, "ctjs.call %attribute(%element, %name, %present)",
+                      "ctjs.call %attribute(%element, %name, %afterTerminalPresent)"),
+             replaced(appendWrite(readInsideSecondWrite, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(readInsideFirstWrite, "ctjs.call %attribute(%element, %name, %present)",
+                      "ctjs.call %attribute(%element, %name, %afterTerminalPresent)"),
+             replaced(readInsideSecondWrite,
+                      "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                      "ctjs.call %secondMethod(%element, %secondName, %afterTerminalPresent)"),
+             replaced(appendWrite(readAfterSecondFeeding, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(readAfterFirstFeeding,
+                      "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                      "ctjs.call %lateMethod(%element, %lateName, %present)"),
+             replaced(appendWrite(readThroughFinalArgument, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(earlyReadThroughFinalArgument,
+                      "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                      "ctjs.call %lateMethod(%element, %lateName, %present)"),
+             replaced(appendWrite(selectorThroughFinalArgument, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
+             replaced(appendWrite(selectorInsideFinalArgument, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
+             replaced(firstWriteSelector,
+                      "ctjs.call %finalMethod(%element, %finalName, %finalPresent)",
+                      "ctjs.call %finalMethod(%element, %finalName, %present)"),
+             replaced(appendWrite(readBeforeFirstSelector, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(appendWrite(readBeforeSelector, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(appendWrite(terminalSelectorValue, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
+             replaced(appendWrite(earlierTerminalValue, finalWrite, "reuse"),
+                      "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                      "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+             replaced(fourthRead, "ctjs.call %fourthMethod(%element, %fourthName, %fourthPresent)",
+                      "ctjs.call %fourthMethod(%element, %fourthName, %finalPresent)"),
+             replaced(fifthRead, "ctjs.call %fifthMethod(%element, %fifthName, %fifthPresent)",
+                      "ctjs.call %fifthMethod(%element, %fifthName, %fourthPresent)"),
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "shared cleanup snapshot fixture parses");
+        if (!input) { continue; }
+        unsigned originalReads = 0, originalWrites = 0;
+        input->walk([&](ctjs::CallOp call) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!method) { return; }
+            const auto key = ctjs::constantKey(method.getKey());
+            originalReads += key == "matches" || key == "hasAttribute";
+            originalWrites += key == "setAttribute";
+        });
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "one saved cleanup read may feed several ordered writes");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+            continue;
+        }
+        unsigned reads = 0, writes = 0, shared = 0;
+        input->walk([&](ctjs::CallOp call) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!method) { return; }
+            const auto key = ctjs::constantKey(method.getKey());
+            if (key == "setAttribute") {
+                ++writes;
+                check(llvm::isa<ctjs::InvokeOp>(call->getParentOp()),
+                      "every shared snapshot write keeps its suppression");
+                return;
+            }
+            if (key != "matches" && key != "hasAttribute") { return; }
+            ++reads;
+            if (call.getResult().use_empty() || call.getResult().hasOneUse()) { return; }
+            ++shared;
+            for (mlir::OpOperand & use : call.getResult().getUses()) {
+                auto write = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                auto invoke =
+                    write ? llvm::dyn_cast<ctjs::InvokeOp>(write->getParentOp()) : ctjs::InvokeOp{};
+                check(write && invoke && use.getOperandNumber() == 3 &&
+                          write.getArgs()[1] == call.getResult() &&
+                          call->getBlock() == invoke->getBlock() &&
+                          llvm::isa<mlir::scf::IfOp>(call->getParentOp()) &&
+                          call->isBeforeInBlock(invoke),
+                      "all shared-value uses retain snapshot identity, guard and read-before-write "
+                      "order");
+            }
+        });
+        check(reads == originalReads && writes == originalWrites && shared > 0 &&
+                  mlir::succeeded(mlir::verify(*input)),
+              "shared cleanup expansion neither repeats reads nor drops writes");
+        auto bound = contract;
+        bound.entry = "entry$0";
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            bound.provider = provider;
+            DOMEntryAnalysis proof(*input, bound);
+            check(proof.proved(), "shared snapshots receive complete typed DOM reproof");
+            if (!proof.proved()) { continue; }
+            input->walk([&](ctjs::CallOp call) {
+                check(proof.call(call), "every shared snapshot call retains typed evidence");
+            });
+            check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
+                  "shared snapshots reproduce their exact typed proof budget");
+            DOMEntryAnalysis limited(*input, bound, proof.steps() - 1);
+            check(limited.exhausted() && noEvidence(*input, limited),
+                  "incomplete shared snapshot proof withholds all evidence");
+        }
+    }
     for (const auto & budgetSource : {protectedRead,
                                       trailingRead,
                                       secondWrite,
@@ -1866,7 +2016,10 @@ module {
                                       selectorBeforeFirstWrite,
                                       selectorBeforeSecondWrite,
                                       earlySavedSelector,
-                                      ignoredEarlySelector}) {
+                                      ignoredEarlySelector,
+                                      reusedInitialSelector,
+                                      reusedInitialRead,
+                                      reusedSecondSelector}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1887,7 +2040,29 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(selectorBeforeFirstWrite, "[data-visited]", "["),
+         {replaced(reusedInitialSelector, "[data-visited]", "["),
+          replaced(reusedInitialSelector, "#ctjs.string<\"[data-visited]\">", "#ctjs.number<0>"),
+          replaced(reusedInitialSelector, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %readName, %name)"),
+          replaced(reusedInitialSelector, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %present\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(reusedInitialSelector, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %afterPresent\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(reusedInitialSelector,
+                   "ctjs.call %secondMethod(%element, %secondName, %present)",
+                   "ctjs.call %secondMethod(%element, %present, %present)"),
+          replaced(reusedInitialSelector, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %readMethod(%element, %readName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(reusedInitialSelector,
+                   "    %afterPresent = ctjs.call %afterReadMethod(%element, %afterReadName)\n",
+                   ""),
+          replaced(reusedInitialSelector, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(selectorBeforeFirstWrite, "[data-visited]", "["),
           replaced(selectorBeforeFirstWrite, "ctjs.call %readMethod(%element, %readName)",
                    "ctjs.call %readMethod(%element, %element)"),
           replaced(ignoredEarlySelector, "[data-terminal]", "["),
@@ -1904,9 +2079,6 @@ module {
           replaced(selectorBeforeSecondWrite, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterReadMethod(%element, %afterReadName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(earlySavedSelector, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
           replaced(selectorBeforeFirstWrite, "ctjs.call %readMethod(%element, %readName)",
                    "ctjs.call %readMethod(%element, %readName, %name)"),
           replaced(selectorBeforeSecondWrite,
@@ -1927,18 +2099,12 @@ module {
           replaced(readBeforeSecondWrite, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(readBeforeSecondWrite, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
           replaced(readBeforeSecondWrite,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
           replaced(readBeforeSecondWrite,
                    "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
                    "ctjs.call %lateMethod(%element, %afterTerminalPresent, %afterTerminalPresent)"),
-          replaced(readBeforeSecondWrite,
-                   "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
-                   "ctjs.call %secondMethod(%element, %secondName, %afterTerminalPresent)"),
           replaced(readBeforeSecondWrite, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
                    "        ctjs.store_global \"effect\", %error"),
@@ -1951,23 +2117,15 @@ module {
           replaced(readBeforeFirstWrite, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(readBeforeFirstWrite, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
           replaced(readBeforeFirstWrite,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
           replaced(readBeforeFirstWrite,
                    "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
                    "ctjs.call %lateMethod(%element, %afterTerminalPresent, %afterTerminalPresent)"),
-          replaced(readBeforeFirstWrite,
-                   "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
-                   "ctjs.call %secondMethod(%element, %secondName, %afterTerminalPresent)"),
           replaced(readBeforeFirstWrite, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
                    "        ctjs.store_global \"effect\", %error"),
-          replaced(readBeforeFirstWrite, "ctjs.call %attribute(%element, %name, %present)",
-                   "ctjs.call %attribute(%element, %name, %afterTerminalPresent)"),
           replaced(readInsideFirstWrite, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
@@ -1977,20 +2135,12 @@ module {
           replaced(readInsideFirstWrite, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(readInsideSecondWrite, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
           replaced(readInsideFirstWrite,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
           replaced(readInsideSecondWrite,
                    "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
                    "ctjs.call %lateMethod(%element, %afterTerminalPresent, %afterTerminalPresent)"),
-          replaced(readInsideFirstWrite, "ctjs.call %attribute(%element, %name, %present)",
-                   "ctjs.call %attribute(%element, %name, %afterTerminalPresent)"),
-          replaced(readInsideSecondWrite,
-                   "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
-                   "ctjs.call %secondMethod(%element, %secondName, %afterTerminalPresent)"),
           replaced(readInsideFirstWrite,
                    "%afterTerminalPresent = ctjs.call %afterTerminalMethod(%element, "
                    "%afterTerminalName)",
@@ -2004,12 +2154,6 @@ module {
           replaced(readAfterFirstFeeding, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(readAfterSecondFeeding, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
-          replaced(readAfterFirstFeeding,
-                   "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
-                   "ctjs.call %lateMethod(%element, %lateName, %present)"),
           replaced(readAfterFirstFeeding, "%present = ctjs.call %readMethod(%element, %readName)",
                    "%present = ctjs.constant #ctjs.boolean<false>"),
           replaced(readAfterSecondFeeding,
@@ -2031,9 +2175,6 @@ module {
           replaced(readThroughFinalArgument, "%answer = ctjs.create_object",
                    "%again = ctjs.call %lateReadMethod(%element, %lateReadName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(readThroughFinalArgument, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
           replaced(readThroughFinalArgument, "ctjs.call %lateReadMethod(%element, %lateReadName)",
                    "ctjs.call %lateReadMethod(%text, %lateReadName)"),
           replaced(readThroughFinalArgument, "ctjs.call %lateReadMethod(%element, %lateReadName)",
@@ -2041,9 +2182,6 @@ module {
           replaced(readThroughFinalArgument,
                    "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
                    "ctjs.call %lateMethod(%element, %latePresent, %afterTerminalPresent)"),
-          replaced(earlyReadThroughFinalArgument,
-                   "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
-                   "ctjs.call %lateMethod(%element, %lateName, %present)"),
           replaced(readThroughFinalArgument, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
                    "        ctjs.store_global \"effect\", %error"),
@@ -2057,9 +2195,6 @@ module {
           replaced(selectorThroughFinalArgument, "%answer = ctjs.create_object",
                    "ctjs.store_global \"leaked\", %latePresent\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(selectorThroughFinalArgument, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
           replaced(selectorThroughFinalArgument, "%answer = ctjs.create_object",
                    "%again = ctjs.call %terminalReadMethod(%element, %terminalReadName)\n"
                    "    %answer = ctjs.create_object"),
@@ -2081,9 +2216,6 @@ module {
           replaced(selectorInsideFinalArgument, "%answer = ctjs.create_object",
                    "ctjs.store_global \"leaked\", %latePresent\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(selectorInsideFinalArgument, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
           replaced(selectorInsideFinalArgument, "%answer = ctjs.create_object",
                    "%again = ctjs.call %lateReadMethod(%element, %lateReadName)\n"
                    "    %answer = ctjs.create_object"),
@@ -2118,9 +2250,6 @@ module {
           replaced(secondWriteSelector, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterReadMethod(%element, %afterReadName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(firstWriteSelector,
-                   "ctjs.call %finalMethod(%element, %finalName, %finalPresent)",
-                   "ctjs.call %finalMethod(%element, %finalName, %present)"),
           replaced(firstWriteSelector, "ctjs.call %readMethod(%element, %readName)",
                    "ctjs.call %readMethod(%element, %readName, %name)"),
           replaced(secondWriteSelector, "ctjs.call %afterReadMethod(%element, %afterReadName)",
@@ -2137,9 +2266,6 @@ module {
           replaced(readBeforeFirstSelector, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(readBeforeFirstSelector, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
           replaced(readBeforeFirstSelector,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
@@ -2152,9 +2278,6 @@ module {
           replaced(readBeforeSelector, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
-          replaced(appendWrite(readBeforeSelector, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
           replaced(readBeforeSelector,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
@@ -2170,9 +2293,6 @@ module {
           replaced(terminalSelectorValue, "%answer = ctjs.create_object",
                    "ctjs.store_global \"leaked\", %terminalPresent\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(terminalSelectorValue, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
           replaced(terminalSelectorValue,
                    "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)",
                    "ctjs.call %lateMethod(%element, %terminalPresent, %terminalPresent)"),
@@ -2188,9 +2308,6 @@ module {
           replaced(earlierTerminalValue, "%answer = ctjs.create_object",
                    "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(appendWrite(earlierTerminalValue, finalWrite, "reuse"),
-                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
-                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
           replaced(earlierTerminalValue,
                    "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
                    "ctjs.call %lateMethod(%element, %afterTerminalPresent, %afterTerminalPresent)"),
@@ -2270,16 +2387,12 @@ module {
           replaced(terminalRead, "%answer = ctjs.create_object",
                    "%again = ctjs.call %terminalReadMethod(%element, %terminalReadName)\n"
                    "    %answer = ctjs.create_object"),
-          replaced(fourthRead, "ctjs.call %fourthMethod(%element, %fourthName, %fourthPresent)",
-                   "ctjs.call %fourthMethod(%element, %fourthName, %finalPresent)"),
           replaced(
               fourthRead, "%answer = ctjs.create_object",
               "ctjs.store_global \"leaked\", %fourthPresent\n    %answer = ctjs.create_object"),
           replaced(
               fourthRead, "%answer = ctjs.create_object",
               "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %fourthEffect"),
-          replaced(fifthRead, "ctjs.call %fifthMethod(%element, %fifthName, %fifthPresent)",
-                   "ctjs.call %fifthMethod(%element, %fifthName, %fourthPresent)"),
           replaced(fourthWrite, "ctjs.call %fourthMethod(%element, %fourthName, %fourthValue)",
                    "ctjs.call %fourthMethod(%element, %fourthName, %selected)"),
           replaced(finalRead, "ctjs.call %finalReadMethod(%element, %finalReadName)",

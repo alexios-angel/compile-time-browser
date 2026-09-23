@@ -2537,6 +2537,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
         "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
     )
+    selector_reused_second_write_source = selector_before_first_write_source.replace(
+        "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
+        "anchor.setAttribute('data-closed', first);",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3436,6 +3440,37 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-close",
+            selector_reused_second_write_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-getter-close",
+            selector_reused_second_write_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-order-close",
+            selector_reused_second_write_source.replace(
+                "anchor.setAttribute('data-closed', false); const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', false);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
+            selector_reused_second_write_source.replace("throw false;", "throw first;"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -3502,8 +3537,10 @@ def saved_throws(args, compilers, includes, libraries):
         terminal_match_read = "-terminal-match-read-" in label
         terminal_write = "-terminal-match-read-sequence-write-" in label
         terminal_write_value = "-terminal-match-read-sequence-write-value-" in label
+        selector_reused_second_write = "-write-selector-reused-second-value-" in label
         selector_inside_first_argument = (
-            "-write-selector-before-first-value-" in label
+            selector_reused_second_write
+            or "-write-selector-before-first-value-" in label
             or "-write-selector-inside-first-argument-value-" in label
         )
         selector_inside_final_argument = (
@@ -4029,7 +4066,12 @@ var savedThrow, savedExhausted;
                                 or "ctnative::has_attribute(" in line
                                 or "ctnative::set_attribute(" in line
                             ]
-                            if first_operations != ["matches", "write", "read", "write"]:
+                            expected_first_operations = (
+                                ["matches", "write", "write"]
+                                if selector_reused_second_write
+                                else ["matches", "write", "read", "write"]
+                            )
+                            if first_operations != expected_first_operations:
                                 raise RuntimeError(
                                     f"{name}: first selector lost its feeding write order"
                                 )
@@ -4377,6 +4419,10 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -5918,10 +5964,73 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-selector-reused-by-second-write",
-            selector_before_first_write_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
-                "anchor.setAttribute('data-closed', first);",
+            "normal-selector-reused-second-write-close",
+            selector_reused_second_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-reused-second-write-close",
+            selector_reused_second_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-reused-second-write-selector",
+            selector_reused_second_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]');",
+                "const first = anchor.matches('[');",
+            ),
+        ),
+        (
+            "dynamic-selector-reused-second-write-selector",
+            selector_reused_second_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]');",
+                "const first = anchor.matches(anchor);",
+            ),
+        ),
+        (
+            "bad-selector-reused-second-write-receiver",
+            selector_reused_second_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]');",
+                "const first = (0).matches('[data-closed=false]');",
+            ),
+        ),
+        (
+            "invalid-selector-reused-second-write-arity",
+            selector_reused_second_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]');",
+                "const first = anchor.matches('[data-closed=false]', false);",
+            ),
+        ),
+        (
+            "unsupported-selector-reused-second-write-extra-use",
+            selector_reused_second_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]');",
+                "const first = anchor.matches('[data-closed=false]'); external(first);",
+            ),
+        ),
+        (
+            "invalid-selector-reused-second-write-name",
+            selector_reused_second_write_source.replace(
+                "anchor.setAttribute('data-closed', first); anchor.matches",
+                "anchor.setAttribute('bad name', first); anchor.matches",
+            ),
+        ),
+        (
+            "unsupported-selector-reused-second-write-name-use",
+            selector_reused_second_write_source.replace(
+                "anchor.setAttribute('data-closed', first); anchor.matches",
+                "anchor.setAttribute(first, first); anchor.matches",
+            ),
+        ),
+        (
+            "unsupported-selector-guards-second-write",
+            selector_reused_second_write_source.replace(
+                "anchor.setAttribute('data-closed', first); anchor.matches",
+                "if (first) anchor.setAttribute('data-closed', first); anchor.matches",
             ),
         ),
         (

@@ -55,8 +55,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                                ctjs::GetPropertyOp & pendingMethod,
                                                ctjs::CallOp & pendingRead) {
                 if (pendingMethod && !pendingRead) { return false; }
-                if (pendingRead && leaf.getArgs()[1] == pendingRead.getResult()) { return true; }
-                if (!suffixReads.erase(leaf.getArgs()[1])) { return !pendingRead; }
+                if (pendingRead && leaf.getArgs()[1] == pendingRead.getResult()) {
+                    suffixReads.insert(pendingRead.getResult());
+                    return true;
+                }
+                if (!suffixReads.contains(leaf.getArgs()[1])) { return !pendingRead; }
                 // A standalone read may feed the write without an argument read.
                 // Preserve any later argument read in the complete use census.
                 if (pendingRead) {
@@ -180,8 +183,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult())) {
                         return false;
                     }
-                    // Each consumed suffix read belongs to one following write.
-                    // Check every use below, including uses in later pairs.
+                    // A saved read may feed several writes. Check every use
+                    // below, including uses in later pairs.
                     suffixValues.append({finalMethod.getResult(), leaf.getResult()});
                     suffixUses.insert(&leaf->getOpOperand(0));
                     if (finalReadCall) {
@@ -192,12 +195,6 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         if (suffixLeaves.erase(finalReadCall)) {
                             consumedSelectors.push_back(finalReadCall);
                         }
-                    } else if (suffixReads.erase(leaf.getArgs()[1])) {
-                        // An earlier standalone read may feed one later write.
-                        // The complete census still rejects leaks and reuse.
-                        suffixUses.insert(&leaf->getOpOperand(3));
-                        auto read = leaf.getArgs()[1].getDefiningOp<ctjs::CallOp>();
-                        if (suffixLeaves.erase(read)) { consumedSelectors.push_back(read); }
                     }
                     if (suffixLeaves.empty() && leaf.getArgs()[1] == selectorLeaf.getResult()) {
                         selectorFeedsWrite = true;
