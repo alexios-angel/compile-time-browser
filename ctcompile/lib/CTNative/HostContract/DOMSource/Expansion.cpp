@@ -38,12 +38,12 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         // preparation and hasAttribute reads requires complete typed DOM reproof:
         // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
-        // ponytail: two writes with feeding reads, matches, and one final write;
+        // ponytail: two writes with feeding reads, matches, and a final read/write;
         // larger bodies need all their exceptional edges represented.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
-            ctjs::GetPropertyOp selectorMethod, finalMethod;
-            ctjs::CallOp readCall, trailingCall;
+            ctjs::GetPropertyOp selectorMethod, finalMethod, finalReadMethod;
+            ctjs::CallOp readCall, trailingCall, finalReadCall;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             for (mlir::Operation & operation : target.getBody().front()) {
                 if (!step()) { return false; }
@@ -65,10 +65,14 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     writeMethod = read;
                     continue;
                 }
-                auto & sourceReadMethod = protectedLeaf ? trailingMethod : readMethod;
-                auto & sourceReadCall = protectedLeaf ? trailingCall : readCall;
+                auto & sourceReadMethod = selectorLeaf    ? finalReadMethod
+                                          : protectedLeaf ? trailingMethod
+                                                          : readMethod;
+                auto & sourceReadCall = selectorLeaf    ? finalReadCall
+                                        : protectedLeaf ? trailingCall
+                                                        : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-                    read && !sourceReadMethod &&
+                    read && !sourceReadMethod && !finalLeaf &&
                     ctjs::constantKey(read.getKey()) == "hasAttribute") {
                     sourceReadMethod = read;
                     continue;
@@ -146,7 +150,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (!protectedLeaf || (!discardedResult && !primitiveResult) ||
                 (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult())) ||
                 (trailingMethod && !trailingCall) || (secondMethod && !secondLeaf) ||
-                (selectorMethod && !selectorLeaf) || (finalMethod && !finalLeaf)) {
+                (selectorMethod && !selectorLeaf) || (finalMethod && !finalLeaf) ||
+                (finalReadMethod && (!finalReadCall || !finalLeaf ||
+                                     finalLeaf.getArgs()[1] != finalReadCall.getResult()))) {
                 return false;
             }
             selectorFeedsWrite =
@@ -176,6 +182,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                      secondLeaf ? secondLeaf.getResult() : mlir::Value{},
                      selectorMethod ? selectorMethod.getResult() : mlir::Value{},
                      selectorLeaf ? selectorLeaf.getResult() : mlir::Value{},
+                     finalReadMethod ? finalReadMethod.getResult() : mlir::Value{},
+                     finalReadCall ? finalReadCall.getResult() : mlir::Value{},
                      finalMethod ? finalMethod.getResult() : mlir::Value{},
                      finalLeaf ? finalLeaf.getResult() : mlir::Value{}}) {
                 if (!value) { continue; }
@@ -200,6 +208,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         (selectorMethod && value == selectorMethod.getResult() &&
                          use.getOwner() == selectorLeaf && use.getOperandNumber() == 0) ||
                         (selectorFeedsWrite && value == selectorLeaf.getResult() &&
+                         use.getOwner() == finalLeaf && use.getOperandNumber() == 3) ||
+                        (finalReadMethod && value == finalReadMethod.getResult() &&
+                         use.getOwner() == finalReadCall && use.getOperandNumber() == 0) ||
+                        (finalReadCall && value == finalReadCall.getResult() &&
                          use.getOwner() == finalLeaf && use.getOperandNumber() == 3) ||
                         (finalMethod && value == finalMethod.getResult() &&
                          use.getOwner() == finalLeaf && use.getOperandNumber() == 0) ||
