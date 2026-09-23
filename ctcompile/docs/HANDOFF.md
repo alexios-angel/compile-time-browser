@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Post-write cleanup reads and fractional bitwise keys, 2026-09-23 UTC
+
+Resumed clean **ea386588** and retained source `77866d32` from the previous
+handoff. **3a7ec75f** preserves branch-local DOM reads after the guarded second
+cleanup write. The existing use census retains the write's original Boolean;
+source order, guard, body exception, selector validation, budgets and private
+DOM/Style reproof remain. Original, getter, order and selector variants execute.
+
+**7056768a** proves bounded fractional String bitwise conversions through public
+Core, shared by scalar and loop/table proofs. Original Strings/property keys,
+non-bitwise arithmetic, mutation checks and receiver gaps remain separate.
+Six measured child sites change from all stored to **three confined and three
+stored**. Independent native and escape production reviews are clean.
+
+Focused checks: **64 native executions, 84 refusals, 32 Node/VM observations,
+26 source preflight checks, exact host/arrays CTests and one table-key lit case**.
+An interruption lost native final stdout; recovery verified all artifacts and
+reran only the final refusal. The first table lit recording assertion exposed
+VM fractional-index truncation: Node retains the child and the compiler keeps
+that control stored. Its recording expectation/comment now document the VM
+observation; final lit passes. No runtime code changed. Formatting passes
+**1126 C++, 157 Python and 114 web files**; eight final hashes match the devbox.
+Full suites were skipped.
+
+**Next native boundary:** `unsupported-selector-guards-third-write-postread`,
+source `006cce9f`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the third guarded read/write, original
+order and body exception. Broader cleanup/control flow, nested custom iterators,
+unguarded Bootstrap defaults, the application driver, full native Bootstrap,
+general powers and legacy SCF retention remain. Fractional Number/arithmetic
+proofs, unsafe exponents and Strings over 32 bytes remain unsupported. The VM
+fractional-index discrepancy is separate runtime work. No full-Bootstrap
+coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-postwrite-reads-fractional-bitwise.md).
+
 ## Multiple cleanup reads and decimal exponents, 2026-09-23 UTC
 
 Resumed clean **7ca5d604** and retained source `04f5317c` from the previous
