@@ -407,6 +407,73 @@ void InductionCases::invariantReads() {
     reject("binary table aliases retain exact allocation in the complete write census",
            replace(replace(convertedTableAlias, "unary plus %slot", "binary sub %slot, %zero"),
                    "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
+    const auto bigintTable =
+        replace(replace(stringTable, "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">"),
+                "#ctjs.string<\"2\">", "#ctjs.bigint<\"2\">");
+    for (const auto & source :
+         {bigintTable,
+          replace(replace(bigintTable, "#ctjs.bigint<\"0\">", "#ctjs.bigint<\"0x0\">"),
+                  "#ctjs.bigint<\"2\">", "#ctjs.bigint<\"0b10\">"),
+          replace(bigintTable, "#ctjs.bigint<\"2\">", "#ctjs.string<\"2\">"),
+          replace(bigintTable, "#ctjs.bigint<\"2\">", "#ctjs.number<4611686018427387904>")}) {
+        run({.what = "BigInt table property keys preserve the selected primitive identities",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "BigInt table replay retains children at unwritten positions",
+         .body = replace(bigintTable, "[%textZero, %textTwo]", "[%textZero, %textZero]"),
+         .arrays = "keys:[textZero,textZero]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textZero; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    run({.what = "a saved child survives BigInt table-directed overwrites",
+         .body = replace(replace(bigintTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    const auto nestedBigintTable =
+        replace(replace(replace(nestedStringTable, "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">"),
+                        "#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">"),
+                "#ctjs.string<\"2\">", "#ctjs.bigint<\"2\">");
+    run({.what = "nested BigInt table reads convert only at each property boundary",
+         .body = nestedBigintTable,
+         .arrays = "picks:[textZero,textOne]; keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "picks[0]=textZero; keys[0]=textZero; picks[1]=textOne; keys[1]=textTwo; "
+                  "picks[0]=textZero; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto selectedBigintTable =
+        replace(replace(selectedStringTable, "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">"),
+                "#ctjs.string<\"2\">", "#ctjs.bigint<\"2\">");
+    run({.what = "BigInt table keys preserve the selected receiver's independent reload gap",
+         .body = selectedBigintTable,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads = "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; "
+                  "keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    reject("BigInt table writes cannot overlap a selected receiver reload",
+           replace(selectedBigintTable, "#ctjs.bigint<\"2\">", "#ctjs.bigint<\"1\">"));
+    for (const std::string key : {"-1", "3", "4294967295", "4294967296"}) {
+        reject("BigInt table property keys must name an existing bounded own element",
+               replace(bigintTable, "#ctjs.bigint<\"0\">", "#ctjs.bigint<\"" + key + "\">"));
+    }
+    for (const std::string expression :
+         {"unary plus %slot", "binary add %slot, %zero", "binary sub %slot, %zero",
+          "binary_static shl %slot, %zero"}) {
+        reject("BigInt property keys cannot lend Number facts to numeric operations",
+               replace(bigintTable, "  ctjs.set_property %base[%slot]",
+                       "  %converted = ctjs." + expression +
+                           "\n  ctjs.set_property %base[%converted]"));
+    }
+    for (const std::string point : {"  %pick =", "  %step ="}) {
+        reject("BigInt table mutation remains visible before and after lookup",
+               replace(bigintTable, point, "  ctjs.set_property %keys[%one], %textZero\n" + point));
+    }
     const auto reloaded = replace(
         replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
         "add %i, %one", "add %i, %unit");

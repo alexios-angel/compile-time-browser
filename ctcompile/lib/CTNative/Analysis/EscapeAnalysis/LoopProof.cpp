@@ -303,10 +303,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto position = ownArrayIndex(key->first);
             if (!position || *position >= table->second.size()) { return std::nullopt; }
             auto result = table->second[*position];
-            if (use == IndexUse::PropertyKey && result.string()) {
-                // Canonical String keys name own positions without becoming
+            if (use == IndexUse::PropertyKey) {
+                // Exact primitive keys name own positions without becoming
                 // Number operands. Arithmetic recursion keeps its original proof;
-                // ordinary replay retains the selected element's String identity.
+                // ordinary replay retains the selected element's primitive identity.
                 const auto position = ownArrayIndex(result);
                 if (!position) { return std::nullopt; }
                 result = {operand, ContentsKind::NonBigInt, *position};

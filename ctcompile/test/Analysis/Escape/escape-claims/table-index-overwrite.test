@@ -53,6 +53,14 @@
 // CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj escapes:stored
 
+// BigInt keys convert only at property boundaries, preserving retained children.
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function varyingTableKey() {
     var child = {}, a = [child, 0, child], keys = [0, 2];
@@ -298,3 +306,38 @@ function overlappingBinaryTableReceiver() {
 subtractedTableKey(); multipliedTableKey(); dividedTableKey(); shiftedTableKey(); poweredTableKey();
 savedBinaryTableChild(); concatenatedBinaryTableKey(); noncanonicalBinaryTableKey();
 mutatedBinaryTableKey(); overlappingBinaryTableReceiver();
+function bigintTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mixedBigintTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, '2'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function nestedBigintTableKey() {
+    var child = {}, a = [child, 0, child], picks = [0n, 1n], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) a[keys[picks[i % 2]]] = 0;
+    return a;
+}
+function savedBigintTableChild() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return [saved, a];
+}
+function mutatedBigintTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) {
+        a[keys[i % 2]] = 0;
+        keys[1] = 0n;
+    }
+    return a;
+}
+function mixedBigintArithmeticTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0n, 2n];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] + 0] = 0;
+    return a;
+}
+bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
+savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
