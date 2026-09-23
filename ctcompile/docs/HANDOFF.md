@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## String cleanup payloads and nonfinite String tokens, 2026-09-23 UTC
+
+Resumed clean **e4396a38** and retained source `39355ceb` from the preceding
+handoff. **0ada61d2** admits `getAttribute` through the existing cleanup read
+census and drops ignored guard-result transport during protected cloning.
+Read producers, both arms, source order, per-write suppression and the original
+body exception remain. Typed DOM reproof and observer checks still gate
+publication; independent native production review is complete and clean.
+
+**b678ce72** admits exact trimmed `Infinity`, `+Infinity`, `-Infinity` and `NaN`
+String tokens through public Core bitwise conversion. Arithmetic, original
+property spelling, provenance, mutation and source-size proofs remain separate.
+Six measured child sites change from all stored to **three confined and three
+stored**, each observed once with zero unresolved or unchecked instances.
+No browser/runtime implementation changed.
+
+Focused checks pass: **64 native executions, 80 refusals, 32 Node/VM observations,
+24 source-policy checks, exact host/arrays CTests and one table-key lit case**.
+Final formatting passes **1126 C++, 157 Python and 114 web files**; six final
+code/test hashes match the devbox, and all 32 generated C++ files have no Script
+namespace. Four historical token expectations were promoted. One historical
+`getAttribute` case now expands structurally but retains its typed refusal for a
+protected optional-String write. Completed execution/arrays/lit checks were not
+replayed; full suites were skipped.
+
+**Next native boundary:** `normal-selector-branch-throw-read-close`, source
+`b216ee20`, refuses **DOM iterator primitive close requires saved-throw suppression**
+under both policies. This is the retained cleanup body with a normal `break`:
+preserve the observable cleanup exception and its branch/read/write order.
+Broader cleanup/control flow, nested custom iterators, unguarded Bootstrap
+defaults, the application driver and full native Bootstrap remain. Escape still
+excludes wider finite Strings, unsafe exponents, Strings over 32 bytes and
+computed fractional/nonfinite origins. General powers and legacy SCF retention
+remain; the VM fractional-index discrepancy is separate. No full-Bootstrap gain
+is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-cleanup-string-payloads-nonfinite-tokens.md).
+
 ## Branch-local cleanup throws and decimal overflow Strings, 2026-09-23 UTC
 
 Resumed clean **b7cc6822** and retained source `65c65b0b` from the preceding
