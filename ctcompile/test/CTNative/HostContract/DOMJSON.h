@@ -557,6 +557,12 @@ module {
     %answer = ctjs.create_object)MLIR");
     };
     const auto secondWrite = writeAfterRead(trailingRead);
+    const auto selectorRead = replaced(secondWrite, "%answer = ctjs.create_object", R"MLIR(
+    %selectorKey = ctjs.constant #ctjs.string<"matches">
+    %selectorText = ctjs.constant #ctjs.string<"[data-closed]">
+    %selectorMethod = ctjs.get_property %element[%selectorKey]
+    %selected = ctjs.call %selectorMethod(%element, %selectorText)
+    %answer = ctjs.create_object)MLIR");
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
@@ -605,6 +611,21 @@ module {
              std::pair{protectedRead, true},
              std::pair{trailingRead, true},
              std::pair{secondWrite, true},
+             std::pair{selectorRead, true},
+             std::pair{replaced(selectorRead, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(selectorRead, "[data-closed]", "["), false},
+             std::pair{replaced(selectorRead, "#ctjs.string<\"[data-closed]\">", "#ctjs.number<0>"),
+                       false},
+             std::pair{replaced(replaced(selectorRead, "ctjs.get_property %element[%selectorKey]",
+                                         "ctjs.get_property %text[%selectorKey]"),
+                                "ctjs.call %selectorMethod(%element, %selectorText)",
+                                "ctjs.call %selectorMethod(%text, %selectorText)"),
+                       false},
+             std::pair{replaced(selectorRead, "#ctjs.string<\"data-closed\">",
+                                "#ctjs.string<\"bad name\">"),
+                       false},
              std::pair{writeAfterRead(readAfterWrite(capturedAttribute)), true},
              std::pair{replaced(secondWrite, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
@@ -675,7 +696,8 @@ module {
                                : ctjs::GetPropertyOp{};
             check(method && method->getBlock() == invoke->getBlock() &&
                       method->isBeforeInBlock(invoke) &&
-                      ctjs::constantKey(method.getKey()) == "setAttribute" &&
+                      (ctjs::constantKey(method.getKey()) == "setAttribute" ||
+                       ctjs::constantKey(method.getKey()) == "matches") &&
                       call.getReceiver() == method.getObject(),
                   "original attribute call stays protected under the original guard");
         });
@@ -684,6 +706,20 @@ module {
         const bool reads = valid.find("%readKey") != std::string::npos;
         const bool trailingReads = valid.find("%afterReadKey") != std::string::npos;
         const bool secondWrites = valid.find("%secondKey") != std::string::npos;
+        const bool selectorReads = valid.find("%selectorKey") != std::string::npos;
+        if (selectorReads) {
+            input->walk([&](ctjs::InvokeOp invoke) {
+                auto call = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (ctjs::constantKey(method.getKey()) != "matches") { return; }
+                unsigned preceding = 0;
+                for (ctjs::InvokeOp prior : invoke->getBlock()->getOps<ctjs::InvokeOp>()) {
+                    preceding += prior->isBeforeInBlock(method);
+                }
+                check(preceding == 2 && llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
+                      "selector lookup and evaluation follow both writes at the source guard");
+            });
+        }
         if (reads || trailingReads) {
             input->walk([&](ctjs::CallOp call) {
                 auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -721,10 +757,12 @@ module {
                       "member lookup, read and protected write retain source order and guard");
             });
         }
-        check(invocations == 1u + static_cast<unsigned>(secondWrites) &&
+        check(invocations == 1u + static_cast<unsigned>(secondWrites) +
+                                 static_cast<unsigned>(selectorReads) &&
                   calls == 1u + static_cast<unsigned>(reads) +
                                static_cast<unsigned>(trailingReads) +
-                               static_cast<unsigned>(secondWrites) &&
+                               static_cast<unsigned>(secondWrites) +
+                               static_cast<unsigned>(selectorReads) &&
                   allocations == 0 && mlir::succeeded(mlir::verify(*input)),
               "protected expansion retains call-plus-exit and only elides unused objects");
         auto bound = contract;
@@ -746,8 +784,12 @@ module {
             }
             input->walk([&](ctjs::InvokeOp invoke) {
                 auto call = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                const auto kind = ctjs::constantKey(method.getKey()) == "matches"
+                                      ? HostDOMMethod::matches
+                                      : HostDOMMethod::setAttribute;
                 check(proof.invocation(invoke) && proof.call(call) &&
-                          proof.call(call)->kind == HostDOMMethod::setAttribute,
+                          proof.call(call)->kind == kind,
                       "typed suppression retains the exact attribute call evidence");
             });
             input->walk([&](ctjs::CallOp call) {
@@ -764,7 +806,7 @@ module {
             }
         }
     }
-    for (const auto & budgetSource : {protectedRead, trailingRead, secondWrite}) {
+    for (const auto & budgetSource : {protectedRead, trailingRead, secondWrite, selectorRead}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -785,7 +827,24 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(secondWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+         {replaced(selectorRead, "ctjs.call %selectorMethod(%element, %selectorText)",
+                   "ctjs.call %selectorMethod(%text, %selectorText)"),
+          replaced(selectorRead, "ctjs.call %selectorMethod(%element, %selectorText)",
+                   "ctjs.call %selectorMethod(%element)"),
+          replaced(selectorRead, "ctjs.call %selectorMethod(%element, %selectorText)",
+                   "ctjs.call %selectorMethod(%element, %selectorText, %name)"),
+          replaced(selectorRead, "%selected = ctjs.call %selectorMethod(%element, %selectorText)",
+                   ""),
+          replaced(selectorRead, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %selected"),
+          replaced(selectorRead, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %selectorMethod(%element, %selectorText)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(selectorRead, "%answer = ctjs.create_object",
+                   "%late = ctjs.call %secondMethod(%element, %secondName, %afterPresent)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(secondWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
                    "ctjs.call %secondMethod(%text, %secondName, %afterPresent)"),
           replaced(secondWrite, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
                    "ctjs.call %secondMethod(%element, %secondName, %text)"),

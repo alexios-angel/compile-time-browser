@@ -1,6 +1,7 @@
 #include "Body.hpp"
 
 #include <ctbrowser/dom/element.hpp>
+#include <ctbrowser/style/css/parser.hpp>
 
 namespace ctcompile::ctnative::dom_entry_detail {
 
@@ -357,7 +358,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         if (invocation.getNumResults() == 0) {
             // Only the exact unused-result wrapper can disappear. Complete
             // DOM proof below excludes receiver failure, coercion and reentry;
-            // a valid literal name excludes the remaining source exception.
+            // a valid literal name/selector excludes the remaining source exception.
             if (invocation->getParentOfType<ctjs::InvokeOp>() ||
                 !invocation.getBody().hasOneBlock() || !invocation.getNormalBody().hasOneBlock() ||
                 !invocation.getUnwindBody().hasOneBlock()) {
@@ -371,12 +372,17 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                                        : llvm::dyn_cast<ctjs::InvokeExitOp>(called.back());
             if (called.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
                 exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse() ||
-                !exit.getState().empty() || !hasKind(call.getCallee(), Kind::attribute) ||
-                !hasKind(call.getReceiver(), Kind::element) || call.getArgs().size() != 2 ||
+                !exit.getState().empty() || !hasKind(call.getReceiver(), Kind::element)) {
+                refusal = "DOM suppression requires one typed unused Element call";
+                return false;
+            }
+            const bool matches = hasKind(call.getCallee(), Kind::matches);
+            if ((!matches && !hasKind(call.getCallee(), Kind::attribute)) ||
+                call.getArgs().size() != (matches ? 1u : 2u) ||
                 !hasKind(call.getArgs()[0], Kind::string) ||
-                (!hasKind(call.getArgs()[1], Kind::string) &&
+                (!matches && !hasKind(call.getArgs()[1], Kind::string) &&
                  !hasKind(call.getArgs()[1], Kind::boolean))) {
-                refusal = "DOM suppressed attribute requires one typed unused setAttribute call";
+                refusal = "DOM suppression requires typed setAttribute or matches arguments";
                 return false;
             }
             for (mlir::Region * region :
@@ -398,15 +404,23 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             auto name =
                 literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
             if (!name) {
-                refusal = "DOM suppressed attribute requires a valid literal name";
+                refusal = "DOM suppression requires a valid literal name or selector";
                 return false;
             }
             // Reserve the public validator's byte scan before invoking it.
             for (std::size_t i = 0; i < name.getValue().size(); ++i) {
                 if (!spend()) { return false; }
             }
-            if (!ctbrowser::is_valid_attribute_name(
-                    {name.getValue().data(), name.getValue().size()})) {
+            const std::string_view text{name.getValue().data(), name.getValue().size()};
+            if (matches) {
+                ctbrowser::atom_table atoms;
+                bool invalid = false;
+                (void)ctbrowser::style::css::parse_selector_text(text, atoms, invalid);
+                if (invalid) {
+                    refusal = "DOM suppressed matches requires a valid literal selector";
+                    return false;
+                }
+            } else if (!ctbrowser::is_valid_attribute_name(text)) {
                 refusal = "DOM suppressed attribute requires a valid literal name";
                 return false;
             }

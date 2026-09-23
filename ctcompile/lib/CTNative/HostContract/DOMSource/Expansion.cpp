@@ -6,7 +6,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                            mlir::ValueRange arguments, mlir::Value receiver, mlir::Value callee,
                            llvm::MutableArrayRef<Capture> captures, unsigned depth) {
     ctjs::InvokeOp protectedInvocation;
-    ctjs::CallOp protectedLeaf, secondLeaf;
+    ctjs::CallOp protectedLeaf, secondLeaf, selectorLeaf;
     ctjs::CreateObjectOp discardedResult;
     llvm::DenseSet<mlir::Operation *> discardedFields;
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
@@ -36,10 +36,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         // preparation and hasAttribute reads requires complete typed DOM reproof:
         // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
-        // ponytail: two writes, each with at most one feeding read;
+        // ponytail: two writes, each with at most one feeding read, and a final matches;
         // larger bodies need all their exceptional edges represented.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
+            ctjs::GetPropertyOp selectorMethod;
             ctjs::CallOp readCall, trailingCall;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             for (mlir::Operation & operation : target.getBody().front()) {
@@ -92,6 +93,20 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     secondLeaf = leaf;
                     continue;
                 }
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                    read && secondLeaf && !selectorMethod &&
+                    ctjs::constantKey(read.getKey()) == "matches") {
+                    selectorMethod = read;
+                    continue;
+                }
+                if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
+                    leaf && selectorMethod && !selectorLeaf &&
+                    leaf.getCallee() == selectorMethod.getResult() &&
+                    leaf.getReceiver() == selectorMethod.getObject() &&
+                    leaf.getArgs().size() == 1) {
+                    selectorLeaf = leaf;
+                    continue;
+                }
                 if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
                     object && protectedLeaf && !discardedResult && result &&
                     result.getValue() == object.getResult()) {
@@ -115,7 +130,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                      ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue());
             if (!protectedLeaf || (!discardedResult && !primitiveResult) ||
                 (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult())) ||
-                (trailingMethod && !trailingCall) || (secondMethod && !secondLeaf)) {
+                (trailingMethod && !trailingCall) || (secondMethod && !secondLeaf) ||
+                (selectorMethod && !selectorLeaf)) {
                 return false;
             }
             for (mlir::Value value : llvm::SmallVector<mlir::Value>{
@@ -126,7 +142,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                      trailingMethod ? trailingMethod.getResult() : mlir::Value{},
                      trailingCall ? trailingCall.getResult() : mlir::Value{},
                      secondMethod ? secondMethod.getResult() : mlir::Value{},
-                     secondLeaf ? secondLeaf.getResult() : mlir::Value{}}) {
+                     secondLeaf ? secondLeaf.getResult() : mlir::Value{},
+                     selectorMethod ? selectorMethod.getResult() : mlir::Value{},
+                     selectorLeaf ? selectorLeaf.getResult() : mlir::Value{}}) {
                 if (!value) { continue; }
                 for (mlir::OpOperand & use : value.getUses()) {
                     if (!step()) { return false; }
@@ -146,6 +164,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                          use.getOwner() == secondLeaf && use.getOperandNumber() == 3) ||
                         (secondMethod && value == secondMethod.getResult() &&
                          use.getOwner() == secondLeaf && use.getOperandNumber() == 0) ||
+                        (selectorMethod && value == selectorMethod.getResult() &&
+                         use.getOwner() == selectorLeaf && use.getOperandNumber() == 0) ||
                         (discardedResult && value == discardedResult.getResult() &&
                          use.getOwner() == result)) {
                         continue;
@@ -165,6 +185,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (!reason.empty()) { return false; }
             protectedLeaf = {};
             secondLeaf = {};
+            selectorLeaf = {};
             discardedResult = {};
             discardedFields.clear();
             // Only an independently inert body may discharge suppression.
@@ -249,34 +270,35 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 mapping.map(operation.getResults(), cloned->getResults());
             } else {
                 if (&operation == protectedLeaf) { at.setInsertionPoint(call); }
-                ctjs::InvokeOp secondInvocation;
-                if (&operation == secondLeaf) {
+                ctjs::InvokeOp trailingInvocation;
+                if (&operation == secondLeaf || &operation == selectorLeaf) {
                     // Splitting suppression is valid only after complete DOM
                     // reproof excludes source exceptions from BOTH writes.
                     // Keep each write caught so its valid-name check remains
                     // mandatory, including the second write's own arguments.
+                    // A final matches retains its own literal-selector validation.
                     if (!step() || !step() || !step() || !step()) { return false; }
                     mlir::OperationState state(operation.getLoc(),
                                                ctjs::InvokeOp::getOperationName());
                     for (unsigned i = 0; i != 3; ++i) { state.addRegion(); }
-                    secondInvocation = llvm::cast<ctjs::InvokeOp>(at.create(state));
-                    auto & called = secondInvocation.getBody().emplaceBlock();
+                    trailingInvocation = llvm::cast<ctjs::InvokeOp>(at.create(state));
+                    auto & called = trailingInvocation.getBody().emplaceBlock();
                     at.setInsertionPointToEnd(&called);
                     operationCount += 4;
                 }
                 auto * cloned = at.clone(operation, mapping);
-                if (secondInvocation) {
+                if (trailingInvocation) {
                     ctjs::InvokeExitOp::create(at, operation.getLoc(), cloned->getResult(0),
                                                mlir::ValueRange{});
-                    for (auto * region :
-                         {&secondInvocation.getNormalBody(), &secondInvocation.getUnwindBody()}) {
+                    for (auto * region : {&trailingInvocation.getNormalBody(),
+                                          &trailingInvocation.getUnwindBody()}) {
                         auto & continuation = region->emplaceBlock();
                         continuation.addArgument(ctjs::ValueType::get(call->getContext()),
                                                  operation.getLoc());
                         mlir::OpBuilder yield = mlir::OpBuilder::atBlockEnd(&continuation);
                         ctjs::InvokeYieldOp::create(yield, operation.getLoc(), mlir::ValueRange{});
                     }
-                    at.setInsertionPointAfter(secondInvocation);
+                    at.setInsertionPointAfter(trailingInvocation);
                 }
                 for (auto [from, to] : llvm::zip(operation.getResults(), cloned->getResults())) {
                     if (!step()) { return false; }

@@ -2417,6 +2417,9 @@ def saved_throws(args, compilers, includes, libraries):
         "throw anchor.hasAttribute('data-closed');",
         "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed')); throw false;",
     )
+    selector_throwing_source = second_postwrite_throwing_source.replace(
+        "throw false;", "throw anchor.matches('[data-closed]');"
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2663,6 +2666,30 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-close",
+            selector_throwing_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-getter-close",
+            selector_throwing_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-missing-read",
+            selector_throwing_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
+            ).replace("'[data-closed]'", "'[data-closed=false]'"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -2724,6 +2751,10 @@ def saved_throws(args, compilers, includes, libraries):
         mixed = label == "conditional-boolean-throw-or-return"
         second_close = label.startswith("conditional-boolean-second-postwrite-")
         close_writes = ("data-closed=true;" if second_close else "") + f"data-closed={closed};"
+        selecting = "-selector-" in label
+        if selecting:
+            selector = "[data-closed=false]" if closed == "false" else "[data-closed]"
+            close_writes += f"matches={selector}:true;"
         conditional = label.startswith("conditional-")
         numeric_snapshot = kind == "js_num" and label not in (
             "number",
@@ -2753,6 +2784,20 @@ var savedThrow, savedExhausted;
   savedExhausted = '' + customElements(anchor) + ':' + writes;
 })();
 """
+        if selecting:
+            script = script.replace(
+                "    hasAttribute(name) { return name in saved; },",
+                """
+    matches(selector) {
+      let matched;
+      if (selector === '[data-closed]') matched = 'data-closed' in saved;
+      else if (selector === '[data-closed=false]') matched = saved['data-closed'] === 'false';
+      else throw 'unexpected selector';
+      writes += 'matches=' + selector + ':' + matched + ';';
+      return matched;
+    },
+    hasAttribute(name) { return name in saved; },""",
+            )
         if conditional:
             script = (
                 script.replace(
@@ -2871,12 +2916,23 @@ var savedThrow, savedExhausted;
                 cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
                 if "throw ctnative::js_exception{" not in cpp or "if (true)" in cpp:
                     raise RuntimeError(f"{name}: saved throw lost its ordinary terminating scope")
+                selected_checks = checks + (OWNED_CHECKS if owned else "")
+                selected_includes, selected_libraries = includes, libraries
+                if selecting:
+                    selected_checks = (
+                        "style::engine selectors{atoms}, foreign_selectors{foreign_atoms};\n"
+                        + selected_checks.replace(
+                            "@ENTRY@(alias)", "@ENTRY@(alias, selectors)"
+                        ).replace("@ENTRY@(foreign)", "@ENTRY@(foreign, foreign_selectors)")
+                    )
+                    selected_includes, selected_libraries = dom.link_options(args, selectors=True)
+                    if "ctnative::Element.prototype.matches.call" not in cpp:
+                        raise RuntimeError(f"{name}: ignored throw lost selector evaluation")
                 dom.standalone(
                     args,
                     native,
                     name,
-                    (checks + (OWNED_CHECKS if owned else ""))
-                    .replace(
+                    selected_checks.replace(
                         "@SETUP@",
                         (
                             'assert(target.set_attribute(id, target.atoms().intern("stop"), "yes"));'
@@ -2964,8 +3020,8 @@ var savedThrow, savedExhausted;
                     )
                     .replace("@CLOSED_INDEX@", "3" if snapshot else "2"),
                     compilers,
-                    includes,
-                    libraries,
+                    selected_includes,
+                    selected_libraries,
                 )
                 executions += 2 * len(compilers)
                 if (
@@ -2985,6 +3041,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-close",
                         "conditional-boolean-second-postwrite-getter-close",
                         "conditional-boolean-second-postwrite-missing-read",
+                        "conditional-boolean-second-postwrite-selector-close",
+                        "conditional-boolean-second-postwrite-selector-getter-close",
+                        "conditional-boolean-second-postwrite-selector-missing-read",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -3113,9 +3172,51 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-second-postwrite-selector-read",
-            second_postwrite_throwing_source.replace(
-                "throw false;", "throw anchor.matches('[data-closed]');"
+            "normal-second-postwrite-selector-close",
+            selector_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-second-postwrite-selector-close",
+            selector_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "normal-second-postwrite-selector-getter-close",
+            selector_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-second-postwrite-selector-getter-close",
+            selector_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-second-postwrite-selector",
+            selector_throwing_source.replace("'[data-closed]'", "'['"),
+        ),
+        (
+            "dynamic-second-postwrite-selector",
+            selector_throwing_source.replace("'[data-closed]'", "anchor"),
+        ),
+        (
+            "bad-second-postwrite-selector-receiver",
+            selector_throwing_source.replace("anchor.matches(", "(0).matches("),
+        ),
+        (
+            "unsupported-after-selector-effect",
+            selector_throwing_source.replace(
+                "throw anchor.matches('[data-closed]');",
+                "anchor.matches('[data-closed]'); "
+                "anchor.setAttribute('data-closed', false); throw false;",
             ),
         ),
         (
