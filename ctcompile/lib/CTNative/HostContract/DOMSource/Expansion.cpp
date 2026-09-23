@@ -114,8 +114,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             return false;
                         }
                     }
-                    // ponytail: one guarded second write with branch-local reads;
-                    // further effects need their own order and exceptional-edge proof.
+                    // ponytail: one guard with ordered read/write pairs;
+                    // nested control flow needs its own exceptional-edge proof.
+                    ctjs::GetPropertyOp guardedMethod;
                     for (mlir::Operation & nested : guard.getThenRegion().front()) {
                         if (!step()) { return false; }
                         if (llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::RootOp>(
@@ -123,9 +124,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             continue;
                         }
                         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
-                            read && !secondMethod &&
+                            read && !guardedMethod &&
                             ctjs::constantKey(read.getKey()) == "setAttribute") {
-                            secondMethod = read;
+                            guardedMethod = read;
                             continue;
                         }
                         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
@@ -156,15 +157,23 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             continue;
                         }
                         if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(nested);
-                            leaf && secondMethod && !secondLeaf &&
-                            leaf.getCallee() == secondMethod.getResult() &&
-                            leaf.getReceiver() == secondMethod.getObject() &&
+                            leaf && guardedMethod &&
+                            leaf.getCallee() == guardedMethod.getResult() &&
+                            leaf.getReceiver() == guardedMethod.getObject() &&
                             leaf.getArgs().size() == 2 &&
                             (trailingCall || suffixReads.contains(leaf.getArgs()[1]))) {
                             if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) {
                                 return false;
                             }
-                            secondLeaf = leaf;
+                            if (!secondLeaf) {
+                                secondMethod = guardedMethod;
+                                secondLeaf = leaf;
+                            } else {
+                                suffixValues.append({guardedMethod.getResult(), leaf.getResult()});
+                                suffixUses.insert(&leaf->getOpOperand(0));
+                                suffixLeaves.insert(leaf);
+                            }
+                            guardedMethod = {};
                             // Later branch-local reads may replace trailingCall.
                             // Keep this write's use of the original snapshot.
                             suffixUses.insert(&leaf->getOpOperand(3));
@@ -176,7 +185,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         }
                         return false;
                     }
-                    if (!secondLeaf) { return false; }
+                    if (!secondLeaf || guardedMethod) { return false; }
                     continue;
                 }
                 auto & writeMethod = protectedLeaf ? secondMethod : method;
