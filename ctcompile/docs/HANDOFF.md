@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Earlier terminal iterator-close read values and varying subtraction, 2026-09-23 UTC
+
+Resumed clean **6b908f6b** and retained earlier-read source `378326b6`.
+**9ba39cb4** retains an earlier terminal `hasAttribute` Boolean across
+ignored reads and selectors for one later `setAttribute`. The existing complete
+use census rejects leaks and reuse; typed DOM/Style reproof, source guard/order,
+saved exception and budgets remain. The unchanged original, getter and reordered
+read variant execute.
+
+Parallel **ad45ffe5** reuses bounded whole-key subdivision for varying
+subtraction operands, preserving source order and existing exact scalar transfers.
+Complete reload/store checks, independent reload-gap proof and actual-write replay
+remain. Eight source controls were added; all 255 historical source bodies and
+expectations are unchanged. Two historical raw `i-i` refusals now admit after
+exact Node write/read/own-key/retained-identity witnesses.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. Seven final hashes match
+the devbox; all 24 generated C++ files preserve the earlier Boolean and original
+exception without Script/VM or nullable fallback. Full formatting passes **1126
+C++, 157 Python, 114 web files**. Three parallel agents saved their work; rate
+limits interrupted raw/escape completion and final source review, which the parent
+finished. The source agent found no defect in the native production diff. Full
+suites were skipped; no browser implementation changed. Claude status stayed uncertain.
+
+**Next native boundary:** retained `unsupported-terminal-selector-write-earlier-value`
+source `f3f1e6c6` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the saved second `matches` Boolean across
+two ignored `hasAttribute` calls for `data-after-terminal`, while the original
+body exception wins. Reads before terminal mode, single-write selector cleanup,
+nonterminal exceptional state, multiple protected regions, implicit cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver,
+full native Bootstrap and general powers remain. No full-Bootstrap coverage gain
+is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-earlier-terminal-read-values.md).
+
 ## Terminal iterator-close read values and correlated powers, 2026-09-23 UTC
 
 Resumed clean **dde07a16** and retained read-to-write source `b1b67287`.
