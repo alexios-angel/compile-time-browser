@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator-close feeding-read selection and invariant shift bases, 2026-09-23 UTC
+
+Resumed clean **0ca10958** and retained `005c36e5`. **8768efa0** selects the
+read feeding either initial protected write from its actual operand, preserving
+a later argument read in the existing saved-value and complete-use census.
+Both snapshots, source order/guard, typed DOM/Style reproof, suppression, original
+body exception and budgets remain. The unchanged original, getter and order
+variant execute. An independent review found no native issues.
+
+**0241f5fd** proves invariant shift bases with varying counts through existing
+bounded subdivision and ordered scalar bitwise conversion. Five new source child
+sites become confined; five controls remain stored. Signed shifts, modulo-32
+counts, bounded integral intermediates, reload/store checks, independent gaps and
+actual-write replay remain. Two historical raw refusal inputs now have exact
+admission assertions; all 324 historical source bodies/CHECKs are unchanged.
+
+Focused validation passes: 26 source preflight checks, 48 existing native assertion
+binaries, the final refusal, exact host/arrays CTests and one power-index lit case.
+The interrupted fail-fast native run had reached its final manifest after 24
+Node/VM observations and 75 preceding refusals; recovery verified the existing
+binaries and final refusal without recompilation. Full formatting passes
+**1126 C++, 157 Python, 114 web files**; all six code/test hashes match the devbox.
+Three parallel tasks survived interruptions through saved candidates and artifacts.
+No browser implementation changed; Claude remained uncertain. Full suites skipped.
+
+**Next native boundary:** retained
+`unsupported-saved-read-through-final-write-argument-read`, source `40cadb13`,
+refuses **DOM protected helper needs an independent inert-body proof** under both
+policies. Preserve an earlier saved read through a later argument read inside the
+final write, while the original body exception wins. Single-write selector cleanup,
+nonterminal exceptional state, multiple protected regions, implicit cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver,
+full native Bootstrap, general powers and legacy SCF retention remain unfinished.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-feeding-read-selection.md).
+
 ## Saved reads inside iterator-close arguments and invariant numerators, 2026-09-23 UTC
 
 Resumed clean **254fed05** and retained inside-first-write source `9533d479`.
