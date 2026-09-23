@@ -40,8 +40,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
         // ponytail: two writes with feeding reads, one matches, then read/write pairs
-        // and unused terminal selectors followed by one read; other effects need their
-        // exceptional edges represented.
+        // and unused terminal reads/selectors; other effects need their exceptional
+        // edges represented.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
             ctjs::GetPropertyOp selectorMethod, finalMethod, finalReadMethod;
@@ -89,13 +89,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     read.getReceiver() == sourceReadMethod.getObject() &&
                     read.getArgs().size() == 1) {
                     sourceReadCall = read;
-                    if (selectorLeaf && ctjs::constantKey(sourceReadMethod.getKey()) == "matches") {
+                    const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
+                    if (selectorLeaf && (terminalSelector || selector)) {
                         if (finalMethod) { return false; }
-                        // Retain each unused selector in exact suppression. Its
-                        // complete use census and typed DOM proof still run below.
+                        // Retain every terminal read in source order. Only selectors
+                        // need exact suppression; all reads retain the complete use
+                        // census and typed DOM proof below.
                         suffixValues.append({sourceReadMethod.getResult(), read.getResult()});
                         suffixUses.insert(&read->getOpOperand(0));
-                        suffixLeaves.insert(read);
+                        if (selector) { suffixLeaves.insert(read); }
                         sourceReadMethod = {};
                         sourceReadCall = {};
                         terminalSelector = true;

@@ -2466,6 +2466,10 @@ def saved_throws(args, compilers, includes, libraries):
         "throw anchor.matches('[data-closed=false]');",
         "anchor.matches('[data-closed=false]'); throw anchor.hasAttribute('data-closed');",
     )
+    terminal_read_sequence_source = terminal_match_read_throwing_source.replace(
+        "throw anchor.hasAttribute('data-closed');",
+        "anchor.hasAttribute('data-closed'); throw anchor.hasAttribute('data-unvisited');",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2932,6 +2936,61 @@ def saved_throws(args, compilers, includes, libraries):
             "true",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-close",
+            terminal_read_sequence_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-getter-close",
+            terminal_read_sequence_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-missing-read",
+            terminal_read_sequence_source.replace(
+                "anchor.hasAttribute('data-closed'); throw",
+                "anchor.hasAttribute('data-unvisited'); throw",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-order-close",
+            terminal_read_sequence_source.replace(
+                "anchor.hasAttribute('data-closed'); throw anchor.hasAttribute('data-unvisited');",
+                "anchor.hasAttribute('data-unvisited'); throw anchor.hasAttribute('data-closed');",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-wider-close",
+            terminal_read_sequence_source.replace(
+                "throw anchor.hasAttribute('data-unvisited');",
+                "anchor.hasAttribute('data-unvisited'); anchor.hasAttribute('data-visited'); "
+                "throw anchor.hasAttribute('data-yielded');",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-alternating-close",
+            terminal_read_sequence_source.replace(
+                "throw anchor.hasAttribute('data-unvisited');",
+                "anchor.matches('[data-closed=false]'); throw anchor.hasAttribute('data-unvisited');",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -2996,6 +3055,22 @@ def saved_throws(args, compilers, includes, libraries):
         postselector_read = "-selector-third-read-" in label
         terminal_match = "-terminal-match-" in label
         terminal_match_read = "-terminal-match-read-" in label
+        terminal_sequence = ()
+        if "-terminal-match-read-sequence-" in label:
+            terminal_sequence = ("data-closed", "data-unvisited")
+            if label.endswith("-missing-read"):
+                terminal_sequence = ("data-unvisited", "data-unvisited")
+            elif label.endswith("-order-close"):
+                terminal_sequence = ("data-unvisited", "data-closed")
+            elif label.endswith("-wider-close"):
+                terminal_sequence = (
+                    "data-closed",
+                    "data-unvisited",
+                    "data-visited",
+                    "data-yielded",
+                )
+            elif label.endswith("-alternating-close"):
+                terminal_sequence = ("data-closed", None, "data-unvisited")
         terminal_read = "-terminal-" in label and not terminal_match
         following_writes = ()
         if "-fourth-" in label:
@@ -3056,7 +3131,14 @@ def saved_throws(args, compilers, includes, libraries):
         if terminal_match:
             terminal_value = "false" if closed == "true" else "true"
             close_writes += f"matches=[data-closed=false]:{terminal_value};"
-        if terminal_match_read:
+        if terminal_sequence:
+            for terminal_name in terminal_sequence:
+                if terminal_name is None:
+                    close_writes += "matches=[data-closed=false]:true;"
+                else:
+                    terminal_value = "false" if terminal_name == "data-unvisited" else "true"
+                    close_writes += f"hasAttribute={terminal_name}:{terminal_value};"
+        elif terminal_match_read:
             terminal_name = "data-unvisited" if label.endswith("-missing-read") else "data-closed"
             terminal_value = "false" if label.endswith("-missing-read") else "true"
             close_writes += f"hasAttribute={terminal_name}:{terminal_value};"
@@ -3174,6 +3256,17 @@ var savedThrow, savedExhausted;
             ).replace(
                 f"selectorReadPending = {read_count};",
                 f"selectorReadPending = ++closeMatches % 2 ? {read_count} : {int(terminal_match_read)};",
+            )
+        if terminal_sequence:
+            selector_reads = [read_count, 0]
+            for terminal_name in terminal_sequence:
+                if terminal_name is None:
+                    selector_reads.append(0)
+                else:
+                    selector_reads[-1] += 1
+            script = script.replace(
+                f"selectorReadPending = ++closeMatches % 2 ? {read_count} : 1;",
+                f"selectorReadPending = {selector_reads}[closeMatches++ % {len(selector_reads)}];",
             )
         if mixed:
             script = (
@@ -3308,9 +3401,11 @@ var savedThrow, savedExhausted;
                         close_body = cpp[
                             cpp.index(selector_call) : cpp.index("throw ctnative::js_exception{")
                         ]
-                        if close_body.count(selector_call) != 2 or close_body.rfind(
-                            selector_call
-                        ) <= close_body.rfind("ctnative::set_attribute("):
+                        if close_body.count(selector_call) != 2 + terminal_sequence.count(
+                            None
+                        ) or close_body.rfind(selector_call) <= close_body.rfind(
+                            "ctnative::set_attribute("
+                        ):
                             raise RuntimeError(f"{name}: final selector lost its close write order")
                         if terminal_match_read and close_body.rfind(
                             "ctnative::has_attribute("
@@ -3318,6 +3413,20 @@ var savedThrow, savedExhausted;
                             raise RuntimeError(
                                 f"{name}: final read moved before its close selector"
                             )
+                        if terminal_sequence:
+                            tail = close_body.split(selector_call, 2)[2]
+                            operations = [
+                                "read" if "ctnative::has_attribute(" in line else "matches"
+                                for line in tail.splitlines()
+                                if "ctnative::has_attribute(" in line or selector_call in line
+                            ]
+                            expected_operations = [
+                                "matches" if item is None else "read" for item in terminal_sequence
+                            ]
+                            if operations != expected_operations:
+                                raise RuntimeError(
+                                    f"{name}: terminal read/selector sequence changed"
+                                )
                 dom.standalone(
                     args,
                     native,
@@ -3479,6 +3588,12 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-missing-read",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-alternating-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-missing-read",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-wider-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -4061,10 +4176,87 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-terminal-match-second-read",
-            terminal_match_read_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "anchor.hasAttribute('data-closed'); throw anchor.hasAttribute('data-unvisited');",
+            "normal-terminal-read-sequence-close",
+            terminal_read_sequence_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "normal-terminal-read-sequence-getter-close",
+            terminal_read_sequence_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-terminal-read-sequence-close",
+            terminal_read_sequence_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "return-terminal-read-sequence-getter-close",
+            terminal_read_sequence_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "bad-terminal-read-sequence-first-receiver",
+            terminal_read_sequence_source.replace(
+                "anchor.hasAttribute('data-closed'); throw",
+                "(0).hasAttribute('data-closed'); throw",
+            ),
+        ),
+        (
+            "bad-terminal-read-sequence-last-receiver",
+            terminal_read_sequence_source.replace(
+                "throw anchor.hasAttribute('data-unvisited');",
+                "throw (0).hasAttribute('data-unvisited');",
+            ),
+        ),
+        (
+            "invalid-terminal-read-sequence-arity",
+            terminal_read_sequence_source.replace(
+                "anchor.hasAttribute('data-closed'); throw",
+                "anchor.hasAttribute(); throw",
+            ),
+        ),
+        (
+            "invalid-terminal-read-sequence-selector",
+            terminal_read_sequence_source.replace(
+                "throw anchor.hasAttribute('data-unvisited');",
+                "anchor.matches('['); throw anchor.hasAttribute('data-unvisited');",
+            ),
+        ),
+        (
+            "unsupported-terminal-read-sequence-escape",
+            terminal_read_sequence_source.replace(
+                "anchor.hasAttribute('data-closed'); throw",
+                "const present = anchor.hasAttribute('data-closed'); external(present); throw",
+            ),
+        ),
+        (
+            "unsupported-terminal-read-sequence-effect",
+            terminal_read_sequence_source.replace(
+                "throw anchor.hasAttribute('data-unvisited');",
+                "external(anchor); throw anchor.hasAttribute('data-unvisited');",
+            ),
+        ),
+        (
+            "dynamic-terminal-read-sequence-name",
+            terminal_read_sequence_source.replace(
+                "throw anchor.hasAttribute('data-unvisited');",
+                "throw anchor.hasAttribute(anchor);",
+            ),
+        ),
+        (
+            "unsupported-terminal-read-write",
+            terminal_read_sequence_source.replace(
+                "throw anchor.hasAttribute('data-unvisited');",
+                "anchor.hasAttribute('data-unvisited'); anchor.setAttribute('data-after-terminal', false); throw false;",
             ),
         ),
         (
