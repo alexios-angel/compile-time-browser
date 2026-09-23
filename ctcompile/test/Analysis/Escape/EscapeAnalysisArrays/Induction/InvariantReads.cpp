@@ -208,6 +208,92 @@ void InductionCases::invariantReads() {
     reject("String table aliases retain the same exact allocation in the write census",
            replace(stringTableAlias,
                    "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
+    const auto convertedTable =
+        replace(stringTable, "  ctjs.set_property %base[%slot]",
+                "  %converted = ctjs.unary plus %slot\n  ctjs.set_property %base[%converted]");
+    for (const auto & source :
+         {convertedTable,
+          replace(replace(convertedTable, "#ctjs.string<\"2\">", "#ctjs.string<\"-2\">"),
+                  "unary plus %slot", "unary neg %slot"),
+          replace(replace(replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"-1\">"),
+                          "#ctjs.string<\"2\">", "#ctjs.string<\"-3\">"),
+                  "unary plus %slot", "unary bitnot %slot"),
+          replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.null"),
+          replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.boolean<false>"),
+          replace(convertedTable, "  %converted = ctjs.unary plus %slot",
+                  "  %number = ctjs.unary plus %slot\n"
+                  "  %converted = ctjs.binary add %number, %zero"),
+          replace(convertedTable, "  %converted = ctjs.unary plus %slot",
+                  "  %number = ctjs.unary plus %slot\n"
+                  "  %converted = ctjs.unary plus %number")}) {
+        run({.what =
+                 "explicit table conversion makes a Number without changing the stored primitive",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "converted table replay retains a child at an unwritten position",
+         .body = replace(convertedTable, "[%textZero, %textTwo]", "[%textZero, %textZero]"),
+         .arrays = "keys:[textZero,textZero]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textZero; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    run({.what = "a saved child retains its original identity across converted table writes",
+         .body = replace(replace(convertedTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    const auto selectedConvertedTable =
+        replace(selectedStringTable, "  ctjs.set_property %base[%slot]",
+                "  %converted = ctjs.unary plus %slot\n  ctjs.set_property %base[%converted]");
+    run({.what = "converted table keys still prove the receiver's independent reload gap",
+         .body = selectedConvertedTable,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads = "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; "
+                  "keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    for (const std::string primitive :
+         {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">", "#ctjs.string<\"0.0\">",
+          "#ctjs.string<\"-2\">", "#ctjs.string<\"3\">", "#ctjs.string<\"4294967296\">",
+          "#ctjs.number<4602678819172646912>", "#ctjs.bigint<\"0\">", "#ctjs.undefined"}) {
+        reject("table conversion retains exact primitive and own-index bounds",
+               replace(convertedTable, "#ctjs.string<\"0\">", primitive));
+    }
+    reject("table conversion cannot invoke object coercion",
+           replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
+    reject("table conversion cannot read a missing own element",
+           replace(convertedTable, "[%textZero, %textTwo]", "[%textZero]"));
+    for (const std::string expression :
+         {"ctjs.binary add %slot, %zero", "ctjs.binary add %zero, %slot",
+          "ctjs.binary_static add %slot, %zero"}) {
+        reject("an outer conversion does not make earlier String addition numeric",
+               replace(convertedTable, "  %converted = ctjs.unary plus %slot",
+                       "  %text = " + expression + "\n  %converted = ctjs.unary plus %text"));
+    }
+    reject("converted table keys cannot overlap their selected receiver reload",
+           replace(selectedConvertedTable, "#ctjs.string<\"2\">", "#ctjs.string<\"1\">"));
+    reject("a later write cannot invalidate a converted table receiver",
+           replace(selectedConvertedTable,
+                   "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("conversion cannot turn the mutable guard array into an invariant table",
+           replace(convertedTable, "%keys[%pick]", "%base[%pick]"));
+    for (const std::string mutation :
+         {"ctjs.set_property %keys[%one], %textZero", "ctjs.set_property %keys[%key], %one"}) {
+        reject("table conversion retains mutations before reads in the complete census",
+               replace(convertedTable, "  %pick =", "  " + mutation + "\n  %pick ="));
+        reject("table conversion retains mutations after reads in the complete census",
+               replace(convertedTable, "  %step =", "  " + mutation + "\n  %step ="));
+    }
+    const auto convertedTableAlias =
+        replace(stringTableAlias, "  ctjs.set_property %base[%slot]",
+                "  %converted = ctjs.unary plus %slot\n  ctjs.set_property %base[%converted]");
+    reject("converted table aliases keep their exact allocation in the write census",
+           replace(convertedTableAlias,
+                   "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
     const auto reloaded = replace(
         replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
         "add %i, %one", "add %i, %unit");

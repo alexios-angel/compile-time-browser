@@ -265,8 +265,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     };
     std::pair<std::size_t, std::size_t> indexBounds{*start, last};
     bool refinableEnclosure = false;
+    enum class IndexUse {
+        Number,
+        PropertyKey,
+        Conversion
+    };
     const auto indexRange = [&](auto && self, mlir::Value operand, unsigned depth,
-                                bool propertyKey = false) -> std::optional<IndexRange> {
+                                IndexUse use = IndexUse::Number) -> std::optional<IndexRange> {
         if (!spend()) {
             invariantFailure = ArrayContentsFailure::WorkLimit;
             return std::nullopt;
@@ -287,7 +292,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // allocation is unchanged; invariant receiver reloads still join
             // guardReloads and need the independent write-gap proof below.
             if (table == state.arrays.end() || table->first == guardSite) { return std::nullopt; }
-            const auto key = self(self, load->getOperand(1), depth + 1, true);
+            const auto key = self(self, load->getOperand(1), depth + 1, IndexUse::PropertyKey);
             if (!key) { return std::nullopt; }
             // ponytail: refine varying keys to singletons; table image lattices
             // can replace subdivision if the shared proof budget needs them.
@@ -298,13 +303,21 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto position = ownArrayIndex(key->first);
             if (!position || *position >= table->second.size()) { return std::nullopt; }
             auto result = table->second[*position];
-            if (propertyKey && result.string()) {
+            if (use == IndexUse::PropertyKey && result.string()) {
                 // Canonical String keys name own positions without becoming
                 // Number operands. Arithmetic recursion keeps its original proof;
                 // ordinary replay retains the selected element's String identity.
                 const auto position = ownArrayIndex(result);
                 if (!position) { return std::nullopt; }
                 result = {operand, ContentsKind::NonBigInt, *position};
+            } else if (use == IndexUse::Conversion) {
+                // Explicit unary operations convert the selected primitive to a
+                // separate Number. Do not lend this conversion to String Add or
+                // to the original property's spelling; replay retains both values.
+                const auto positive = boundedConvertedNumber(result);
+                const auto negative =
+                    positive ? std::nullopt : boundedConvertedNumber(result, true);
+                result = {operand, ContentsKind::NonBigInt, positive, negative};
             }
             if (!result.integerNumber && !result.negativeIntegerNumber) {
                 result.integerNumber = boundedNumber(result.origin());
@@ -321,7 +334,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                               unary.getKind() != ctjs::UnaryKind::BitNot)) {
                 return std::nullopt;
             }
-            auto range = self(self, unary.getOperand(), depth + 1);
+            auto range = self(self, unary.getOperand(), depth + 1, IndexUse::Conversion);
             if (!range) { return std::nullopt; }
             const bool wrappingComplement = unary.getKind() == ctjs::UnaryKind::BitNot &&
                                             signedBand(range->first) != signedBand(range->last);
@@ -909,7 +922,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             indexBounds = {begin, end};
             refinableEnclosure = false;
-            const auto actual = indexRange(indexRange, key, 0, true);
+            const auto actual = indexRange(indexRange, key, 0, IndexUse::PropertyKey);
             if (guardReloads.size() != reloadCount ||
                 (!actual &&
                  (!refinableEnclosure || invariantFailure == ArrayContentsFailure::WorkLimit))) {
@@ -931,7 +944,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 if (block != body) { return unsupported; }
                 refinableEnclosure = false;
-                if (auto range = indexRange(indexRange, store.getKey(), 0, true);
+                if (auto range = indexRange(indexRange, store.getKey(), 0, IndexUse::PropertyKey);
                     range || (refinableEnclosure && *start < size)) {
                     if (*start < size) {
                         const auto ownBounds = [&](const IndexRange & candidate) {
