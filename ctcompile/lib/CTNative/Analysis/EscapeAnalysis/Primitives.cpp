@@ -1,5 +1,6 @@
 #include "Contents.hpp"
 #include "ctbrowser/core/algorithms.hpp"
+#include "ctbrowser/core/number.hpp"
 #include "ctbrowser/core/number_format.hpp"
 
 #include <limits>
@@ -134,6 +135,64 @@ std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
     return character;
 }
 
+namespace {
+
+std::optional<double> boundedStringNumber(const ContentsValue & input) {
+    if (!input.string() || !input.origin() || input.asciiCharacter) { return std::nullopt; }
+    auto literal = input.origin().getDefiningOp<ctjs::ConstantOp>();
+    auto string =
+        literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+    if (!string) { return std::nullopt; }
+    const auto text = string.getValue();
+    // ponytail: at most 32 source bytes; wider Strings need charged parsing.
+    // Validate the whole grammar before Core handles overflow/underflow.
+    if (text.size() > 32) { return std::nullopt; }
+    llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
+    int radix = 10;
+    if (digits.consume_front_insensitive("0x")) {
+        radix = 16;
+    } else if (digits.consume_front_insensitive("0o")) {
+        radix = 8;
+    } else if (digits.consume_front_insensitive("0b")) {
+        radix = 2;
+    } else if ((digits.consume_front("+") || digits.consume_front("-")) && digits.empty()) {
+        return std::nullopt;
+    }
+    if (radix == 10 && !digits.empty()) {
+        const auto decimal = [](char c) { return c >= '0' && c <= '9'; };
+        auto rest = digits.drop_while(decimal);
+        bool hasDigits = rest.size() != digits.size();
+        if (rest.consume_front(".")) {
+            const auto fraction = rest.drop_while(decimal);
+            hasDigits |= fraction.size() != rest.size();
+            rest = fraction;
+        }
+        if (!hasDigits) { return std::nullopt; }
+        if (rest.consume_front_insensitive("e")) {
+            if (!rest.consume_front("+")) { rest.consume_front("-"); }
+            unsigned exponent = 0;
+            // Core adds an int exponent to the mantissa order on range failure.
+            // The source-byte bound limits that order's magnitude to 32.
+            if (rest.empty() || !llvm::all_of(rest, decimal) || rest.getAsInteger(10, exponent) ||
+                exponent > static_cast<unsigned>(std::numeric_limits<int>::max() - 32)) {
+                return std::nullopt;
+            }
+            rest = {};
+        }
+        if (!rest.empty()) { return std::nullopt; }
+    } else if ((radix != 10 && digits.empty()) || !llvm::all_of(digits, [radix](char c) {
+                   const auto digit = ctbrowser::hex_value(c);
+                   return digit >= 0 && digit < radix;
+               })) {
+        return std::nullopt;
+    }
+    const double converted = ctbrowser::string_to_number({text.data(), text.size()});
+    if (!std::isfinite(converted) || std::abs(converted) > 4294967295.0) { return std::nullopt; }
+    return converted;
+}
+
+} // namespace
+
 // One signed magnitude of an exact primitive Number conversion. Facts attach
 // only to the operation result; primitive origins keep their property keys.
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, bool negate) {
@@ -144,58 +203,10 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     if (auto number = boundedNumber(origin, negate)) { return number; }
     if (input.string()) {
         if (input.asciiCharacter) { return negate ? std::nullopt : ownArrayIndex(input); }
-        auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
-        auto string =
-            literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
-        if (!string) { return std::nullopt; }
-        const auto text = string.getValue();
-        // ponytail: at most 32 source bytes; wider Strings need charged parsing.
-        // Validate the whole grammar before Core handles overflow/underflow.
-        if (text.size() > 32) { return std::nullopt; }
-        llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
-        int radix = 10;
-        if (digits.consume_front_insensitive("0x")) {
-            radix = 16;
-        } else if (digits.consume_front_insensitive("0o")) {
-            radix = 8;
-        } else if (digits.consume_front_insensitive("0b")) {
-            radix = 2;
-        } else if ((digits.consume_front("+") || digits.consume_front("-")) && digits.empty()) {
-            return std::nullopt;
-        }
-        if (radix == 10 && !digits.empty()) {
-            const auto decimal = [](char c) { return c >= '0' && c <= '9'; };
-            auto rest = digits.drop_while(decimal);
-            bool hasDigits = rest.size() != digits.size();
-            if (rest.consume_front(".")) {
-                const auto fraction = rest.drop_while(decimal);
-                hasDigits |= fraction.size() != rest.size();
-                rest = fraction;
-            }
-            if (!hasDigits) { return std::nullopt; }
-            if (rest.consume_front_insensitive("e")) {
-                if (!rest.consume_front("+")) { rest.consume_front("-"); }
-                unsigned exponent = 0;
-                // Core adds an int exponent to the mantissa order on range failure.
-                // The source-byte bound limits that order's magnitude to 32.
-                if (rest.empty() || !llvm::all_of(rest, decimal) ||
-                    rest.getAsInteger(10, exponent) ||
-                    exponent > static_cast<unsigned>(std::numeric_limits<int>::max() - 32)) {
-                    return std::nullopt;
-                }
-                rest = {};
-            }
-            if (!rest.empty()) { return std::nullopt; }
-        } else if ((radix != 10 && digits.empty()) || !llvm::all_of(digits, [radix](char c) {
-                       const auto digit = ctbrowser::hex_value(c);
-                       return digit >= 0 && digit < radix;
-                   })) {
-            return std::nullopt;
-        }
-        const double converted = ctbrowser::string_to_number({text.data(), text.size()});
-        const double magnitude = negate ? -converted : converted;
-        if (std::isfinite(magnitude) && magnitude >= 0 && magnitude <= 4294967295.0 &&
-            std::floor(magnitude) == magnitude) {
+        const auto converted = boundedStringNumber(input);
+        if (!converted) { return std::nullopt; }
+        const double magnitude = negate ? -*converted : *converted;
+        if (magnitude >= 0 && std::floor(magnitude) == magnitude) {
             return static_cast<std::size_t>(magnitude);
         }
         return std::nullopt;
@@ -210,14 +221,27 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     return std::nullopt;
 }
 
+// Bitwise conversion may truncate a bounded original String. Arithmetic and
+// property keys still require their separate exact Number/spelling proofs.
+std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
+    if (const auto positive = boundedConvertedNumber(input)) {
+        return static_cast<std::uint32_t>(*positive);
+    }
+    if (const auto negative = boundedConvertedNumber(input, true)) {
+        return 0U - static_cast<std::uint32_t>(*negative);
+    }
+    if (const auto number = boundedStringNumber(input)) {
+        return ctbrowser::number_to_uint32(*number);
+    }
+    return std::nullopt;
+}
+
 void boundedNumberComplement(const ContentsValue & input, ContentsValue & result) {
-    const auto positive = boundedConvertedNumber(input);
-    const auto negative = boundedConvertedNumber(input, true);
-    if (!positive && !negative) { return; }
+    const auto converted = boundedConvertedBits(input);
+    if (!converted) { return; }
     // Complement exact ToUint32 bits, then recover the signed Number magnitude
     // without signed overflow. Facts attach only to the result's identity.
-    const std::uint32_t bits = ~(positive ? static_cast<std::uint32_t>(*positive)
-                                          : 0U - static_cast<std::uint32_t>(*negative));
+    const std::uint32_t bits = ~*converted;
     if (bits < 2147483648ULL) {
         result.integerNumber = bits;
     } else {
@@ -236,19 +260,14 @@ void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & righ
     case ctjs::BinaryKind::UShr: break;
     default: return;
     }
-    const auto a = boundedConvertedNumber(left);
-    const auto b = boundedConvertedNumber(right);
-    const auto negativeA = boundedConvertedNumber(left, true);
-    const auto negativeB = boundedConvertedNumber(right, true);
-    // Original Boolean/null and canonical Strings convert exactly;
-    // signed Numbers wrap. Mask counts; C++23 signed right shift
-    // preserves the sign. Only UShr keeps an unsigned result;
-    // negative magnitudes never become own-index facts.
-    if ((a || negativeA) && (b || negativeB)) {
-        const auto x =
-            a ? static_cast<std::uint32_t>(*a) : 0U - static_cast<std::uint32_t>(*negativeA);
-        const auto y =
-            b ? static_cast<std::uint32_t>(*b) : 0U - static_cast<std::uint32_t>(*negativeB);
+    const auto a = boundedConvertedBits(left);
+    const auto b = boundedConvertedBits(right);
+    // Bounded primitive operands use Core's ToUint32 conversion. Mask counts;
+    // C++23 signed right shift preserves the sign. Only UShr keeps an unsigned
+    // result; negative magnitudes never become own-index facts.
+    if (a && b) {
+        const auto x = *a;
+        const auto y = *b;
         const auto bits =
             kind == ctjs::BinaryKind::BitAnd   ? x & y
             : kind == ctjs::BinaryKind::BitOr  ? x | y

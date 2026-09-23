@@ -86,6 +86,14 @@
 // CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
 
+// Fractional Strings truncate only at bitwise operations, preserving original keys.
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -123,6 +131,21 @@
 // RECORD-LABEL: fn 65 entries 1 params 0 frame {{[0-9]+}} name unconvertedExponentTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 66 entries 1 params 0 frame {{[0-9]+}} name mutatedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 67 entries 1 params 0 frame {{[0-9]+}} name fractionalBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 68 entries 1 params 0 frame {{[0-9]+}} name fractionalComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 69 entries 1 params 0 frame {{[0-9]+}} name fractionalShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 70 entries 1 params 0 frame {{[0-9]+}} name unconvertedFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 71 entries 1 params 0 frame {{[0-9]+}} name arithmeticFractionalTableKey
+// The VM currently truncates numeric fractional array keys in store_index.
+// Node retains the child; the compiler's Stored control above stays conservative.
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 72 entries 1 params 0 frame {{[0-9]+}} name mutatedFractionalTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -410,6 +433,8 @@ hexConvertedTableKey(); binaryConvertedTableKey(); spacedOctalTableKey();
 malformedRadixTableKey(); unconvertedRadixTableKey(); mutatedRadixTableKey();
 decimalPointTableKey(); exponentTableKey(); signedExponentTableKey();
 malformedExponentTableKey(); unconvertedExponentTableKey(); mutatedExponentTableKey();
+fractionalBitwiseTableKey(); fractionalComplementTableKey(); fractionalShiftTableKey();
+unconvertedFractionalTableKey(); arithmeticFractionalTableKey(); mutatedFractionalTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -511,6 +536,40 @@ function mutatedExponentTableKey() {
     for (var i = 0; i < a.length; i++) {
         keys[1] = '0.0';
         a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
+
+function fractionalBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function fractionalComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['-1.9', '-3.9'];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function fractionalShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = ['.5', '1.9'];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function arithmeticFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function mutatedFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.9', '2.9'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '.5';
+        a[keys[i % 2] | 0] = 0;
     }
     return a;
 }

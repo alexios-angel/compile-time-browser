@@ -439,6 +439,108 @@ void InductionCases::invariantReads() {
     reject("decimal conversion keeps the independent receiver reload gap",
            replace(replace(selectedConvertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.0\">"),
                    "#ctjs.string<\"2\">", "#ctjs.string<\"1e0\">"));
+    const auto fractionalTable =
+        replace(replace(replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.9\">"),
+                        "#ctjs.string<\"2\">", "#ctjs.string<\"2.9\">"),
+                "unary plus %slot", "binary_static bitor %slot, %zero");
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+          "shr %slot, %zero", "ushr %slot, %zero"}) {
+        run({.what = "bitwise table operands truncate fractions without changing stored Strings",
+             .body = replace(fractionalTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const auto & [first, second] :
+         {std::pair{"-0.9", "+2.9"}, std::pair{"5e-1", "29e-1"},
+          std::pair{"2147483648.5", "4294967294.9"}, std::pair{"-0.9", "-4294967294.9"}}) {
+        run({.what =
+                 "fractional bitwise Strings preserve signed zero and wrap at signed boundaries",
+             .body = replace(replace(replace(fractionalTable, "#ctjs.string<\"0.9\">",
+                                             "#ctjs.string<\"" + std::string{first} + "\">"),
+                                     "#ctjs.string<\"2.9\">",
+                                     "#ctjs.string<\"" + std::string{second} + "\">"),
+                             "bitor %slot, %zero", "bitand %slot, %two"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "complement truncates original negative fractional String operands",
+         .body = replace(
+             replace(replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"-1.9\">"),
+                     "#ctjs.string<\"2.9\">", "#ctjs.string<\"-3.9\">"),
+             "binary_static bitor %slot, %zero", "unary bitnot %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying fractional shift counts truncate before the original left shift",
+         .body =
+             replace(replace(replace(replace(fractionalTable, "[%x, %zero, %x]", "[%zero, %x, %x]"),
+                                     "#ctjs.string<\"0.9\">", "#ctjs.string<\".5\">"),
+                             "#ctjs.string<\"2.9\">", "#ctjs.string<\"1.9\">"),
+                     "bitor %slot, %zero", "shl %one, %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string expression :
+         {"bitor %i, %textZero", "shl %i, %textZero", "shr %i, %textZero", "ushr %i, %textZero"}) {
+        run({.what = "invariant fractional masks and shift counts share the scalar bitwise proof",
+             .body = replace(fractionalTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto selectedFractional = replace(
+        replace(replace(selectedConvertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.9\">"),
+                "#ctjs.string<\"2\">", "#ctjs.string<\"2.9\">"),
+        "unary plus %slot", "binary_static bitor %slot, %zero");
+    run({.what = "fractional table conversion preserves an independent receiver reload gap",
+         .body = selectedFractional,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads =
+             "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    reject("truncated fractional keys cannot overwrite their selected receiver",
+           replace(selectedFractional, "#ctjs.string<\"2.9\">", "#ctjs.string<\"1.9\">"));
+    run({.what = "a child saved before fractional writes retains its original identity",
+         .body = replace(replace(fractionalTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    for (const std::string text :
+         {".", "0.9junk", "1e-999junk", "1e9999999999", "1e-2147483616", "Infinity", "NaN",
+          "4294967295.5", "-4294967295.5", "0.0000000000000000000000000000000"}) {
+        reject("bitwise conversion keeps complete grammar exponent and magnitude bounds",
+               replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    for (const std::string expression :
+         {"unary plus %slot", "binary sub %slot, %zero", "binary mul %slot, %one",
+          "binary div %slot, %one", "binary add %slot, %zero"}) {
+        reject("fractional arithmetic does not borrow bitwise truncation",
+               replace(fractionalTable, "binary_static bitor %slot, %zero", expression));
+        reject("an outer bitwise operation cannot truncate an unproved arithmetic intermediate",
+               replace(fractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                       "  %number = ctjs." + expression +
+                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+    }
+    reject("fractional String properties preserve their original spelling",
+           replace(fractionalTable, "%base[%converted]", "%base[%slot]"));
+    reject("fractional Number literals remain outside the original bounded Number proof",
+           replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.number<4602678819172646912>"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("fractional table mutation remains visible before and after reads",
+               replace(fractionalTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     reject("table conversion cannot invoke object coercion",
            replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
     reject("table conversion cannot read a missing own element",

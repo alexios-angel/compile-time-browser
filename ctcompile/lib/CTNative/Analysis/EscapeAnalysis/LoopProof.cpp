@@ -268,7 +268,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     enum class IndexUse {
         Number,
         PropertyKey,
-        Conversion
+        Conversion,
+        BitwiseConversion
     };
     const auto indexRange = [&](auto && self, mlir::Value operand, unsigned depth,
                                 IndexUse use = IndexUse::Number) -> std::optional<IndexRange> {
@@ -310,6 +311,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 const auto position = ownArrayIndex(result);
                 if (!position) { return std::nullopt; }
                 result = {operand, ContentsKind::NonBigInt, *position};
+            } else if (use == IndexUse::BitwiseConversion) {
+                // Only the consuming bitwise operation may truncate this String.
+                // The singleton is its ToUint32 input, never a new table value.
+                result = {operand, ContentsKind::NonBigInt, boundedConvertedBits(result)};
             } else if (use == IndexUse::Conversion) {
                 // Numeric operations convert the selected primitive to a
                 // separate Number. Do not lend this conversion to String Add or
@@ -334,7 +339,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                               unary.getKind() != ctjs::UnaryKind::BitNot)) {
                 return std::nullopt;
             }
-            auto range = self(self, unary.getOperand(), depth + 1, IndexUse::Conversion);
+            auto range =
+                self(self, unary.getOperand(), depth + 1,
+                     unary.getKind() == ctjs::UnaryKind::BitNot ? IndexUse::BitwiseConversion
+                                                                : IndexUse::Conversion);
             if (!range) { return std::nullopt; }
             const bool wrappingComplement = unary.getKind() == ctjs::UnaryKind::BitNot &&
                                             signedBand(range->first) != signedBand(range->last);
@@ -397,7 +405,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         // Add keeps String concatenation; every other admitted binary
         // operation converts its primitive operands before computing a Number.
-        const auto operandUse = add ? IndexUse::Number : IndexUse::Conversion;
+        const auto operandUse = add                                    ? IndexUse::Number
+                                : (shift || bitAnd || bitOr || bitXor) ? IndexUse::BitwiseConversion
+                                                                       : IndexUse::Conversion;
         unsigned offsetOperand = 1;
         auto range = self(self, expression->getOperand(0), depth + 1, operandUse);
         if (!range && invariantFailure != ArrayContentsFailure::WorkLimit) {
@@ -635,11 +645,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            const auto positive = boundedConvertedNumber(*offset);
-            const auto negative = boundedConvertedNumber(*offset, true);
-            if (!positive && !negative) { return std::nullopt; }
-            const auto mask = positive ? static_cast<std::uint32_t>(*positive)
-                                       : 0U - static_cast<std::uint32_t>(*negative);
+            const auto bits = boundedConvertedBits(*offset);
+            if (!bits) { return std::nullopt; }
+            const auto mask = *bits;
             // With no interior lattice point, both endpoint images enclose
             // every visit even across a ToInt32 discontinuity. Magnitudes are
             // bounded by 2^32-1, so their signed difference fits int64_t.
@@ -752,15 +760,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            const auto positive = boundedConvertedNumber(*offset);
-            const auto negative = boundedConvertedNumber(*offset, true);
+            const auto count = boundedConvertedBits(*offset);
+            if (!count) { return std::nullopt; }
             const bool unsignedShift = addition.getKind() == ctjs::BinaryKind::UShr;
             const bool signedShift = addition.getKind() == ctjs::BinaryKind::Shr;
             // Exact negative magnitudes are bounded by 2^32-1. Within this
             // band ToUint32 adds 2^32; crossing zero would break its order.
             const bool negativeBand = unsignedShift && range->first.negativeIntegerNumber &&
                                       range->last.negativeIntegerNumber;
-            if (!positive && !negative) { return std::nullopt; }
             const bool conversionJump =
                 ((signedShift || leftShift) &&
                  signedBand(range->first) != signedBand(range->last)) ||
@@ -776,9 +783,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                          unsignedShift);
                 if (!range) { return std::nullopt; }
             }
-            const auto count = positive ? static_cast<std::uint32_t>(*positive)
-                                        : 0U - static_cast<std::uint32_t>(*negative);
-            const auto factor = std::size_t{1} << (count & 31U);
+            const auto factor = std::size_t{1} << (*count & 31U);
             if (leftShift && !twoPointShift) {
                 // Within one input and output conversion band, left shift
                 // stays affine. The i32 endpoints times at most 2^31 fit i64.
@@ -798,7 +803,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     const auto period =
                         std::gcd(range->stride, std::size_t{4294967296ULL} / factor) * factor;
                     const auto residue =
-                        static_cast<std::size_t>(numberBits(range->first) << (count & 31U)) %
+                        static_cast<std::size_t>(numberBits(range->first) << (*count & 31U)) %
                         period;
                     return convertedLattice(operand, period, residue);
                 }
