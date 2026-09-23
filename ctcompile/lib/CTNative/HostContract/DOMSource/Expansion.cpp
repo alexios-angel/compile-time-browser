@@ -32,15 +32,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             !emptyContinuation(unwind)) {
             return refuse("DOM protected helper requires exact unused-result suppression");
         }
-        // Keep the write protected. Moving preparation and an optional
-        // hasAttribute read requires complete typed DOM reproof: the initial
-        // Element methods and primitive arguments exclude source exceptions
+        // Keep the write protected and its reads in source order. Moving
+        // preparation and hasAttribute reads requires complete typed DOM reproof:
+        // the initial Element methods and primitive arguments exclude source exceptions
         // and reentry. Clone them in order, under the original guard.
-        // ponytail: one read feeding one write; larger protected bodies need
-        // a representation that preserves all their exceptional edges.
+        // ponytail: one read feeding one write and one unused trailing read;
+        // larger bodies need all their exceptional edges represented.
         const auto attributeLeaf = [&] {
-            ctjs::GetPropertyOp method, readMethod;
-            ctjs::CallOp readCall;
+            ctjs::GetPropertyOp method, readMethod, trailingMethod;
+            ctjs::CallOp readCall, trailingCall;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             for (mlir::Operation & operation : target.getBody().front()) {
                 if (!step()) { return false; }
@@ -48,7 +48,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                               ctjs::ReturnOp>(operation)) {
                     continue;
                 }
-                if (llvm::isa<ctjs::LoadUpvalueOp>(operation) && !protectedLeaf) { continue; }
+                if (llvm::isa<ctjs::LoadUpvalueOp>(operation)) { continue; }
                 // These producers remain under the source guard. Complete
                 // typed DOM reproof must exclude coercion, throws and reentry.
                 if (!protectedLeaf && llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
@@ -61,17 +61,20 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     method = read;
                     continue;
                 }
+                auto & sourceReadMethod = protectedLeaf ? trailingMethod : readMethod;
+                auto & sourceReadCall = protectedLeaf ? trailingCall : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
-                    read && !readMethod && !protectedLeaf &&
+                    read && !sourceReadMethod &&
                     ctjs::constantKey(read.getKey()) == "hasAttribute") {
-                    readMethod = read;
+                    sourceReadMethod = read;
                     continue;
                 }
                 if (auto read = llvm::dyn_cast<ctjs::CallOp>(operation);
-                    read && readMethod && !readCall && !protectedLeaf &&
-                    read.getCallee() == readMethod.getResult() &&
-                    read.getReceiver() == readMethod.getObject() && read.getArgs().size() == 1) {
-                    readCall = read;
+                    read && sourceReadMethod && !sourceReadCall &&
+                    read.getCallee() == sourceReadMethod.getResult() &&
+                    read.getReceiver() == sourceReadMethod.getObject() &&
+                    read.getArgs().size() == 1) {
+                    sourceReadCall = read;
                     continue;
                 }
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
@@ -102,14 +105,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 literal && llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
                                      ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue());
             if (!protectedLeaf || (!discardedResult && !primitiveResult) ||
-                (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult()))) {
+                (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult())) ||
+                (trailingMethod && !trailingCall)) {
                 return false;
             }
             for (mlir::Value value : llvm::SmallVector<mlir::Value>{
                      method.getResult(), protectedLeaf.getResult(),
                      discardedResult ? discardedResult.getResult() : mlir::Value{},
                      readMethod ? readMethod.getResult() : mlir::Value{},
-                     readCall ? readCall.getResult() : mlir::Value{}}) {
+                     readCall ? readCall.getResult() : mlir::Value{},
+                     trailingMethod ? trailingMethod.getResult() : mlir::Value{},
+                     trailingCall ? trailingCall.getResult() : mlir::Value{}}) {
                 if (!value) { continue; }
                 for (mlir::OpOperand & use : value.getUses()) {
                     if (!step()) { return false; }
@@ -123,6 +129,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                          use.getOwner() == readCall && use.getOperandNumber() == 0) ||
                         (readCall && value == readCall.getResult() &&
                          use.getOwner() == protectedLeaf && use.getOperandNumber() == 3) ||
+                        (trailingMethod && value == trailingMethod.getResult() &&
+                         use.getOwner() == trailingCall && use.getOperandNumber() == 0) ||
                         (discardedResult && value == discardedResult.getResult() &&
                          use.getOwner() == result)) {
                         continue;
@@ -224,6 +232,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 mapping.map(operation.getResults(), cloned->getResults());
             } else {
+                if (&operation == protectedLeaf) { at.setInsertionPoint(call); }
                 auto * cloned = at.clone(operation, mapping);
                 for (auto [from, to] : llvm::zip(operation.getResults(), cloned->getResults())) {
                     if (!step()) { return false; }
@@ -262,16 +271,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     }
                 }
                 ++operationCount;
+                // Suffix producers follow the original suppression at the
+                // same guard. Complete DOM proof must show the write and
+                // every moved read cannot throw or reenter source code.
+                if (&operation == protectedLeaf) { at.setInsertionPointAfter(protectedInvocation); }
             }
         }
         return true;
     };
     if (!cloneBody(cloneBody, body, at)) { return false; }
-    if (protectedLeaf) {
-        // Commit the replacement only after the charged clone succeeds.
-        // The caller immediately erases the old call, restoring call+exit.
-        mapping.lookup(protectedLeaf.getResult()).getDefiningOp()->moveBefore(call);
-    }
+    // The caller erases the old call after the charged clone succeeds,
+    // restoring the exact call+exit inside the original suppression.
     return true;
 }
 

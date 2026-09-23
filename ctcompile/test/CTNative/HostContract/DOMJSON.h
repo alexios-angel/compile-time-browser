@@ -537,6 +537,15 @@ module {
     %effect = ctjs.call %attribute(%element, %name, %present))MLIR");
     };
     const auto protectedRead = readThenWrite(protectedAttribute);
+    const auto readAfterWrite = [&](const std::string & source) {
+        return replaced(source, "%answer = ctjs.create_object", R"MLIR(
+    %afterReadKey = ctjs.constant #ctjs.string<"hasAttribute">
+    %afterReadName = ctjs.constant #ctjs.string<"data-closed">
+    %afterReadMethod = ctjs.get_property %element[%afterReadKey]
+    %afterPresent = ctjs.call %afterReadMethod(%element, %afterReadName)
+    %answer = ctjs.create_object)MLIR");
+    };
+    const auto trailingRead = readAfterWrite(protectedRead);
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
@@ -583,6 +592,25 @@ module {
                  replaced(protectedAttribute, "#ctjs.string<\"yes\">", "#ctjs.boolean<false>"),
                  true},
              std::pair{protectedRead, true},
+             std::pair{trailingRead, true},
+             std::pair{replaced(trailingRead,
+                                "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%afterReadName = ctjs.constant #ctjs.string<\"bad name\">"),
+                       true},
+             std::pair{replaced(trailingRead,
+                                "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%afterReadName = ctjs.constant #ctjs.number<0>"),
+                       false},
+             std::pair{readAfterWrite(capturedAttribute), true},
+             std::pair{replaced(trailingRead, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(replaced(trailingRead, "ctjs.get_property %element[%afterReadKey]",
+                                         "ctjs.get_property %text[%afterReadKey]"),
+                                "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                                "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+                       false},
+             std::pair{replaced(trailingRead, "data-closed", "bad name"), false},
              std::pair{readThenWrite(capturedAttribute), true},
              std::pair{replaced(protectedRead, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
@@ -622,10 +650,22 @@ module {
         input->walk([&](ctjs::CallOp) { ++calls; });
         input->walk([&](ctjs::CreateObjectOp) { ++allocations; });
         const bool reads = valid.find("%readKey") != std::string::npos;
-        if (reads) {
+        const bool trailingReads = valid.find("%afterReadKey") != std::string::npos;
+        if (reads || trailingReads) {
             input->walk([&](ctjs::CallOp call) {
                 auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!method || ctjs::constantKey(method.getKey()) != "hasAttribute") { return; }
+                if (call.getResult().use_empty()) {
+                    bool ordered = false;
+                    for (ctjs::InvokeOp invoke : call->getBlock()->getOps<ctjs::InvokeOp>()) {
+                        ordered |= method->getBlock() == invoke->getBlock() &&
+                                   invoke->isBeforeInBlock(method) && method->isBeforeInBlock(call);
+                    }
+                    check(trailingReads && ordered &&
+                              llvm::isa<mlir::scf::IfOp>(call->getParentOp()),
+                          "unused trailing read stays after the protected write at its guard");
+                    return;
+                }
                 auto * next = call->getNextNode();
                 while (next && llvm::isa<ctjs::ConstantOp>(next)) { next = next->getNextNode(); }
                 auto invoke = llvm::dyn_cast_or_null<ctjs::InvokeOp>(next);
@@ -640,8 +680,10 @@ module {
                       "member lookup, read and protected write retain source order and guard");
             });
         }
-        check(invocations == 1 && calls == (reads ? 2u : 1u) && allocations == 0 &&
-                  mlir::succeeded(mlir::verify(*input)),
+        check(invocations == 1 &&
+                  calls ==
+                      1u + static_cast<unsigned>(reads) + static_cast<unsigned>(trailingReads) &&
+                  allocations == 0 && mlir::succeeded(mlir::verify(*input)),
               "protected expansion retains call-plus-exit and only elides unused objects");
         auto bound = contract;
         bound.entry = "entry$0";
@@ -680,26 +722,40 @@ module {
             }
         }
     }
-    auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(protectedRead, &context);
-    check(static_cast<bool>(completeRead), "protected read budget fixture parses");
-    if (completeRead) {
-        unsigned steps = 0;
-        auto error = expandDOMHelpers(*completeRead, "entry$0", 100000, &steps);
-        check(!error && steps > 0, "protected read records a finite expansion budget");
-        if (error) {
-            llvm::consumeError(std::move(error));
-        } else {
-            for (unsigned budget : {0u, steps - 1, steps}) {
-                auto input = mlir::parseSourceString<mlir::ModuleOp>(protectedRead, &context);
-                auto limited = expandDOMHelpers(*input, "entry$0", budget);
-                check(static_cast<bool>(limited) == (budget < steps),
-                      "protected read requires its complete expansion budget");
-                if (limited) { llvm::consumeError(std::move(limited)); }
+    for (const auto & budgetSource : {protectedRead, trailingRead}) {
+        auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
+        check(static_cast<bool>(completeRead), "protected read budget fixture parses");
+        if (completeRead) {
+            unsigned steps = 0;
+            auto error = expandDOMHelpers(*completeRead, "entry$0", 100000, &steps);
+            check(!error && steps > 0, "protected read records a finite expansion budget");
+            if (error) {
+                llvm::consumeError(std::move(error));
+            } else {
+                for (unsigned budget : {0u, steps - 1, steps}) {
+                    auto input = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
+                    auto limited = expandDOMHelpers(*input, "entry$0", budget);
+                    check(static_cast<bool>(limited) == (budget < steps),
+                          "protected read requires its complete expansion budget");
+                    if (limited) { llvm::consumeError(std::move(limited)); }
+                }
             }
         }
     }
     for (const auto & invalid :
-         {replaced(protectedRead, "hasAttribute", "getAttribute"),
+         {replaced(trailingRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+          replaced(trailingRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%element, %afterReadName, %name)"),
+          replaced(trailingRead,
+                   "%afterPresent = ctjs.call %afterReadMethod(%element, %afterReadName)", ""),
+          replaced(trailingRead, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %afterReadMethod(%element, %afterReadName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(trailingRead, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %afterPresent"),
+          replaced(protectedRead, "hasAttribute", "getAttribute"),
           replaced(replaced(protectedRead,
                             "    %present = ctjs.call %readMethod(%element, %readName)\n", ""),
                    "ctjs.call %attribute(%element, %name, %present)",

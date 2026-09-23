@@ -2410,6 +2410,9 @@ def saved_throws(args, compilers, includes, libraries):
         "return {};", "throw 2;"
     )
     nonliteral_throwing_source = mutable_throwing_source.replace("throw 2;", "throw count;")
+    postwrite_throwing_source = conditional_source.replace(
+        "return {};", "throw anchor.hasAttribute('data-closed');"
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2606,6 +2609,30 @@ def saved_throws(args, compilers, includes, libraries):
             "js_num",
             "error.value.value() == 3.0",
             "true",
+        ),
+        (
+            "conditional-boolean-nonliteral-close",
+            postwrite_throwing_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-postwrite-getter-close",
+            postwrite_throwing_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-postwrite-missing-read",
+            postwrite_throwing_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
         ),
         (
             "number-close-observes-state",
@@ -2916,6 +2943,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-primitive-close",
                         "conditional-boolean-throwing-close",
                         "conditional-boolean-getter-close",
+                        "conditional-boolean-nonliteral-close",
+                        "conditional-boolean-postwrite-getter-close",
+                        "conditional-boolean-postwrite-missing-read",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -2952,8 +2982,59 @@ var savedThrow, savedExhausted;
     getter_close = refusals()["body-throw-close-getter"]
     for label, text in (
         (
-            "conditional-boolean-nonliteral-close",
-            conditional_source.replace("return {};", "throw anchor.hasAttribute('data-closed');"),
+            "normal-postwrite-close",
+            postwrite_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-postwrite-close",
+            postwrite_throwing_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "normal-postwrite-getter-close",
+            postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-postwrite-getter-close",
+            postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "unsupported-postwrite-read",
+            postwrite_throwing_source.replace(
+                "throw anchor.hasAttribute('data-closed');",
+                "throw anchor.matches('[data-closed]');",
+            ),
+        ),
+        (
+            "bad-postwrite-receiver",
+            postwrite_throwing_source.replace(
+                "throw anchor.hasAttribute('data-closed');",
+                "throw (0).hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "second-postwrite-effect",
+            postwrite_throwing_source.replace(
+                "throw anchor.hasAttribute('data-closed');",
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed')); throw false;",
+            ),
+        ),
+        (
+            "invalid-postwrite-close-name",
+            postwrite_throwing_source.replace(
+                "anchor.setAttribute('data-closed',", "anchor.setAttribute('bad name',"
+            ),
         ),
         ("invalid-close-name", throwing_close.replace("data-closed", "bad name")),
         ("unknown-close-throw", throwing_close.replace("throw 2;", "throw anchor;")),
