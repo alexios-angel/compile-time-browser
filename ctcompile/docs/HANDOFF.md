@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved reads before iterator-close writes and exact product distances, 2026-09-23 UTC
+
+Resumed clean **ec34d448** and retained before-first-write source `7ba9aa6f`.
+**e4f19f95** uses the existing standalone-read census whenever no feeding write
+is pending. A Boolean captured before the first protected write survives both
+feeding writes, selectors and later writes. Pending feeding-read obligations,
+complete use checks, typed DOM/Style reproof, source guard/order, original saved
+exception and budgets remain. The unchanged original, getter and order variant
+execute; repeated calls preserve the earlier false/true snapshot.
+
+**9854d3a8** reuses the exact endpoint-pair representation for multiplication
+with at most two input values. At visits 0 and 2, `(i - 1) * 4294967295` has two
+bounded signed results whose distance exceeds the scalar bound. That distance
+is an internal stride; every source product still needs the existing scalar proof.
+Negative factors, reload gaps and saved identity pass; actual unbounded/fractional
+intermediates, overlapping reloads and later stores remain refused.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. All six final code/test
+hashes match the devbox; all 24 generated C++ files retain the early Boolean and
+original exception without Script/VM or nullable fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Three agents investigated source/raw/escape
+work before rate limits; the parent completed implementation, review and gates.
+One new host order assertion and one new escape-test variable collision were
+corrected; production stayed unchanged after first gates. Full suites were skipped.
+No browser implementation changed; Claude availability stayed uncertain.
+
+**Next native boundary:** retained `unsupported-earlier-read-inside-first-write`
+source `9533d479` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the saved read evaluated inside the first
+write's argument list, separately from that write's feeding read, while the original
+body exception wins. Single-write selector cleanup, nonterminal exceptional state,
+multiple protected regions, implicit cleanup, nested custom iterators, unguarded
+Bootstrap defaults, the application driver, full native Bootstrap and general
+powers remain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-before-first-write-read-values.md).
+
 ## Saved reads between iterator-close writes and mixed power ranges, 2026-09-23 UTC
 
 Resumed clean **9d3ddc90** and retained before-second-write source `40e597cd`.
