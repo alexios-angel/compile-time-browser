@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Writes after iterator-close selectors and power congruence, 2026-09-23 UTC
+
+Resumed clean **1bf155c0** and retained third-write source `6d1b5000`.
+**ca257905** preserves its final attribute write after the selector, in its own
+exact unused-result suppression region. Complete typed DOM/Style reproof still
+validates each receiver, literal attribute name and selector. Private callable
+checks, result confinement, source order, saved Boolean ownership and budgets
+remain. The original source, getter and order-sensitive literal-write variant
+execute. A selector result consumed by the following write remains refused.
+
+Parallel **f31c88dc** preserves the common congruence of a bounded base and one
+when its exponent is zero or one. Existing exact division can then prove composed
+array indices. Complete reload/store census, whole-key refinement and actual-write
+replay remain. All 145 historical power source bodies/CHECKs survive; twelve
+source controls were added. General powers remain separate.
+
+Three selected sources pass **48 native executions, 80 refusals and 24 Node/VM
+observations**. Focused host/arrays CTests and the exact power-index lit case pass.
+Seven final hashes match the devbox; all 24 generated C++ files retain the selector
+and following write, with no Script/VM protocol or nullable-scalar fallback.
+Full formatting passes **1126 C++, 157 Python, 114 web files**. Full suites were
+skipped.
+
+**Next native boundary:** `unsupported-third-postselector-result` source
+`8038c1f8` still refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve its selector Boolean for the subsequent
+attribute write while retaining the saved body exception. An additional
+post-selector `hasAttribute` producer (`fcad547a`), nonterminal exceptional state,
+multiple protected regions, implicit cleanup, nested custom iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-postselector-close.md).
+
 ## Selector reads in iterator closes and zero/unit power exponents, 2026-09-23 UTC
 
 Resumed clean **740279da** and retained selector source `f4005c21`.
