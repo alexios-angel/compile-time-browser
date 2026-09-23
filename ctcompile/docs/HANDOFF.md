@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded cleanup writes and bounded decimal conversions, 2026-09-23 UTC
+
+Resumed clean **f3f6f9b2** and retained source `c90a81f2` from the prior
+handoff. **df15eea0** preserves a saved DOM Boolean guarding the second
+protected cleanup write. The original read, condition, write order and body
+exception remain; complete uses, literal-selector validation, typed DOM/Style
+reproof and budgets still gate publication. Original, getter and order variants
+execute. Independent native review found no actionable issues.
+
+**f21f0a8d** extends shared `boundedConvertedNumber` through public Core
+conversion for at most 32 original bytes containing an empty or signed decimal
+String after JavaScript whitespace trimming. Property spelling, original values,
+mutation checks and receiver gaps remain separate. Three of six previously
+stored child sites become confined; three controls remain stored. Two historical
+table cases also become confined. All six new sites are explicitly observed by
+the interpreter oracle; their calls precede an existing intentional BigInt throw.
+Historical source bodies and raw IR inputs are preserved. No runtime code changed.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations,
+26 source preflight checks, exact host/arrays CTests and one selected table-key lit
+case**. User interruption lost the native run's final stdout after it reached the
+last refusal manifest; recovery checked the artifacts and only reran that final
+refusal. Formatting passes **1126 C++, 157 Python, 114 web files**; all 17 final
+code/test hashes match the devbox. Full suites were skipped.
+
+**Next native boundary:** retained `unsupported-selector-guards-second-write-read`,
+source `164962d0`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the branch-local `hasAttribute` read inside
+the guarded second write, the saved condition and original body exception.
+Single-write cleanup, broader exceptional state/control flow, nested custom
+iterators, unguarded Bootstrap defaults, the application driver, full native
+Bootstrap, general powers and legacy SCF retention remain unfinished. Escape
+conversion still refuses fractional/exponent/radix grammars and Strings over
+32 bytes. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-guarded-cleanup-decimal-conversions.md).
+
 ## Shared cleanup snapshots and BigInt table keys, 2026-09-23 UTC
 
 Resumed clean **e998a46a** and retained source `8f5b1ef8` from the prior
