@@ -768,6 +768,22 @@ module {
         replaced(replaced(conditionalSelector, "    %attribute =", secondRead + "    %attribute ="),
                  "ctjs.call %secondMethod(%element, %secondName, %present)",
                  "ctjs.call %secondMethod(%element, %secondName, %afterPresent)");
+    const auto conditionalIgnoredRead =
+        replaced(conditionalSelector, "    %secondKey =", secondRead + "    %secondKey =");
+    const auto conditionalBranchRead =
+        replaced(conditionalIgnoredRead, "ctjs.call %secondMethod(%element, %secondName, %present)",
+                 "ctjs.call %secondMethod(%element, %secondName, %afterPresent)");
+    const auto conditionalArgumentRead = moveReadBefore(
+        conditionalBranchRead, "    %afterReadKey =", "    %secondKey =", "    %secondEffect =");
+    const auto conditionalBranchSelector =
+        replaced(replaced(conditionalArgumentRead,
+                          "%afterReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                          "%afterReadKey = ctjs.constant #ctjs.string<\"matches\">"),
+                 "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                 "%afterReadName = ctjs.constant #ctjs.string<\"[data-closed]\">");
+    const auto conditionalIgnoredSelector = replaced(
+        conditionalBranchSelector, "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+        "ctjs.call %secondMethod(%element, %secondName, %present)");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -1992,6 +2008,30 @@ module {
              std::pair{conditionalSelector, true},
              std::pair{conditionalRead, true},
              std::pair{conditionalDistinct, true},
+             std::pair{conditionalIgnoredRead, true},
+             std::pair{conditionalBranchRead, true},
+             std::pair{conditionalArgumentRead, true},
+             std::pair{conditionalBranchSelector, true},
+             std::pair{conditionalIgnoredSelector, true},
+             std::pair{replaced(conditionalArgumentRead, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(replaced(conditionalArgumentRead,
+                                         "ctjs.get_property %element[%afterReadKey]",
+                                         "ctjs.get_property %text[%afterReadKey]"),
+                                "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                                "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+                       false},
+             std::pair{replaced(replaced(conditionalBranchSelector,
+                                         "ctjs.get_property %element[%afterReadKey]",
+                                         "ctjs.get_property %text[%afterReadKey]"),
+                                "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                                "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+                       false},
+             std::pair{replaced(conditionalArgumentRead,
+                                "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%afterReadName = ctjs.constant #ctjs.number<0>"),
+                       false},
              std::pair{replaced(conditionalSelector, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -2015,7 +2055,7 @@ module {
             std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
             continue;
         }
-        ctjs::CallOp snapshot, firstWrite, secondWrite;
+        ctjs::CallOp snapshot, otherRead, firstWrite, secondWrite;
         unsigned reads = 0, writes = 0;
         input->walk([&](ctjs::CallOp call) {
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -2025,12 +2065,20 @@ module {
             } else {
                 ++reads;
                 const auto name = ctjs::constantKey(call.getArgs()[0]);
-                if (name == "data-visited" || name == "[data-visited]") { snapshot = call; }
+                if (name == "data-visited" || name == "[data-visited]") {
+                    snapshot = call;
+                } else {
+                    otherRead = call;
+                }
             }
         });
-        const bool distinct = valid == conditionalDistinct;
-        check(snapshot && firstWrite && secondWrite && reads == (distinct ? 2u : 1u) &&
-                  writes == 2 && mlir::succeeded(mlir::verify(*input)),
+        const bool extraRead = valid.find("%afterReadKey =") != std::string::npos;
+        const bool distinct = valid.find("%secondName, %afterPresent)") != std::string::npos;
+        const bool branchRead =
+            extraRead && valid.find("%closeCondition =") < valid.find("%afterReadKey =");
+        check(snapshot && firstWrite && secondWrite && reads == (extraRead ? 2u : 1u) &&
+                  static_cast<bool>(otherRead) == extraRead && writes == 2 &&
+                  mlir::succeeded(mlir::verify(*input)),
               "conditional expansion keeps every read once and both original writes");
         if (!snapshot || !firstWrite || !secondWrite) { continue; }
         auto first = llvm::dyn_cast<ctjs::InvokeOp>(firstWrite->getParentOp());
@@ -2070,6 +2118,38 @@ module {
                   "every snapshot use is its original write value or exact guard");
         }
         check(uses == (distinct ? 2u : 3u), "conditional snapshot has a complete use census");
+        if (branchRead && otherRead && guard && second) {
+            auto method = otherRead.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            const bool beforeLookup = valid.find("%afterPresent =") < valid.find("%secondMethod =");
+            check(method && otherRead->getParentRegion() == &guard.getThenRegion() &&
+                      method->getBlock() == second->getBlock() &&
+                      otherRead->getBlock() == second->getBlock() &&
+                      method->isBeforeInBlock(otherRead) && otherRead->isBeforeInBlock(second) &&
+                      (beforeLookup ? otherRead->isBeforeInBlock(secondMethod)
+                                    : secondMethod->isBeforeInBlock(method)) &&
+                      method.getResult().hasOneUse(),
+                  "branch-local lookup and read retain their exact guard and write-lookup order");
+            unsigned localUses = 0;
+            for (mlir::OpOperand & use : otherRead.getResult().getUses()) {
+                ++localUses;
+                check(distinct && use.getOwner() == secondWrite && use.getOperandNumber() == 3,
+                      "branch-local read has only its original second-write value use");
+            }
+            check(localUses == (distinct ? 1u : 0u),
+                  "ignored or consumed branch-local snapshot has a complete use census");
+        }
+        for (auto invocation : {first, second}) {
+            if (!invocation) { continue; }
+            for (auto * continuation : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
+                auto & arm = continuation->front();
+                auto yield = llvm::hasSingleElement(arm)
+                                 ? llvm::dyn_cast<ctjs::InvokeYieldOp>(arm.front())
+                                 : ctjs::InvokeYieldOp{};
+                check(!invocation.getNumResults() && arm.getNumArguments() == 1 &&
+                          arm.getArgument(0).use_empty() && yield && yield.getValues().empty(),
+                      "both writes retain exact discarded-result and exception suppression");
+            }
+        }
         auto bound = contract;
         bound.entry = "entry$0";
         bound.moduleSha256 = hostContractFingerprint(*input);
@@ -2087,6 +2167,15 @@ module {
             input->walk([&](ctjs::CallOp call) {
                 check(proof.call(call), "every conditional cleanup call has typed evidence");
             });
+            if (branchRead && otherRead) {
+                auto method = otherRead.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                const auto kind = ctjs::constantKey(method.getKey()) == "matches"
+                                      ? HostDOMMethod::matches
+                                      : HostDOMMethod::hasAttribute;
+                check(proof.call(otherRead) && proof.call(otherRead)->kind == kind &&
+                          proof.call(otherRead)->returnsBoolean() && proof.method(method),
+                      "branch-local read receives exact DOM or Style Boolean evidence");
+            }
             check(proof.invocation(first) && proof.invocation(second) &&
                       DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
                   "both conditional suppressions reproduce complete typed proof");
@@ -2149,7 +2238,12 @@ module {
                                       reusedSecondSelector,
                                       conditionalSelector,
                                       conditionalRead,
-                                      conditionalDistinct}) {
+                                      conditionalDistinct,
+                                      conditionalIgnoredRead,
+                                      conditionalBranchRead,
+                                      conditionalArgumentRead,
+                                      conditionalBranchSelector,
+                                      conditionalIgnoredSelector}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -2170,7 +2264,42 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(conditionalSelector, "[data-visited]", "["),
+         {replaced(conditionalBranchSelector, "[data-closed]", "["),
+          replaced(conditionalIgnoredSelector, "[data-closed]", "["),
+          replaced(conditionalBranchSelector, "#ctjs.string<\"[data-closed]\">", "#ctjs.number<0>"),
+          replaced(conditionalArgumentRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+          replaced(conditionalArgumentRead, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%element, %afterReadName, %name)"),
+          replaced(conditionalArgumentRead, "    %secondEffect =",
+                   "    %again = ctjs.call %afterReadMethod(%element, %afterReadName)\n"
+                   "    %secondEffect ="),
+          replaced(conditionalArgumentRead, "    %secondEffect =",
+                   "    %anotherReadMethod = ctjs.get_property %element[%afterReadKey]\n"
+                   "    %anotherPresent = ctjs.call %anotherReadMethod(%element, %afterReadName)\n"
+                   "    %secondEffect ="),
+          replaced(conditionalArgumentRead,
+                   "%afterPresent = ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "%afterPresent = ctjs.constant #ctjs.boolean<false>"),
+          replaced(conditionalArgumentRead, "    %secondEffect =",
+                   "    ctjs.store_global \"leaked\", %afterPresent\n"
+                   "    %secondEffect ="),
+          replaced(conditionalArgumentRead,
+                   "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                   "ctjs.call %secondMethod(%element, %afterPresent, %afterPresent)"),
+          replaced(conditionalArgumentRead, "    %secondEffect =",
+                   "    %record = ctjs.create_object\n"
+                   "    ctjs.set_property %record[%name], %afterPresent\n"
+                   "    %secondEffect ="),
+          replaced(conditionalArgumentRead, "    %secondEffect =",
+                   "    ctjs.store_global \"leaked\", %afterReadMethod\n"
+                   "    %secondEffect ="),
+          moveReadBefore(conditionalIgnoredRead,
+                         "    %afterReadKey =", "    %secondKey =", "    scf.yield\n    }\n"),
+          replaced(conditionalArgumentRead, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(conditionalSelector, "[data-visited]", "["),
           replaced(conditionalSelector, "ctjs.call %readMethod(%element, %readName)",
                    "ctjs.call %readMethod(%element, %element)"),
           replaced(conditionalSelector, "ctjs.truthy %present", "ctjs.truthy %element"),
@@ -2178,7 +2307,6 @@ module {
           replaced(conditionalSelector, "    %answer = ctjs.create_object",
                    "    ctjs.store_global \"leaked\", %present\n"
                    "    %answer = ctjs.create_object"),
-          replaced(conditionalSelector, "    %secondKey =", secondRead + "    %secondKey ="),
           replaced(conditionalSelector, "    scf.yield\n    }\n",
                    "    scf.yield\n    } else {\n"
                    "    ctjs.store_global \"leaked\", %present\n    scf.yield\n    }\n"),

@@ -114,8 +114,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             return false;
                         }
                     }
-                    // ponytail: one guarded second write using saved reads; branch-local
-                    // reads and effects need their own order and exceptional-edge proof.
+                    // ponytail: one guarded second write and one branch-local read;
+                    // further effects need their own order and exceptional-edge proof.
                     for (mlir::Operation & nested : guard.getThenRegion().front()) {
                         if (!step()) { return false; }
                         if (llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::RootOp>(
@@ -128,11 +128,32 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             secondMethod = read;
                             continue;
                         }
+                        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
+                            read && !trailingMethod && !secondLeaf &&
+                            (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
+                             ctjs::constantKey(read.getKey()) == "matches")) {
+                            trailingMethod = read;
+                            continue;
+                        }
+                        if (auto read = llvm::dyn_cast<ctjs::CallOp>(nested);
+                            read && trailingMethod && !trailingCall &&
+                            read.getCallee() == trailingMethod.getResult() &&
+                            read.getReceiver() == trailingMethod.getObject() &&
+                            read.getArgs().size() == 1) {
+                            trailingCall = read;
+                            // This read stays inside the branch, but leaves suppression.
+                            // The shared selector and typed DOM proofs must exclude throws.
+                            if (ctjs::constantKey(trailingMethod.getKey()) == "matches") {
+                                consumedSelectors.push_back(read);
+                            }
+                            continue;
+                        }
                         if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(nested);
                             leaf && secondMethod && !secondLeaf &&
                             leaf.getCallee() == secondMethod.getResult() &&
                             leaf.getReceiver() == secondMethod.getObject() &&
-                            leaf.getArgs().size() == 2 && suffixReads.contains(leaf.getArgs()[1])) {
+                            leaf.getArgs().size() == 2 &&
+                            (trailingCall || suffixReads.contains(leaf.getArgs()[1]))) {
                             if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) {
                                 return false;
                             }
