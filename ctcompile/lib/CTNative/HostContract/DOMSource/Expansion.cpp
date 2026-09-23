@@ -48,6 +48,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             ctjs::CallOp readCall, trailingCall, finalReadCall;
             llvm::SmallVector<mlir::Value> suffixValues;
             llvm::DenseSet<mlir::OpOperand *> suffixUses;
+            llvm::DenseSet<mlir::Value> terminalReads;
             bool terminalSelector = false;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             for (mlir::Operation & operation : target.getBody().front()) {
@@ -98,7 +99,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         // write keeps the existing read-to-write proof instead.
                         suffixValues.append({sourceReadMethod.getResult(), read.getResult()});
                         suffixUses.insert(&read->getOpOperand(0));
-                        if (selector) { suffixLeaves.insert(read); }
+                        if (selector) {
+                            suffixLeaves.insert(read);
+                        } else {
+                            terminalReads.insert(read.getResult());
+                        }
                         sourceReadMethod = {};
                         sourceReadCall = {};
                         terminalSelector = true;
@@ -155,6 +160,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         suffixValues.append(
                             {finalReadMethod.getResult(), finalReadCall.getResult()});
                         suffixUses.insert(&finalReadCall->getOpOperand(0));
+                        suffixUses.insert(&leaf->getOpOperand(3));
+                    } else if (terminalReads.erase(leaf.getArgs()[1])) {
+                        // An earlier terminal read may feed one later write.
+                        // The complete census still rejects leaks and reuse.
                         suffixUses.insert(&leaf->getOpOperand(3));
                     }
                     if (suffixLeaves.empty() && leaf.getArgs()[1] == selectorLeaf.getResult()) {
