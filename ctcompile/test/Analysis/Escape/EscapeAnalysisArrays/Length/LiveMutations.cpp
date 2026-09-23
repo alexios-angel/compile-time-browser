@@ -105,7 +105,7 @@ void LengthCases::liveMutations() {
         literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "01"));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "2"));
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "0"));
@@ -119,7 +119,7 @@ void LengthCases::liveMutations() {
         literal.setValueAttr(ctjs::StringAttr::get(&context, "1"));
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "01"));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606875873280ULL));
@@ -241,7 +241,7 @@ void LengthCases::liveMutations() {
         inspect(unary || shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         if (unary || shift) {
             literal.setValueAttr(ctjs::StringAttr::get(&context, "00"));
-            inspect(ArrayContentsFailure::UnknownIndex);
+            inspect(ArrayContentsFailure::None);
         }
         literal.setValueAttr(ctjs::BigIntAttr::get(&context, "0"));
         inspect(ArrayContentsFailure::UnknownIndex);

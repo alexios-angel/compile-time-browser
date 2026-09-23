@@ -205,8 +205,19 @@ void InductionCases::signedArithmetic() {
            replace(stringSub, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
     for (const std::string text :
          {"02", "+2", "-2", "2.0", "2e0", " 2", "0x2", "4294967295", "NaN"}) {
-        reject("negative String offsets require the existing bounded canonical decimal proof",
-               replace(stringSub, "#ctjs.string<\"2\">", "#ctjs.string<\"" + text + "\">"));
+        if (text == "02" || text == "+2" || text == " 2" || text == "4294967295") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body =
+                     replace(stringSub, "#ctjs.string<\"2\">", "#ctjs.string<\"" + text + "\">"),
+                 .arrays = "a:[one,x]",
+                 .reads = text == "4294967295" ? "a[0]=one" : "a[0]=one; a[1]=x",
+                 .exit = text == "4294967295" ? "one -> {}" : "x -> {x}"},
+                text == "4294967295" ? "x" : "");
+        } else {
+            reject("negative String offsets require the existing bounded canonical decimal proof",
+                   replace(stringSub, "#ctjs.string<\"2\">", "#ctjs.string<\"" + text + "\">"));
+        }
         const auto left =
             replace(leftStringSub, "#ctjs.string<\"1\">", "#ctjs.string<\"" + text + "\">");
         if (text == "-2") {
@@ -308,10 +319,22 @@ void InductionCases::signedArithmetic() {
     for (const std::string constant :
          {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>",
           "#ctjs.number<4751297606875873280>"}) {
-        reject("negative-left Sub needs bounded exact Numbers or canonical String offsets",
-               replace(negativeLeft, difference,
-                       "  %operand = ctjs.constant " + constant + "\n" +
-                           replace(difference, "sub %minus, %one", "sub %minus, %operand")));
+        if (constant == "#ctjs.string<\"01\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body =
+                     replace(negativeLeft, difference,
+                             "  %operand = ctjs.constant " + constant + "\n" +
+                                 replace(difference, "sub %minus, %one", "sub %minus, %operand")),
+                 .arrays = "a:[one,one,x]; seed:[]",
+                 .reads = "a[0]=one; a[2]=x",
+                 .exit = "x -> {x}"});
+        } else {
+            reject("negative-left Sub needs bounded exact Numbers or canonical String offsets",
+                   replace(negativeLeft, difference,
+                           "  %operand = ctjs.constant " + constant + "\n" +
+                               replace(difference, "sub %minus, %one", "sub %minus, %operand")));
+        }
     }
     const auto negativeStringLeft =
         replace(negativeLeft, difference,
@@ -669,9 +692,20 @@ void InductionCases::signedArithmetic() {
         }
         for (const std::string invalid :
              {"0", "01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
-            reject("String divisors need canonical bounded nonzero decimal evidence",
-                   replace(stringRight, "#ctjs.string<\"" + text + "\">",
-                           "#ctjs.string<\"" + invalid + "\">"));
+            if ((operation == "div" && (invalid == "01" || invalid == "+1" || invalid == " 1")) ||
+                (operation == "mod" && invalid == "4294967295")) {
+                run({.what = "bounded decimal conversion preserves original reads and retained "
+                             "children",
+                     .body = replace(stringRight, "#ctjs.string<\"" + text + "\">",
+                                     "#ctjs.string<\"" + invalid + "\">"),
+                     .arrays = "a:[one,x]; seed:[]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("String divisors need canonical bounded nonzero decimal evidence",
+                       replace(stringRight, "#ctjs.string<\"" + text + "\">",
+                               "#ctjs.string<\"" + invalid + "\">"));
+            }
         }
         run({.what = "repeated String division proves its original saved operands",
              .body = replace(replace(stringRight, "  %signedResult =", "  %unused ="), "  %step =",

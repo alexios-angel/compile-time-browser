@@ -156,7 +156,17 @@ void InductionCases::overwritesAndTransport() {
                  .exit = "a -> {a}"},
                 "x");
         } else {
-            reject("varying power exponents require a converted zero/unit Number base", body);
+            if (literal == "#ctjs.string<\"01\">") {
+                run({.what = "bounded decimal conversion preserves original reads and retained "
+                             "children",
+                     .body = body,
+                     .arrays = "a:[one,zero]",
+                     .reads = "a[0]=one; a[1]=zero",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("varying power exponents require a converted zero/unit Number base", body);
+            }
         }
     }
     const auto zeroBase = replace(unitBase, "pow %one, %i", "pow %zero, %i");
@@ -277,7 +287,17 @@ void InductionCases::overwritesAndTransport() {
                  .exit = "a -> {a}"},
                 "x");
         } else {
-            reject("two-point powers still require exact converted scalar results", body);
+            if (literal == "#ctjs.string<\"01\">") {
+                run({.what = "bounded decimal conversion preserves original reads and retained "
+                             "children",
+                     .body = body,
+                     .arrays = "a:[zero,zero]",
+                     .reads = "a[0]=zero; a[1]=zero",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("two-point powers still require exact converted scalar results", body);
+            }
         }
     }
     const auto twoPointExponent = replace(replace(unitPower, "[%one, %x]", "[%zero, %x, %x]"),
@@ -1622,8 +1642,18 @@ void InductionCases::overwritesAndTransport() {
     for (const std::string literal :
          {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
           "#ctjs.string<\"04\">", "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"4\">"}) {
-        reject("primitive remainders require bounded nonzero side-effect-free conversion",
-               replace(stringRemainderReload, "#ctjs.string<\"4\">", literal));
+        if (literal == "#ctjs.string<\"04\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(stringRemainderReload, "#ctjs.string<\"4\">", literal),
+                 .arrays = "a:[zero,four,zero,zero,zero]",
+                 .reads = "a[1]=four; a[0]=zero; a[1]=four; a[2]=zero; a[1]=four; a[4]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("primitive remainders require bounded nonzero side-effect-free conversion",
+                   replace(stringRemainderReload, "#ctjs.string<\"4\">", literal));
+        }
     }
     for (const auto & expression :
          {"ctjs.binary_static bitand %i, %one", "ctjs.binary_static bitand %one, %i",
@@ -1781,8 +1811,19 @@ void InductionCases::overwritesAndTransport() {
         replace(stringAndReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
     for (const std::string literal : {"#ctjs.undefined", "#ctjs.string<\"01\">",
                                       "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"1\">"}) {
-        reject("primitive AND masks require bounded side-effect-free conversion",
-               replace(stringAndReload, "#ctjs.string<\"1\">", literal));
+        if (literal == "#ctjs.string<\"01\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(stringAndReload, "#ctjs.string<\"1\">", literal),
+                 .arrays = "a:[zero,zero,text,zero]",
+                 .reads = "a[2]=text; a[0]=zero; a[2]=text; a[1]=zero; a[2]=text; a[2]=text; "
+                          "a[2]=text; a[3]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("primitive AND masks require bounded side-effect-free conversion",
+                   replace(stringAndReload, "#ctjs.string<\"1\">", literal));
+        }
     }
     for (const auto & bits : {"4613937818241073152", "13830554455654793216"}) {
         auto inputGap =
@@ -1967,8 +2008,18 @@ void InductionCases::overwritesAndTransport() {
                        "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
         for (const std::string literal : {"#ctjs.undefined", "#ctjs.string<\"01\">",
                                           "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"1\">"}) {
-            reject("primitive OR/XOR masks require bounded side-effect-free conversion",
-                   replace(stringReload, "#ctjs.string<\"1\">", literal));
+            if (literal == "#ctjs.string<\"01\">") {
+                run({.what = "bounded decimal conversion preserves original reads and retained "
+                             "children",
+                     .body = replace(stringReload, "#ctjs.string<\"1\">", literal),
+                     .arrays = "a:[zero,zero,text,zero]",
+                     .reads = "a[2]=text; a[0]=zero; a[2]=text; a[2]=text",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("primitive OR/XOR masks require bounded side-effect-free conversion",
+                       replace(stringReload, "#ctjs.string<\"1\">", literal));
+            }
         }
     }
     for (const std::string kind : {"bitand", "bitor"}) {
@@ -3850,8 +3901,18 @@ void InductionCases::overwritesAndTransport() {
                        left ? "shl %part, %x" : kind + " %i, %x"));
         for (const std::string literal : {"#ctjs.undefined", "#ctjs.string<\"01\">",
                                           "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"1\">"}) {
-            reject("primitive shift counts retain canonical conversion and magnitude bounds",
-                   replace(primitiveShift, "#ctjs.string<\"1\">", literal));
+            if (literal == "#ctjs.string<\"01\">") {
+                run({.what = "bounded decimal conversion preserves original reads and retained "
+                             "children",
+                     .body = replace(primitiveShift, "#ctjs.string<\"1\">", literal),
+                     .arrays = left ? "a:[zero,one,zero,one]" : "a:[zero,zero,one,one]",
+                     .reads = left ? "a[0]=zero; a[2]=zero" : "a[0]=zero; a[2]=one",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("primitive shift counts retain canonical conversion and magnitude bounds",
+                       replace(primitiveShift, "#ctjs.string<\"1\">", literal));
+            }
         }
     }
     for (const auto & kind : {"shr", "ushr"}) {
@@ -4819,8 +4880,18 @@ void InductionCases::overwritesAndTransport() {
     for (const std::string literal :
          {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
           "#ctjs.string<\"02\">", "#ctjs.bigint<\"2\">"}) {
-        reject("primitive divisors require bounded nonzero side-effect-free conversion",
-               replace(stringQuotient, "#ctjs.string<\"2\">", literal));
+        if (literal == "#ctjs.string<\"02\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(stringQuotient, "#ctjs.string<\"2\">", literal),
+                 .arrays = "a:[zero,zero,one,one]",
+                 .reads = "a[0]=zero; a[2]=one",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("primitive divisors require bounded nonzero side-effect-free conversion",
+                   replace(stringQuotient, "#ctjs.string<\"2\">", literal));
+        }
     }
     const auto negativeQuotient = replace(
         replace(replace(quotientIndex, "[%x, %x, %one, %one]", "[%one, %x, %x, %one]"), "  %a =",
@@ -5453,10 +5524,22 @@ void InductionCases::overwritesAndTransport() {
            replace(stringReload, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
     for (const std::string literal :
          {"#ctjs.string<\"01\">", "#ctjs.undefined", "#ctjs.bigint<\"1\">"}) {
-        reject("primitive scaling still requires a bounded side-effect-free Number conversion",
-               replace(replace(scaledIndex,
-                               "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
-                       "mul %i, %one", "mul %i, %factor"));
+        if (literal == "#ctjs.string<\"01\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(replace(scaledIndex, "  %a =",
+                                         "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                                 "mul %i, %one", "mul %i, %factor"),
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("primitive scaling still requires a bounded side-effect-free Number conversion",
+                   replace(replace(scaledIndex,
+                                   "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                           "mul %i, %one", "mul %i, %factor"));
+        }
     }
     const std::string quotientOffset =
         "ctjs.binary div %i, %two\n  %position = ctjs.binary add %part, %one";
@@ -5660,10 +5743,20 @@ void InductionCases::overwritesAndTransport() {
     reject("later stores invalidate earlier primitive subtraction reloads",
            replace(stringReverseReload,
                    "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
-    for (const auto & literal :
+    for (const std::string literal :
          {"#ctjs.string<\"01\">", "#ctjs.undefined", "#ctjs.bigint<\"1\">"}) {
-        reject("subtraction still requires a bounded primitive Number conversion",
-               replace(primitiveReverse, "#ctjs.string<\"1\">", literal));
+        if (literal == "#ctjs.string<\"01\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(primitiveReverse, "#ctjs.string<\"1\">", literal),
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=one; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("subtraction still requires a bounded primitive Number conversion",
+                   replace(primitiveReverse, "#ctjs.string<\"1\">", literal));
+        }
     }
     reject("subtraction cannot borrow an object's conversion",
            replace(primitiveReverse, "sub %text, %i", "sub %x, %i"));

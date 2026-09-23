@@ -70,8 +70,20 @@ void StructuredCases::invariantArithmetic() {
                     .exit = "y -> {y}"});
     for (const std::string literal :
          {"#ctjs.number<0>", "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
-        reject("structured product strides need exact nonzero primitive conversion",
-               replace(invariantProduct, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        if (literal == "#ctjs.string<\"01\">") {
+            rows.push_back(
+                {.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(invariantProduct, makeUnit,
+                                 "  %unit = ctjs.constant " + literal + "\n"),
+                 .arrays = "a:[x,y]",
+                 .reads = "a[0]=x; a[1]=y",
+                 .exit = "y -> {y}"});
+        } else {
+            reject(
+                "structured product strides need exact nonzero primitive conversion",
+                replace(invariantProduct, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        }
     }
     const auto divisionProduct =
         replace(invariantProduct, makeUnit,
@@ -146,8 +158,13 @@ void StructuredCases::invariantArithmetic() {
                             .arrays = "a:[x,y]",
                             .reads = "a[0]=x; a[1]=y",
                             .exit = "y -> {y}"});
-            reject("invariant Sub refuses noncanonical original Strings",
-                   replace(string, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
+            rows.push_back(
+                {.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(string, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"),
+                 .arrays = "a:[x,y]",
+                 .reads = "a[0]=x; a[1]=y",
+                 .exit = "y -> {y}"});
         }
     }
     reject("invariant addition cannot exceed the exact magnitude bound",
@@ -212,8 +229,19 @@ void StructuredCases::invariantArithmetic() {
                    "%index = %one"));
     for (const std::string literal : {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">",
                                       "#ctjs.undefined", "#ctjs.number<4602678819172646912>"}) {
-        reject("structured bitwise latches require bounded original Number conversion",
-               replace(invariantBits, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        if (literal == "#ctjs.string<\"01\">") {
+            rows.push_back(
+                {.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body =
+                     replace(invariantBits, makeUnit, "  %unit = ctjs.constant " + literal + "\n"),
+                 .arrays = "a:[x,y]",
+                 .reads = "a[0]=x; a[1]=y",
+                 .exit = "y -> {y}"});
+        } else {
+            reject("structured bitwise latches require bounded original Number conversion",
+                   replace(invariantBits, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        }
     }
     const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
     for (const auto & source :
@@ -247,8 +275,13 @@ void StructuredCases::invariantArithmetic() {
                     .arrays = "a:[x,y]",
                     .reads = "a[0]=x; a[1]=y",
                     .exit = "y -> {y}"});
-    reject("a structured power cannot borrow noncanonical primitive conversion",
-           replace(invariantPower, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body =
+             replace(invariantPower, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"),
+         .arrays = "a:[x,y]",
+         .reads = "a[0]=x; a[1]=y",
+         .exit = "y -> {y}"});
     reject("an invariant structured power still bounds the final index update",
            replace(replace(invariantPower, makeUnit,
                            "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"),
@@ -372,8 +405,17 @@ void StructuredCases::invariantArithmetic() {
         for (const std::string refused :
              {"#ctjs.string<\"-1\">", "#ctjs.string<\"4294967295\">", "#ctjs.string<\"00\">",
               "#ctjs.string<\"4294967296\">", "#ctjs.undefined"}) {
-            reject("structured BitNot requires exact bounded nonzero literal conversion",
-                   replace(source, literal, refused));
+            if (subtract && refused == "#ctjs.string<\"00\">") {
+                rows.push_back({.what = "bounded decimal conversion preserves original reads and "
+                                        "retained children",
+                                .body = replace(source, literal, refused),
+                                .arrays = "a:[x,y]",
+                                .reads = "a[0]=x; a[1]=y",
+                                .exit = "y -> {y}"});
+            } else {
+                reject("structured BitNot requires exact bounded nonzero literal conversion",
+                       replace(source, literal, refused));
+            }
         }
     }
     const std::string makeBoolean =
@@ -522,8 +564,12 @@ void StructuredCases::invariantArithmetic() {
                     .exit = "zero -> {}; zero -> {}"});
     reject("negative String snapshots cannot change across structured yields",
            replace(negativeStrings, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
-    reject("a noncanonical negative String cannot borrow another predecessor's conversion",
-           replace(negativeStrings, "#ctjs.string<\"-2\">", "#ctjs.string<\"-02\">"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(negativeStrings, "#ctjs.string<\"-2\">", "#ctjs.string<\"-02\">"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[1]=y; a[0]=x",
+         .exit = "y -> {y}; x -> {x}"});
     reject("unknown structured String inputs cannot borrow another predecessor's conversion",
            replace(negativeStrings, "scf.yield %right :", "scf.yield %p :"),
            ArrayContentsFailure::UnsupportedOperation);
@@ -544,8 +590,12 @@ void StructuredCases::invariantArithmetic() {
                     .exit = "y -> {y}; x -> {x}"});
     reject("String latches cannot change on a structured backedge",
            replace(directStrings, "%base, %step, %read, %d :", "%base, %step, %read, %one :"));
-    reject("String latches require canonical spelling on every predecessor",
-           replace(directStrings, "#ctjs.string<\"-2\">", "#ctjs.string<\"-02\">"));
+    rows.push_back(
+        {.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(directStrings, "#ctjs.string<\"-2\">", "#ctjs.string<\"-02\">"),
+         .arrays = "a:[x,y] | a:[x,y]",
+         .reads = "a[0]=x; a[1]=y; a[0]=x",
+         .exit = "y -> {y}; x -> {x}"});
     savedNegative = replace(replace(savedUnit, "  %unit = ctjs.get_property %seed[%name]",
                                     "  %magnitude = ctjs.get_property %seed[%name]\n"
                                     "  %unit = ctjs.unary neg %magnitude"),

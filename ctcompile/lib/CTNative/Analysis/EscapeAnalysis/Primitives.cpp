@@ -1,4 +1,5 @@
 #include "Contents.hpp"
+#include "ctbrowser/core/number_format.hpp"
 
 namespace ctcompile::ctnative::escape_detail {
 
@@ -139,17 +140,27 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     if (!origin) { return std::nullopt; }
     if (auto number = boundedNumber(origin, negate)) { return number; }
     if (input.string()) {
-        if (!negate) { return ownArrayIndex(input); }
+        if (input.asciiCharacter) { return negate ? std::nullopt : ownArrayIndex(input); }
         auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
         auto string =
             literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
         if (!string) { return std::nullopt; }
-        auto text = string.getValue();
-        std::uint32_t magnitude = 0;
-        // ponytail: a sign and ten canonical decimal digits; wider spellings need charged parsing.
-        if (text.consume_front("-") && !text.empty() && text.size() <= 10 && text.front() >= '1' &&
-            text.front() <= '9' && !text.getAsInteger(10, magnitude)) {
-            return magnitude;
+        const auto text = string.getValue();
+        // ponytail: at most 32 source bytes, empty or signed decimal digits after
+        // JS whitespace trimming. Wider/other numeric grammars need charged proof.
+        if (text.size() > 32) { return std::nullopt; }
+        llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
+        if ((digits.consume_front("+") || digits.consume_front("-")) && digits.empty()) {
+            return std::nullopt;
+        }
+        if (!llvm::all_of(digits, [](char c) { return c >= '0' && c <= '9'; })) {
+            return std::nullopt;
+        }
+        const double converted = ctbrowser::string_to_number({text.data(), text.size()});
+        const double magnitude = negate ? -converted : converted;
+        if (std::isfinite(magnitude) && magnitude >= 0 && magnitude <= 4294967295.0 &&
+            std::floor(magnitude) == magnitude) {
+            return static_cast<std::size_t>(magnitude);
         }
         return std::nullopt;
     }

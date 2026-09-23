@@ -260,8 +260,32 @@ void InductionCases::invariantReads() {
          {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">", "#ctjs.string<\"0.0\">",
           "#ctjs.string<\"-2\">", "#ctjs.string<\"3\">", "#ctjs.string<\"4294967296\">",
           "#ctjs.number<4602678819172646912>", "#ctjs.bigint<\"0\">", "#ctjs.undefined"}) {
-        reject("table conversion retains exact primitive and own-index bounds",
-               replace(convertedTable, "#ctjs.string<\"0\">", primitive));
+        const auto source = replace(convertedTable, "#ctjs.string<\"0\">", primitive);
+        if (primitive == "#ctjs.string<\"00\">" || primitive == "#ctjs.string<\"-0\">") {
+            run({.what = "decimal conversion preserves original table primitives",
+                 .body = source,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("table conversion retains exact primitive and own-index bounds", source);
+        }
+    }
+    for (const std::string text : {"", "+00", " 00 ", "00000000000000000000000000000000"}) {
+        run({.what =
+                 "bounded signed decimal and empty Strings convert without changing their origin",
+             .body =
+                 replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string text : {"+", "-", "--0", "+-0", "-+0", "1e-999junk", "0x0", "0.0", "0e0",
+                                   "000000000000000000000000000000000"}) {
+        reject("conversion validates the whole bounded decimal grammar before Core parsing",
+               replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">"));
     }
     reject("table conversion cannot invoke object coercion",
            replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
@@ -371,8 +395,17 @@ void InductionCases::invariantReads() {
          {"#ctjs.string<\"00\">", "#ctjs.string<\"-0\">", "#ctjs.string<\"0.0\">",
           "#ctjs.string<\"-2\">", "#ctjs.string<\"3\">", "#ctjs.string<\"4294967296\">",
           "#ctjs.number<4602678819172646912>", "#ctjs.bigint<\"0\">", "#ctjs.undefined"}) {
-        reject("binary table conversion retains exact primitive and own-index bounds",
-               replace(binaryTable, "#ctjs.string<\"0\">", primitive));
+        const auto source = replace(binaryTable, "#ctjs.string<\"0\">", primitive);
+        if (primitive == "#ctjs.string<\"00\">" || primitive == "#ctjs.string<\"-0\">") {
+            run({.what = "decimal conversion preserves original table primitives",
+                 .body = source,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("binary table conversion retains exact primitive and own-index bounds", source);
+        }
     }
     reject("binary table conversion cannot invoke object coercion",
            replace(binaryTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
@@ -922,8 +955,19 @@ void InductionCases::invariantReads() {
          .exit = "added -> {}"});
     for (const std::string literal : {"#ctjs.number<0>", "#ctjs.string<\"01\">",
                                       "#ctjs.bigint<\"1\">", "#ctjs.number<4602678819172646912>"}) {
-        reject("product latches require exact nonzero primitive conversion",
-               replace(invariantProduct, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        if (literal == "#ctjs.string<\"01\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(invariantProduct, makeUnit,
+                                 "  %unit = ctjs.constant " + literal + "\n"),
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one; a[1]=two; a[2]=three",
+                 .exit = "added -> {}"});
+        } else {
+            reject(
+                "product latches require exact nonzero primitive conversion",
+                replace(invariantProduct, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        }
     }
     reject("an invariant product must still bound the final index update",
            replace(replace(invariantProduct, makeUnit,
@@ -954,8 +998,11 @@ void InductionCases::invariantReads() {
                    replace(source, operation + " %d, " + (operation == "div" ? "%one" : "%two"),
                            operation + " " + operands));
         }
-        reject("division latches cannot borrow noncanonical primitive conversion",
-               replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"));
+        run({.what = "bounded decimal conversion preserves original reads and retained children",
+             .body = replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"),
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
     }
     reject("a fractional quotient cannot certify integer induction",
            replace(invariantProduct, "mul %d, %one", "div %d, %two"));
@@ -993,8 +1040,12 @@ void InductionCases::invariantReads() {
                  .arrays = "a:[one,two,three]",
                  .reads = "a[0]=one; a[1]=two; a[2]=three",
                  .exit = "added -> {}"});
-            reject("invariant Sub refuses noncanonical original Strings",
-                   replace(string, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"));
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(string, "#ctjs.string<\"1\">", "#ctjs.string<\"01\">"),
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one; a[1]=two; a[2]=three",
+                 .exit = "added -> {}"});
         }
     }
     reject("invariant addition cannot exceed the exact magnitude bound",
@@ -1020,8 +1071,11 @@ void InductionCases::invariantReads() {
                        "^header(%base, %step, %added, %one"));
         reject("bitwise latches cannot borrow a changing induction operand",
                replace(source, expression, replace(expression, "%d", "%i")));
-        reject("bitwise latches refuse noncanonical String conversion",
-               replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"));
+        run({.what = "bounded decimal conversion preserves original reads and retained children",
+             .body = replace(source, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"01\">\n"),
+             .arrays = "a:[one,two,three]",
+             .reads = "a[0]=one; a[1]=two; a[2]=three",
+             .exit = "added -> {}"});
     }
     run({.what = "header-local bitwise latches retain original header transport",
          .body = replace(
@@ -1132,8 +1186,18 @@ void InductionCases::invariantReads() {
     for (const std::string literal :
          {"#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">", "#ctjs.undefined",
           "#ctjs.number<4602678819172646912>", "#ctjs.number<4751297606875873280>"}) {
-        reject("power latches cannot borrow unsupported primitive conversions",
-               replace(invariantPower, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        if (literal == "#ctjs.string<\"01\">") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body =
+                     replace(invariantPower, makeUnit, "  %unit = ctjs.constant " + literal + "\n"),
+                 .arrays = "a:[one,two,three]",
+                 .reads = "a[0]=one; a[1]=two; a[2]=three",
+                 .exit = "added -> {}"});
+        } else {
+            reject("power latches cannot borrow unsupported primitive conversions",
+                   replace(invariantPower, makeUnit, "  %unit = ctjs.constant " + literal + "\n"));
+        }
     }
     reject("an invariant power still bounds the final index update",
            replace(replace(invariantPower, makeUnit,
@@ -1300,8 +1364,17 @@ void InductionCases::invariantReads() {
         for (const std::string refused : {"#ctjs.string<\"-1\">", "#ctjs.string<\"4294967295\">",
                                           "#ctjs.string<\"00\">", "#ctjs.string<\"4294967296\">",
                                           "#ctjs.number<4602678819172646912>", "#ctjs.undefined"}) {
-            reject("a BitNot latch requires exact bounded nonzero literal conversion",
-                   replace(source, literal, refused));
+            if (subtract && refused == "#ctjs.string<\"00\">" && literal != "#ctjs.number<0>") {
+                run({.what = "bounded decimal conversion preserves original reads and retained "
+                             "children",
+                     .body = replace(source, literal, refused),
+                     .arrays = "a:[one,x]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("a BitNot latch requires exact bounded nonzero literal conversion",
+                       replace(source, literal, refused));
+            }
         }
     }
 }

@@ -474,10 +474,11 @@ void LengthCases::arithmetic() {
               "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
                 const bool exactZero =
-                    literal == "#ctjs.string<\"0\">" || literal == "#ctjs.boolean<false>" ||
-                    literal == "#ctjs.null" ||
+                    literal == "#ctjs.string<\"0\">" || literal == "#ctjs.string<\"00\">" ||
+                    literal == "#ctjs.boolean<false>" || literal == "#ctjs.null" ||
                     ((literal == "#ctjs.number<13830554455654793216>" ||
-                      literal == "#ctjs.string<\"-1\">") &&
+                      literal == "#ctjs.string<\"-1\">" ||
+                      literal == "#ctjs.string<\"4294967295\">") &&
                      (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
                                            operands == "%zero, %input")));
                 run({.what = "only independently bounded bitwise inputs supply an exact index",

@@ -199,8 +199,19 @@ void InductionCases::signedStrides() {
          .reads = "a[0]=one; a[2]=three",
          .exit = "added -> {}"});
     for (const std::string text : {"-0", "-01", "-1.0", " -1", "-1 ", "-4294967296"}) {
-        reject("String Sub latches require bounded canonical decimal spelling",
-               replace(stringSubtract, "#ctjs.string<\"-1\">", "#ctjs.string<\"" + text + "\">"));
+        if (text == "-01" || text == " -1" || text == "-1 ") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(stringSubtract, "#ctjs.string<\"-1\">",
+                                 "#ctjs.string<\"" + text + "\">"),
+                 .arrays = "a:[one,x]",
+                 .reads = "a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        } else {
+            reject(
+                "String Sub latches require bounded canonical decimal spelling",
+                replace(stringSubtract, "#ctjs.string<\"-1\">", "#ctjs.string<\"" + text + "\">"));
+        }
     }
     reject("String Sub latches preserve original property keys",
            replace(stringSubtract, "%base[%i]", "%base[%minus]"),
@@ -377,9 +388,19 @@ void InductionCases::signedStrides() {
            ArrayContentsFailure::UnsupportedOperation);
     for (const std::string text :
          {"-0", "-01", "--1", "-+1", "-1.0", "-1e0", " -1", "-1 ", "-0x1", "-4294967296"}) {
-        reject(
-            "negative String conversion requires bounded canonical decimal digits",
-            replace(savedNegativeText, "#ctjs.string<\"-1\">", "#ctjs.string<\"" + text + "\">"));
+        if (text == "-01" || text == " -1" || text == "-1 ") {
+            run({.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(savedNegativeText, "#ctjs.string<\"-1\">",
+                                 "#ctjs.string<\"" + text + "\">"),
+                 .arrays = "a:[one,x]; inputs:[x]",
+                 .reads = "inputs[0]=ctjs.constant; a[0]=one; a[1]=x",
+                 .exit = "x -> {x}"});
+        } else {
+            reject("negative String conversion requires bounded canonical decimal digits",
+                   replace(savedNegativeText, "#ctjs.string<\"-1\">",
+                           "#ctjs.string<\"" + text + "\">"));
+        }
     }
     run({.what = "negative canonical String conversion includes the exact magnitude bound",
          .body = prefix + "  %text = ctjs.constant #ctjs.string<\"-4294967295\">\n"
@@ -517,7 +538,16 @@ void InductionCases::signedStrides() {
                  .reads = "a[0]=one; a[1]=x",
                  .exit = "x -> {x}"});
         } else {
-            reject("BitNot requires bounded Numbers or canonical original Strings", body);
+            if (constant == "#ctjs.string<\"00\">") {
+                run({.what = "bounded decimal conversion preserves original reads and retained "
+                             "children",
+                     .body = body,
+                     .arrays = "a:[one,x]",
+                     .reads = "a[0]=one; a[1]=x",
+                     .exit = "x -> {x}"});
+            } else {
+                reject("BitNot requires bounded Numbers or canonical original Strings", body);
+            }
         }
     }
     const auto carriedStringComplement =
@@ -805,8 +835,11 @@ void InductionCases::signedStrides() {
          .arrays = "a:[one,two,three]",
          .reads = "a[0]=one; a[1]=two; a[2]=three",
          .exit = "negative -> {}"});
-    reject("String shift counts require canonical decimal evidence",
-           replace(stringCount, "#ctjs.string<\"31\">", "#ctjs.string<\"031\">"));
+    run({.what = "bounded decimal conversion preserves original reads and retained children",
+         .body = replace(stringCount, "#ctjs.string<\"31\">", "#ctjs.string<\"031\">"),
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
 }
 
 } // namespace ctcompile::test::escape::arrays::induction_detail

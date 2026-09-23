@@ -322,7 +322,10 @@ void LengthCases::indexSnapshots() {
                      "^join(%offset: !ctjs.value):\n"
                      "  %index = ctjs.binary sub %length, %offset\n" +
                      indexed,
-             .failure = ArrayContentsFailure::UnknownIndex});
+             .failure = literal == "#ctjs.string<\"01\">" ? ArrayContentsFailure::None
+                                                          : ArrayContentsFailure::UnknownIndex,
+             .arrays = "a:[zero] | a:[zero]",
+             .exit = "a -> {a}; a -> {a}"});
     }
     run({.what = "a computed String offset has no original literal index authority",
          .body = values + stringOne + read +
@@ -441,7 +444,8 @@ void LengthCases::indexSnapshots() {
                                       "#ctjs.undefined"}) {
         const auto body =
             values + "  %one = ctjs.constant " + literal + "\n" + read + subtract + indexed;
-        if (literal == "#ctjs.boolean<true>") {
+        if (literal == "#ctjs.boolean<true>" || literal == "#ctjs.string<\"01\">" ||
+            literal == "#ctjs.string<\"+1\">") {
             run({.what = "the original Boolean offset selects its exact overwritten slot",
                  .body = body,
                  .arrays = "a:[zero]",
@@ -450,7 +454,10 @@ void LengthCases::indexSnapshots() {
         }
         run({.what = "subtraction still refuses unproved or missing indices",
              .body = body,
-             .failure = literal == "#ctjs.number<13830554455654793216>" || literal == "#ctjs.null"
+             .failure = literal == "#ctjs.number<13830554455654793216>" ||
+                                literal == "#ctjs.null" || literal == "#ctjs.string<\"\">" ||
+                                literal == "#ctjs.string<\" \">" ||
+                                literal == "#ctjs.string<\"-0\">"
                             ? ArrayContentsFailure::MissingElement
                             : ArrayContentsFailure::UnknownIndex});
     }

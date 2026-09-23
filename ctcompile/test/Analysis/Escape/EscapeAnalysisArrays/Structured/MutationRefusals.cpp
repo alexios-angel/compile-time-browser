@@ -1029,8 +1029,18 @@ void StructuredCases::mutationRefusals() {
     for (const std::string literal :
          {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
           "#ctjs.string<\"02\">", "#ctjs.string<\"4294967296\">", "#ctjs.bigint<\"2\">"}) {
-        reject("structured primitive remainders require bounded nonzero conversion",
-               replace(stringRemainder, "#ctjs.string<\"2\">", literal));
+        if (literal == "#ctjs.string<\"02\">") {
+            rows.push_back(
+                {.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(stringRemainder, "#ctjs.string<\"2\">", literal),
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"});
+        } else {
+            reject("structured primitive remainders require bounded nonzero conversion",
+                   replace(stringRemainder, "#ctjs.string<\"2\">", literal));
+        }
     }
     reject("structured remainder cannot borrow an object's conversion",
            replace(stringRemainder, "mod %i, %text", "mod %i, %x"));
@@ -1335,10 +1345,22 @@ void StructuredCases::mutationRefusals() {
                    "    %step =", "    ctjs.set_property %base[%one], %one\n    %step ="));
     for (const std::string literal :
          {"#ctjs.string<\"01\">", "#ctjs.undefined", "#ctjs.bigint<\"1\">"}) {
-        reject("structured primitive scaling requires bounded side-effect-free conversion",
-               replace(replace(scaledIndex,
-                               "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
-                       "mul %i, %one", "mul %i, %factor"));
+        if (literal == "#ctjs.string<\"01\">") {
+            rows.push_back(
+                {.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(replace(scaledIndex, "  %a =",
+                                         "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                                 "mul %i, %one", "mul %i, %factor"),
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=zero; a[1]=zero",
+                 .exit = "a -> {a}"});
+        } else {
+            reject("structured primitive scaling requires bounded side-effect-free conversion",
+                   replace(replace(scaledIndex,
+                                   "  %a =", "  %factor = ctjs.constant " + literal + "\n  %a ="),
+                           "mul %i, %one", "mul %i, %factor"));
+        }
     }
     const auto composedIndex =
         replace(replace(scaledVisit, "create_array [%x]", "create_array [%one, %x, %y]"),
@@ -1408,8 +1430,18 @@ void StructuredCases::mutationRefusals() {
     for (const std::string literal :
          {"#ctjs.string<\"0\">", "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined",
           "#ctjs.string<\"02\">", "#ctjs.bigint<\"2\">"}) {
-        reject("structured primitive divisors require bounded nonzero conversion",
-               replace(stringQuotient, "#ctjs.string<\"2\">", literal));
+        if (literal == "#ctjs.string<\"02\">") {
+            rows.push_back(
+                {.what =
+                     "bounded decimal conversion preserves original reads and retained children",
+                 .body = replace(stringQuotient, "#ctjs.string<\"2\">", literal),
+                 .arrays = "a:[one,zero,zero,one]",
+                 .reads = "a[0]=one; a[2]=zero",
+                 .exit = "a -> {a}"});
+        } else {
+            reject("structured primitive divisors require bounded nonzero conversion",
+                   replace(stringQuotient, "#ctjs.string<\"2\">", literal));
+        }
     }
     rows.push_back({.what = "structured compositions keep signed intermediate Numbers exact",
                     .body = replace(composedIndex,

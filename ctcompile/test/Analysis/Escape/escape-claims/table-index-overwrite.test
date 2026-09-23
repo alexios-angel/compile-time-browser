@@ -1,6 +1,7 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name table-index-overwrite
 // RUN: FileCheck %s < %t/escape-claims-table-index-overwrite.claims
+// RUN: FileCheck %s --check-prefix=RECORD < %t/escape-claims-table-index-overwrite.rec
 
 // Varying reads need an invariant independent table. Replay keeps actual writes,
 // saved identities and untouched children; mutation and overlapping receiver reads refuse.
@@ -35,7 +36,7 @@
 // CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj escapes:stored
@@ -49,7 +50,7 @@
 // CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj escapes:stored
-// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj escapes:stored
 
@@ -60,6 +61,28 @@
 // CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+
+// Bounded decimal conversion keeps spelling separate from numeric facts.
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj escapes:stored
+
+// Each new child site must be observed, including retained-child controls.
+// RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 51 entries 1 params 0 frame {{[0-9]+}} name spacedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 52 entries 1 params 0 frame {{[0-9]+}} name malformedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 53 entries 1 params 0 frame {{[0-9]+}} name unconvertedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 54 entries 1 params 0 frame {{[0-9]+}} name mutatedDecimalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
 function varyingTableKey() {
@@ -339,5 +362,42 @@ function mixedBigintArithmeticTableKey() {
     for (var i = 0; i < a.length; i++) a[keys[i % 2] + 0] = 0;
     return a;
 }
+// Run the decimal cases before the intentional mixed-BigInt TypeError below.
+decimalConvertedTableKey(); signedDecimalTableKey(); spacedDecimalTableKey();
+malformedDecimalTableKey(); unconvertedDecimalTableKey(); mutatedDecimalTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
+
+function decimalConvertedTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '+02'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function signedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['-00', '-02'];
+    for (var i = 0; i < a.length; i++) a[-keys[i % 2]] = 0;
+    return a;
+}
+function spacedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['', ' +02 '];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function malformedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '--2'];
+    for (var i = 0; i < a.length; i++) a[-keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '+02'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mutatedDecimalTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['00', '+02'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '00';
+        a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
