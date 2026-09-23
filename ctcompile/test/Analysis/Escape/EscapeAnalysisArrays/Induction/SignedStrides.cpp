@@ -199,7 +199,7 @@ void InductionCases::signedStrides() {
          .reads = "a[0]=one; a[2]=three",
          .exit = "added -> {}"});
     for (const std::string text : {"-0", "-01", "-1.0", " -1", "-1 ", "-4294967296"}) {
-        if (text == "-01" || text == " -1" || text == "-1 ") {
+        if (text == "-01" || text == " -1" || text == "-1 " || text == "-1.0") {
             run({.what =
                      "bounded decimal conversion preserves original reads and retained children",
                  .body = replace(stringSubtract, "#ctjs.string<\"-1\">",
@@ -388,7 +388,7 @@ void InductionCases::signedStrides() {
            ArrayContentsFailure::UnsupportedOperation);
     for (const std::string text :
          {"-0", "-01", "--1", "-+1", "-1.0", "-1e0", " -1", "-1 ", "-0x1", "-4294967296"}) {
-        if (text == "-01" || text == " -1" || text == "-1 ") {
+        if (text == "-01" || text == " -1" || text == "-1 " || text == "-1.0" || text == "-1e0") {
             run({.what =
                      "bounded decimal conversion preserves original reads and retained children",
                  .body = replace(savedNegativeText, "#ctjs.string<\"-1\">",
@@ -545,8 +545,15 @@ void InductionCases::signedStrides() {
                      .arrays = "a:[one,x]",
                      .reads = "a[0]=one; a[1]=x",
                      .exit = "x -> {x}"});
+            } else if (constant == "#ctjs.string<\"1.0\">") {
+                run({.what = "decimal String BitNot preserves the larger exact negative stride",
+                     .body = body,
+                     .arrays = "a:[one,x]",
+                     .reads = "a[0]=one",
+                     .exit = "one -> {}"},
+                    "x");
             } else {
-                reject("BitNot requires bounded Numbers or canonical original Strings", body);
+                reject("BitNot requires bounded Numbers or converted original Strings", body);
             }
         }
     }

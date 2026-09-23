@@ -78,6 +78,14 @@
 // CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
 
+// Decimal points and exponents convert only to bounded integral Number facts.
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -102,6 +110,19 @@
 // RECORD-LABEL: fn 59 entries 1 params 0 frame {{[0-9]+}} name unconvertedRadixTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 60 entries 1 params 0 frame {{[0-9]+}} name mutatedRadixTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 61 entries 1 params 0 frame {{[0-9]+}} name decimalPointTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 62 entries 1 params 0 frame {{[0-9]+}} name exponentTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 63 entries 1 params 0 frame {{[0-9]+}} name signedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 64 entries 1 params 0 frame {{[0-9]+}} name malformedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 65 entries 1 params 0 frame {{[0-9]+}} name unconvertedExponentTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 66 entries 1 params 0 frame {{[0-9]+}} name mutatedExponentTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -382,11 +403,13 @@ function mixedBigintArithmeticTableKey() {
     for (var i = 0; i < a.length; i++) a[keys[i % 2] + 0] = 0;
     return a;
 }
-// Run the decimal/radix cases before the intentional mixed-BigInt TypeError below.
+// Run all numeric conversion cases before the intentional mixed-BigInt TypeError below.
 decimalConvertedTableKey(); signedDecimalTableKey(); spacedDecimalTableKey();
 malformedDecimalTableKey(); unconvertedDecimalTableKey(); mutatedDecimalTableKey();
 hexConvertedTableKey(); binaryConvertedTableKey(); spacedOctalTableKey();
 malformedRadixTableKey(); unconvertedRadixTableKey(); mutatedRadixTableKey();
+decimalPointTableKey(); exponentTableKey(); signedExponentTableKey();
+malformedExponentTableKey(); unconvertedExponentTableKey(); mutatedExponentTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -453,6 +476,40 @@ function mutatedRadixTableKey() {
     var child = {}, a = [child, 0, child], keys = ['0x0', '0X2'];
     for (var i = 0; i < a.length; i++) {
         keys[1] = '0x0';
+        a[+keys[i % 2]] = 0;
+    }
+    return a;
+}
+
+function decimalPointTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.0', '2.'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function exponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0e0', '20e-1'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] * 1] = 0;
+    return a;
+}
+function signedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['-.0', '-2.e+0'];
+    for (var i = 0; i < a.length; i++) a[-keys[i % 2]] = 0;
+    return a;
+}
+function malformedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0e0', '2e0junk'];
+    for (var i = 0; i < a.length; i++) a[+keys[i % 2]] = 0;
+    return a;
+}
+function unconvertedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.0', '2e0'];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function mutatedExponentTableKey() {
+    var child = {}, a = [child, 0, child], keys = ['0.0', '2e0'];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = '0.0';
         a[+keys[i % 2]] = 0;
     }
     return a;

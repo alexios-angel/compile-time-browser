@@ -205,7 +205,8 @@ void InductionCases::signedArithmetic() {
            replace(stringSub, "%base[%i]", "%base[%minus]"), ArrayContentsFailure::UnknownIndex);
     for (const std::string text :
          {"02", "+2", "-2", "2.0", "2e0", " 2", "0x2", "4294967295", "NaN"}) {
-        if (text == "02" || text == "+2" || text == " 2" || text == "0x2" || text == "4294967295") {
+        if (text == "02" || text == "+2" || text == " 2" || text == "0x2" || text == "2.0" ||
+            text == "2e0" || text == "4294967295") {
             run({.what =
                      "bounded numeric conversion preserves original reads and retained children",
                  .body =
@@ -693,7 +694,8 @@ void InductionCases::signedArithmetic() {
         for (const std::string invalid :
              {"0", "01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
             if ((operation == "div" &&
-                 (invalid == "01" || invalid == "+1" || invalid == " 1" || invalid == "0x1")) ||
+                 (invalid == "01" || invalid == "+1" || invalid == " 1" || invalid == "0x1" ||
+                  invalid == "1.0" || invalid == "1e0")) ||
                 (operation == "mod" && invalid == "4294967295")) {
                 run({.what = "bounded numeric conversion preserves original reads and retained "
                              "children",

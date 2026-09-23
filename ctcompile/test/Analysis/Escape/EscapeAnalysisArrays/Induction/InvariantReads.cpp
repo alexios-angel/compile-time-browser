@@ -261,7 +261,8 @@ void InductionCases::invariantReads() {
           "#ctjs.string<\"-2\">", "#ctjs.string<\"3\">", "#ctjs.string<\"4294967296\">",
           "#ctjs.number<4602678819172646912>", "#ctjs.bigint<\"0\">", "#ctjs.undefined"}) {
         const auto source = replace(convertedTable, "#ctjs.string<\"0\">", primitive);
-        if (primitive == "#ctjs.string<\"00\">" || primitive == "#ctjs.string<\"-0\">") {
+        if (primitive == "#ctjs.string<\"00\">" || primitive == "#ctjs.string<\"-0\">" ||
+            primitive == "#ctjs.string<\"0.0\">") {
             run({.what = "decimal conversion preserves original table primitives",
                  .body = source,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
@@ -286,8 +287,8 @@ void InductionCases::invariantReads() {
                                    "000000000000000000000000000000000"}) {
         const auto source =
             replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">");
-        if (text == "0x0") {
-            run({.what = "bounded radix conversion preserves the original historical String",
+        if (text == "0x0" || text == "0.0" || text == "0e0") {
+            run({.what = "bounded numeric conversion preserves the original historical String",
                  .body = source,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
                  .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
@@ -355,6 +356,89 @@ void InductionCases::invariantReads() {
             "radix table mutations remain visible before and after each original read",
             replace(radixTable, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto exponentTable =
+        replace(replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.0\">"),
+                "#ctjs.string<\"2\">", "#ctjs.string<\"20e-1\">");
+    for (const std::string expression :
+         {"unary plus %slot", "binary sub %slot, %zero", "binary mul %slot, %one",
+          "binary div %slot, %one", "binary mod %slot, %three", "binary pow %slot, %one",
+          "binary_static bitand %slot, %two", "binary_static bitor %slot, %zero",
+          "binary_static bitxor %slot, %zero", "binary_static shl %slot, %zero",
+          "binary_static shr %slot, %zero", "binary_static ushr %slot, %zero"}) {
+        run({.what = "decimal point and exponent conversion preserves original primitive identity",
+             .body = replace(exponentTable, "unary plus %slot", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string text :
+         {".0", "0.", "-0.0", "+.0", "0.e+0", "00.000E-99", "1e-999", "-1e-999", "1e-2147483615",
+          " 0.0 ", "0.000000000000000000000000000000"}) {
+        run({.what = "bounded decimal grammar retains integral results and signed zero origins",
+             .body =
+                 replace(exponentTable, "#ctjs.string<\"0.0\">", "#ctjs.string<\"" + text + "\">"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+        reject("decimal grammar Strings keep their property spelling without conversion",
+               replace(stringTable, "#ctjs.string<\"0\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    for (const std::string text : {".",
+                                   ".e0",
+                                   "e0",
+                                   "0e",
+                                   "0e+",
+                                   "0e-",
+                                   "0e--0",
+                                   "0e+-0",
+                                   "0e.0",
+                                   "0..0",
+                                   "0e0e0",
+                                   "0.0junk",
+                                   "1e-999junk",
+                                   "0.5",
+                                   "1e-1",
+                                   "1e999",
+                                   "4294967296.0",
+                                   "0.0000000000000000000000000000000",
+                                   "1e9999999999",
+                                   "-1e9999999999",
+                                   "1e-9999999999",
+                                   "1e-2147483616",
+                                   "99e2147483647",
+                                   "0.01e-2147483648"}) {
+        reject("decimal conversion requires complete bounded grammar and an integral result",
+               replace(exponentTable, "#ctjs.string<\"0.0\">", "#ctjs.string<\"" + text + "\">"));
+    }
+    run({.what = "the largest integral decimal conversion preserves exact bitwise conversion",
+         .body = replace(
+             replace(exponentTable, "#ctjs.string<\"20e-1\">", "#ctjs.string<\"4294967295.0\">"),
+             "unary plus %slot", "binary_static bitand %slot, %two"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "decimal conversion cannot release a child saved before the writes",
+         .body = replace(replace(exponentTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    reject("decimal grammar cannot convert an earlier String Add to Number Add",
+           replace(exponentTable, "  %converted = ctjs.unary plus %slot",
+                   "  %text = ctjs.binary add %slot, %zero\n"
+                   "  %converted = ctjs.unary plus %text"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("decimal table mutations remain visible before and after every read",
+               replace(exponentTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    reject("decimal conversion keeps the independent receiver reload gap",
+           replace(replace(selectedConvertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.0\">"),
+                   "#ctjs.string<\"2\">", "#ctjs.string<\"1e0\">"));
     reject("table conversion cannot invoke object coercion",
            replace(convertedTable, "[%textZero, %textTwo]", "[%x, %textTwo]"));
     reject("table conversion cannot read a missing own element",
@@ -464,7 +548,8 @@ void InductionCases::invariantReads() {
           "#ctjs.string<\"-2\">", "#ctjs.string<\"3\">", "#ctjs.string<\"4294967296\">",
           "#ctjs.number<4602678819172646912>", "#ctjs.bigint<\"0\">", "#ctjs.undefined"}) {
         const auto source = replace(binaryTable, "#ctjs.string<\"0\">", primitive);
-        if (primitive == "#ctjs.string<\"00\">" || primitive == "#ctjs.string<\"-0\">") {
+        if (primitive == "#ctjs.string<\"00\">" || primitive == "#ctjs.string<\"-0\">" ||
+            primitive == "#ctjs.string<\"0.0\">") {
             run({.what = "decimal conversion preserves original table primitives",
                  .body = source,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",

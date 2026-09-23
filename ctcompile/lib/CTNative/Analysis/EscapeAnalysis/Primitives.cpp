@@ -2,6 +2,8 @@
 #include "ctbrowser/core/algorithms.hpp"
 #include "ctbrowser/core/number_format.hpp"
 
+#include <limits>
+
 namespace ctcompile::ctnative::escape_detail {
 
 // An original Number in the exact array-length range; -0 has index value zero.
@@ -147,8 +149,8 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
             literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
         if (!string) { return std::nullopt; }
         const auto text = string.getValue();
-        // ponytail: at most 32 source bytes, decimal or unsigned radix digits after
-        // JS whitespace trimming. Wider/other numeric grammars need charged proof.
+        // ponytail: at most 32 source bytes; wider Strings need charged parsing.
+        // Validate the whole grammar before Core handles overflow/underflow.
         if (text.size() > 32) { return std::nullopt; }
         llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
         int radix = 10;
@@ -161,10 +163,33 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
         } else if ((digits.consume_front("+") || digits.consume_front("-")) && digits.empty()) {
             return std::nullopt;
         }
-        if ((radix != 10 && digits.empty()) || !llvm::all_of(digits, [radix](char c) {
-                const auto digit = ctbrowser::hex_value(c);
-                return digit >= 0 && digit < radix;
-            })) {
+        if (radix == 10 && !digits.empty()) {
+            const auto decimal = [](char c) { return c >= '0' && c <= '9'; };
+            auto rest = digits.drop_while(decimal);
+            bool hasDigits = rest.size() != digits.size();
+            if (rest.consume_front(".")) {
+                const auto fraction = rest.drop_while(decimal);
+                hasDigits |= fraction.size() != rest.size();
+                rest = fraction;
+            }
+            if (!hasDigits) { return std::nullopt; }
+            if (rest.consume_front_insensitive("e")) {
+                if (!rest.consume_front("+")) { rest.consume_front("-"); }
+                unsigned exponent = 0;
+                // Core adds an int exponent to the mantissa order on range failure.
+                // The source-byte bound limits that order's magnitude to 32.
+                if (rest.empty() || !llvm::all_of(rest, decimal) ||
+                    rest.getAsInteger(10, exponent) ||
+                    exponent > static_cast<unsigned>(std::numeric_limits<int>::max() - 32)) {
+                    return std::nullopt;
+                }
+                rest = {};
+            }
+            if (!rest.empty()) { return std::nullopt; }
+        } else if ((radix != 10 && digits.empty()) || !llvm::all_of(digits, [radix](char c) {
+                       const auto digit = ctbrowser::hex_value(c);
+                       return digit >= 0 && digit < radix;
+                   })) {
             return std::nullopt;
         }
         const double converted = ctbrowser::string_to_number({text.data(), text.size()});

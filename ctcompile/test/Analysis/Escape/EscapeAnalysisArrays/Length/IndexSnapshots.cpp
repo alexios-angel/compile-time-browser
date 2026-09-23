@@ -445,7 +445,8 @@ void LengthCases::indexSnapshots() {
         const auto body =
             values + "  %one = ctjs.constant " + literal + "\n" + read + subtract + indexed;
         if (literal == "#ctjs.boolean<true>" || literal == "#ctjs.string<\"01\">" ||
-            literal == "#ctjs.string<\"+1\">" || literal == "#ctjs.string<\"0x1\">") {
+            literal == "#ctjs.string<\"+1\">" || literal == "#ctjs.string<\"0x1\">" ||
+            literal == "#ctjs.string<\"1.0\">" || literal == "#ctjs.string<\"1e0\">") {
             run({.what = "the original primitive offset selects its exact overwritten slot",
                  .body = body,
                  .arrays = "a:[zero]",

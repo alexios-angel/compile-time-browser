@@ -477,7 +477,7 @@ void LengthCases::arithmetic() {
                     literal == "#ctjs.string<\"0\">" || literal == "#ctjs.string<\"00\">" ||
                     literal == "#ctjs.boolean<false>" || literal == "#ctjs.null" ||
                     ((literal == "#ctjs.number<13830554455654793216>" ||
-                      literal == "#ctjs.string<\"-1\">" ||
+                      literal == "#ctjs.string<\"-1\">" || literal == "#ctjs.string<\"1.0\">" ||
                       literal == "#ctjs.string<\"4294967295\">") &&
                      (kind == "bitand" || ((kind == "shl" || kind == "shr" || kind == "ushr") &&
                                            operands == "%zero, %input")));
@@ -486,7 +486,9 @@ void LengthCases::arithmetic() {
                              "\n  %index = ctjs.binary_static " + kind + " " + operands + "\n" +
                              indexed,
                      .failure = exactZero ? ArrayContentsFailure::None
-                                          : ArrayContentsFailure::UnknownIndex,
+                                : literal == "#ctjs.string<\"1.0\">"
+                                    ? ArrayContentsFailure::MissingElement
+                                    : ArrayContentsFailure::UnknownIndex,
                      .arrays = exactZero ? "a:[zero]" : "",
                      .exit = exactZero ? "a -> {a}" : ""});
             }

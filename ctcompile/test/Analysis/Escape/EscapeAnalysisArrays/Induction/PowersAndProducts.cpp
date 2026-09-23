@@ -166,6 +166,7 @@ void InductionCases::powersAndProducts() {
                      .exit = "x -> {x}"});
             } else {
                 if (invalid == "01" || invalid == "+1" || invalid == " 1" || invalid == "0x1" ||
+                    invalid == "1.0" || invalid == "1e0" ||
                     (!stringBase && invalid == "4294967295")) {
                     run({.what = "bounded numeric conversion preserves original reads and retained "
                                  "children",
@@ -380,7 +381,8 @@ void InductionCases::powersAndProducts() {
          {"#ctjs.number<0>", "#ctjs.number<4602678819172646912>",
           "#ctjs.number<4751297606875873280>", "#ctjs.string<\"01\">", "#ctjs.string<\"-1\">",
           "#ctjs.string<\"1.0\">", "#ctjs.string<\"4294967295\">", "#ctjs.bigint<\"1\">"}) {
-        if (constant == "#ctjs.string<\"01\">" || constant == "#ctjs.string<\"4294967295\">") {
+        if (constant == "#ctjs.string<\"01\">" || constant == "#ctjs.string<\"1.0\">" ||
+            constant == "#ctjs.string<\"4294967295\">") {
             run({.what =
                      "bounded decimal conversion preserves original reads and retained children",
                  .body =
@@ -439,8 +441,8 @@ void InductionCases::powersAndProducts() {
         }
         for (const std::string text :
              {"01", "+1", "-1", "1.0", "1e0", " 1", "0x1", "4294967295", "NaN"}) {
-            if (text == "01" || text == "+1" || text == " 1" || text == "0x1" ||
-                text == "4294967295") {
+            if (text == "01" || text == "+1" || text == " 1" || text == "0x1" || text == "1.0" ||
+                text == "1e0" || text == "4294967295") {
                 run({.what = "bounded numeric conversion preserves original reads and retained "
                              "children",
                      .body = replace(stringChild, "#ctjs.string<\"1\">",
