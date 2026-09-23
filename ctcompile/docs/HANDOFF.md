@@ -22,6 +22,45 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Primitive iterator close results and negative-unit power indices, 2026-09-23 UTC
+
+Resumed clean **563a6a4a** and the retained primitive close `5c738524`.
+**9386caf3** admits its ignored literal result during a saved throw.
+The existing done truth test supplies arm-local Boolean state; completion
+elides a normal close only when its generated guard proves exhaustion.
+Every remaining primitive close must retain exact unused-result suppression.
+Normal break/return still requires a valid object result. Complete typed DOM
+reproof, source effects, saved payloads and budgets remain. The original source
+executes unchanged, alongside a Boolean snapshot with a primitive close result.
+
+Parallel **beee2449** proves bounded negative-unit power indices through the
+existing scalar power transfer. Even exponent strides retain one parity;
+odd strides enclose both signs, including interior values when endpoints agree.
+The unwritten gap, reload/store census and actual-write replay remain.
+All 40 historical power source bodies/CHECKs survive; 13 controls were appended.
+
+Focused host and arrays CTests and the exact power-index lit case pass.
+Thirteen saved-throw sources pass **208 native executions, 84 refusals and
+80 Node/VM observations**; three prior sources pass **48 native executions,
+74 refusals, zero nonexecuted admissions and 24 Node/VM observations**.
+Historical throw oracles agree on **20 observations per engine**. Nine final
+code/test hashes match the devbox; 128 generated C++ files contain no Script/VM
+protocol or nullable-scalar fallback.
+Full formatting passes **1126 C++, 157 Python, 114 web files**, with a final
+scoped Python check. All 233 historical iterator bodies and 86 metadata rows
+remain unchanged. Full suites were skipped; no browser implementation changed.
+
+**Next native boundary:** original throwing close `fa88f9d6` still refuses the
+fresh own-field record requirement in both policies. Preserve the original body
+exception while suppressing the close's throw and retaining its preceding effects.
+The derived conditional primitive close `1fe1a3e8` still needs correlation between
+loop completion and done state; getter `68ea7208` lacks a complete return/yield.
+Nonterminal exceptional state, multiple protected regions, implicit cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver
+and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-primitive-close.md).
+
 ## Terminal mutable iterator closes and zero-base power indices, 2026-09-23 UTC
 
 Resumed clean **2046e48b** and the retained Number snapshots `7c0874c9` and
