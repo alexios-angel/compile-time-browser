@@ -25,10 +25,15 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                         ctjs::InvokeOp>(operation)) ||
             operation.getNumSuccessors() != 0 || returned ||
             (nonReturning.contains(&body) && !llvm::isa<mlir::scf::YieldOp>(operation) &&
-             !(structuralTail && llvm::isa<ctjs::ConstantOp, ctjs::FrameExitOp>(operation)))) {
+             !(structuralTail &&
+               llvm::isa<ctjs::ConstantOp, ctjs::FrameExitOp, ctjs::GetPropertyOp, ctjs::CallOp>(
+                   operation)))) {
             refusal = "DOM entry does not admit nested control flow or a source continuation";
             return false;
         }
+        // A fully proved throwing branch makes its suffix unreachable. Retain
+        // and check each remaining DOM read/call with the ordinary proof below;
+        // the emitted throw still precedes it. Direct abrupt regions stay strict.
         for (mlir::OpOperand & use : operation.getOpOperands()) {
             const mlir::Value operand = use.get();
             if (!spend()) { return false; }

@@ -2523,11 +2523,14 @@ var {name} = (function() {{
                         ]
                         result = "return:true:"
                     else:
-                        trace += "write:data-visited=yes;"
-                        writes.append(("data-visited", "yes"))
-                        trace += f"read:data-closed={'true' if mode in (2, 6) else 'false'};"
-                        trace += "read:data-visited=true;write:data-closed=true;"
-                        writes.append(("data-closed", "true"))
+                        visiting = protected or "-break-" not in label
+                        if visiting:
+                            trace += "write:data-visited=yes;"
+                            writes.append(("data-visited", "yes"))
+                            trace += f"read:data-closed={'true' if mode in (2, 6) else 'false'};"
+                        value = "true" if visiting else "false"
+                        trace += f"read:data-visited={value};write:data-closed={value};"
+                        writes.append(("data-closed", value))
                         result = (
                             f"throw:boolean:{'true' if mode == 2 else 'false'}:"
                             if protected
@@ -5750,9 +5753,7 @@ var savedThrow, savedExhausted;
         for label, text in mixed_close_cases
     )
     normal_cases += tuple(
-        (label, text)
-        for label, text in mixed_close_cases
-        if "-break-" not in label and "-mutable-" not in label
+        (label, text) for label, text in mixed_close_cases if "-mutable-" not in label
     )
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
@@ -5816,6 +5817,8 @@ var savedThrow, savedExhausted;
     } | {
         "normal-getter-close",
         "return-getter-close",
+        "mixed-body-throw-break-close",
+        "mixed-body-throw-break-getter-close",
         "unknown-close-throw",
         "unknown-getter-throw",
         "return-mutable-throwing-close",
@@ -8169,6 +8172,11 @@ var savedThrow, savedExhausted;
                 "mixed-body-throw-return-invalid-close",
                 mixed_throw_source.replace("setAttribute('data-closed'", "setAttribute('bad name'"),
             ),
+        )
+        + tuple(
+            (label.replace("-close", "-invalid-close"), text.replace("'data-closed'", "'bad name'"))
+            for label, text in mixed_close_cases
+            if "-break-" in label
         )
     ):
         accepted = label in accepted_normal_closes

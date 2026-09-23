@@ -1442,8 +1442,61 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             bool closed = true;
             for (auto & region : cursor->getRegions()) {
                 if (!spend()) { return false; }
-                closed &= region.hasOneBlock() &&
-                          self(self, region.front().begin(), region.front().end(), depth + 1);
+                if (!region.hasOneBlock()) {
+                    closed = false;
+                    continue;
+                }
+                if (self(self, region.front().begin(), region.front().end(), depth + 1)) {
+                    continue;
+                }
+                // CFG structuring may close one arm, then yield an integer
+                // completion tag that selects the remaining normal close.
+                // Only an inert arm may defer closing through this exact tag.
+                auto yield = llvm::hasSingleElement(region.front())
+                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(region.front().front())
+                                 : mlir::scf::YieldOp{};
+                if (!yield || yield.getOperandTypes() != cursor->getResultTypes()) {
+                    closed = false;
+                    continue;
+                }
+                auto next = std::next(cursor);
+                while (next != end && llvm::isa<mlir::arith::ConstantOp>(*next)) {
+                    if (!spend()) { return false; }
+                    ++next;
+                }
+                auto compare = next != end ? llvm::dyn_cast<mlir::arith::CmpIOp>(*next)
+                                           : mlir::arith::CmpIOp{};
+                if (!spend()) { return false; }
+                if (!compare || (compare.getPredicate() != mlir::arith::CmpIPredicate::eq &&
+                                 compare.getPredicate() != mlir::arith::CmpIPredicate::ne)) {
+                    closed = false;
+                    continue;
+                }
+                auto selected = llvm::dyn_cast<mlir::OpResult>(compare.getLhs());
+                auto other = compare.getRhs();
+                if (!selected || selected.getOwner() != &*cursor) {
+                    selected = llvm::dyn_cast<mlir::OpResult>(compare.getRhs());
+                    other = compare.getLhs();
+                }
+                auto literal = selected && selected.getOwner() == &*cursor
+                                   ? yield.getOperand(selected.getResultNumber())
+                                         .template getDefiningOp<mlir::arith::ConstantOp>()
+                                   : mlir::arith::ConstantOp{};
+                auto key = other.getDefiningOp<mlir::arith::ConstantOp>();
+                auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(compare->getNextNode());
+                if (!literal || !key || !branch || branch.getCondition() != compare.getResult() ||
+                    !llvm::isa<mlir::IntegerAttr>(literal.getValue()) ||
+                    !llvm::isa<mlir::IntegerAttr>(key.getValue())) {
+                    closed = false;
+                    continue;
+                }
+                const bool equal = literal.getValue() == key.getValue();
+                auto & continuation =
+                    equal == (compare.getPredicate() == mlir::arith::CmpIPredicate::eq)
+                        ? branch.getThenRegion()
+                        : branch.getElseRegion();
+                closed &= continuation.hasOneBlock() && self(self, continuation.front().begin(),
+                                                             continuation.front().end(), depth + 1);
             }
             if (closed) { return true; }
         }

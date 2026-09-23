@@ -2101,6 +2101,86 @@ module {
       scf.yield %mixed : !ctjs.value
     }
 )MLIR");
+    // The loop distinguishes exhaustion, break and a saved body exception. The
+    // first two completion arms defer closing through their shared literal tag;
+    // the third closes before yielding the saved exception and its different tag.
+    auto mixedBreakSource = replaced(throwingReturn(primitiveReturn(countedSource)),
+                                     "    %breakTag = arith.constant 11 : i32",
+                                     "    %breakTag = arith.constant 11 : i32\n"
+                                     "    %throwTag = arith.constant 13 : i32\n"
+                                     "    %throwCompletion = arith.constant 0 : i32\n"
+                                     "    %normalCompletion = arith.constant 1 : i32\n"
+                                     "    %advanceName = ctjs.constant #ctjs.string<\"advance\">");
+    mixedBreakSource = replaced(
+        mixedBreakSource, "          scf.yield %stop, %poison, %poison, %increment, %breakTag",
+        "          scf.yield %stop, %poison, %poison, %increment, %throwTag");
+    mixedBreakSource = replaced(mixedBreakSource, R"MLIR(          %again = arith.constant true
+          scf.yield %again, %increment, %poison, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+)MLIR",
+                                R"MLIR(          %advance = ctjs.call %has(%element, %advanceName)
+          %advanceTest = ctjs.truthy %advance
+          %break:5 = scf.if %advanceTest -> (i1, !ctjs.value, !ctjs.value, !ctjs.value, i32) {
+            %stop = arith.constant false
+            scf.yield %stop, %poison, %poison, %increment, %breakTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+          } else {
+            %again = arith.constant true
+            scf.yield %again, %increment, %poison, %poison, %normalTag : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+          }
+          scf.yield %break#0, %break#1, %break#2, %break#3, %break#4 : i1, !ctjs.value, !ctjs.value, !ctjs.value, i32
+)MLIR");
+    const auto mixedCompletionBegin = mixedBreakSource.find("    %answer = scf.index_switch");
+    const auto mixedCompletionEnd =
+        mixedBreakSource.find("    ctjs.frame_exit %frame", mixedCompletionBegin);
+    check(mixedCompletionBegin != std::string::npos && mixedCompletionEnd > mixedCompletionBegin,
+          "mixed break fixture has complete replacement bounds");
+    if (mixedCompletionBegin == std::string::npos || mixedCompletionEnd <= mixedCompletionBegin) {
+        return;
+    }
+    mixedBreakSource.replace(
+        mixedCompletionBegin, mixedCompletionEnd - mixedCompletionBegin,
+        R"MLIR(    %completion:2 = scf.index_switch %selector -> !ctjs.value, i32
+    case 7 {
+      scf.yield %poison, %normalCompletion : !ctjs.value, i32
+    }
+    case 11 {
+      scf.yield %poison, %normalCompletion : !ctjs.value, i32
+    }
+    default {
+      %abrupt = ctjs.constant #ctjs.boolean<true>
+      "ctjs.invoke"() ({
+        %closedAbrupt = ctjs.call %close(%undefined, %record, %abrupt)
+        ctjs.invoke_exit %closedAbrupt state()
+      }, {
+      ^normalClose(%ignored: !ctjs.value):
+        ctjs.invoke_yield()
+      }, {
+      ^caughtClose(%caught: !ctjs.value):
+        ctjs.invoke_yield()
+      }) : () -> ()
+      scf.yield %one, %throwCompletion : !ctjs.value, i32
+    }
+    %throwTest = arith.cmpi eq, %completion#1, %throwCompletion : i32
+    %answer = scf.if %throwTest -> !ctjs.value {
+      scf.execute_region {
+        ctjs.throw %completion#0
+      } {no_inline}
+      scf.yield %poison : !ctjs.value
+    } else {
+      %normalClose = ctjs.call %close(%undefined, %record, %normal)
+      %observed = ctjs.call %has(%element, %visited)
+      scf.yield %observed : !ctjs.value
+    }
+)MLIR");
+    auto mixedBreak = mlir::parseSourceString<mlir::ModuleOp>(mixedBreakSource, &context);
+    auto mixedBreakGetter =
+        mlir::parseSourceString<mlir::ModuleOp>(getterReturn(mixedBreakSource), &context);
+    auto mixedBreakReversed = mlir::parseSourceString<mlir::ModuleOp>(
+        replaced(mixedBreakSource, "arith.cmpi eq, %completion#1, %throwCompletion",
+                 "arith.cmpi ne, %normalCompletion, %completion#1"),
+        &context);
+    check(mixedBreak && mixedBreakGetter && mixedBreakReversed,
+          "three-arm method/getter break and reversed-tag comparison parse");
+    if (!mixedBreak || !mixedBreakGetter || !mixedBreakReversed) { return; }
     const auto mixedMutableSource = mutableThrowingClose(mixedThrowingSource);
     const auto mixedMutablePayloadSource =
         replaced(mixedMutableSource, "    ctjs.throw %result",
@@ -2126,7 +2206,8 @@ module {
          {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn, *normalGetterBreak,
           *booleanThrowingReturn, *booleanGetterReturn, *normalMutable, *normalMutableGetter,
           *normalMutablePayload, *normalMutablePayloadGetter, *mixedThrowing, *mixedGetter,
-          *mixedMutable, *mixedMutableGetter}) {
+          *mixedMutable, *mixedMutableGetter, *mixedBreak, *mixedBreakGetter,
+          *mixedBreakReversed}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
@@ -2153,7 +2234,9 @@ module {
             auto ten = increment ? llvm::dyn_cast<ctjs::NumberAttr>(increment.getValue())
                                  : ctjs::NumberAttr{};
             const bool mixedState = fixture == *mixedMutable || fixture == *mixedMutableGetter;
-            const bool mixed = fixture == *mixedThrowing || fixture == *mixedGetter || mixedState;
+            const bool mixed = fixture == *mixedThrowing || fixture == *mixedGetter || mixedState ||
+                               fixture == *mixedBreak || fixture == *mixedBreakGetter ||
+                               fixture == *mixedBreakReversed;
             const bool statePayload = fixture == *normalMutablePayload ||
                                       fixture == *normalMutablePayloadGetter || mixedState;
             check((statePayload
@@ -2242,6 +2325,53 @@ module {
             request.moduleSha256 = hostContractFingerprint(*input);
             check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
                   "refused mixed cleanup publishes no native evidence");
+        }
+    }
+    for (const auto & invalid : {
+             replaced(mixedBreakSource, "scf.yield %poison, %normalCompletion : !ctjs.value, i32",
+                      "scf.yield %poison, %throwCompletion : !ctjs.value, i32"),
+             replaced(mixedBreakSource,
+                      "      %normalClose = ctjs.call %close(%undefined, %record, %normal)\n", ""),
+             replaced(mixedBreakSource,
+                      R"MLIR(      "ctjs.invoke"() ({
+        %closedAbrupt = ctjs.call %close(%undefined, %record, %abrupt)
+        ctjs.invoke_exit %closedAbrupt state()
+      }, {
+      ^normalClose(%ignored: !ctjs.value):
+        ctjs.invoke_yield()
+      }, {
+      ^caughtClose(%caught: !ctjs.value):
+        ctjs.invoke_yield()
+      }) : () -> ()
+)MLIR",
+                      ""),
+             replaced(mixedBreakSource, "    case 7 {\n",
+                      "    case 7 {\n      ctjs.store_global \"observed\", %one\n"),
+         }) {
+        for (const auto & specimen : {invalid, getterReturn(invalid)}) {
+            check(!specimen.empty(), "incomplete mixed break replacement matched");
+            for (auto provider : {HostContract::Provider::ctbrowserDOM,
+                                  HostContract::Provider::ctbrowserDOMSession}) {
+                auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
+                check(static_cast<bool>(input), "incomplete mixed break completion parses");
+                if (!input) { continue; }
+                auto request = contract;
+                request.provider = provider;
+                request.moduleSha256 = hostContractFingerprint(*input);
+                auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+                check(static_cast<bool>(failure),
+                      "wrong tags and missing or effectful closes refuse");
+                if (failure) {
+                    check(llvm::toString(std::move(failure)).find("close every traversal exit") !=
+                              std::string::npos,
+                          "incomplete mixed break fails complete-path closure proof");
+                }
+                // This normalizer owns a disposable candidate; refresh its
+                // fingerprint so evidence refusal cannot rely on a stale hash.
+                request.moduleSha256 = hostContractFingerprint(*input);
+                check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                      "incomplete mixed break publishes no native evidence");
+            }
         }
     }
     auto booleanReturning =
@@ -5558,6 +5688,9 @@ module {
                          *mixedGetter,
                          *mixedMutable,
                          *mixedMutableGetter,
+                         *mixedBreak,
+                         *mixedBreakGetter,
+                         *mixedBreakReversed,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,
