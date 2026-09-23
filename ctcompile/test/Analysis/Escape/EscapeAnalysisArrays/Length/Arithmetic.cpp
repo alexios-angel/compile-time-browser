@@ -474,6 +474,7 @@ void LengthCases::arithmetic() {
               "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
                 const bool exactZero =
+                    literal == "#ctjs.number<4602678819172646912>" ||
                     literal == "#ctjs.string<\"0\">" || literal == "#ctjs.string<\"00\">" ||
                     literal == "#ctjs.boolean<false>" || literal == "#ctjs.null" ||
                     ((literal == "#ctjs.number<13830554455654793216>" ||

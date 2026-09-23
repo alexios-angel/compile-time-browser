@@ -216,7 +216,7 @@ void LengthCases::liveMutations() {
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::MissingElement);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
-        inspect(ArrayContentsFailure::UnknownIndex);
+        inspect(shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL));
         // A negative Sub offset, including saved Add, proves growth, never holes or release.
         // A nonzero negative divisor keeps these zero results exact.

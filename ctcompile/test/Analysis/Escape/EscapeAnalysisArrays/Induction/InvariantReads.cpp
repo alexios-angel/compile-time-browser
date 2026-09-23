@@ -534,11 +534,107 @@ void InductionCases::invariantReads() {
     }
     reject("fractional String properties preserve their original spelling",
            replace(fractionalTable, "%base[%converted]", "%base[%slot]"));
-    reject("fractional Number literals remain outside the original bounded Number proof",
-           replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.number<4602678819172646912>"));
+    run({.what =
+             "fractional Number literals share bitwise conversion without changing their identity",
+         .body =
+             replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.number<4602678819172646912>"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject("fractional table mutation remains visible before and after reads",
                replace(fractionalTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    const auto numberFractionalTable = replace(
+        replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.number<4606281698874543309>"),
+        "#ctjs.string<\"2.9\">", "#ctjs.number<4613712638259704627>");
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+          "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+          "shr %i, %textZero", "ushr %i, %textZero"}) {
+        run({.what = "Number table operands and invariant bitwise inputs retain original fractions",
+             .body = replace(numberFractionalTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto numberComplementTable =
+        replace(replace(replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
+                                "#ctjs.number<13834607695319426662>"),
+                        "#ctjs.number<4613712638259704627>", "#ctjs.number<13839336474928165683>"),
+                "binary_static bitor %slot, %zero", "unary bitnot %slot");
+    const auto negatedNumberTable = replace(
+        replace(replace(numberComplementTable, "  %textZero =",
+                        "  %absZero = ctjs.constant #ctjs.number<4611235658464650854>\n"
+                        "  %absTwo = ctjs.constant #ctjs.number<4615964438073389875>\n"
+                        "  %textZero ="),
+                "ctjs.constant #ctjs.number<13834607695319426662>", "ctjs.unary neg %absZero"),
+        "ctjs.constant #ctjs.number<13839336474928165683>", "ctjs.unary neg %absTwo");
+    for (const auto & source : {numberComplementTable, negatedNumberTable}) {
+        run({.what = "Number complement accepts a literal or its original single source Neg",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "varying fractional Number shift counts truncate only at their consumer",
+         .body = replace(
+             replace(replace(replace(numberFractionalTable, "[%x, %zero, %x]", "[%zero, %x, %x]"),
+                             "#ctjs.number<4606281698874543309>",
+                             "#ctjs.number<4602678819172646912>"),
+                     "#ctjs.number<4613712638259704627>", "#ctjs.number<4611235658464650854>"),
+             "bitor %slot, %zero", "shl %one, %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a child saved before Number fractional writes keeps its identity",
+         .body = replace(replace(numberFractionalTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    const auto selectedNumberFractional = replace(
+        replace(selectedFractional, "#ctjs.string<\"0.9\">", "#ctjs.number<4606281698874543309>"),
+        "#ctjs.string<\"2.9\">", "#ctjs.number<4613712638259704627>");
+    run({.what = "Number truncation preserves the independent receiver reload gap",
+         .body = selectedNumberFractional,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,keys,zero]",
+         .reads =
+             "a[1]=keys; keys[0]=textZero; a[1]=keys; keys[1]=textTwo; a[1]=keys; keys[0]=textZero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    reject("truncated Number keys cannot overwrite their reloaded table receiver",
+           replace(selectedNumberFractional, "#ctjs.number<4613712638259704627>",
+                   "#ctjs.number<4611235658464650854>"));
+    for (const std::string bits :
+         {"4751297606874824704", "13974669643729600512", "4751297606876816998",
+          "9218868437227405312", "18442240474082181120", "9221120237041090560"}) {
+        reject("Number bitwise conversion retains finite original magnitude bounds",
+               replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
+                       "#ctjs.number<" + bits + ">"));
+    }
+    for (const std::string expression :
+         {"unary plus %slot", "binary sub %slot, %zero", "binary mul %slot, %one",
+          "binary div %slot, %one", "binary add %slot, %zero"}) {
+        reject("Number arithmetic cannot borrow bitwise truncation",
+               replace(numberFractionalTable, "binary_static bitor %slot, %zero", expression));
+        reject("Number bitwise conversion cannot borrow unproved arithmetic provenance",
+               replace(numberFractionalTable,
+                       "  %converted = ctjs.binary_static bitor %slot, %zero",
+                       "  %number = ctjs." + expression +
+                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+    }
+    reject("Number fractional properties retain their exact original key",
+           replace(numberFractionalTable, "%base[%converted]", "%base[%slot]"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("Number table mutations remain visible before and after a read",
+               replace(numberFractionalTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
     reject("table conversion cannot invoke object coercion",
@@ -1619,7 +1715,9 @@ void InductionCases::invariantReads() {
         for (const std::string refused : {"#ctjs.string<\"-1\">", "#ctjs.string<\"4294967295\">",
                                           "#ctjs.string<\"00\">", "#ctjs.string<\"4294967296\">",
                                           "#ctjs.number<4602678819172646912>", "#ctjs.undefined"}) {
-            if (subtract && refused == "#ctjs.string<\"00\">" && literal != "#ctjs.number<0>") {
+            if (subtract && literal != "#ctjs.number<0>" &&
+                (refused == "#ctjs.string<\"00\">" ||
+                 refused == "#ctjs.number<4602678819172646912>")) {
                 run({.what = "bounded decimal conversion preserves original reads and retained "
                              "children",
                      .body = replace(source, literal, refused),

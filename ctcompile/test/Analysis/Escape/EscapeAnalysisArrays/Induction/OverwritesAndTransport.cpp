@@ -1780,7 +1780,8 @@ void InductionCases::overwritesAndTransport() {
                  .reads = negativeOne ? "a[0]=zero; a[1]=zero" : "a[0]=zero; a[1]=x",
                  .exit = negativeOne ? "a -> {a}" : "a -> {a,x}"},
                 negativeOne ? "x" : "");
-        } else if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>") {
+        } else if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>" ||
+                   value == "#ctjs.number<4609434218613702656>") {
             run({.what = "primitive AND masks preserve the historical exact own writes",
                  .body = source,
                  .arrays = "a:[zero,zero]",
@@ -1978,7 +1979,8 @@ void InductionCases::overwritesAndTransport() {
             const auto source =
                 replace(replace(bitwise, "  %a =", "  %mask = ctjs.constant " + value + "\n  %a ="),
                         "%i, %one", "%i, %mask");
-            if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>") {
+            if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>" ||
+                value == "#ctjs.number<4609434218613702656>") {
                 run({.what = "primitive OR/XOR masks preserve the historical exact own writes",
                      .body = source,
                      .arrays = isOr ? "a:[one,zero]" : "a:[zero,zero]",

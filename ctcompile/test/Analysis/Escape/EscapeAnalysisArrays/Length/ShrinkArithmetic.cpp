@@ -498,6 +498,14 @@ void LengthCases::shrinkArithmetic() {
             const auto body = values + "  %input = ctjs.constant " + literal +
                               "\n  %wanted = " + producer +
                               "\n  ctjs.set_property %a[%key], %wanted\n  ctjs.return %a\n";
+            if (literal == "#ctjs.number<4602678819172646912>" &&
+                producer == "ctjs.binary_static ushr %input, %input") {
+                run({.what = "a bounded fractional Number supplies an exact bitwise empty length",
+                     .body = body,
+                     .arrays = "a:[]",
+                     .exit = "a -> {a}"});
+                continue;
+            }
             static const llvm::StringSet<> negativeNumberProducers{
                 "ctjs.binary mul %input, %zero", "ctjs.binary div %input, %input",
                 "ctjs.binary mod %input, %input", "ctjs.binary_static ushr %input, %input",

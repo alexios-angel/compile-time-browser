@@ -312,7 +312,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 if (!position) { return std::nullopt; }
                 result = {operand, ContentsKind::NonBigInt, *position};
             } else if (use == IndexUse::BitwiseConversion) {
-                // Only the consuming bitwise operation may truncate this String.
+                // Only the consuming bitwise operation may truncate this primitive.
                 // The singleton is its ToUint32 input, never a new table value.
                 result = {operand, ContentsKind::NonBigInt, boundedConvertedBits(result)};
             } else if (use == IndexUse::Conversion) {

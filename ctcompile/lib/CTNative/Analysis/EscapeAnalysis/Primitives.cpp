@@ -221,7 +221,7 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     return std::nullopt;
 }
 
-// Bitwise conversion may truncate a bounded original String. Arithmetic and
+// Bitwise conversion may truncate a bounded original Number or String. Arithmetic and
 // property keys still require their separate exact Number/spelling proofs.
 std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     if (const auto positive = boundedConvertedNumber(input)) {
@@ -232,6 +232,19 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     }
     if (const auto number = boundedStringNumber(input)) {
         return ctbrowser::number_to_uint32(*number);
+    }
+    auto origin = input.origin();
+    if (!origin) { return std::nullopt; }
+    auto unary = origin.getDefiningOp<ctjs::UnaryOp>();
+    const bool negate = unary && unary.getKind() == ctjs::UnaryKind::Neg;
+    // ponytail: one literal or its source Neg; computed fractions need provenance.
+    if (negate) { origin = unary.getOperand(); }
+    auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
+    const auto number =
+        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    if (number && std::isfinite(number.getDouble()) &&
+        std::abs(number.getDouble()) <= 4294967295.0) {
+        return ctbrowser::number_to_uint32(negate ? -number.getDouble() : number.getDouble());
     }
     return std::nullopt;
 }

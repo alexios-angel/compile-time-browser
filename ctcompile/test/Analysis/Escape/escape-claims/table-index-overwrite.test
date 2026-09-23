@@ -94,6 +94,14 @@
 // CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj escapes:stored
 
+// Bounded original Number fractions truncate only for bitwise consumers.
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -146,6 +154,19 @@
 // Node retains the child; the compiler's Stored control above stays conservative.
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 // RECORD-LABEL: fn 72 entries 1 params 0 frame {{[0-9]+}} name mutatedFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 73 entries 1 params 0 frame {{[0-9]+}} name numberFractionalBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 74 entries 1 params 0 frame {{[0-9]+}} name numberFractionalComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 75 entries 1 params 0 frame {{[0-9]+}} name numberFractionalShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 76 entries 1 params 0 frame {{[0-9]+}} name savedNumberFractionalTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 77 entries 1 params 0 frame {{[0-9]+}} name mutatedNumberFractionalTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 78 entries 1 params 0 frame {{[0-9]+}} name wideNumberFractionalTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -435,6 +456,8 @@ decimalPointTableKey(); exponentTableKey(); signedExponentTableKey();
 malformedExponentTableKey(); unconvertedExponentTableKey(); mutatedExponentTableKey();
 fractionalBitwiseTableKey(); fractionalComplementTableKey(); fractionalShiftTableKey();
 unconvertedFractionalTableKey(); arithmeticFractionalTableKey(); mutatedFractionalTableKey();
+numberFractionalBitwiseTableKey(); numberFractionalComplementTableKey(); numberFractionalShiftTableKey();
+savedNumberFractionalTableChild(); mutatedNumberFractionalTableKey(); wideNumberFractionalTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -571,5 +594,40 @@ function mutatedFractionalTableKey() {
         keys[1] = '.5';
         a[keys[i % 2] | 0] = 0;
     }
+    return a;
+}
+
+function numberFractionalBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function numberFractionalComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = [-1.9, -3.9];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function numberFractionalShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = [0.5, 1.9];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedNumberFractionalTableChild() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedNumberFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.5;
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function wideNumberFractionalTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0.9, 4294967296.9];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
     return a;
 }

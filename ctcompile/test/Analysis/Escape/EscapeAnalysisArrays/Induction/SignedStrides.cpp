@@ -538,8 +538,9 @@ void InductionCases::signedStrides() {
                  .reads = "a[0]=one; a[1]=x",
                  .exit = "x -> {x}"});
         } else {
-            if (constant == "#ctjs.string<\"00\">") {
-                run({.what = "bounded decimal conversion preserves original reads and retained "
+            if (constant == "#ctjs.string<\"00\">" ||
+                constant == "#ctjs.number<4602678819172646912>") {
+                run({.what = "bounded primitive conversion preserves original reads and retained "
                              "children",
                      .body = body,
                      .arrays = "a:[one,x]",
