@@ -2406,6 +2406,9 @@ def saved_throws(args, compilers, includes, libraries):
     # Retain the historical source inventory; execute every promoted body here.
     original = refusals()["body-throw"]
     conditional_source = refusals()["body-throw-branch-boolean-snapshot"]
+    mutable_throwing_source = refusals()["body-throw-number-snapshot"].replace(
+        "return {};", "throw 2;"
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2475,6 +2478,15 @@ def saved_throws(args, compilers, includes, libraries):
             "true",
         ),
         (
+            "conditional-boolean-getter-close",
+            conditional_source.replace("return() {", "get return() {").replace(
+                "return {};", "throw 2;"
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
             "boolean-snapshot-primitive-close",
             refusals()["body-throw-boolean-snapshot"].replace("return {};", "return 2;"),
             "js_boolean_t",
@@ -2535,6 +2547,30 @@ def saved_throws(args, compilers, includes, libraries):
             "js_num",
             "error.value.value() == 3.0",
             "yes",
+        ),
+        (
+            "mutable-number-throwing-close",
+            mutable_throwing_source,
+            "js_num",
+            "error.value.value() == 3.0",
+            "yes",
+        ),
+        (
+            "conditional-mutable-number-throwing-close",
+            refusals()["body-throw-branch-number-snapshot"].replace("return {};", "throw 2;"),
+            "js_num",
+            "error.value.value() == 3.0",
+            "yes",
+        ),
+        (
+            "mutable-number-throwing-close-observes-state",
+            mutable_throwing_source.replace(
+                "anchor.setAttribute('data-closed', 'yes');",
+                "anchor.setAttribute('data-closed', count === 13);",
+            ),
+            "js_num",
+            "error.value.value() == 3.0",
+            "true",
         ),
         (
             "number-close-observes-state",
@@ -2844,6 +2880,7 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-read",
                         "conditional-boolean-primitive-close",
                         "conditional-boolean-throwing-close",
+                        "conditional-boolean-getter-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -2898,6 +2935,22 @@ var savedThrow, savedExhausted;
         ("return-getter-close", getter_close.replace("throw 1;", "return 1;")),
         ("returning-getter-close", getter_close.replace("throw 2;", "return {};")),
         ("unknown-getter-throw", getter_close.replace("throw 2;", "throw anchor;")),
+        (
+            "normal-mutable-throwing-close",
+            mutable_throwing_source.replace("throw (count += 2, count);", "break;"),
+        ),
+        (
+            "return-mutable-throwing-close",
+            mutable_throwing_source.replace("throw (count += 2, count);", "return count;"),
+        ),
+        (
+            "unknown-mutable-close-throw",
+            mutable_throwing_source.replace("throw 2;", "throw count;"),
+        ),
+        (
+            "invalid-mutable-close-name",
+            mutable_throwing_source.replace("data-closed", "bad name"),
+        ),
     ):
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)

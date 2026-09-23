@@ -1838,7 +1838,24 @@ module {
     auto getterAbrupt = mlir::parseSourceString<mlir::ModuleOp>(getterAbruptSource, &context);
     check(static_cast<bool>(getterAbrupt), "throwing return getter parses");
     if (!getterAbrupt) { return; }
-    for (const auto & source : {throwingAbruptSource, getterAbruptSource}) {
+    const auto mutableThrowingClose = [&](const std::string & input) {
+        return replaced(replaced(input, "    %holder = ctjs.create_object",
+                                 "    %holder = ctjs.create_object\n"
+                                 "    %stateKey = ctjs.constant #ctjs.string<\"state\">\n"
+                                 "    %stateZero = ctjs.constant #ctjs.number<0>\n"
+                                 "    ctjs.set_property %holder[%stateKey], %stateZero"),
+                        "    %closeFrame = ctjs.frame_enter 1",
+                        R"MLIR(    %closeFrame = ctjs.frame_enter 1
+    %stateKey = ctjs.constant #ctjs.string<"state">
+    %previous = ctjs.get_property %this[%stateKey]
+    %ten = ctjs.constant #ctjs.number<4621819117588971520>
+    %updated = ctjs.binary_static add %previous, %ten
+    ctjs.set_property %this[%stateKey], %updated)MLIR");
+    };
+    const auto mutableThrowingSource = mutableThrowingClose(throwingAbruptSource);
+    const auto mutableGetterSource = mutableThrowingClose(getterAbruptSource);
+    for (const auto & source :
+         {throwingAbruptSource, getterAbruptSource, mutableThrowingSource, mutableGetterSource}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
@@ -1867,9 +1884,27 @@ module {
                       llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()) &&
                       mlir::succeeded(mlir::verify(*input)),
                   "suppressed literal returns only after closing its own frame");
+            if (source == mutableThrowingSource || source == mutableGetterSource) {
+                check(close.getBody().front().getNumArguments() == ctjs::implicit_arguments + 1,
+                      "throwing close receives its current scalar state");
+                unsigned updates = 0;
+                close.walk([&](ctjs::BinaryStaticOp update) {
+                    ++updates;
+                    check(update.getLhs() == close.getBody().front().getArguments().back(),
+                          "close update uses current state rather than the saved throw");
+                });
+                check(updates == 1, "suppressed close keeps its state update producer");
+            }
             failure = expandDOMHelpers(*input, request.entry, completeBudget);
-            check(!failure, "rewritten throwing close passes complete helper proof");
-            if (failure) { llvm::consumeError(std::move(failure)); }
+            if (source == mutableThrowingSource || source == mutableGetterSource) {
+                // These raw arithmetic operands have no typed DOM leaf proof.
+                // Structural state transport must not publish such a proof.
+                check(static_cast<bool>(failure), "mutable arithmetic still needs typed proof");
+                llvm::consumeError(std::move(failure));
+            } else {
+                check(!failure, "rewritten throwing close passes complete helper proof");
+                if (failure) { llvm::consumeError(std::move(failure)); }
+            }
         }
     }
     for (const auto & invalid : {
@@ -1929,6 +1964,11 @@ module {
         }
     }
     for (const auto & invalid : {
+             replaced(mutableThrowingSource, "    ctjs.throw %result",
+                      "    %extraFrame = ctjs.frame_enter 1\n    ctjs.throw %result"),
+             replaced(mutableThrowingSource, "      scf.execute_region {",
+                      "      ctjs.store_global \"between\", %one\n"
+                      "      scf.execute_region {"),
              replaced(throwingAbruptSource, "    ctjs.throw %result",
                       "    %extraFrame = ctjs.frame_enter 1\n    ctjs.throw %result"),
              replaced(throwingAbruptSource, "    ctjs.throw %result",

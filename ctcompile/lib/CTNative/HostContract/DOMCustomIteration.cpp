@@ -1191,7 +1191,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         helper.body.erase();
     }
     bool primitiveClose = false;
-    ctjs::ThrowOp suppressedThrow;
+    bool suppressedThrow = false;
     // Projecting these records cannot invoke getters, consult a prototype or
     // lose evaluation of a field producer. Complete DOM proof checks values.
     for (auto & [name, store] : slots) {
@@ -1230,7 +1230,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             // A saved throw ignores the close result. After completion
             // normalization, every surviving call must still be suppressed.
             primitiveClose = true;
-            suppressedThrow = thrown;
+            suppressedThrow = static_cast<bool>(thrown);
         } else if (!record || record->getBlock() != &block) {
             return error("DOM iterator method must return one fresh own-field record");
         }
@@ -1268,6 +1268,26 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     return error("DOM iterator state method escapes its own slot");
                 }
             }
+        }
+        if (thrown) {
+            // Normalize this private terminal before the mutable-state body
+            // proof. Publication still requires every surviving call to have
+            // exact unused-result suppression and the final observer census.
+            // Preserve all preceding effects and let checkBody verify frames.
+            mlir::Value frame;
+            for (mlir::Operation & operation : *thrown->getBlock()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
+                    frame = enter.getContext();
+                } else if (llvm::isa<ctjs::FrameExitOp>(operation)) {
+                    frame = {};
+                }
+            }
+            if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
+            mlir::OpBuilder at(thrown);
+            if (frame) { ctjs::FrameExitOp::create(at, thrown.getLoc(), frame); }
+            ctjs::ReturnOp::create(at, thrown.getLoc(), thrown.getValue());
+            thrown.erase();
         }
         if (!stateInitials.empty()) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
@@ -2083,26 +2103,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
             }
         }
-        // Every remaining call has exact unused-result suppression, and the
-        // method has no other observer. Preserve all payload producers and
-        // effects; its terminal literal throw is equivalent to a discarded
-        // primitive return here. Complete helper/DOM proof still checks them.
-        // ponytail: terminal literals only; conditional throws need explicit
-        // completion proof, and mutable state still needs exceptional transport.
-        mlir::Value frame;
-        for (mlir::Operation & operation : *suppressedThrow->getBlock()) {
-            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
-                frame = enter.getContext();
-            } else if (llvm::isa<ctjs::FrameExitOp>(operation)) {
-                frame = {};
-            }
-        }
-        if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
-        mlir::OpBuilder at(suppressedThrow);
-        if (frame) { ctjs::FrameExitOp::create(at, suppressedThrow.getLoc(), frame); }
-        ctjs::ReturnOp::create(at, suppressedThrow.getLoc(), suppressedThrow.getValue());
-        suppressedThrow.erase();
     }
     for (mlir::Operation * user : emittedNext->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
