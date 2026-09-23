@@ -722,15 +722,70 @@ void InductionCases::invariantReads() {
            ArrayContentsFailure::UnsupportedOperation);
     reject("source Plus cannot borrow a String conversion proof",
            replace(plusNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
-    reject("nested Plus requires its own computed Number provenance",
-           replace(plusNumberTable, "  %textZero = ctjs.unary plus %rawZero",
-                   "  %inner = ctjs.unary plus %rawZero\n"
-                   "  %textZero = ctjs.unary plus %inner"));
+    run({.what = "two source Plus operations preserve the original Number provenance",
+         .body = replace(plusNumberTable, "  %textZero = ctjs.unary plus %rawZero",
+                         "  %inner = ctjs.unary plus %rawZero\n"
+                         "  %textZero = ctjs.unary plus %inner"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject("source Plus preserves mutations before and after table reads",
                replace(plusNumberTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto nestedNumberTable =
+        replace(replace(plusNumberTable, "  %textZero = ctjs.unary plus %rawZero",
+                        "  %innerZero = ctjs.unary plus %rawZero\n"
+                        "  %textZero = ctjs.unary plus %innerZero"),
+                "  %textTwo = ctjs.unary plus %rawTwo",
+                "  %innerTwo = ctjs.unary plus %rawTwo\n"
+                "  %textTwo = ctjs.unary plus %innerTwo");
+    for (const std::string inner : {"plus", "neg"}) {
+        for (const std::string outer : {"plus", "neg"}) {
+            auto source =
+                replace(replace(replace(replace(nestedNumberTable, "unary plus %rawZero",
+                                                "unary " + inner + " %rawZero"),
+                                        "unary plus %rawTwo", "unary " + inner + " %rawTwo"),
+                                "unary plus %innerZero", "unary " + outer + " %innerZero"),
+                        "unary plus %innerTwo", "unary " + outer + " %innerTwo");
+            if (inner != outer) {
+                source = replace(replace(source, "4606281698874543309", "13829653735729319117"),
+                                 "4613712638259704627", "13837084675114480435");
+            }
+            run({.what = "two original Number unary operations retain sign parity before bitwise",
+                 .body = source,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+    }
+    for (const std::string bits : {"9223372036854775808", "9218868437227405312",
+                                   "18442240474082181120", "9221120237041090560"}) {
+        run({.what = "nested unary Number zero and nonfinite inputs keep Core bitwise conversion",
+             .body = replace(nestedNumberTable, "4606281698874543309", bits),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    reject("a third fractional unary needs charged source provenance",
+           replace(nestedNumberTable, "  %innerZero = ctjs.unary plus %rawZero",
+                   "  %third = ctjs.unary plus %rawZero\n"
+                   "  %innerZero = ctjs.unary plus %third"));
+    reject(
+        "nested unary Number proof cannot convert String origins",
+        replace(nestedNumberTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    reject("nested unary Number proof cannot borrow an unknown operand",
+           replace(nestedNumberTable, "unary plus %rawZero", "unary plus %p"),
+           ArrayContentsFailure::UnsupportedOperation);
+    reject("nested unary Number bitwise proof does not change original property keys",
+           replace(nestedNumberTable, "%base[%converted]", "%base[%slot]"));
+    reject(
+        "nested unary Number bitwise proof does not supply fractional arithmetic facts",
+        replace(nestedNumberTable, "binary_static bitor %slot, %zero", "binary sub %slot, %zero"));
     const auto wideNumberTable =
         replace(replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
                         "#ctjs.number<4751297606876816998>"),
