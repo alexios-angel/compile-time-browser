@@ -2162,6 +2162,52 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=one; a[0]=one; a[0]=one; a[2]=one",
          .exit = "a -> {a}"},
         "x");
+    const auto booleanOffset = replace(
+        replace(offsetIndex, "  %a =",
+                "  %unit = ctjs.constant #ctjs.boolean<true> {storage_test_id = \"unit\"}\n  %a ="),
+        "ctjs.binary add %i, %one", "ctjs.binary add %i, %unit");
+    for (const auto & expression : {"ctjs.binary add %i, %unit", "ctjs.binary add %unit, %i",
+                                    "ctjs.binary_static add %i, %unit"}) {
+        run({.what = "Boolean Add offsets preserve exact shifted own positions",
+             .body = replace(booleanOffset, "ctjs.binary add %i, %unit", expression),
+             .arrays = "a:[one,zero,one,zero]",
+             .reads = "a[0]=one; a[2]=one",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const auto & literal : {"#ctjs.boolean<false>", "#ctjs.null"}) {
+        run({.what = "zero primitive Add offsets preserve current own positions",
+             .body = replace(replace(booleanOffset, "#ctjs.boolean<true>", literal),
+                             "[%one, %x, %one, %x]", "[%x, %one, %x, %one]"),
+             .arrays = "a:[zero,one,zero,one]",
+             .reads = "a[0]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    const auto booleanReload =
+        replace(replace(booleanOffset, "[%one, %x, %one, %x]", "[%unit, %x, %one, %x]"),
+                "%position = ctjs.binary add %i, %unit",
+                "%offset = ctjs.get_property %base[%zero]\n"
+                "  %position = ctjs.binary add %offset, %i");
+    run({.what = "Boolean Add reloads preserve the primitive in the unvisited gap",
+         .body = booleanReload,
+         .arrays = "a:[unit,zero,one,zero]",
+         .reads = "a[0]=unit; a[0]=unit; a[0]=unit; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "Boolean Add reloads retain the complete later-store census",
+        replace(booleanReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    reject("Boolean Add reloads cannot overlap an actual shifted write",
+           replace(replace(booleanReload, "[%unit, %x, %one, %x]", "[%unit, %unit, %x, %one]"),
+                   "%offset = ctjs.get_property %base[%zero]",
+                   "%offset = ctjs.get_property %base[%one]"));
+    for (const auto & literal : {"#ctjs.string<\"1\">", "#ctjs.undefined", "#ctjs.bigint<\"1\">"}) {
+        reject("Add offsets still refuse concatenation and unproved Number conversion",
+               replace(booleanOffset, "#ctjs.boolean<true>", literal));
+    }
+    reject("Add offsets cannot borrow object conversion",
+           replace(booleanOffset, "add %i, %unit", "add %i, %x"));
     run({.what = "a saved child survives an offset overwrite of its former slot",
          .body = replace(replace(offsetIndex, "  cf.br ^header(%a,",
                                  "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),

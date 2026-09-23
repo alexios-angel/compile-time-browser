@@ -351,14 +351,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (!range) { return std::nullopt; }
         const auto offset = invariant(invariant, expression->getOperand(offsetOperand), 0);
-        // Numeric operations use bounded primitive conversion.
-        // Add retains Number operands; String Add concatenates.
-        if (!offset ||
-            (!subtract && !multiply && !divide && !remainder && !bitAnd && !bitOr && !bitXor &&
-             !shift && !offset->integerNumber && !offset->negativeIntegerNumber &&
-             !boundedNumber(offset->origin()) && !boundedNumber(offset->origin(), true))) {
-            return std::nullopt;
-        }
+        // Each transfer proves bounded primitive conversion; boundedNumberSum
+        // separately excludes String concatenation for Add.
+        if (!offset) { return std::nullopt; }
         if (remainder) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;

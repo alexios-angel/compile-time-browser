@@ -24,6 +24,14 @@
 // CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function next() {
@@ -148,3 +156,49 @@ function undefinedOffset() {
 }
 stringPrevious(); booleanPrevious(); negativeStringOffset(); nullOffset();
 noncanonicalOffset(); undefinedOffset();
+
+function booleanNext() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[i + true] = 0;
+    return a;
+}
+function commutedBooleanNext() {
+    var child = {}, a = [0, child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[true + i] = 0;
+    return a;
+}
+function falseNext() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i + false] = 0;
+    return a;
+}
+function nullNext() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[i + null] = 0;
+    return a;
+}
+function reloadedBooleanOffset() {
+    var child = {}, a = [true, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) a[a[0] + i] = 0;
+    return a;
+}
+function laterBooleanStore() {
+    var child = {}, a = [true, child, 1, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[a[0] + i] = 0;
+        a[0] = false;
+    }
+    return a;
+}
+function overlappingBooleanOffset() {
+    var child = {}, a = [true, true, child, 1];
+    for (var i = 0; i < a.length; i += 2) a[a[1] + i] = 0;
+    return a;
+}
+function undefinedAddOffset() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i + undefined] = 0;
+    return a;
+}
+booleanNext(); commutedBooleanNext(); falseNext(); nullNext();
+reloadedBooleanOffset(); laterBooleanStore(); overlappingBooleanOffset(); undefinedAddOffset();

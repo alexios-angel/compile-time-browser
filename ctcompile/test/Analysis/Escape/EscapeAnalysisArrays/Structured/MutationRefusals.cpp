@@ -37,6 +37,33 @@ void StructuredCases::mutationRefusals() {
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
         "binary mul %i, %one", "binary_static bitand %i, %text");
+    const auto primitiveAdd =
+        replace(primitiveAnd, "binary_static bitand %i, %text", "binary add %text, %i");
+    for (const auto & literal : {"#ctjs.boolean<false>", "#ctjs.null"}) {
+        rows.push_back({.what = "structured zero primitive Add offsets preserve exact own writes",
+                        .body = replace(primitiveAdd, "#ctjs.string<\"1\">", literal),
+                        .arrays = "a:[zero,zero]",
+                        .reads = "a[0]=zero; a[1]=zero",
+                        .exit = "a -> {a}"});
+    }
+    const auto booleanAdd =
+        replace(replace(replace(replace(primitiveAdd, "#ctjs.string<\"1\">", "#ctjs.boolean<true>"),
+                                "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                        "create_array [%x]", "create_array [%text, %x, %one]"),
+                "add %i, %one", "add %i, %two");
+    const auto booleanAddReload = replace(booleanAdd, "%position = ctjs.binary add %text, %i",
+                                          "%offset = ctjs.get_property %base[%zero]\n"
+                                          "    %position = ctjs.binary add %offset, %i");
+    rows.push_back({.what = "structured Boolean Add reloads retain their primitive gap identity",
+                    .body = booleanAddReload,
+                    .arrays = "a:[text,zero,one,zero]",
+                    .reads = "a[0]=text; a[0]=text; a[0]=text; a[2]=one",
+                    .exit = "a -> {a}"});
+    reject("structured Boolean Add reloads retain the complete later-store census",
+           replace(booleanAddReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
+    reject("structured Add still refuses String concatenation",
+           replace(booleanAdd, "#ctjs.boolean<true>", "#ctjs.string<\"1\">"));
     for (const std::string kind : {"shl", "shr", "ushr"}) {
         for (const std::string literal : {"#ctjs.string<\"0\">", "#ctjs.string<\"32\">",
                                           "#ctjs.boolean<false>", "#ctjs.null"}) {
