@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Terminal iterator-close selector values and varying multiplication, 2026-09-23 UTC
+
+Resumed clean **78aacd8e** and retained selector-value source `f3f1e6c6`.
+**8fcad4df** preserves an earlier terminal `matches` Boolean for one protected
+write. It reuses the complete read/use census and literal selector validation;
+cloning retains source order/guard, typed DOM/Style reproof and the original saved
+body exception. The unchanged original, getter and order-sensitive variant execute.
+
+Parallel **7ad4962a** reuses bounded whole-key subdivision for varying
+multiplication, preserving exact scalar products, intermediate bounds, complete
+reload/store census, independent reload gaps and actual-write replay. Eighteen raw
+and eleven source controls cover interior extrema, saved identity and refusals.
+All historical raw bytes and 263 source bodies/CHECKs remain unchanged.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. Seven final hashes match
+the devbox; all 24 generated C++ files retain the saved selector Boolean and
+original exception without Script/VM or nullable fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. All gates passed first run. Three parallel
+agents completed source/raw/escape work and independently reviewed native production.
+The interrupted iteration resumed saved work without replaying completed checks.
+Full suites were skipped; no browser implementation changed. Claude stayed uncertain.
+
+**Next native boundary:** retained `unsupported-terminal-earlier-read-write-before-selector`
+source `abc08f6e` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the `hasAttribute('data-closed')` Boolean
+captured immediately before the second selector through that selector and an
+ignored read, then feed `data-after-terminal` while the original exception wins.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap and general powers remain.
+No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-selector-values.md).
+
 ## Earlier terminal iterator-close read values and varying subtraction, 2026-09-23 UTC
 
 Resumed clean **6b908f6b** and retained earlier-read source `378326b6`.
