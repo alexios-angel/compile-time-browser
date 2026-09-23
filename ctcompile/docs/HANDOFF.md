@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional iterator closes and powers with two varying operands, 2026-09-23 UTC
+
+Resumed clean **b73eba63** and retained conditional primitive/throwing closes
+`1fe1a3e8`/`fd04cbc3`. **7b28e708** admits both unchanged bodies by preserving
+Boolean facts shared by every path to a selected loop exit. Unknown or conflicting
+facts remain unknown; facts are collected before inactive-slot padding and
+materialized only inside the selected continuation. Source producers, saved
+Boolean snapshots, suppression and ordinary-close result validation remain.
+
+Parallel **0d1ce73b** proves powers with two varying operands only when the base
+stays within `-1, 0, 1` and the exponent is a bounded nonnegative integer.
+The existing reload/store census, whole-key refinement and actual-write replay
+retain correlations and unvisited children. All 77 historical power sources and
+CHECKs remain; an existing raw SCF body now proves unchanged, with twelve source
+controls added.
+
+The two conditional sources pass **32 native executions, 64 refusals and
+16 Node/VM observations**. The affected mixed throw/return source separately
+passes **16 executions, 40 refusals and 16 Node/VM observations**.
+Focused host/arrays CTests and the exact power-index lit case pass. Seven final
+code/test hashes match the devbox; 24 generated C++ files contain no Script/VM
+protocol or nullable-scalar fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Full suites were skipped.
+
+**Next native boundary:** mutable throwing-close sources `cd9eb979` and
+`83b34eed` refuse **DOM helper has no complete return or yield** under both
+policies. Preserve the saved Number and current private state while proving
+a terminal close throw. Conditional getter `2b727264` now admits in both
+policies, but was only compiled, not executed. Nonterminal exceptional state,
+multiple protected regions, implicit cleanup, nested custom iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+
+[Exact checks and next boundary](handoff/2026-09-23-conditional-close.md).
+
 ## Suppressed iterator return getters and signed-unit power ranges, 2026-09-23 UTC
 
 Resumed clean **155fd28b** and original getter close `68ea7208`.
