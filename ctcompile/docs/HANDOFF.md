@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Terminal iterator-close selectors and singleton bitwise masks, 2026-09-23 UTC
+
+Resumed clean **3fe78026** and retained terminal-selector source `5f783ab2`.
+**76d69d1e** keeps its second `matches` call after all close writes using the
+existing exact unused-result suppression and complete typed DOM/Style proof.
+The selector result remains unobserved; literal validation, original guard/order,
+private callable/frame checks, saved Boolean ownership and budgets remain.
+The original source, getter and order-sensitive variant execute unchanged.
+
+Parallel **82f62403** reuses the singleton range proof for AND/OR/XOR masks,
+including commuted operands. Existing bitwise conversions, complete reload/store
+census, independent reload-gap proof and actual-write replay remain. Seventeen
+raw and eleven source controls were added; all 199 historical source bodies and
+expectations are unchanged.
+
+Three selected sources pass **48 native executions, 76 refusals and 24 Node/VM
+observations**. Exact host/arrays CTests and the selected power-index lit case pass.
+Seven final source hashes match the devbox; all 24 generated C++ files retain both
+selectors and the ordered writes, without Script/VM or nullable fallback.
+Full formatting passes **1126 C++, 157 Python, 114 web files**. Review corrected
+one raw refusal to exercise the new guard; the final host rebuild passes.
+Full suites were skipped; no browser/runtime implementation changed.
+
+**Next native boundary:** retained `unsupported-terminal-match-read` source
+`54c46eea` refuses **DOM protected helper needs an independent inert-body proof**
+under both policies. Preserve the final `hasAttribute` after the second selector,
+used as the ignored close throw, together with the original saved body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap, general powers and genuinely
+varying bitwise masks remain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-selector-close.md).
+
 ## Terminal iterator-close reads and singleton shift counts, 2026-09-23 UTC
 
 Resumed clean **3df6cedd** and retained terminal-read source `51fc580e`.
