@@ -1,0 +1,80 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name table-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-table-index-overwrite.claims
+
+// Varying reads need an invariant independent table. Replay keeps actual writes,
+// saved identities and untouched children; mutation and overlapping receiver reads refuse.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function varyingTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 2];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function reversedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [2, 0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function selectedTableKey() {
+    var child = {}, keys = [0, 2], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+function retainedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+function savedTableChild() {
+    var child = {}, a = [child, 0, child], keys = [0, 2], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return [saved, a];
+}
+function mutatedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 2];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0;
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function mutatedTableAlias() {
+    var child = {}, a = [child, 0, child], keys = [0, 2], alias = keys;
+    for (var i = 0; i < a.length; i++) {
+        alias[1] = 0;
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function resizedTableKey() {
+    var child = {}, a = [child, 0, child], keys = [0, 2];
+    for (var i = 0; i < a.length; i++) {
+        keys.length = 1;
+        a[keys[i % 2]] = 0;
+    }
+    return a;
+}
+function guardTableKey() {
+    var child = {}, a = [0, child, 2];
+    for (var i = 0; i < a.length; i++) a[a[i % 2]] = 0;
+    return a;
+}
+function overwrittenTableReceiver() {
+    var child = {}, keys = [0, 1], a = [child, keys, child];
+    for (var i = 0; i < a.length; i++) a[a[1][i % 2]] = 0;
+    return a;
+}
+varyingTableKey(); reversedTableKey(); selectedTableKey(); retainedTableKey();
+savedTableChild(); mutatedTableKey(); mutatedTableAlias(); resizedTableKey();
+guardTableKey(); overwrittenTableReceiver();

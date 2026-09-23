@@ -4,6 +4,108 @@
 namespace ctcompile::test::escape::arrays::induction_detail {
 
 void InductionCases::invariantReads() {
+    const auto tablePrefix =
+        replace(prefix, "  %a = ctjs.create_array [%one, %two, %three] {storage_test_id = \"a\"}\n",
+                "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+                "  %keys = ctjs.create_array [%zero, %two] {storage_test_id = \"keys\"}\n"
+                "  %a = ctjs.create_array [%x, %zero, %x] {storage_test_id = \"a\"}\n");
+    const auto tableLoop = replace(replace(replace(loop, "  %read = ctjs.get_property %base[%i]\n",
+                                                   "  %pick = ctjs.binary mod %i, %two\n"
+                                                   "  %slot = ctjs.get_property %keys[%pick]\n"
+                                                   "  ctjs.set_property %base[%slot], %zero\n"),
+                                           "add %s, %read", "add %s, %one"),
+                                   "ctjs.return %result", "ctjs.return %a");
+    const auto tableIndex = tablePrefix + tableLoop;
+    run({.what = "varying reads from an independent table prove actual own writes",
+         .body = tableIndex,
+         .arrays = "keys:[zero,two]; a:[zero,zero,zero]",
+         .reads = "keys[0]=zero; keys[1]=two; keys[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "table order remains source order through singleton refinement",
+         .body = replace(tableIndex, "[%zero, %two]", "[%two, %zero]"),
+         .arrays = "keys:[two,zero]; a:[zero,zero,zero]",
+         .reads = "keys[0]=two; keys[1]=zero; keys[0]=two",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "table replay retains children at positions never actually overwritten",
+         .body = replace(tableIndex, "[%zero, %two]", "[%zero, %zero]"),
+         .arrays = "keys:[zero,zero]; a:[zero,zero,x]",
+         .reads = "keys[0]=zero; keys[1]=zero; keys[0]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "saved child identity survives subsequent table-directed writes",
+         .body = replace(replace(tableIndex, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[zero,two]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=zero; keys[1]=two; keys[0]=zero",
+         .exit = "x -> {x}"});
+    const auto selectedTable = replace(replace(tableIndex, "[%x, %zero, %x]", "[%x, %keys, %x]"),
+                                       "  %slot = ctjs.get_property %keys[%pick]",
+                                       "  %table = ctjs.get_property %base[%one]\n"
+                                       "  %slot = ctjs.get_property %table[%pick]");
+    run({.what = "a selected table receiver needs independent exclusion from every write",
+         .body = selectedTable,
+         .arrays = "keys:[zero,two]; a:[zero,keys,zero]",
+         .reads = "a[1]=keys; keys[0]=zero; a[1]=keys; keys[1]=two; a[1]=keys; keys[0]=zero",
+         .exit = "a -> {a,keys}"},
+        "x");
+    reject("a table receiver cannot reload a position targeted by its own keys",
+           replace(selectedTable, "[%zero, %two]", "[%zero, %one]"));
+    reject(
+        "a later write cannot invalidate an earlier selected table receiver",
+        replace(selectedTable, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("a varying table lookup cannot read the mutable guard allocation",
+           replace(tableIndex, "%keys[%pick]", "%base[%pick]"));
+    for (const std::string mutation :
+         {"ctjs.set_property %keys[%one], %zero", "ctjs.set_property %keys[%key], %one",
+          "ctjs.append %zero to %keys", "%called = ctjs.call %p(%keys)"}) {
+        reject("complete census refuses table mutation or resizing before a lookup",
+               replace(tableIndex, "  %pick =", "  " + mutation + "\n  %pick ="));
+        reject("complete census also refuses table mutation after a lookup",
+               replace(tableIndex, "  %step =", "  " + mutation + "\n  %step ="));
+    }
+    const auto aliasTable = replace(tableIndex, "  cf.br ^header",
+                                    "  %box = ctjs.create_array [%keys]\n"
+                                    "  %alias = ctjs.get_property %box[%zero]\n  cf.br ^header");
+    reject("saved table aliases remain visible to the complete write census",
+           replace(aliasTable, "  %step =", "  ctjs.set_property %alias[%one], %zero\n  %step ="));
+    for (const std::string element : {"%three", "%x"}) {
+        reject("table elements must supply bounded Numbers within the guard's own bounds",
+               replace(tableIndex, "[%zero, %two]", "[%zero, " + element + "]"));
+    }
+    reject("an opaque table element refuses before loop proof at array initialization",
+           replace(tableIndex, "[%zero, %two]", "[%zero, %p]"), ArrayContentsFailure::UnknownValue);
+    reject("table index refinement retains fractional intermediate refusal",
+           replace(tableIndex, "mod %i, %two", "div %i, %two"));
+    reject("table lookup requires every selected own element to exist",
+           replace(tableIndex, "[%zero, %two]", "[%zero]"));
+    auto carriedTable = tableIndex;
+    for (const auto & [before, after] : {
+             std::pair{"^header(%a, %zero, %zero : !ctjs.value, !ctjs.value, !ctjs.value)",
+                       "^header(%a, %zero, %zero, %keys : !ctjs.value, !ctjs.value, !ctjs.value, "
+                       "!ctjs.value)"},
+             {"%sum: !ctjs.value):", "%sum: !ctjs.value, %tableInput: !ctjs.value):"},
+             {"^body(%array, %index, %sum : !ctjs.value, !ctjs.value, !ctjs.value)",
+              "^body(%array, %index, %sum, %tableInput : !ctjs.value, !ctjs.value, !ctjs.value, "
+              "!ctjs.value)"},
+             {"%s: !ctjs.value):", "%s: !ctjs.value, %tableBody: !ctjs.value):"},
+             {"%keys[%pick]", "%tableBody[%pick]"},
+             {"^header(%base, %step, %added : !ctjs.value, !ctjs.value, !ctjs.value)",
+              "^header(%base, %step, %added, %tableBody : !ctjs.value, !ctjs.value, !ctjs.value, "
+              "!ctjs.value)"},
+         }) {
+        carriedTable = replace(carriedTable, before, after);
+    }
+    run({.what = "table receivers preserve exact allocation through unchanged CFG transport",
+         .body = carriedTable,
+         .arrays = "keys:[zero,two]; a:[zero,zero,zero]",
+         .reads = "keys[0]=zero; keys[1]=two; keys[0]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("a changing carried table cannot borrow its initial allocation",
+           replace(carriedTable, "^header(%base, %step, %added, %tableBody",
+                   "^header(%base, %step, %added, %base"));
     const auto reloaded = replace(
         replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
         "add %i, %one", "add %i, %unit");

@@ -278,6 +278,35 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (depth == 64) { return std::nullopt; }
         auto * expression = operand.getDefiningOp();
+        if (auto load = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(expression)) {
+            if (load->getBlock() != body) { return std::nullopt; }
+            const auto receiver = invariant(invariant, load.getObject(), 0);
+            if (!receiver || !receiver->origin()) { return std::nullopt; }
+            const auto table = state.arrays.find(receiver->origin().getDefiningOp());
+            // Every loop write must target the guard array. A distinct exact
+            // allocation is unchanged; invariant receiver reloads still join
+            // guardReloads and need the independent write-gap proof below.
+            if (table == state.arrays.end() || table->first == guardSite) { return std::nullopt; }
+            const auto key = self(self, load->getOperand(1), depth + 1);
+            if (!key) { return std::nullopt; }
+            // ponytail: refine varying keys to singletons; table image lattices
+            // can replace subdivision if the shared proof budget needs them.
+            if (endpointNumber(key->first) != endpointNumber(key->last)) {
+                refinableEnclosure = true;
+                return std::nullopt;
+            }
+            const auto position = ownArrayIndex(key->first);
+            if (!position || *position >= table->second.size()) { return std::nullopt; }
+            auto result = table->second[*position];
+            if (!result.integerNumber && !result.negativeIntegerNumber) {
+                result.integerNumber = boundedNumber(result.origin());
+                if (!result.integerNumber) {
+                    result.negativeIntegerNumber = boundedNumber(result.origin(), true);
+                }
+            }
+            if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+            return IndexRange{result, result, 1, key->mixedShift};
+        }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression)) {
             if (unary->getBlock() != body || (unary.getKind() != ctjs::UnaryKind::Plus &&
                                               unary.getKind() != ctjs::UnaryKind::Neg &&
