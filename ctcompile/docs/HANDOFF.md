@@ -22,6 +22,46 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved selector arguments and independent table keys, 2026-09-23 UTC
+
+Resumed clean **7754eba6** and retained source `c9ccc672`, recovering the
+interrupted compiler build, source candidate and raw checks. **91a8cb96**
+retains a saved `matches` Boolean through a later `hasAttribute` read inside
+the final protected write. The selected read joins the existing literal-selector
+validation; complete uses, typed DOM/Style reproof, source order/guard, original
+body exception and budgets remain. Original, getter and order variants execute.
+Independent native review found no actionable issues.
+
+**a0e1b45d** proves varying numeric keys read from an invariant, distinct
+array, using existing bounded subdivision and actual-write replay. A receiver
+loaded from the cleared array must remain outside every write footprint.
+Three previously stored child sites become confined; seven source controls stay
+stored. Mutated tables/aliases, changing receivers, missing/opaque elements,
+fractional indices and overlapping reloads remain refused.
+
+Focused validation passes: **28 source preflight checks, 48 native executions,
+80 refusals, 24 Node/VM observations, exact host/arrays CTests and one table-key
+lit case**. Formatting passes **1126 C++, 157 Python, 114 web files**; six final
+code/test hashes match the devbox. Corrected two new test expectations: the CSS
+parser accepts a missing closing bracket at EOF, so the invalid-selector control
+now uses `[`, and an opaque table initializer refuses as `UnknownValue` before
+loop proof. Production stayed unchanged after its respective first build.
+Historical source/oracle bodies and raw literals are preserved. No browser
+implementation changed; Claude stayed uncertain. Full suites were skipped.
+
+**Next native boundary:** retained
+`unsupported-selector-inside-final-write-argument-read`, source `b3cd2859`,
+refuses **DOM protected helper needs an independent inert-body proof** under both
+policies. Preserve the earlier saved selector Boolean while evaluating an ignored
+`matches` inside the final write's arguments, with the original body exception.
+Single-write selector cleanup, nonterminal exceptional state, multiple protected
+regions, implicit cleanup, nested custom iterators, unguarded Bootstrap defaults,
+the application driver, full native Bootstrap, general powers and legacy SCF
+retention remain unfinished. String-valued table keys remain an inferred escape
+boundary, not a measured gain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-selector-final-argument-values.md).
+
 ## Saved reads through final iterator-close arguments, 2026-09-23 UTC
 
 Resumed clean **d58cbb32** and retained source `40cadb13`, including the
