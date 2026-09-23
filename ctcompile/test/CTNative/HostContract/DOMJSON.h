@@ -857,6 +857,28 @@ module {
         "    %fourthMethod = ctjs.get_property %element[%secondKey]\n"
         "    %fourthEffect = ctjs.call %fourthMethod(%element, %fourthName, %afterPresent)\n"
         "    scf.yield\n    }\n");
+    const auto conditionalNestedWrite =
+        replaced(replaced(conditionalThirdWrite, "    %thirdName =",
+                          "    %guardReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">\n"
+                          "    %guardReadName = ctjs.constant #ctjs.string<\"data-third-guard\">\n"
+                          "    %guardMethod = ctjs.get_property %element[%guardReadKey]\n"
+                          "    %guardPresent = ctjs.call %guardMethod(%element, %guardReadName)\n"
+                          "    %nestedCondition = ctjs.truthy %guardPresent\n"
+                          "    scf.if %nestedCondition {\n    %thirdName ="),
+                 "    scf.yield\n    }\n", "    scf.yield\n    }\n    scf.yield\n    }\n");
+    const auto conditionalNestedSelector =
+        replaced(replaced(conditionalNestedWrite,
+                          "%guardReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                          "%guardReadKey = ctjs.constant #ctjs.string<\"matches\">"),
+                 "#ctjs.string<\"data-third-guard\">", "#ctjs.string<\"[data-third-guard]\">");
+    const auto conditionalDeeperWrite =
+        replaced(replaced(conditionalNestedWrite, "    %thirdName =",
+                          "    %deeperCondition = ctjs.truthy %guardPresent\n"
+                          "    scf.if %deeperCondition {\n    %thirdName ="),
+                 "    scf.yield\n    }\n", "    scf.yield\n    }\n    scf.yield\n    }\n");
+    const auto conditionalNestedElse =
+        replaced(conditionalNestedWrite, "    scf.yield\n    }\n",
+                 "    scf.yield\n    } else {\n    scf.yield\n    }\n");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -2399,6 +2421,170 @@ module {
             }
         }
     }
+    for (const auto & [valid, typed] : {
+             std::pair{conditionalNestedWrite, true},
+             std::pair{conditionalNestedSelector, true},
+             std::pair{conditionalDeeperWrite, true},
+             std::pair{conditionalNestedElse, true},
+             std::pair{replaced(conditionalNestedWrite,
+                                "ctjs.call %thirdMethod(%element, %thirdName, %afterPresent)",
+                                "ctjs.call %thirdMethod(%element, %thirdName, %present)"),
+                       true},
+             std::pair{moveReadBefore(conditionalNestedWrite, "    %afterReadKey =",
+                                      "    %thirdEffect =", "    %thirdMethod ="),
+                       true},
+             std::pair{replaced(conditionalNestedWrite, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(conditionalNestedWrite, "data-after-second", "bad name"), false},
+             std::pair{replaced(replaced(conditionalNestedSelector,
+                                         "ctjs.get_property %element[%guardReadKey]",
+                                         "ctjs.get_property %text[%guardReadKey]"),
+                                "ctjs.call %guardMethod(%element, %guardReadName)",
+                                "ctjs.call %guardMethod(%text, %guardReadName)"),
+                       false},
+         }) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
+        check(static_cast<bool>(input), "nested cleanup fixture parses");
+        if (!input) { continue; }
+        // Compare every lookup, read, value use and guard before/after expansion.
+        // The caller's surrounding guard adds one common level of nesting.
+        const auto trace = [&](ctjs::FuncOp function) {
+            std::vector<std::string> events;
+            llvm::DenseMap<mlir::Value, unsigned> producers;
+            unsigned baseDepth = 0;
+            function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
+                std::string event;
+                if (auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                    const auto key = ctjs::constantKey(method.getKey());
+                    if (key != "setAttribute" && key != "hasAttribute" && key != "matches") {
+                        return;
+                    }
+                    event = "lookup " + key.str();
+                } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+                    if (!producers.contains(call.getCallee())) { return; }
+                    event = "call " + std::to_string(producers.lookup(call.getCallee()));
+                    for (mlir::Value argument : call.getArgs()) {
+                        event += " " + ctjs::constantKey(argument).str() + ":" +
+                                 std::to_string(producers.lookup(argument));
+                    }
+                } else if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
+                    if (!producers.contains(truth.getValue())) { return; }
+                    event = "truth " + std::to_string(producers.lookup(truth.getValue()));
+                } else if (auto guard = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    if (!producers.contains(guard.getCondition())) { return; }
+                    event = "guard " + std::to_string(producers.lookup(guard.getCondition())) +
+                            (guard.getElseRegion().empty() ? "" : " else");
+                } else {
+                    return;
+                }
+                unsigned depth = 0;
+                for (auto * parent = operation->getParentOp(); parent;
+                     parent = parent->getParentOp()) {
+                    depth += llvm::isa<mlir::scf::IfOp>(parent);
+                }
+                if (events.empty()) { baseDepth = depth; }
+                events.push_back(std::to_string(depth - baseDepth) + " " + event);
+                if (operation->getNumResults() == 1) {
+                    producers[operation->getResult(0)] = static_cast<unsigned>(events.size());
+                }
+            });
+            return events;
+        };
+        const auto original = trace(input->lookupSymbol<ctjs::FuncOp>("same$1"));
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(!error, "nested cleanup guards preserve independently protected writes");
+        if (error) {
+            std::fprintf(stderr, "%s\n", llvm::toString(std::move(error)).c_str());
+            continue;
+        }
+        check(
+            !original.empty() && original == trace(input->lookupSymbol<ctjs::FuncOp>("entry$0")) &&
+                mlir::succeeded(mlir::verify(*input)),
+            "nested expansion retains exact lookup/read/write order, guard depth and saved values");
+        unsigned calls = 0, invocations = 0;
+        input->walk([&](ctjs::CallOp call) {
+            ++calls;
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            check(method && method.getResult().hasOneUse() &&
+                      method.getObject() == call.getReceiver(),
+                  "nested method lookup retains its unique call and receiver");
+            for (mlir::OpOperand & use : call.getResult().getUses()) {
+                check((llvm::isa<ctjs::TruthyOp, ctjs::InvokeExitOp>(use.getOwner()) &&
+                       use.getOperandNumber() == 0) ||
+                          (llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 3),
+                      "every nested snapshot use remains an exact guard or write value");
+            }
+        });
+        input->walk([&](ctjs::InvokeOp invocation) {
+            ++invocations;
+            for (auto * continuation : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
+                auto & arm = continuation->front();
+                auto yield = llvm::hasSingleElement(arm)
+                                 ? llvm::dyn_cast<ctjs::InvokeYieldOp>(arm.front())
+                                 : ctjs::InvokeYieldOp{};
+                check(!invocation.getNumResults() && arm.getNumArguments() == 1 &&
+                          arm.getArgument(0).use_empty() && yield && yield.getValues().empty(),
+                      "each nested write keeps exact unused-result and exception suppression");
+            }
+        });
+        check(calls == 6 && invocations == 3, "nested expansion keeps all reads and three writes");
+        auto bound = contract;
+        bound.entry = "entry$0";
+        bound.moduleSha256 = hostContractFingerprint(*input);
+        for (auto provider :
+             {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
+            bound.provider = provider;
+            DOMEntryAnalysis proof(*input, bound);
+            check(proof.proved() == typed,
+                  "nested expansion requires complete DOM and Style reproof");
+            if (!typed) {
+                check(noEvidence(*input, proof),
+                      "invalid nested receiver or name grants no evidence");
+                continue;
+            }
+            if (!proof.proved()) { continue; }
+            input->walk([&](ctjs::CallOp call) {
+                check(proof.call(call), "nested call has typed evidence");
+            });
+            input->walk([&](ctjs::InvokeOp invocation) {
+                check(proof.invocation(invocation), "nested suppression has typed evidence");
+            });
+            check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
+                  "nested cleanup reproduces its complete typed budget");
+            for (unsigned budget : {0u, proof.steps() - 1}) {
+                DOMEntryAnalysis limited(*input, bound, budget);
+                check(limited.exhausted() && noEvidence(*input, limited),
+                      "incomplete nested cleanup proof publishes no evidence");
+            }
+        }
+    }
+    for (unsigned mutation = 0; mutation != 4; ++mutation) {
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(conditionalNestedElse, &context);
+        check(static_cast<bool>(input), "nested malformed-region fixture parses before mutation");
+        if (!input) { continue; }
+        mlir::scf::IfOp nested;
+        input->walk([&](mlir::scf::IfOp guard) {
+            auto truth = guard.getCondition().getDefiningOp<ctjs::TruthyOp>();
+            auto read = truth ? truth.getValue().getDefiningOp<ctjs::CallOp>() : ctjs::CallOp{};
+            if (read && ctjs::constantKey(read.getArgs()[0]) == "data-third-guard") {
+                nested = guard;
+            }
+        });
+        check(static_cast<bool>(nested), "malformed fixture finds its nested DOM guard");
+        if (!nested) { continue; }
+        auto & region = mutation < 2 ? nested.getThenRegion() : nested.getElseRegion();
+        if (mutation % 2) {
+            auto & block = region.emplaceBlock();
+            auto at = mlir::OpBuilder::atBlockEnd(&block);
+            mlir::scf::YieldOp::create(at, nested.getLoc());
+        } else {
+            region.front().addArgument(ctjs::ValueType::get(&context), nested.getLoc());
+        }
+        auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        check(static_cast<bool>(error), "nested guards refuse region arguments and extra blocks");
+        if (error) { llvm::consumeError(std::move(error)); }
+    }
     for (const auto & budgetSource : {protectedRead,
                                       trailingRead,
                                       secondWrite,
@@ -2465,7 +2651,10 @@ module {
                                       conditionalMixedPostReads,
                                       conditionalThirdWrite,
                                       conditionalThirdSelector,
-                                      conditionalFourthWrite}) {
+                                      conditionalFourthWrite,
+                                      conditionalNestedWrite,
+                                      conditionalNestedSelector,
+                                      conditionalDeeperWrite}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -2486,7 +2675,34 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(conditionalThirdSelector, "[data-closed]", "["),
+         {replaced(conditionalNestedSelector, "[data-third-guard]", "["),
+          replaced(conditionalNestedSelector, "#ctjs.string<\"[data-third-guard]\">",
+                   "#ctjs.number<0>"),
+          replaced(conditionalNestedWrite, "ctjs.truthy %guardPresent", "ctjs.truthy %element"),
+          replaced(conditionalNestedWrite, "ctjs.truthy %guardPresent",
+                   "ctjs.truthy %secondEffect"),
+          replaced(conditionalNestedWrite, "scf.if %nestedCondition", "scf.if %closeCondition"),
+          replaced(conditionalNestedWrite, "    %thirdName =",
+                   "    ctjs.store_global \"leaked\", %guardPresent\n    %thirdName ="),
+          replaced(conditionalNestedWrite, "    %thirdName =",
+                   "    ctjs.store_global \"leaked\", %guardMethod\n    %thirdName ="),
+          replaced(conditionalNestedWrite, "    scf.yield\n    }\n",
+                   "    %unfinished = ctjs.get_property %element[%afterReadKey]\n"
+                   "    scf.yield\n    }\n"),
+          replaced(conditionalNestedElse, "    } else {\n    scf.yield",
+                   "    } else {\n    ctjs.store_global \"leaked\", %guardPresent\n    scf.yield"),
+          replaced(replaced(conditionalNestedWrite,
+                            "    %thirdMethod = ctjs.get_property %element[%secondKey]\n", ""),
+                   "    %nestedCondition =",
+                   "    %thirdMethod = ctjs.get_property %element[%secondKey]\n"
+                   "    %nestedCondition ="),
+          replaced(conditionalNestedWrite, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(conditionalNestedWrite,
+                   "ctjs.call %thirdMethod(%element, %thirdName, %afterPresent)",
+                   "ctjs.call %thirdMethod(%element, %afterPresent, %afterPresent)"),
+          replaced(conditionalThirdSelector, "[data-closed]", "["),
           replaced(conditionalThirdSelector, "#ctjs.string<\"[data-closed]\">", "#ctjs.number<0>"),
           replaced(conditionalThirdWrite,
                    "ctjs.call %thirdMethod(%element, %thirdName, %afterPresent)",

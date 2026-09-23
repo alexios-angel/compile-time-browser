@@ -2561,6 +2561,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.hasAttribute('data-closed'); }",
         "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
     )
+    selector_guarded_nested_third_write_source = selector_guarded_third_write_source.replace(
+        "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+        "if (anchor.hasAttribute('data-closed')) anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3644,6 +3648,40 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-close",
+            selector_guarded_nested_third_write_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-getter-close",
+            selector_guarded_nested_third_write_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-order-close",
+            selector_guarded_nested_third_write_source.replace(
+                "anchor.setAttribute('data-closed', false); const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', false);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-false-guard-close",
+            selector_guarded_nested_third_write_source.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (anchor.matches('[data-closed=true]'))",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
             selector_reused_second_write_source.replace("throw false;", "throw first;"),
             "js_boolean_t",
@@ -3717,7 +3755,16 @@ def saved_throws(args, compilers, includes, libraries):
         terminal_match_read = "-terminal-match-read-" in label
         terminal_write = "-terminal-match-read-sequence-write-" in label
         terminal_write_value = "-terminal-match-read-sequence-write-value-" in label
-        selector_guarded_third_write = "-write-selector-guarded-third-write-value-" in label
+        selector_guarded_nested_third_write = (
+            "-write-selector-guarded-nested-third-write-value-" in label
+        )
+        nested_guard_false = selector_guarded_nested_third_write and label.endswith(
+            "-false-guard-close"
+        )
+        selector_guarded_third_write = (
+            selector_guarded_nested_third_write
+            or "-write-selector-guarded-third-write-value-" in label
+        )
         selector_guarded_second_postread = (
             selector_guarded_third_write
             or "-write-selector-guarded-second-postread-value-" in label
@@ -4044,6 +4091,7 @@ var savedThrow, savedExhausted;
                     int(selector_guarded_second_read and not guarded_second_matches)
                     + selector_guarded_second_two_reads * (1 + guarded_second_matches)
                     + (selector_guarded_second_postread and not guarded_postread_matches)
+                    + (selector_guarded_nested_third_write and not nested_guard_false)
                 ]
                 if selector_inside_first_argument
                 else []
@@ -4081,7 +4129,7 @@ var savedThrow, savedExhausted;
                 "      writes += 'matches=' + selector + ':' + matched + ';';"
                 "\n      if (selector === '[data-visited]') return matched;",
             )
-        if guarded_postread_matches:
+        if guarded_postread_matches or nested_guard_false:
             script = script.replace(
                 "      writes += 'matches=' + selector + ':' + matched + ';';",
                 "      writes += 'matches=' + selector + ':' + matched + ';';"
@@ -4247,6 +4295,16 @@ var savedThrow, savedExhausted;
                 + ("false;" if guarded_postread_matches else "true;"),
                 1,
             )
+        if selector_guarded_nested_third_write:
+            expected["savedPrior"] = expected["savedPrior"].replace(
+                "hasAttribute=data-closed:true;data-after-second=true;",
+                (
+                    "matches=[data-closed=true]:false;"
+                    if nested_guard_false
+                    else "hasAttribute=data-closed:true;hasAttribute=data-closed:true;data-after-second=true;"
+                ),
+                1,
+            )
         if before_first_write_read and terminal_sequence[0] == "data-closed":
             expected["savedPrior"] = (
                 expected["savedPrior"]
@@ -4359,6 +4417,21 @@ var savedThrow, savedExhausted;
                             + '"); }',
                         )
                     )
+                if nested_guard_false:
+                    selected_checks = (
+                        selected_checks.replace("(7 + 2 * repetition)", "(7 + repetition)")
+                        .replace("writes[4 + 2 * repetition]", "writes[4 + repetition]")
+                        .replace("writes[5 + 2 * repetition]", "writes[5 + repetition]")
+                        .replace("assert(writes[5].name == after_second);", "")
+                        .replace(
+                            "has_attribute(id, after_second) == (repetition != 0)",
+                            "has_attribute(id, after_second) == false",
+                        )
+                        .replace(
+                            'if (repetition) { assert(target.read().attribute_value(id, after_second) == "true"); }',
+                            "",
+                        )
+                    )
                 selected_includes, selected_libraries = includes, libraries
                 if selecting:
                     selected_checks = (
@@ -4392,7 +4465,9 @@ var savedThrow, savedExhausted;
                                     (
                                         close_body.index(selector_call, len(selector_call))
                                         + len(selector_call)
-                                        if guarded_second_matches or guarded_postread_matches
+                                        if guarded_second_matches
+                                        or guarded_postread_matches
+                                        or nested_guard_false
                                         else len(selector_call)
                                     ),
                                 )
@@ -4453,6 +4528,10 @@ var savedThrow, savedExhausted;
                                 ) > postread_body.index("}"):
                                     raise RuntimeError(f"{name}: post-write read escaped its guard")
                             if selector_guarded_third_write:
+                                if selector_guarded_nested_third_write:
+                                    expected_first_operations.insert(
+                                        -1, "matches" if nested_guard_false else "read"
+                                    )
                                 expected_first_operations.append("write")
                                 third_write_position = first_selector.rfind(
                                     "ctnative::set_attribute("
@@ -4481,6 +4560,32 @@ var savedThrow, savedExhausted;
                                     < third_write_position
                                 ):
                                     raise RuntimeError(f"{name}: third write escaped its guard")
+                            if selector_guarded_nested_third_write:
+                                guard_position = first_selector.index(
+                                    (
+                                        selector_call
+                                        if nested_guard_false
+                                        else "ctnative::has_attribute("
+                                    ),
+                                    second_write_position,
+                                )
+                                guard_value = (
+                                    first_selector[:guard_position].rpartition("=")[0].split()[-1]
+                                )
+                                cast_position = first_selector.index(
+                                    f"= (bool) {guard_value};", guard_position
+                                )
+                                cast_value = first_selector[:cast_position].split()[-1]
+                                nested_scope = first_selector.index(
+                                    f"if ({cast_value})", cast_position
+                                )
+                                if (
+                                    not nested_scope
+                                    < third_read_position
+                                    < third_write_position
+                                    < first_selector.index("}", nested_scope)
+                                ):
+                                    raise RuntimeError(f"{name}: nested write lost its read guard")
                             if first_operations != expected_first_operations:
                                 raise RuntimeError(
                                     f"{name}: first selector lost its feeding write order"
@@ -4558,6 +4663,7 @@ var savedThrow, savedExhausted;
                             + selector_inside_first_argument
                             + guarded_second_matches
                             + guarded_postread_matches
+                            + nested_guard_false
                         ) or (
                             not early_terminal_selector
                             and close_body.rfind(selector_call)
@@ -4579,12 +4685,14 @@ var savedThrow, savedExhausted;
                                 2
                                 + selector_inside_first_argument
                                 + guarded_second_matches
-                                + guarded_postread_matches,
+                                + guarded_postread_matches
+                                + nested_guard_false,
                             )[
                                 2
                                 + selector_inside_first_argument
                                 + guarded_second_matches
                                 + guarded_postread_matches
+                                + nested_guard_false
                             ]
                             operations = [
                                 (
@@ -4862,6 +4970,10 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-third-write-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-third-write-value-matches-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-third-write-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-false-guard-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-value-order-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
@@ -6789,10 +6901,80 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-selector-guards-nested-third-write",
-            selector_guarded_third_write_source.replace(
+            "normal-selector-nested-third-write-close",
+            selector_guarded_nested_third_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-nested-third-write-close",
+            selector_guarded_nested_third_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-nested-third-write-guard",
+            selector_guarded_nested_third_write_source.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (anchor.matches('['))",
+            ),
+        ),
+        (
+            "dynamic-selector-nested-third-write-guard",
+            selector_guarded_nested_third_write_source.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (anchor.matches(anchor))",
+            ),
+        ),
+        (
+            "bad-selector-nested-third-write-guard-receiver",
+            selector_guarded_nested_third_write_source.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if ((0).hasAttribute('data-closed'))",
+            ),
+        ),
+        (
+            "invalid-selector-nested-third-write-guard-arity",
+            selector_guarded_nested_third_write_source.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (anchor.hasAttribute('data-closed', false))",
+            ),
+        ),
+        (
+            "unsupported-selector-nested-third-write-guard-observer",
+            selector_guarded_nested_third_write_source.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (external(anchor.hasAttribute('data-closed')))",
+            ),
+        ),
+        (
+            "unsupported-selector-nested-third-write-value-observer",
+            selector_guarded_nested_third_write_source.replace(
                 "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                "anchor.setAttribute('data-after-second', external(anchor.hasAttribute('data-closed'))); }",
+            ),
+        ),
+        (
+            "unsupported-selector-nested-third-write-guard-method",
+            selector_guarded_nested_third_write_source.replace(
+                "if (anchor.hasAttribute('data-closed'))",
+                "if (anchor.hasAttribute)",
+            ),
+        ),
+        (
+            "unsupported-selector-nested-third-write-guard-reuse",
+            selector_guarded_nested_third_write_source.replace(
                 "if (anchor.hasAttribute('data-closed')) anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                "const nested = anchor.hasAttribute('data-closed'); external(nested); if (nested) anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+            ),
+        ),
+        (
+            "unsupported-selector-nested-third-write-else",
+            selector_guarded_nested_third_write_source.replace(
+                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); else anchor.setAttribute('data-after-second', false); }",
             ),
         ),
         (
