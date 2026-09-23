@@ -95,8 +95,42 @@ void StructuredCases::mutationRefusals() {
                            "ctjs.append %y to %a", "ctjs.append %one to %a"),
                    "%powerBase = ctjs.get_property %base[%zero]",
                    "%powerBase = ctjs.get_property %base[%one]"));
-    reject("structured powers do not generalize a unit base to zero",
-           replace(unitBase, "pow %one, %i", "pow %zero, %i"));
+    rows.push_back({.what = "structured zero bases preserve both descending own writes",
+                    .body = replace(unitBase, "pow %one, %i", "pow %zero, %i"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    const auto zeroBase = replace(unitBase, "pow %one, %i", "pow %zero, %i");
+    rows.push_back({.what = "structured positive exponents retain the unvisited child",
+                    .body = replace(zeroBase, "%position = ctjs.binary pow %zero, %i",
+                                    "%exponent = ctjs.binary add %i, %one\n"
+                                    "    %position = ctjs.binary pow %zero, %exponent"),
+                    .arrays = "a:[zero,y]",
+                    .reads = "a[0]=zero; a[1]=y",
+                    .exit = "a -> {a,y}"});
+    const auto zeroBaseReload =
+        replace(replace(zeroBase, "  %a =", "  %two = ctjs.binary add %one, %one\n  %a ="),
+                "  ctjs.append %y to %a\n", "  ctjs.append %y to %a\n  ctjs.append %zero to %a\n");
+    const auto reloadedZeroBase = replace(zeroBaseReload, "%position = ctjs.binary pow %zero, %i",
+                                          "%powerBase = ctjs.get_property %base[%two]\n"
+                                          "    %position = ctjs.binary pow %powerBase, %i");
+    rows.push_back({.what = "structured zero bases reload outside both endpoint writes",
+                    .body = reloadedZeroBase,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[2]=zero; a[0]=x; a[2]=zero; a[1]=zero; a[2]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured zero-base reloads retain the complete later-store census",
+           replace(reloadedZeroBase,
+                   "    %step =", "    ctjs.set_property %base[%two], %one\n    %step ="));
+    reject("structured zero bases cannot reload an overwritten endpoint",
+           replace(replace(reloadedZeroBase, "create_array [%x]", "create_array [%zero]"),
+                   "%base[%two]", "%base[%zero]"));
+    reject("structured zero bases require nonnegative exponents throughout the range",
+           replace(zeroBase, "%position = ctjs.binary pow %zero, %i",
+                   "%exponent = ctjs.binary sub %i, %one\n"
+                   "    %position = ctjs.binary pow %zero, %exponent"));
+    reject("structured zero to zero cannot grow the guard array",
+           replace(zeroBase, "  ctjs.append %y to %a\n", ""));
     reject("structured powers refuse nonunit varying results",
            replace(unitPower, "pow %i, %one", "pow %i, %i"));
     const auto primitiveAnd = replace(

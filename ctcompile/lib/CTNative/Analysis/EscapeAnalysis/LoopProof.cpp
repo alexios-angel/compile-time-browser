@@ -360,11 +360,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
-            // ponytail: only zero/unit exponents or a unit base. Every bounded
-            // Number exponent, including negative values, maps a unit base to
-            // one. Wider powers need an enclosure for every interior visit.
+            // ponytail: only zero/unit exponents or bases. A zero base maps
+            // exponent zero to one and positive exponents to zero; its full
+            // exponent range must be nonnegative. General powers need an
+            // enclosure for every interior visit.
             const auto number = boundedConvertedNumber(*offset);
-            if (offsetOperand == 0 ? number != 1 : !number || *number > 1) { return std::nullopt; }
+            if (!number || *number > 1 ||
+                (offsetOperand == 0 && *number == 0 && !range->first.integerNumber)) {
+                return std::nullopt;
+            }
             if (offsetOperand == 0 || *number == 0) { range->stride = 1; }
         }
         if (remainder) {
@@ -542,7 +546,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             shift && endpointNumber(range->last) - endpointNumber(range->first) <=
                          static_cast<std::int64_t>(range->stride);
         std::int64_t roundedIntervals = 0;
-        bool descending = subtract && offsetOperand == 0;
+        bool descending = (subtract || power) && offsetOperand == 0;
         if (shift) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;

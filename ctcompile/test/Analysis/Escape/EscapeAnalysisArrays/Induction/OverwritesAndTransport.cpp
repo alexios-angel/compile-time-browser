@@ -145,11 +145,67 @@ void InductionCases::overwritesAndTransport() {
          {"#ctjs.number<0>", "#ctjs.number<4611686018427387904>",
           "#ctjs.number<13830554455654793216>", "#ctjs.null", "#ctjs.undefined",
           "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
-        reject("varying power exponents require a converted unit Number base",
-               replace(replace(unitBase,
-                               "  %a =", "  %powerBase = ctjs.constant " + literal + "\n  %a ="),
-                       "pow %one, %i", "pow %powerBase, %i"));
+        const auto body = replace(
+            replace(unitBase, "  %a =", "  %powerBase = ctjs.constant " + literal + "\n  %a ="),
+            "pow %one, %i", "pow %powerBase, %i");
+        if (literal == "#ctjs.number<0>" || literal == "#ctjs.null") {
+            run({.what = "zero bases preserve both descending own writes",
+                 .body = body,
+                 .arrays = "a:[zero,zero]",
+                 .reads = "a[0]=one; a[1]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else {
+            reject("varying power exponents require a converted zero/unit Number base", body);
+        }
     }
+    const auto zeroBase = replace(unitBase, "pow %one, %i", "pow %zero, %i");
+    for (const std::string literal :
+         {"#ctjs.number<9223372036854775808>", "#ctjs.boolean<false>", "#ctjs.string<\"0\">"}) {
+        run({.what = "zero bases preserve exact primitive conversion and signed zero keys",
+             .body = replace(replace(zeroBase, "  %a =",
+                                     "  %powerBase = ctjs.constant " + literal + "\n  %a ="),
+                             "pow %zero, %i", "pow %powerBase, %i"),
+             .arrays = "a:[zero,zero]",
+             .reads = "a[0]=one; a[1]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "positive exponents never imply a visit to the zero-exponent key",
+         .body = replace(zeroBase, "%position = ctjs.binary pow %zero, %i",
+                         "%exponent = ctjs.binary add %i, %one\n"
+                         "  %position = ctjs.binary pow %zero, %exponent"),
+         .arrays = "a:[zero,x]",
+         .reads = "a[0]=zero; a[1]=x",
+         .exit = "a -> {a,x}"});
+    const auto zeroBaseReload = replace(replace(zeroBase, "[%one, %x]", "[%x, %x, %zero]"),
+                                        "%position = ctjs.binary pow %zero, %i",
+                                        "%powerBase = ctjs.get_property %base[%two]\n"
+                                        "  %position = ctjs.binary pow %powerBase, %i");
+    run({.what = "zero bases reload outside both endpoint writes",
+         .body = zeroBaseReload,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[2]=zero; a[0]=x; a[2]=zero; a[1]=zero; a[2]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "zero-base writes keep snapshots taken before the loop",
+         .body = replace(replace(zeroBase, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[1]=x; a[0]=one; a[1]=zero",
+         .exit = "x -> {x}"});
+    reject(
+        "zero-base reloads retain the complete later-store census",
+        replace(zeroBaseReload, "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
+    reject("zero bases cannot reload an overwritten endpoint",
+           replace(replace(zeroBaseReload, "[%x, %x, %zero]", "[%zero, %x, %zero]"), "%base[%two]",
+                   "%base[%zero]"));
+    reject("zero bases require nonnegative exponents throughout the range",
+           replace(zeroBase, "%position = ctjs.binary pow %zero, %i",
+                   "%exponent = ctjs.binary sub %i, %one\n"
+                   "  %position = ctjs.binary pow %zero, %exponent"));
+    reject("zero to zero cannot grow the guard array", replace(zeroBase, "[%one, %x]", "[%x]"));
     reject("a unit-base proof cannot borrow an object conversion",
            replace(unitBase, "pow %one, %i", "pow %x, %i"));
     reject("power exponents cannot borrow an object conversion",
