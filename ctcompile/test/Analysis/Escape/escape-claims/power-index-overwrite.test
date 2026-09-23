@@ -297,6 +297,16 @@
 // CHECK: escape {{[0-9a-f]+}} 254 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 255 {{[0-9]+}} obj escapes:stored
 
+// Bounded varying subtraction reuses exact ordered scalar transfers.
+// CHECK: escape {{[0-9a-f]+}} 256 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 257 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 258 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 259 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 260 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 261 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 262 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 263 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -1753,3 +1763,50 @@ function generalCorrelatedPower() {
 correlatedPower(); reversedCorrelatedPower(); retainedCorrelatedPower(); savedCorrelatedPower();
 reloadedCorrelatedPower(); laterCorrelatedPowerStore(); overlappingCorrelatedPower();
 crossingCorrelatedPower(); poleCorrelatedPower(); generalCorrelatedPower();
+
+function varyingDifference() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) - i] = 0;
+    return a;
+}
+function retainedVaryingDifference() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i + 1) - i] = 0;
+    return a;
+}
+function savedVaryingDifference() {
+    var child = {}, a = [0, child, 0], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(i + 1) - i] = 0;
+    return saved;
+}
+function reloadedVaryingDifference() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + a[0]) - i] = 0;
+    return a;
+}
+function laterVaryingDifferenceStore() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[(i + a[0]) - i] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingVaryingDifference() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[(i + a[1]) - i] = 0;
+    return a;
+}
+function reversedVaryingDifference() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[i - (i + 1)] = 0;
+    return a;
+}
+function fractionalVaryingDifference() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i / 2) - (i / 2)] = 0;
+    return a;
+}
+varyingDifference(); retainedVaryingDifference(); savedVaryingDifference();
+reloadedVaryingDifference(); laterVaryingDifferenceStore(); overlappingVaryingDifference();
+reversedVaryingDifference(); fractionalVaryingDifference();

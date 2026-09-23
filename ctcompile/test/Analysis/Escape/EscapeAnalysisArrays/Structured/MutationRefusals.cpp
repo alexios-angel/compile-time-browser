@@ -1448,8 +1448,27 @@ void StructuredCases::mutationRefusals() {
                     .exit = "a -> {a}"});
     reject("structured reverse indices cannot visit negative own positions",
            replace(reverseIndex, "sub %one, %i", "sub %zero, %i"));
-    reject("structured reverse indices cannot depend on two varying operands",
-           replace(reverseIndex, "sub %one, %i", "sub %i, %i"));
+    rows.push_back({.what = "structured repeated-index subtraction retains the unvisited child",
+                    .body = replace(reverseIndex, "sub %one, %i", "sub %i, %i"),
+                    .arrays = "a:[zero,y]",
+                    .reads = "a[0]=zero; a[1]=y",
+                    .exit = "a -> {a,y}"});
+    const auto differenceReload =
+        replace(replace(reverseIndex, "create_array [%x]", "create_array [%one]"),
+                "%position = ctjs.binary sub %one, %i",
+                "%offset = ctjs.get_property %base[%zero]\n"
+                "    %left = ctjs.binary add %i, %offset\n"
+                "    %position = ctjs.binary sub %left, %i");
+    rows.push_back({.what = "structured varying subtraction refines ordered reload gaps",
+                    .body = differenceReload,
+                    .arrays = "a:[one,zero]",
+                    .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured varying subtraction retains every later producer write",
+           replace(differenceReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %zero\n    %step ="));
+    reject("structured varying subtraction preserves source operand order",
+           replace(differenceReload, "sub %left, %i", "sub %i, %left"));
     const auto negativeScale =
         replace(replace(reverseIndex, "  %a =", "  %negative = ctjs.unary neg %one\n  %a ="),
                 "%position = ctjs.binary sub %one, %i",

@@ -1024,6 +1024,46 @@ void InductionCases::overwritesAndTransport() {
            replace(varyingDivisor, "add %i, %one", "sub %i, %one"));
     reject("varying divisors cannot round a fractional actual quotient",
            replace(varyingDivisor, "div %numerator, %divisor", "div %i, %divisor"));
+    const auto varyingDifference =
+        replace(varyingDivisor, "div %numerator, %divisor", "sub %numerator, %i");
+    run({.what = "bounded varying subtraction refines exact ordered cancellation",
+         .body = varyingDifference,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "varying subtraction replay retains every unvisited child",
+         .body = replace(varyingDifference, "[%zero, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[x,zero,x]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "varying subtraction retains a saved overwritten child",
+         .body = replace(replace(varyingDifference, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[1]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto differenceReload =
+        replace(varyingDivisorReload, "div %numerator, %divisor", "sub %divisor, %i");
+    run({.what = "varying subtraction independently proves producer reload gaps",
+         .body = differenceReload,
+         .arrays = "a:[one,zero,zero]",
+         .reads = "a[0]=one; a[0]=one; a[0]=one; a[1]=zero; a[0]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("varying subtraction retains every later producer store",
+           replace(differenceReload,
+                   "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
+    reject("varying subtraction cannot borrow an overwritten producer",
+           replace(replace(differenceReload, "[%one, %x, %zero]", "[%x, %one, %zero]"),
+                   "%unit = ctjs.get_property %base[%zero]",
+                   "%unit = ctjs.get_property %base[%one]"));
+    reject("varying subtraction preserves operand order and rejects negative own keys",
+           replace(varyingDifference, "sub %numerator, %i", "sub %i, %numerator"));
+    reject("varying subtraction cannot cancel an unproved fractional intermediate",
+           replace(replace(varyingDifference, "add %i, %one", "div %i, %two"), "sub %numerator, %i",
+                   "sub %numerator, %numerator"));
     const auto singletonShift = replace(replace(masked, "[%one, %x]", "[%x, %x, %zero]"),
                                         "%position = ctjs.binary_static bitand %i, %one",
                                         "%count = ctjs.binary pow %one, %i\n"
@@ -5218,6 +5258,11 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=one; a[2]=zero",
          .exit = "a -> {a}"},
         "x");
+    run({.what = "repeated-index subtraction preserves exact nonunit visits and retained children",
+         .body = replace(reverseIndex, "sub %three, %i", "sub %i, %i"),
+         .arrays = "a:[zero,x,one,x]",
+         .reads = "a[0]=zero; a[2]=one",
+         .exit = "a -> {a,x}"});
     const auto reverseReload =
         replace(replace(reverseIndex, "[%one, %x, %one, %x]", "[%one, %x, %three, %x]"),
                 "  %position = ctjs.binary sub %three, %i",
@@ -5292,7 +5337,6 @@ void InductionCases::overwritesAndTransport() {
            replace(primitiveReverse, "sub %text, %i", "add %text, %i"));
     for (const auto & body :
          {replace(reverseIndex, "sub %three, %i", "sub %zero, %i"),
-          replace(reverseIndex, "sub %three, %i", "sub %i, %i"),
           replace(replace(reverseReload, "[%one, %x, %three, %x]", "[%one, %x, %one, %three]"),
                   "%offset = ctjs.get_property %base[%two]",
                   "%offset = ctjs.get_property %base[%three]"),
