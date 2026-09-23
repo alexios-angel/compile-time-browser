@@ -2058,6 +2058,25 @@ module {
         throwingReturn(primitiveReturn(booleanExhaustionSource)), &context);
     auto booleanGetterReturn = mlir::parseSourceString<mlir::ModuleOp>(
         getterReturn(throwingReturn(primitiveReturn(booleanExhaustionSource))), &context);
+    const auto normalMutableSource =
+        mutableThrowingClose(throwingReturn(primitiveReturn(returningSource)));
+    const auto normalMutablePayloadSource =
+        replaced(normalMutableSource, "    ctjs.throw %result",
+                 "    %payload = ctjs.get_property %this[%stateKey]\n    ctjs.throw %payload");
+    auto normalMutable = mlir::parseSourceString<mlir::ModuleOp>(normalMutableSource, &context);
+    auto normalMutableGetter =
+        mlir::parseSourceString<mlir::ModuleOp>(getterReturn(normalMutableSource), &context);
+    auto normalMutablePayload =
+        mlir::parseSourceString<mlir::ModuleOp>(normalMutablePayloadSource, &context);
+    auto normalMutablePayloadGetter =
+        mlir::parseSourceString<mlir::ModuleOp>(getterReturn(normalMutablePayloadSource), &context);
+    check(normalMutable && normalMutableGetter && normalMutablePayload &&
+              normalMutablePayloadGetter,
+          "normal mutable method and getter exceptions parse");
+    if (!normalMutable || !normalMutableGetter || !normalMutablePayload ||
+        !normalMutablePayloadGetter) {
+        return;
+    }
     check(normalThrowingReturn && normalThrowingBreak && normalGetterReturn && normalGetterBreak &&
               booleanThrowingReturn && booleanGetterReturn,
           "historical normal terminal-throw close controls parse unchanged");
@@ -2065,8 +2084,10 @@ module {
         !normalGetterBreak || !booleanThrowingReturn || !booleanGetterReturn) {
         return;
     }
-    for (auto fixture : {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn,
-                         *normalGetterBreak, *booleanThrowingReturn, *booleanGetterReturn}) {
+    for (auto fixture :
+         {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn, *normalGetterBreak,
+          *booleanThrowingReturn, *booleanGetterReturn, *normalMutable, *normalMutableGetter,
+          *normalMutablePayload, *normalMutablePayloadGetter}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
@@ -2086,9 +2107,21 @@ module {
                                     : ctjs::ConstantOp{};
             auto number =
                 payload ? llvm::dyn_cast<ctjs::NumberAttr>(payload.getValue()) : ctjs::NumberAttr{};
-            check(number && number.getDouble() == 2 &&
+            auto updated = returned ? returned.getValue().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+            auto increment =
+                updated ? updated.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+            auto ten = increment ? llvm::dyn_cast<ctjs::NumberAttr>(increment.getValue())
+                                 : ctjs::NumberAttr{};
+            const bool statePayload =
+                fixture == *normalMutablePayload || fixture == *normalMutablePayloadGetter;
+            check((statePayload
+                       ? updated && updated.getKind() == ctjs::BinaryKind::Add && ten &&
+                             ten.getDouble() == 10 &&
+                             updated.getLhs() == close.getBody().front().getArguments().back()
+                       : number && number.getDouble() == 2) &&
                       llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()),
-                  "normal close returns its original exception after exiting its frame");
+                  "normal close retains its original or updated-state exception after frame exit");
             unsigned closes = 0, throws = 0;
             input->walk([&](ctjs::CallOp call) {
                 auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -5386,6 +5419,10 @@ module {
                          *normalGetterBreak,
                          *booleanThrowingReturn,
                          *booleanGetterReturn,
+                         *normalMutable,
+                         *normalMutableGetter,
+                         *normalMutablePayload,
+                         *normalMutablePayloadGetter,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,

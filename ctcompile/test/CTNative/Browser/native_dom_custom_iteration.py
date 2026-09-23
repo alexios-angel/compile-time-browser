@@ -2407,7 +2407,13 @@ def normal_throws(args, compilers, includes, libraries, cases):
     executions = observations = 0
     for label, text in cases:
         selecting = "selector" in label
-        unconditional_return = label in (
+        mutable = "mutable-" in label
+        cleanup_number = (
+            13
+            if mutable and "effectful" in label
+            else 11 if mutable and "nonliteral" in label else 2
+        )
+        unconditional_return = mutable or label in (
             "return-getter-close",
             "return-method-close",
             "return-effectful-getter-close",
@@ -2422,7 +2428,7 @@ def normal_throws(args, compilers, includes, libraries, cases):
             else (
                 'error.value.value() == "closed"'
                 if "string" in label
-                else "error.value.value() == 2.0"
+                else f"error.value.value() == {cleanup_number}.0"
             )
         )
         extra_catch = attribute_getter = ""
@@ -2486,10 +2492,22 @@ var {name} = (function() {{
                 ("data-yielded", "yes"),
             ]
             trace += "".join(f"write:{key}={value};" for key, value in writes)
-            if mode >= 3:
+            if mode >= 3 and mutable:
+                result = "return:0:"
+            elif mode >= 3:
                 value = "true" if mode == 4 else "false"
                 trace += f"read:data-visited={value};"
                 result = f"return:{value}:"
+            elif mutable:
+                trace += "write:data-visited=yes;"
+                writes.append(("data-visited", "yes"))
+                if "effectful" in label:
+                    trace += "write:data-visited=true;"
+                    writes.append(("data-visited", "true"))
+                value = "true" if "effectful" in label else "yes"
+                trace += f"write:data-closed={value};"
+                writes.append(("data-closed", value))
+                result = f"throw:number:{cleanup_number}:"
             elif unconditional_return:
                 if label == "return-effectful-getter-close":
                     trace += "write:data-visited=yes;"
@@ -2600,7 +2618,7 @@ var {name} = (function() {{
                 if (mode == 4) { assert(target.set_attribute(id, atom("data-visited"), "yes")); }
                 (void)target.take_writes();
                 bool caught = false;
-                try { assert(static_cast<bool>(call()) == (@RETURNS_TRUE@)); }
+                try { assert(@RETURN_CHECK@); }
                 catch (const ctnative::js_exception<ctnative::@TYPE@> & error) {
                     caught = @PAYLOAD@;
                 }
@@ -2617,7 +2635,18 @@ var {name} = (function() {{
             .replace("@STATES@", "\n".join(states))
             .replace("@EXTRA_CATCH@", extra_catch)
             .replace("@MODES@", "5" if unconditional_return else "4")
-            .replace("@RETURNS_TRUE@", "mode == 4" if unconditional_return else "mode == 0")
+            .replace(
+                "@RETURN_CHECK@",
+                (
+                    "call().value() == 0.0"
+                    if mutable
+                    else (
+                        "static_cast<bool>(call()) == (mode == 4)"
+                        if unconditional_return
+                        else "static_cast<bool>(call()) == (mode == 0)"
+                    )
+                ),
+            )
             .replace("@THROWS@", "mode < 3" if unconditional_return else "mode == 1 || mode == 2")
         )
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
@@ -5583,6 +5612,45 @@ var savedThrow, savedExhausted;
             ),
         ),
     )
+    mutable_close_cases = (
+        (
+            "return-mutable-throwing-close",
+            mutable_throwing_source.replace("throw (count += 2, count);", "return count;"),
+        ),
+        (
+            "normal-mutable-throwing-close",
+            mutable_throwing_source.replace("throw (count += 2, count);", "break;"),
+        ),
+        (
+            "return-mutable-nonliteral-close",
+            nonliteral_throwing_source.replace("throw (count += 2, count);", "return count;"),
+        ),
+    )
+    mutable_close_cases += (
+        (
+            "return-mutable-effectful-nonliteral-close",
+            mutable_close_cases[2][1]
+            .replace(
+                "    return count;",
+                "    return (count += 2, node.setAttribute('data-visited', count === 3), count);",
+                1,
+            )
+            .replace(
+                "anchor.setAttribute('data-closed', 'yes');",
+                "anchor.setAttribute('data-closed', count === 13);",
+            ),
+        ),
+    )
+    mutable_close_cases += tuple(
+        (label.replace("-close", "-getter-close"), text.replace("return() {", "get return() {"))
+        for label, text in mutable_close_cases
+    )
+    normal_cases += mutable_close_cases + (
+        (
+            "normal-mutable-nonliteral-close",
+            nonliteral_throwing_source.replace("throw (count += 2, count);", "break;"),
+        ),
+    )
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
@@ -5647,6 +5715,10 @@ var savedThrow, savedExhausted;
         "return-getter-close",
         "unknown-close-throw",
         "unknown-getter-throw",
+        "return-mutable-throwing-close",
+        "normal-mutable-throwing-close",
+        "return-mutable-nonliteral-close",
+        "normal-mutable-nonliteral-close",
     }
     admitted = 0
     for label, text in (

@@ -1236,9 +1236,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             // A normal close propagates the cleanup exception. Keep the payload
             // and throw it at the original call, where the typed DOM proof can
             // check its ownership and the unreachable continuation.
-            // ponytail: stateless, normal-only closes; mixed suppression and
-            // mutable state need separate exceptional-state transport.
-            observableThrow = thrown && protectedCloses.empty() && stateInitials.empty();
+            // The confined final state has no observer after this throw.
+            // ponytail: normal-only closes; mixed suppression still needs a
+            // separate proof for each exceptional continuation.
+            observableThrow = thrown && protectedCloses.empty();
         } else if (!record || record->getBlock() != &block) {
             return error("DOM iterator method must return one fresh own-field record");
         }
@@ -1642,6 +1643,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto method = ctjs::GetPropertyOp::create(at, where, type, holder, key);
         auto called = ctjs::CallOp::create(at, where, type, method, holder,
                                            mlir::ValueRange(state).drop_front());
+        // A throwing close returns its payload only for the immediate rethrow.
+        // Its final private state has no record fields or live continuation.
+        if (name == "return" && observableThrow) { return called; }
         for (unsigned index = 0; index < stateInitials.size(); ++index) {
             if (!spend()) { return ctjs::CallOp{}; }
             auto field = ctjs::ConstantOp::create(
@@ -1708,8 +1712,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     at, where, ctjs::BooleanAttr::get(candidate.getContext(), true));
                 if (slots.contains("return")) {
                     auto branch = mlir::scf::IfOp::create(
-                        at, where, mlir::TypeRange(mlir::ValueRange(state).drop_front()), test,
-                        true);
+                        at, where,
+                        observableThrow ? mlir::TypeRange{}
+                                        : mlir::TypeRange(mlir::ValueRange(state).drop_front()),
+                        test, true);
                     for (auto & region : branch->getRegions()) {
                         auto & block = region.front();
                         mlir::OpBuilder inside(&block, block.begin());
@@ -1731,7 +1737,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                                 ctjs::ThrowOp::create(terminal, where, called.getResult());
                             }
                         }
-                        if (state.size() > 1) {
+                        if (!observableThrow && state.size() > 1) {
                             mlir::scf::YieldOp::create(inside, where,
                                                        mlir::ValueRange(closingState).drop_front());
                         }
