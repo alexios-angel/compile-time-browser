@@ -590,6 +590,59 @@ void InductionCases::overwritesAndTransport() {
     reject("singleton nonunit bases do not prove general powers",
            replace(singletonBasePower, "%exponent = ctjs.binary mod %i, %two",
                    "%exponent = ctjs.binary add %i, %one"));
+    const auto tightOddPower = replace(varyingOddPower, "[%x, %x, %x]", "[%x, %x]");
+    run({.what = "negative and zero bases with odd varying exponents do not invent positive units",
+         .body = tightOddPower,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "descending nonpositive bases retain the exact odd-power upper bound",
+         .body = replace(tightOddPower, "ctjs.binary sub %i, %one", "ctjs.unary neg %i"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=x; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "tight odd-power bounds preserve saved child identities",
+         .body = replace(replace(tightOddPower, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero",
+         .exit = "x -> {x}"});
+    const auto tightOddReload =
+        replace(replace(replace(tightOddPower, "[%x, %x]", "[%x, %x, %one]"),
+                        "%powerBase = ctjs.binary sub %i, %one",
+                        "%part = ctjs.binary mod %i, %two\n"
+                        "  %powerBase = ctjs.binary sub %part, %one"),
+                "%exponent = ctjs.binary add %even, %one",
+                "%offset = ctjs.get_property %base[%two]\n"
+                "  %exponent = ctjs.binary add %even, %offset");
+    run({.what = "tight odd-power bounds retain disjoint exponent reloads",
+         .body = tightOddReload,
+         .arrays = "a:[zero,zero,one]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "tight odd-power bounds retain the complete later-store census",
+        replace(tightOddReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("tight odd-power bounds cannot hide an overwritten exponent reload",
+           replace(replace(tightOddReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%zero]"));
+    reject("mixed exponent parity must still include the positive unit image",
+           replace(tightOddPower, "ctjs.binary mul %i, %two", "ctjs.unary plus %i"));
+    reject("zero exponents must still include the positive unit image",
+           replace(tightOddPower, "add %even, %one", "add %even, %zero"));
+    reject("positive even exponents must still include the positive unit image",
+           replace(tightOddPower, "add %even, %one", "add %even, %two"));
+    reject("positive unit bases cannot borrow the nonpositive odd-power bound",
+           replace(tightOddPower, "ctjs.binary sub %i, %one", "ctjs.unary plus %i"));
+    reject("odd negative exponents still refuse a zero base",
+           replace(tightOddPower, "add %even, %one", "sub %even, %three"));
+    reject("tight odd-power bounds still require integral exponent lattices",
+           replace(tightOddPower, "mul %i, %two", "div %i, %two"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

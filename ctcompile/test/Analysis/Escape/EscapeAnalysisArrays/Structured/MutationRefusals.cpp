@@ -429,6 +429,52 @@ void StructuredCases::mutationRefusals() {
     reject("structured singleton nonunit bases do not prove general powers",
            replace(singletonBasePower, "%exponent = ctjs.binary mod %i, %two",
                    "%exponent = ctjs.binary add %i, %one"));
+    const auto tightOddPower =
+        replace(varyingOddPower, "create_array [%x, %y]", "create_array [%x]");
+    rows.push_back(
+        {.what = "structured nonpositive bases with odd exponents exclude positive units",
+         .body = tightOddPower,
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"});
+    rows.push_back({.what = "structured descending bases preserve tight odd-power bounds",
+                    .body = replace(tightOddPower, "ctjs.binary sub %i, %one", "ctjs.unary neg %i"),
+                    .arrays = "a:[zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero",
+                    .exit = "a -> {a}"});
+    const auto tightOddReload = replace(
+        replace(replace(replace(tightOddPower, "create_array [%x]", "create_array [%x, %y]"),
+                        "ctjs.append %y to %a", "ctjs.append %one to %a"),
+                "%powerBase = ctjs.binary sub %i, %one",
+                "%part = ctjs.binary mod %i, %two\n"
+                "    %powerBase = ctjs.binary sub %part, %one"),
+        "%exponent = ctjs.binary add %even, %one",
+        "%offset = ctjs.get_property %base[%two]\n"
+        "    %exponent = ctjs.binary add %even, %offset");
+    rows.push_back({.what = "structured tight odd-power bounds preserve disjoint reloads",
+                    .body = tightOddReload,
+                    .arrays = "a:[zero,zero,one]",
+                    .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one",
+                    .exit = "a -> {a}"});
+    reject("structured tight odd-power bounds retain later-store checks",
+           replace(tightOddReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured tight odd-power bounds cannot reload overwritten elements",
+           replace(replace(tightOddReload, "create_array [%x, %y]", "create_array [%one, %y]"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%zero]"));
+    reject("structured mixed exponent parity includes the positive unit image",
+           replace(tightOddPower, "ctjs.binary mul %i, %two", "ctjs.unary plus %i"));
+    reject("structured zero exponents include the positive unit image",
+           replace(tightOddPower, "add %even, %one", "add %even, %zero"));
+    reject("structured positive even exponents include the positive unit image",
+           replace(tightOddPower, "add %even, %one", "add %even, %two"));
+    reject("structured positive bases cannot borrow nonpositive odd-power bounds",
+           replace(tightOddPower, "ctjs.binary sub %i, %one", "ctjs.unary plus %i"));
+    reject("structured odd negative exponents cannot include zero bases",
+           replace(tightOddPower, "add %even, %one", "sub %even, %three"));
+    reject("structured odd-power bounds need integral exponent lattices",
+           replace(tightOddPower, "mul %i, %two", "div %i, %two"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

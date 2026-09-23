@@ -141,6 +141,21 @@
 // CHECK: escape {{[0-9a-f]+}} 121 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 122 {{[0-9]+}} obj escapes:stored
 
+// Odd varying exponents of nonpositive signed-unit bases cannot create a positive unit.
+// CHECK: escape {{[0-9a-f]+}} 123 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 124 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 125 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 126 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 127 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 128 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 129 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 130 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -825,3 +840,77 @@ singletonBasePower(); negativeSingletonBasePower(); retainedSingletonBasePower()
 savedSingletonBasePower(); reloadedSingletonBasePower(); positiveSingletonZeroBase();
 laterSingletonBaseStore(); overlappingSingletonBasePower(); nonsingletonBasePower();
 generalSingletonBasePower(); negativeSingletonBaseExponent(); negativeSingletonZeroBase();
+
+function tightNonpositiveOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (2 * i + 1)] = 0;
+    return a;
+}
+function descendingNonpositiveOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-i) ** (2 * i + 1)] = 0;
+    return a;
+}
+function savedNonpositiveOddPower() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (2 * i + 1)] = 0;
+    return saved;
+}
+function retainedNonpositiveOddPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + 1)] = 0;
+    return a;
+}
+function reloadedNonpositiveOddPower() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + a[2])] = 0;
+    return a;
+}
+function laterNonpositiveOddStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[1 + (i % 2 - 1) ** (2 * i + a[2])] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingNonpositiveOddPower() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + a[0])] = 0;
+    return a;
+}
+function mixedNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (i + 1)] = 0;
+    return a;
+}
+function zeroNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i)] = 0;
+    return a;
+}
+function evenNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + 2)] = 0;
+    return a;
+}
+function positiveUnitOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2) ** (2 * i + 1)] = 0;
+    return a;
+}
+function negativeNonpositiveOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (2 * i - 3)] = 0;
+    return a;
+}
+function fractionalNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (i / 2 + 1)] = 0;
+    return a;
+}
+tightNonpositiveOddPower(); descendingNonpositiveOddPower(); savedNonpositiveOddPower();
+retainedNonpositiveOddPower(); reloadedNonpositiveOddPower(); laterNonpositiveOddStore();
+overlappingNonpositiveOddPower(); mixedNonpositivePower(); zeroNonpositivePower();
+evenNonpositivePower(); positiveUnitOddPower(); negativeNonpositiveOddPower();
+fractionalNonpositivePower();

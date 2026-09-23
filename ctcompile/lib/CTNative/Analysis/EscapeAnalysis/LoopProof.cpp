@@ -381,9 +381,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!exponent->first.integerNumber && zeroBase) { return std::nullopt; }
             // Every combination is an exact scalar identity. An odd exponent
             // can retain a negative unit; zero to zero must still include one.
-            const bool odd = endpointNumber(exponent->first) % 2 != 0 ||
-                             (endpointNumber(exponent->first) != endpointNumber(exponent->last) &&
-                              exponent->stride % 2 != 0);
+            const bool varyingParity =
+                endpointNumber(exponent->first) != endpointNumber(exponent->last) &&
+                exponent->stride % 2 != 0;
+            const bool odd = endpointNumber(exponent->first) % 2 != 0 || varyingParity;
+            const bool even = endpointNumber(exponent->first) % 2 == 0 || varyingParity;
             ContentsValue first{operand, ContentsKind::NonBigInt, zeroBase ? 0U : 1U};
             if (range->first.negativeIntegerNumber && odd) {
                 first.integerNumber.reset();
@@ -391,8 +393,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             // ponytail: independent ranges lose correlation; bounded whole-key
             // refinement checks reload gaps, while replay records actual writes.
-            return IndexRange{
-                first, {operand, ContentsKind::NonBigInt, 1}, zeroBase ? 1U : 2U, true};
+            // Without a positive unit base or an even exponent (including zero),
+            // the largest image is zero. Do not invent an out-of-bounds +1 key.
+            return IndexRange{first,
+                              {operand, ContentsKind::NonBigInt,
+                               range->last.integerNumber == 1 || even ? 1U : 0U},
+                              zeroBase ? 1U : 2U,
+                              true};
         }
         if (!offset) { return std::nullopt; }
         // At most two varying values need only their exact scalar power proofs;
