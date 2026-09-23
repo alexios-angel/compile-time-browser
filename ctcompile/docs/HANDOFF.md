@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Terminal mutable iterator closes and zero-base power indices, 2026-09-23 UTC
+
+Resumed clean **2046e48b** and the retained Number snapshots `7c0874c9` and
+`8ee2040d`. **74f07bcc** proves that a protected close immediately followed
+by the saved throw cannot expose its final private state. Close receives current
+scalar state; the earlier throw payload remains a separate owning Number.
+Pre-close scalar producers remain for complete typed DOM reproof, the attribute
+call keeps suppression, and only the unused fresh result record is elided.
+Both original sources now execute unchanged. A derived witness verifies close
+sees count 13 while the throw still carries 3.
+
+Parallel **8d789d96** proves zero-base power indices over bounded nonnegative
+exponents, retaining `0 ** 0 === 1`. Existing primitive conversion, complete
+reload/store census, endpoint bounds, actual-write replay and budgets remain.
+Negative exponents and general powers still refuse. All 27 historical source
+bodies survive, with one unchanged source promoted and 13 controls appended.
+
+Focused host and arrays CTests and the exact power-index lit case pass.
+Eleven saved-throw sources pass **176 native executions, 60 refusals and
+72 Node/VM observations**; three prior sources pass **48 native executions,
+74 refusals, zero nonexecuted admissions and 24 Node/VM observations**.
+Historical throw oracles agree on **20 observations per engine**. Full formatting passes **1126 C++, 157 Python, 114 web files**.
+Nine final code/test hashes match the devbox; 112 generated C++ files contain
+no Script/VM protocol or nullable-scalar fallback. All 233 historical iterator
+bodies and 86 metadata rows remain unchanged. Full suites were skipped;
+no browser implementation changed.
+
+**Next native boundary:** original primitive close `5c738524` still refuses the
+fresh own-field record requirement in both policies. Its primitive result is
+unobserved during saved-throw completion; prove that exact path without losing
+normal-close validation or the original throw. Throwing close `fa88f9d6` has the
+same structural refusal; getter `68ea7208` lacks a complete return/yield.
+Nonterminal exceptional state, multiple protected regions, implicit cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver
+and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-mutable-close.md).
+
 ## Mixed iterator completions and unit-base power indices, 2026-09-23 UTC
 
 Resumed clean **e4e06268** and the retained mixed throw/return source `43ab2b64`.
