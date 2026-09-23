@@ -168,6 +168,20 @@
 // CHECK: escape {{[0-9a-f]+}} 144 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 145 {{[0-9]+}} obj escapes:stored
 
+// The zero/unit union retains only congruences shared by the base and one.
+// CHECK: escape {{[0-9a-f]+}} 146 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 147 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 148 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 149 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 151 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 152 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 153 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 154 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -984,3 +998,71 @@ varyingZeroUnitPower(); negativeVaryingZeroUnitPower(); savedVaryingZeroUnitPowe
 reloadedVaryingZeroUnitPower(); laterVaryingZeroUnitStore(); overlappingVaryingZeroUnitPower();
 fractionalVaryingZeroUnitPower(); outsideVaryingZeroUnitPower();
 negativeVaryingNonunitExponent(); higherVaryingNonunitExponent();
+
+function dividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function descendingDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - (1 - 2 * i) ** (i % 2)) / 2] = 0;
+    return a;
+}
+function negativeDivisorZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - (2 * i + 1) ** (i % 2)) / -2] = 0;
+    return a;
+}
+function strideFourZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((4 * i + 1) ** (i % 2) - 1) / 4] = 0;
+    return a;
+}
+function reducedCongruenceZeroUnitPower() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i++) a[((4 * (i % 2) + 3) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function savedDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 2] = 0;
+    return saved;
+}
+function retainedDividedZeroUnitPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function reloadedDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % a[2]) - 1) / 2] = 0;
+    return a;
+}
+function laterDividedZeroUnitStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[((2 * i + 1) ** (i % a[2]) - 1) / 2] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+function overlappingDividedZeroUnitPower() {
+    var child = {}, a = [2, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % a[0]) - 1) / 2] = 0;
+    return a;
+}
+function mismatchedUnitResiduePower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 2) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function fractionalDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 3] = 0;
+    return a;
+}
+dividedZeroUnitPower(); descendingDividedZeroUnitPower(); negativeDivisorZeroUnitPower();
+strideFourZeroUnitPower(); reducedCongruenceZeroUnitPower(); savedDividedZeroUnitPower();
+retainedDividedZeroUnitPower(); reloadedDividedZeroUnitPower(); laterDividedZeroUnitStore();
+overlappingDividedZeroUnitPower(); mismatchedUnitResiduePower(); fractionalDividedZeroUnitPower();

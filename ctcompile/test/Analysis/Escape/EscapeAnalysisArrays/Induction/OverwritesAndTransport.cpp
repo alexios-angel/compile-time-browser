@@ -694,6 +694,54 @@ void InductionCases::overwritesAndTransport() {
                    "%exponent = ctjs.binary div %i, %two"));
     reject("zero/unit powers still require every output to be an own element",
            replace(zeroUnitExponent, "add %part, %two", "add %part, %three"));
+    const auto dividedPower = replace(replace(singletonBasePower,
+                                              "%part = ctjs.binary mod %i, %one\n"
+                                              "  %powerBase = ctjs.binary add %part, %two",
+                                              "%part = ctjs.binary mul %i, %two\n"
+                                              "  %powerBase = ctjs.binary add %part, %one"),
+                                      "%position = ctjs.binary sub %power, %one",
+                                      "%numerator = ctjs.binary sub %power, %one\n"
+                                      "  %position = ctjs.binary div %numerator, %two");
+    run({.what = "zero/unit power congruence proves exact composed division",
+         .body = dividedPower,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "zero/unit power congruence survives descending signed bases",
+         .body = replace(replace(dividedPower, "add %part, %one", "sub %one, %part"),
+                         "sub %power, %one", "sub %one, %power"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "divided power writes retain unvisited child identities",
+         .body = replace(dividedPower, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    const auto dividedPowerReload =
+        replace(replace(dividedPower, "[%x, %x, %zero]", "[%x, %x, %two]"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "  %exponent = ctjs.binary mod %i, %divisor");
+    run({.what = "divided powers refine correlated gaps for disjoint reloads",
+         .body = dividedPowerReload,
+         .arrays = "a:[zero,zero,two]",
+         .reads = "a[2]=two; a[0]=zero; a[2]=two; a[1]=zero; a[2]=two; a[2]=two",
+         .exit = "a -> {a}"},
+        "x");
+    reject("divided power proofs retain the complete later-store census",
+           replace(dividedPowerReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
+    reject("divided power proofs reject overlapping exponent reloads",
+           replace(replace(dividedPowerReload, "[%x, %x, %two]", "[%two, %x, %zero]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("zero/unit power unions must include the unit residue before division",
+           replace(dividedPower, "add %part, %one", "add %part, %two"));
+    reject("zero/unit power congruence does not prove fractional division",
+           replace(dividedPower, "div %numerator, %two", "div %numerator, %three"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

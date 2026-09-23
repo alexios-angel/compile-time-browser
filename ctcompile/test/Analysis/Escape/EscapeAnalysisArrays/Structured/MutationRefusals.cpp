@@ -520,6 +520,45 @@ void StructuredCases::mutationRefusals() {
                    "%exponent = ctjs.binary div %i, %two"));
     reject("structured zero/unit powers require every output to be an own element",
            replace(zeroUnitExponent, "sub %power, %one", "sub %power, %zero"));
+    const auto dividedPower = replace(replace(singletonBasePower,
+                                              "%part = ctjs.binary mod %i, %one\n"
+                                              "    %powerBase = ctjs.binary add %part, %two",
+                                              "%part = ctjs.binary mul %i, %two\n"
+                                              "    %powerBase = ctjs.binary add %part, %one"),
+                                      "%position = ctjs.binary sub %power, %one",
+                                      "%numerator = ctjs.binary sub %power, %one\n"
+                                      "    %position = ctjs.binary div %numerator, %two");
+    rows.push_back({.what = "structured zero/unit powers preserve exact division congruence",
+                    .body = dividedPower,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured power congruence survives descending signed bases",
+                    .body = replace(replace(dividedPower, "add %part, %one", "sub %one, %part"),
+                                    "sub %power, %one", "sub %one, %power"),
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto dividedPowerReload =
+        replace(replace(dividedPower, "ctjs.append %zero to %a", "ctjs.append %two to %a"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%two]\n"
+                "    %exponent = ctjs.binary mod %i, %divisor");
+    rows.push_back({.what = "structured divided powers refine correlated reload gaps",
+                    .body = dividedPowerReload,
+                    .arrays = "a:[zero,zero,ctjs.binary]",
+                    .reads = "a[2]=ctjs.binary; a[0]=zero; a[2]=ctjs.binary; a[1]=zero; "
+                             "a[2]=ctjs.binary; a[2]=ctjs.binary",
+                    .exit = "a -> {a}"});
+    reject("structured divided power proofs retain the complete later-store census",
+           replace(dividedPowerReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %one\n    %step ="));
+    reject("structured divided power proofs reject overlapping reloads",
+           replace(replace(dividedPowerReload, "create_array [%x, %x]", "create_array [%two, %x]"),
+                   "%divisor = ctjs.get_property %base[%two]",
+                   "%divisor = ctjs.get_property %base[%zero]"));
+    reject("structured power unions include the unit residue before division",
+           replace(dividedPower, "add %part, %one", "add %part, %two"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

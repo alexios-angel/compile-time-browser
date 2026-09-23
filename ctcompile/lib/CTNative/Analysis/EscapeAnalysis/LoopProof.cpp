@@ -379,10 +379,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // itself. Enclose both images; whole-key refinement below keeps
                 // reloads in correlated gaps, and replay records actual writes.
                 const ContentsValue unit{operand, ContentsKind::NonBigInt, 1};
+                // The union keeps every congruence shared by the base and one,
+                // including exact divisibility in later key operations.
+                const auto period = std::gcd(static_cast<std::int64_t>(range->stride),
+                                             endpointNumber(range->first) - 1);
                 range->first.original = operand;
                 range->last.original = operand;
                 return IndexRange{endpointNumber(range->first) < 1 ? range->first : unit,
-                                  endpointNumber(range->last) > 1 ? range->last : unit, 1, true};
+                                  endpointNumber(range->last) > 1 ? range->last : unit,
+                                  static_cast<std::size_t>(period), true};
             }
             // A signed-unit lattice may skip zero. Negative exponents are exact
             // only when every possible base is a unit, including interior visits.
