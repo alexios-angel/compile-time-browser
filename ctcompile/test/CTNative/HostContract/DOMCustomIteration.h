@@ -1854,12 +1854,17 @@ module {
     };
     const auto mutableThrowingSource = mutableThrowingClose(throwingAbruptSource);
     const auto mutableGetterSource = mutableThrowingClose(getterAbruptSource);
-    for (const auto & source :
-         {throwingAbruptSource, getterAbruptSource, mutableThrowingSource, mutableGetterSource}) {
+    const auto scalarThrowingSource = replaced(mutableThrowingSource, "    ctjs.throw %result",
+                                               "    %payload = ctjs.get_property %this[%stateKey]\n"
+                                               "    ctjs.throw %payload");
+    const auto scalarGetterSource = getterReturn(scalarThrowingSource);
+    for (const auto & source : {throwingAbruptSource, getterAbruptSource, mutableThrowingSource,
+                                mutableGetterSource, scalarThrowingSource, scalarGetterSource}) {
+        const bool mutableState = source != throwingAbruptSource && source != getterAbruptSource;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-            check(static_cast<bool>(input), "literal throwing close with live frame parses");
+            check(static_cast<bool>(input), "terminal throwing close with live frame parses");
             if (!input) { continue; }
             auto request = contract;
             request.provider = provider;
@@ -1883,8 +1888,12 @@ module {
             check(throws == 1 && returned &&
                       llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()) &&
                       mlir::succeeded(mlir::verify(*input)),
-                  "suppressed literal returns only after closing its own frame");
-            if (source == mutableThrowingSource || source == mutableGetterSource) {
+                  "suppressed close returns only after closing its own frame");
+            auto ignored = returned ? returned.getValue().getDefiningOp<ctjs::ConstantOp>()
+                                    : ctjs::ConstantOp{};
+            check(ignored && llvm::isa<ctjs::UndefinedAttr>(ignored.getValue()),
+                  "only the validated unobserved close payload is discarded");
+            if (mutableState) {
                 check(close.getBody().front().getNumArguments() == ctjs::implicit_arguments + 1,
                       "throwing close receives its current scalar state");
                 unsigned updates = 0;
@@ -1896,7 +1905,7 @@ module {
                 check(updates == 1, "suppressed close keeps its state update producer");
             }
             failure = expandDOMHelpers(*input, request.entry, completeBudget);
-            if (source == mutableThrowingSource || source == mutableGetterSource) {
+            if (mutableState) {
                 // These raw arithmetic operands have no typed DOM leaf proof.
                 // Structural state transport must not publish such a proof.
                 check(static_cast<bool>(failure), "mutable arithmetic still needs typed proof");
@@ -1963,7 +1972,39 @@ module {
             llvm::consumeError(std::move(failure));
         }
     }
+    for (const auto & source :
+         {throwingAbruptSource, getterAbruptSource, scalarThrowingSource, scalarGetterSource}) {
+        for (bool framePayload : {false, true}) {
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+            check(static_cast<bool>(input), "close payload validation control parses");
+            if (!input) { continue; }
+            auto close = input->lookupSymbol<ctjs::FuncOp>("return$3");
+            auto thrown = llvm::cast<ctjs::ThrowOp>(close.getBody().front().back());
+            auto frame = *close.getBody().front().getOps<ctjs::FrameEnterOp>().begin();
+            auto foreign = input->lookupSymbol<ctjs::FuncOp>(contract.entry)
+                               .getBody()
+                               .front()
+                               .getArguments()
+                               .back();
+            if (framePayload) {
+                thrown.getValueMutable().assign(frame.getContext());
+            } else {
+                thrown.getValueMutable().assign(foreign);
+            }
+            auto request = contract;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure),
+                  "discarding a close payload requires its original frame and dominance proof");
+            llvm::consumeError(std::move(failure));
+        }
+    }
     for (const auto & invalid : {
+             replaced(scalarThrowingSource, "    ctjs.throw %payload",
+                      "    %extraFrame = ctjs.frame_enter 1\n    ctjs.throw %payload"),
+             replaced(scalarGetterSource, "      scf.execute_region {",
+                      "      ctjs.store_global \"between\", %one\n"
+                      "      scf.execute_region {"),
              replaced(mutableThrowingSource, "    ctjs.throw %result",
                       "    %extraFrame = ctjs.frame_enter 1\n    ctjs.throw %result"),
              replaced(mutableThrowingSource, "      scf.execute_region {",

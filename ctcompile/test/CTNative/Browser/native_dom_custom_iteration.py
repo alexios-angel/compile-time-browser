@@ -2409,6 +2409,7 @@ def saved_throws(args, compilers, includes, libraries):
     mutable_throwing_source = refusals()["body-throw-number-snapshot"].replace(
         "return {};", "throw 2;"
     )
+    nonliteral_throwing_source = mutable_throwing_source.replace("throw 2;", "throw count;")
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -2567,6 +2568,40 @@ def saved_throws(args, compilers, includes, libraries):
             mutable_throwing_source.replace(
                 "anchor.setAttribute('data-closed', 'yes');",
                 "anchor.setAttribute('data-closed', count === 13);",
+            ),
+            "js_num",
+            "error.value.value() == 3.0",
+            "true",
+        ),
+        (
+            "mutable-number-nonliteral-close",
+            nonliteral_throwing_source,
+            "js_num",
+            "error.value.value() == 3.0",
+            "yes",
+        ),
+        (
+            "mutable-number-nonliteral-close-observes-state",
+            nonliteral_throwing_source.replace(
+                "anchor.setAttribute('data-closed', 'yes');",
+                "anchor.setAttribute('data-closed', count === 13);",
+            ),
+            "js_num",
+            "error.value.value() == 3.0",
+            "true",
+        ),
+        (
+            "mutable-number-nonliteral-getter-close",
+            nonliteral_throwing_source.replace("return() {", "get return() {"),
+            "js_num",
+            "error.value.value() == 3.0",
+            "yes",
+        ),
+        (
+            "mutable-number-nonliteral-close-producer",
+            nonliteral_throwing_source.replace(
+                "anchor.setAttribute('data-closed', 'yes');\n      throw count;",
+                "throw (anchor.setAttribute('data-closed', count === 13), count);",
             ),
             "js_num",
             "error.value.value() == 3.0",
@@ -2916,6 +2951,10 @@ var savedThrow, savedExhausted;
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
     for label, text in (
+        (
+            "conditional-boolean-nonliteral-close",
+            conditional_source.replace("return {};", "throw anchor.hasAttribute('data-closed');"),
+        ),
         ("invalid-close-name", throwing_close.replace("data-closed", "bad name")),
         ("unknown-close-throw", throwing_close.replace("throw 2;", "throw anchor;")),
         ("normal-primitive-close", refusals()["primitive-return-result"]),
@@ -2944,8 +2983,20 @@ var savedThrow, savedExhausted;
             mutable_throwing_source.replace("throw (count += 2, count);", "return count;"),
         ),
         (
-            "unknown-mutable-close-throw",
-            mutable_throwing_source.replace("throw 2;", "throw count;"),
+            "normal-mutable-nonliteral-close",
+            nonliteral_throwing_source.replace("throw (count += 2, count);", "break;"),
+        ),
+        (
+            "return-mutable-nonliteral-close",
+            nonliteral_throwing_source.replace("throw (count += 2, count);", "return count;"),
+        ),
+        (
+            "unknown-mutable-close-producer",
+            nonliteral_throwing_source.replace("throw count;", "throw external(count);"),
+        ),
+        (
+            "invalid-mutable-nonliteral-close-name",
+            nonliteral_throwing_source.replace("data-closed", "bad name"),
         ),
         (
             "invalid-mutable-close-name",

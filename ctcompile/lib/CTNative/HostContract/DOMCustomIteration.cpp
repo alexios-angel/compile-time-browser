@@ -165,7 +165,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             // A getter that always throws never supplies a return method.
             // Model its invocation with the existing close callable, whose
-            // literal throw, confinement and every remaining suppression edge
+            // throw, confinement and every remaining suppression edge
             // must all prove below before this private candidate can publish.
             if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
             mlir::OpBuilder at(accessor);
@@ -1224,9 +1224,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                                : ctjs::CreateObjectOp{};
         auto result = returned ? returned.getValue() : thrown ? thrown.getValue() : mlir::Value{};
         auto literal = result ? result.getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-        if (name == "return" && literal &&
-            llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
-                      ctjs::UndefinedAttr>(literal.getValue())) {
+        if (name == "return" &&
+            (thrown ||
+             (literal && llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
+                                   ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue())))) {
             // A saved throw ignores the close result. After completion
             // normalization, every surviving call must still be suppressed.
             primitiveClose = true;
@@ -1283,11 +1284,20 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     frame = {};
                 }
             }
-            if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
+            if (!spend() || !spend() || !spend()) {
+                return error("DOM custom iterator budget exhausted");
+            }
             mlir::OpBuilder at(thrown);
+            auto ignored = ctjs::ConstantOp::create(
+                at, thrown.getLoc(), ctjs::UndefinedAttr::get(candidate.getContext()));
             if (frame) { ctjs::FrameExitOp::create(at, thrown.getLoc(), frame); }
-            ctjs::ReturnOp::create(at, thrown.getLoc(), thrown.getValue());
+            auto terminal = ctjs::ReturnOp::create(at, thrown.getLoc(), thrown.getValue());
             thrown.erase();
+            // Validate the original payload's definition, dominance and frame
+            // before discarding its unobserved value. Its producers remain for
+            // scalar state transport and complete typed DOM/effect reproof.
+            if (!work.checkBody(body, false, true, true)) { return error(work.reason); }
+            terminal.getValueMutable().assign(ignored.getResult());
         }
         if (!stateInitials.empty()) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
