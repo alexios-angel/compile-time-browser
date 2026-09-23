@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Writes after terminal iterator-close reads and varying divisors, 2026-09-23 UTC
+
+Resumed clean **8d66dca6** and retained terminal-read/write source `ce6d790d`.
+**c00c569d** lets the existing suffix-write proof preserve writes after unused
+terminal reads and selectors. Every write retains exact suppression, typed
+DOM/Style validation, complete use checks, source order and the original guard.
+The original saved body exception still wins. The unchanged source, getter and
+reordered-read variant execute.
+
+Parallel **8a013b5e** reuses bounded whole-key subdivision for varying division
+and remainder divisors. Accepted subranges require the existing exact singleton
+arithmetic proof; complete reload/store checks, independent reload-gap proof and
+actual-write replay remain. Ten source controls were added; all 235 historical
+source bodies and expectations are unchanged. Two historical raw refusals now
+admit after exact Node write/read/own-key/retained-identity witnesses.
+
+Three selected sources pass **48 native executions, 76 refusals and 24 Node/VM
+observations**. Exact host/arrays CTests and the selected power-index lit case pass.
+Seven final source hashes match the devbox; all 24 generated C++ files retain the
+terminal reads followed by the write without Script/VM or nullable fallback.
+Full formatting passes **1126 C++, 157 Python, 114 web files**. All three agents
+saved their changes before rate limits; the parent completed integration and
+review. Full suites were skipped; no browser implementation changed. Claude
+availability remained uncertain, so concurrent-agent area rules stayed in force.
+
+**Next native boundary:** retained `unsupported-terminal-read-write-value`
+source `b1b67287` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the final `hasAttribute('data-unvisited')`
+Boolean as the value of `setAttribute('data-after-terminal', ...)`, together with
+the original saved body exception. Single-write selector cleanup, nonterminal
+exceptional state, multiple protected regions, implicit cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver, full native
+Bootstrap and general powers remain. Wider arithmetic proofs retain the existing
+work budget. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-terminal-writes-varying-divisors.md).
+
 ## Terminal iterator-close read sequences and varying shift counts, 2026-09-23 UTC
 
 Resumed clean **71e24614** and retained second-read source `5cd57a59`.
