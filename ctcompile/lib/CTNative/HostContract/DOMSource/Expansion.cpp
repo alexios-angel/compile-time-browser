@@ -71,10 +71,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     writeMethod = read;
                     continue;
                 }
-                auto & sourceReadMethod = secondLeaf      ? finalReadMethod
+                const bool suffixRead = protectedLeaf && (!secondMethod || secondLeaf);
+                auto & sourceReadMethod = suffixRead      ? finalReadMethod
                                           : protectedLeaf ? trailingMethod
                                                           : readMethod;
-                auto & sourceReadCall = secondLeaf      ? finalReadCall
+                auto & sourceReadCall = suffixRead      ? finalReadCall
                                         : protectedLeaf ? trailingCall
                                                         : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
@@ -91,7 +92,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     read.getArgs().size() == 1) {
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
-                    if (secondLeaf && (selector || !finalMethod)) {
+                    if (suffixRead && (selector || !finalMethod)) {
                         if (finalMethod) { return false; }
                         // Retain every standalone read in source order. Unused selectors
                         // need exact suppression; all reads retain the complete use
