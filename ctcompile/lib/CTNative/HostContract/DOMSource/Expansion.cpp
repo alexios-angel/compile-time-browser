@@ -57,7 +57,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 if (!pendingRead || leaf.getArgs()[1] == pendingRead.getResult()) { return true; }
                 if (!suffixReads.erase(leaf.getArgs()[1])) { return false; }
                 // The write may consume an earlier read. Preserve the last
-                // argument read for its own later consumer, in source order.
+                // argument read in the complete use census, in source order.
                 suffixValues.append({pendingMethod.getResult(), pendingRead.getResult()});
                 suffixUses.insert(&pendingRead->getOpOperand(0));
                 suffixReads.insert(pendingRead.getResult());
@@ -169,12 +169,13 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
                     leaf && finalMethod && leaf.getCallee() == finalMethod.getResult() &&
                     leaf.getReceiver() == finalMethod.getObject() && leaf.getArgs().size() == 2) {
+                    if (!selectFeedingRead(leaf, finalReadMethod, finalReadCall)) { return false; }
                     if (finalReadMethod &&
                         (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult() ||
                          ctjs::constantKey(finalReadMethod.getKey()) != "hasAttribute")) {
                         return false;
                     }
-                    // Each suffix read belongs only to its following write.
+                    // Each consumed suffix read belongs to one following write.
                     // Check every use below, including uses in later pairs.
                     suffixValues.append({finalMethod.getResult(), leaf.getResult()});
                     suffixUses.insert(&leaf->getOpOperand(0));

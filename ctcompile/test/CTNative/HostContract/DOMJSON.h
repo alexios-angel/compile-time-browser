@@ -685,6 +685,12 @@ module {
     const auto readAfterSecondFeeding =
         replaced(replaced(earlierTerminalValue, savedRead, ""),
                  "    %secondEffect =", savedRead + "    %secondEffect =");
+    const auto readThroughFinalArgument =
+        replaced(terminalReadValue, "ctjs.call %lateMethod(%element, %lateName, %latePresent)",
+                 "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)");
+    const auto earlyReadThroughFinalArgument =
+        replaced(replaced(readThroughFinalArgument, savedRead, ""),
+                 "    %effect =", savedRead + "    %effect =");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -827,6 +833,29 @@ module {
                        false},
              std::pair{readAfterFirstFeeding, true},
              std::pair{readAfterSecondFeeding, true},
+             std::pair{
+                 replaced(terminalReadValue,
+                          "ctjs.call %lateMethod(%element, %lateName, %latePresent)",
+                          "ctjs.call %lateMethod(%element, %lateName, %secondTerminalPresent)"),
+                 true},
+             std::pair{readThroughFinalArgument, true},
+             std::pair{earlyReadThroughFinalArgument, true},
+             std::pair{replaced(earlyReadThroughFinalArgument,
+                                "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(readThroughFinalArgument, "data-late", "bad name"), false},
+             std::pair{replaced(earlyReadThroughFinalArgument, "[data-closed]", "["), false},
+             std::pair{replaced(readThroughFinalArgument,
+                                "%lateReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                                "%lateReadName = ctjs.constant #ctjs.number<0>"),
+                       false},
+             std::pair{replaced(replaced(readThroughFinalArgument,
+                                         "ctjs.get_property %element[%lateReadKey]",
+                                         "ctjs.get_property %text[%lateReadKey]"),
+                                "ctjs.call %lateReadMethod(%element, %lateReadName)",
+                                "ctjs.call %lateReadMethod(%text, %lateReadName)"),
+                       false},
              std::pair{replaced(readAfterFirstFeeding, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -1334,8 +1363,18 @@ module {
                       "late write retains its value, selector order and source guard");
                 for (ctjs::CallOp read : invoke->getBlock()->getOps<ctjs::CallOp>()) {
                     if (read.getResult().use_empty()) {
-                        check(read->isBeforeInBlock(method),
-                              "every unused terminal read remains before the late write lookup");
+                        auto readMethod = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                        const auto readName = ctjs::constantKey(read.getArgs()[0]);
+                        const bool argumentRead =
+                            lateReads && savedTerminalValue &&
+                            (readName == "data-closed" || (!typed && readName.empty()));
+                        check(argumentRead ? method->isBeforeInBlock(readMethod) &&
+                                                 readMethod->isBeforeInBlock(read) &&
+                                                 read->isBeforeInBlock(invoke) &&
+                                                 call.getArgs()[1] != read.getResult()
+                                           : read->isBeforeInBlock(method),
+                              "unused reads retain their position around the late write lookup "
+                              "and the saved write value stays distinct");
                     }
                 }
             });
@@ -1564,7 +1603,9 @@ module {
                                       readInsideFirstWrite,
                                       readInsideSecondWrite,
                                       readAfterFirstFeeding,
-                                      readAfterSecondFeeding}) {
+                                      readAfterSecondFeeding,
+                                      readThroughFinalArgument,
+                                      earlyReadThroughFinalArgument}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1689,6 +1730,31 @@ module {
           replaced(readAfterSecondFeeding,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
+          replaced(readThroughFinalArgument, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %latePresent\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(earlyReadThroughFinalArgument, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
+          replaced(readThroughFinalArgument, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %lateReadMethod(%element, %lateReadName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(appendWrite(readThroughFinalArgument, finalWrite, "reuse"),
+                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+          replaced(readThroughFinalArgument, "ctjs.call %lateReadMethod(%element, %lateReadName)",
+                   "ctjs.call %lateReadMethod(%text, %lateReadName)"),
+          replaced(readThroughFinalArgument, "ctjs.call %lateReadMethod(%element, %lateReadName)",
+                   "ctjs.call %lateReadMethod(%element, %lateReadName, %name)"),
+          replaced(readThroughFinalArgument,
+                   "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                   "ctjs.call %lateMethod(%element, %latePresent, %afterTerminalPresent)"),
+          replaced(earlyReadThroughFinalArgument,
+                   "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                   "ctjs.call %lateMethod(%element, %lateName, %present)"),
+          replaced(readThroughFinalArgument, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
           replaced(readBeforeFirstSelector, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
@@ -1761,8 +1827,6 @@ module {
           replaced(earlierTerminalValue,
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
                    "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
-          replaced(terminalReadValue, "ctjs.call %lateMethod(%element, %lateName, %latePresent)",
-                   "ctjs.call %lateMethod(%element, %lateName, %secondTerminalPresent)"),
           replaced(terminalReadValue, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %latePresent"),
