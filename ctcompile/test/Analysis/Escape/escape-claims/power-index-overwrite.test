@@ -218,6 +218,19 @@
 // CHECK: escape {{[0-9a-f]+}} 187 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 188 {{[0-9]+}} obj confined
 
+// Singleton shift counts retain ordinary conversion, masking and producer checks.
+// CHECK: escape {{[0-9a-f]+}} 189 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 190 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 191 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 192 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 193 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 194 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 195 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 196 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 197 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 198 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 199 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -1280,3 +1293,65 @@ singletonDivisorPower(); negativeSingletonDivisorPower(); retainedSingletonDivis
 savedSingletonDivisorPower(); reloadedSingletonDivisorPower(); laterSingletonDivisorStore();
 overlappingSingletonDivisorPower(); fractionalSingletonDivisorPower(); zeroSingletonDivisorPower();
 varyingDivisorPower(); singletonRemainderPower();
+
+function singletonSignedShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i)] = 0;
+    return a;
+}
+function singletonUnsignedShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(-i) >>> -(1 ** i)] = 0;
+    return a;
+}
+function singletonLeftShift() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) << (1 ** i)] = 0;
+    return a;
+}
+function maskedSingletonShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i + 32)] = 0;
+    return a;
+}
+function retainedSingletonShift() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i)] = 0;
+    return a;
+}
+function savedSingletonShift() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i)] = 0;
+    return saved;
+}
+function reloadedSingletonShift() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[i >> (a[2] ** i)] = 0;
+    return a;
+}
+function laterSingletonShiftStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[i >> (a[2] ** i)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingSingletonShift() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (a[0] ** i)] = 0;
+    return a;
+}
+function varyingShiftCount() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (0 ** i)] = 0;
+    return a;
+}
+function negativeSingletonShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(-i) >> (1 ** i)] = 0;
+    return a;
+}
+singletonSignedShift(); singletonUnsignedShift(); singletonLeftShift(); maskedSingletonShift();
+retainedSingletonShift(); savedSingletonShift(); reloadedSingletonShift(); laterSingletonShiftStore();
+overlappingSingletonShift(); varyingShiftCount(); negativeSingletonShift();

@@ -913,6 +913,63 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero; a[1]=one",
          .exit = "a -> {a}"},
         "x");
+    const auto singletonShift = replace(replace(masked, "[%one, %x]", "[%x, %x, %zero]"),
+                                        "%position = ctjs.binary_static bitand %i, %one",
+                                        "%count = ctjs.binary pow %one, %i\n"
+                                        "  %position = ctjs.binary_static shr %i, %count");
+    for (const auto & kind : {"shr", "ushr"}) {
+        run({.what = "singleton shift counts preserve signed and unsigned own writes",
+             .body = replace(singletonShift, "shr %i, %count", std::string(kind) + " %i, %count"),
+             .arrays = "a:[zero,zero,zero]",
+             .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "singleton negative counts retain unsigned conversion and count masking",
+         .body = replace(singletonShift, "%position = ctjs.binary_static shr %i, %count",
+                         "%negative = ctjs.unary neg %i\n"
+                         "  %negativeCount = ctjs.unary neg %count\n"
+                         "  %position = ctjs.binary_static ushr %negative, %negativeCount"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "singleton left-shift counts preserve gaps in actual writes",
+         .body = replace(replace(singletonShift, "[%x, %x, %zero]", "[%x, %one, %x]"),
+                         "%position = ctjs.binary_static shr %i, %count",
+                         "%half = ctjs.binary_static shr %i, %one\n"
+                         "  %position = ctjs.binary_static shl %half, %count"),
+         .arrays = "a:[zero,one,zero]",
+         .reads = "a[0]=zero; a[1]=one; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "singleton shift replay retains unvisited children",
+         .body = replace(singletonShift, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=x; a[2]=x",
+         .exit = "a -> {a,x}"});
+    const auto singletonShiftReload =
+        replace(replace(singletonShift, "[%x, %x, %zero]", "[%x, %x, %one]"),
+                "%count = ctjs.binary pow %one, %i",
+                "%powerUnit = ctjs.get_property %base[%two]\n"
+                "  %count = ctjs.binary pow %powerUnit, %i");
+    run({.what = "singleton shift-count producers retain independent reload gaps",
+         .body = singletonShiftReload,
+         .arrays = "a:[zero,zero,one]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=x; a[2]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    reject("singleton shift counts retain every later producer store",
+           replace(singletonShiftReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("singleton shift counts reject overlapping producer reloads",
+           replace(replace(singletonShiftReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
+                   "%powerUnit = ctjs.get_property %base[%two]",
+                   "%powerUnit = ctjs.get_property %base[%zero]"));
+    reject("multiple possible shift counts cannot borrow a singleton fact",
+           replace(singletonShift, "pow %one, %i", "pow %zero, %i"));
+    reject("singleton left-shift counts still require every write to be own",
+           replace(singletonShift, "shr %i, %count", "shl %i, %count"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

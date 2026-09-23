@@ -673,6 +673,33 @@ void StructuredCases::mutationRefusals() {
          .arrays = "a:[zero,one]",
          .reads = "a[0]=zero; a[1]=one",
          .exit = "a -> {a}"});
+    const auto singletonShift =
+        replace(replace(replace(unitPower, "create_array [%x]", "create_array [%x, %x]"),
+                        "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+                "%position = ctjs.binary pow %i, %one",
+                "%count = ctjs.binary pow %one, %i\n"
+                "    %position = ctjs.binary_static shr %i, %count");
+    rows.push_back({.what = "structured singleton shift counts retain ordinary write replay",
+                    .body = singletonShift,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=x; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto singletonShiftReload =
+        replace(replace(singletonShift, "ctjs.append %zero to %a", "ctjs.append %one to %a"),
+                "%count = ctjs.binary pow %one, %i",
+                "%two = ctjs.binary add %one, %one\n"
+                "    %powerUnit = ctjs.get_property %base[%two]\n"
+                "    %count = ctjs.binary pow %powerUnit, %i");
+    rows.push_back({.what = "structured singleton shift counts independently prove reload gaps",
+                    .body = singletonShiftReload,
+                    .arrays = "a:[zero,zero,one]",
+                    .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=x; a[2]=one; a[2]=one",
+                    .exit = "a -> {a}"});
+    reject("structured singleton shift counts retain the complete later-store census",
+           replace(singletonShiftReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured varying shift counts cannot borrow a singleton fact",
+           replace(singletonShift, "pow %one, %i", "pow %zero, %i"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
