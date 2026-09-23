@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Cleanup else arms and nonfinite Number bitwise operands, 2026-09-23 UTC
+
+Resumed clean **925ae490** and retained source `fe671bbb` from the preceding
+handoff. **c1dfd76d** scans both arms of nested iterator-cleanup guards using
+the existing proof and ordered clone. Pending method/read pairs cannot cross
+between arms; saved values, per-write suppression, selector checks, typed
+DOM/Style reproof and budgets remain. The original case, getter, order,
+false-guard and cleanup-throw variants execute with the original body exception.
+
+**df80fd69** admits nonfinite original Number bitwise operands, including one
+source negation, through public Core's zero conversion. Property spelling,
+arithmetic, computed provenance, mutations and receiver gaps keep their separate
+proofs. Six measured child sites change from all stored to **three confined and
+three stored**, each observed once with zero unresolved or unchecked instances.
+Forty historical expectation promotions preserve their original inputs; the
+first array test's 208 failures identified 34 of them. No runtime code changed.
+Independent native review is complete and clean; parent escape review is complete.
+
+Focused checks pass: **80 native executions, 100 refusals, 40 Node/VM observations,
+30 source preflight checks, exact host/arrays CTests and one table-key lit case**.
+Final formatting passes **1126 C++, 157 Python and 114 web files**; all ten final
+code/test hashes match the devbox. All 40 generated C++ files contain no Script
+namespace. Completed native/host/lit checks were not replayed after independent
+escape expectation updates. Full suites were skipped.
+
+**Next native boundary:** `unsupported-selector-nested-third-else-throw`, source
+`65c65b0b`, refuses **DOM helper completion has no return or yield** under both
+policies. Preserve the branch-local cleanup throw, both arms, read/write order
+and original body exception. Broader cleanup/control flow, nested custom
+iterators, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain. Escape proofs still exclude computed fractional/nonfinite
+origins, nonfinite String conversions, unsafe String exponents and Strings over
+32 bytes. General powers and legacy SCF retention remain; the known VM
+fractional-index discrepancy is separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-cleanup-else-nonfinite-bitwise.md).
+
 ## Nested cleanup guards and finite Number bitwise operands, 2026-09-23 UTC
 
 Resumed clean **c46c8be0** and retained source `9d3a3639` from the preceding
