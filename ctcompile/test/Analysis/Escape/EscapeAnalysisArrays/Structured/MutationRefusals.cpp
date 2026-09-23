@@ -635,6 +635,44 @@ void StructuredCases::mutationRefusals() {
                    "%divisor = ctjs.get_property %base[%zero]"));
     reject("structured division refinement retains fractional actual keys",
            replace(correlatedDivision, "add %i, %two", "add %i, %one"));
+    const auto singletonDivisor =
+        replace(correlatedDivision, "%position = ctjs.binary div %numerator, %two",
+                "%unit = ctjs.binary pow %one, %i\n"
+                "    %divisor = ctjs.binary add %unit, %one\n"
+                "    %position = ctjs.binary div %numerator, %divisor");
+    rows.push_back({.what = "structured singleton divisor ranges preserve correlated division",
+                    .body = singletonDivisor,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto singletonDivisorReload =
+        replace(replace(singletonDivisor, "ctjs.append %zero to %a", "ctjs.append %one to %a"),
+                "%unit = ctjs.binary pow %one, %i",
+                "%powerUnit = ctjs.get_property %base[%two]\n"
+                "    %unit = ctjs.binary pow %powerUnit, %i");
+    rows.push_back({.what = "structured singleton divisor producers preserve reload gaps",
+                    .body = singletonDivisorReload,
+                    .arrays = "a:[zero,zero,one]",
+                    .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one",
+                    .exit = "a -> {a}"});
+    reject("structured singleton divisor producers retain the complete later-store census",
+           replace(singletonDivisorReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured singleton divisors retain fractional actual keys",
+           replace(singletonDivisor, "add %i, %two", "add %i, %one"));
+    reject("structured singleton divisors require a nonzero value",
+           replace(singletonDivisor, "add %unit, %one", "sub %unit, %one"));
+    reject("structured varying divisors cannot borrow a singleton fact",
+           replace(singletonDivisor, "pow %one, %i", "pow %zero, %i"));
+    rows.push_back(
+        {.what = "structured singleton divisor ranges also preserve remainder writes",
+         .body = replace(replace(unitPower, "ctjs.append %y to %a", "ctjs.append %one to %a"),
+                         "%position = ctjs.binary pow %i, %one",
+                         "%divisor = ctjs.binary pow %one, %i\n"
+                         "    %position = ctjs.binary mod %i, %divisor"),
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero; a[1]=one",
+         .exit = "a -> {a}"});
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

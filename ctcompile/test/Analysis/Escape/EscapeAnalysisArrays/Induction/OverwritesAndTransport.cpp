@@ -847,6 +847,72 @@ void InductionCases::overwritesAndTransport() {
            replace(correlatedDivision, "add %i, %two", "add %i, %one"));
     reject("correlated division does not refine a zero divisor",
            replace(correlatedDivision, "div %numerator, %two", "div %numerator, %zero"));
+    const auto singletonDivisor =
+        replace(correlatedDivision, "%position = ctjs.binary div %numerator, %two",
+                "%unit = ctjs.binary pow %one, %i\n"
+                "  %divisor = ctjs.binary add %unit, %one\n"
+                "  %position = ctjs.binary div %numerator, %divisor");
+    run({.what = "singleton divisor ranges compose with correlated integral division",
+         .body = singletonDivisor,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "negative singleton divisors preserve exact signed quotient order",
+         .body = replace(replace(singletonDivisor, "sub %power, %one", "sub %one, %power"),
+                         "%divisor = ctjs.binary add %unit, %one",
+                         "%twiceUnit = ctjs.binary add %unit, %one\n"
+                         "  %divisor = ctjs.unary neg %twiceUnit"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "singleton divisor replay retains children outside actual writes",
+         .body = replace(singletonDivisor, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "singleton divisor replay preserves the original child snapshot",
+         .body = replace(replace(singletonDivisor, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto singletonDivisorReload =
+        replace(replace(singletonDivisor, "[%x, %x, %zero]", "[%x, %x, %one]"),
+                "%unit = ctjs.binary pow %one, %i",
+                "%powerUnit = ctjs.get_property %base[%two]\n"
+                "  %unit = ctjs.binary pow %powerUnit, %i");
+    run({.what = "singleton divisor producers retain independent reload gaps",
+         .body = singletonDivisorReload,
+         .arrays = "a:[zero,zero,one]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    reject("singleton divisor producers retain the complete later-store census",
+           replace(singletonDivisorReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("singleton divisor proofs reject an actually overwritten producer reload",
+           replace(replace(singletonDivisorReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
+                   "%powerUnit = ctjs.get_property %base[%two]",
+                   "%powerUnit = ctjs.get_property %base[%zero]"));
+    reject("singleton divisors cannot hide an actual fractional quotient",
+           replace(singletonDivisor, "add %i, %two", "add %i, %one"));
+    reject("a zero singleton divisor still refuses",
+           replace(singletonDivisor, "add %unit, %one", "sub %unit, %one"));
+    reject("multiple possible divisor values cannot borrow a singleton fact",
+           replace(singletonDivisor, "pow %one, %i", "pow %zero, %i"));
+    const auto singletonRemainder = replace(replace(masked, "[%one, %x]", "[%x, %one]"),
+                                            "%position = ctjs.binary_static bitand %i, %one",
+                                            "%divisor = ctjs.binary pow %one, %i\n"
+                                            "  %position = ctjs.binary mod %i, %divisor");
+    run({.what = "singleton divisor ranges also preserve exact remainder writes",
+         .body = singletonRemainder,
+         .arrays = "a:[zero,one]",
+         .reads = "a[0]=zero; a[1]=one",
+         .exit = "a -> {a}"},
+        "x");
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :
