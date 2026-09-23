@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved reads between iterator-close writes and mixed power ranges, 2026-09-23 UTC
+
+Resumed clean **9d3ddc90** and retained before-second-write source `40e597cd`.
+**b08d5bd8** distinguishes standalone reads after the first protected write from
+the read feeding the second write. The existing saved-value slots and complete
+use census now preserve that earlier Boolean through both selectors and later
+writes. Pending feeding-write proof, typed DOM/Style reproof, source guard/order,
+original saved exception and budgets remain. The unchanged original, getter and
+order-sensitive variant execute.
+
+**1d76a4cc** reuses bounded whole-key subdivision when a mixed power range
+includes unvisited bases or exponents. At visits 1, 4 and 7, `0 ** ((i % 5) - 1)`
+uses exponents 0, 3 and 1; its enclosing range includes an unvisited negative
+exponent. Every accepted subdivision still requires the existing scalar identity
+proof. Actual poles, general powers and fractional intermediates stay refused;
+complete reload/store checks, independent reload gaps and actual-write replay remain.
+
+Focused checks pass: **48 native executions, 76 refusals, 24 Node/VM observations**,
+exact host/arrays CTests and one power-index lit case. All six changed code/test
+hashes match the devbox; 24 generated C++ files retain the earlier Boolean and
+original exception without Script/VM or nullable fallback. Full formatting passes
+**1126 C++, 157 Python, 114 web files**. Three agents worked on source/raw/escape
+items; the parent completed rate-limited source/raw work. The escape agent
+independently reviewed native production. All focused gates passed first run;
+full suites were skipped. No browser implementation changed; Claude stayed uncertain.
+
+**Next native boundary:** retained `unsupported-earlier-read-write-before-first-write`
+source `7ba9aa6f` refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the Boolean captured before the first
+protected write, through both feeding writes, selectors and later writes, while
+the original body exception wins. Single-write selector cleanup, nonterminal
+exceptional state, multiple protected regions, implicit cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver, full native
+Bootstrap and general powers remain. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-between-write-read-values.md).
+
 ## Reads before iterator-close selectors and scalar-bound refinement, 2026-09-23 UTC
 
 Resumed clean **3111e52e** and retained before-first-selector source `b3f9a6ca`.
