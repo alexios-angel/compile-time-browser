@@ -116,11 +116,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
                     if (suffixRead && (selector || !finalMethod)) {
-                        if (finalMethod) { return false; }
-                        // Retain every standalone read in source order. Unused selectors
-                        // need exact suppression; all reads retain the complete use
-                        // census and typed DOM proof below. A read within a pending
-                        // write keeps the existing read-to-write proof instead.
+                        // Retain standalone reads and argument selectors in source order.
+                        // Unused selectors need exact suppression; all reads retain
+                        // the complete use census and typed DOM proof below. A pending
+                        // hasAttribute read keeps the read-to-write proof instead.
                         suffixValues.append({sourceReadMethod.getResult(), read.getResult()});
                         suffixUses.insert(&read->getOpOperand(0));
                         if (selector) { suffixLeaves.insert(read); }
