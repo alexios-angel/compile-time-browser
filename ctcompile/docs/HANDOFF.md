@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Confined node catches and zero subtraction, 2026-09-23 UTC
+
+Resumed clean **bed8328f** from the previous ownership handoff and frozen
+arithmetic source `ffcfb029`. **2427229f** consumes an unconditional explicit
+DOM throw inside its original local catch. Existing recovery supplies the exact
+payload and state; a separate protected-effect check precedes complete DOM
+reproof. Catch identity and attribute reads execute without a borrowed C++
+exception. Uncaught nodes, conditional completions and nested iterator catches
+remain refused.
+
+**32c9bd81** proves that subtracting exact zero preserves a primitive's ToUint32
+result. The saved conversion remains separate from arithmetic and property-key
+facts. Identical source/program `ffcfb029` / `822031e8512b11f1` changes its child
+from Stored to **Confined**; two of four total sites are confined, with zero
+soundness violations or unresolved instances. All 148 historical source functions
+remain unchanged.
+
+Focused validation: **32 native executions, 20 refusals, 4 Node/VM observations,
+exact exception-recovery and arrays CTests, and one selected escape lit case**.
+The native lit process was interrupted after creating its final refusal request;
+only that last refusal was repeated to finish the checkpoint. **No whole native
+lit pass is claimed.** Formatting passes **1126 C++, 158 Python and 114 web
+files**. Eleven final code/test hashes match the devbox; all 16 generated C++
+files contain no Script namespace. Both independent reviews are complete and clean.
+
+**Next:** original iterator getter wrapped in an observing outer catch,
+`1a7fb166`, still requires **one unobserved suppression landing**. Preserve
+the outer catch's node identity, cleanup effects, saved completion and exhaustion;
+uncaught `67bd3ad9` still lacks an exception-lifetime owner. Escape's next measured
+source `4f39da6e`, `(keys[i % 2] - 0.5) | 0`, remains Stored despite Node
+`[0,0,0]`; nonzero arithmetic needs its own result proof. Protected observers,
+nested iterators, unguarded Bootstrap defaults and the application driver remain.
+Full suites and full Bootstrap were skipped; no full-Bootstrap gain is claimed.
+
+[Exact checks and next boundaries](handoff/2026-09-23-confined-catch-zero-subtraction.md).
+
 ## DOM exception ownership and unary table snapshots, 2026-09-23 UTC
 
 Resumed clean **eea1416d**, exact `return-object-getter-close` (`67bd3ad9`) and
