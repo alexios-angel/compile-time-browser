@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Branch-local cleanup throws and decimal overflow Strings, 2026-09-23 UTC
+
+Resumed clean **b7cc6822** and retained source `65c65b0b` from the preceding
+handoff. **64c24085** preserves one terminal cleanup throw through the existing
+completion joins, keeping suffix effects only on paths that reach them. Guard
+payloads use the complete observer census; completed reads no longer obstruct a
+later literal write. Private iterator suppression, saved body exceptions, ordered
+cloning, typed DOM/Style reproof and budgets remain. Original, actual else, getter
+and then-arm throw cases execute. Independent native review is complete and clean.
+
+**274c03fd** admits bounded decimal-overflow String bitwise inputs through public
+Core's zero conversion. Arithmetic rejects nonfinite values before integer casts;
+NaN/radix-overflow, finite magnitude, grammar, exponent, source-size, property,
+provenance and mutation guards remain. Six measured child sites change from all
+stored to **three confined and three stored**, each observed once with zero
+unresolved or unchecked instances. Historical source and raw inputs remain.
+No browser or runtime implementation changed.
+
+Focused checks pass: **64 native executions, 84 refusals, 32 Node/VM observations,
+26 source-policy checks, exact host/arrays CTests and one table-key lit case**.
+Final formatting passes **1126 C++, 157 Python and 114 web files**; seven final
+code/test hashes match the devbox and all 32 generated C++ files have no Script
+namespace. A new RECORD site number and new-case textual layout assumptions were
+corrected; completed host/arrays/lit checks were not replayed. Full suites skipped.
+
+**Next native boundary:** `unsupported-selector-branch-throw-read`, source
+`39355ceb`, refuses **DOM protected helper needs an independent inert-body proof**
+under both policies. Preserve its `getAttribute` read and String throw payload,
+branch/suffix order and original body exception. Broader cleanup, nested custom
+iterators, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain. Escape still excludes Infinity/NaN String token grammar, wider
+finite Strings, unsafe exponents, Strings over 32 bytes and computed fractional
+or nonfinite origins. General powers and legacy SCF retention remain; the known
+VM fractional-index discrepancy is separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-branch-cleanup-throws-decimal-overflow.md).
+
 ## Cleanup else arms and nonfinite Number bitwise operands, 2026-09-23 UTC
 
 Resumed clean **925ae490** and retained source `fe671bbb` from the preceding
