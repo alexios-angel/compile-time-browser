@@ -1822,7 +1822,16 @@ void InductionCases::overwritesAndTransport() {
                  .exit = "a -> {a}"},
                 "x");
         } else {
-            reject("primitive AND masks require bounded side-effect-free conversion",
+            if (literal == "#ctjs.string<\"4294967296\">") {
+                run({.what = "wide String AND mask wraps to zero and retains the unwritten child",
+                     .body = replace(stringAndReload, "#ctjs.string<\"1\">", literal),
+                     .arrays = "a:[zero,x,text,zero]",
+                     .reads = "a[2]=text; a[0]=zero; a[2]=text; a[1]=x; a[2]=text; a[2]=text; "
+                              "a[2]=text; a[3]=zero",
+                     .exit = "a -> {a,x}"});
+                continue;
+            }
+            reject("primitive AND masks require side-effect-free conversion",
                    replace(stringAndReload, "#ctjs.string<\"1\">", literal));
         }
     }
@@ -3912,7 +3921,16 @@ void InductionCases::overwritesAndTransport() {
                      .exit = "a -> {a}"},
                     "x");
             } else {
-                reject("primitive shift counts retain canonical conversion and magnitude bounds",
+                if (literal == "#ctjs.string<\"4294967296\">") {
+                    run({.what =
+                             "wide String shift counts wrap to zero and retain unwritten children",
+                         .body = replace(primitiveShift, "#ctjs.string<\"1\">", literal),
+                         .arrays = left ? "a:[zero,zero,x,one]" : "a:[zero,x,zero,one]",
+                         .reads = left ? "a[0]=zero; a[2]=x" : "a[0]=zero; a[2]=zero",
+                         .exit = "a -> {a,x}"});
+                    continue;
+                }
+                reject("primitive shift counts retain side-effect-free conversion",
                        replace(primitiveShift, "#ctjs.string<\"1\">", literal));
             }
         }

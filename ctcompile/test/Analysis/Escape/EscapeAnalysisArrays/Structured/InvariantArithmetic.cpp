@@ -405,7 +405,8 @@ void StructuredCases::invariantArithmetic() {
         for (const std::string refused :
              {"#ctjs.string<\"-1\">", "#ctjs.string<\"4294967295\">", "#ctjs.string<\"00\">",
               "#ctjs.string<\"4294967296\">", "#ctjs.undefined"}) {
-            if (subtract && refused == "#ctjs.string<\"00\">") {
+            if (subtract &&
+                (refused == "#ctjs.string<\"00\">" || refused == "#ctjs.string<\"4294967296\">")) {
                 rows.push_back({.what = "bounded decimal conversion preserves original reads and "
                                         "retained children",
                                 .body = replace(source, literal, refused),

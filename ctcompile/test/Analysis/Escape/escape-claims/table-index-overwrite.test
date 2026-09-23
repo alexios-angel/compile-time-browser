@@ -135,6 +135,14 @@
 // CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj escapes:stored
 
+// Wide finite String conversion preserves the source and retained children.
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
+
 // Each new child site must be observed, including retained-child controls.
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
@@ -252,6 +260,19 @@
 // RECORD-LABEL: fn 101 entries 1 params 0 frame {{[0-9]+}} name mutatedInfinityStringTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 // RECORD-LABEL: fn 102 entries 1 params 0 frame {{[0-9]+}} name unconvertedInfinityStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
+// RECORD-LABEL: fn 103 entries 1 params 0 frame {{[0-9]+}} name wideStringBitwiseTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 104 entries 1 params 0 frame {{[0-9]+}} name wideStringComplementTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 105 entries 1 params 0 frame {{[0-9]+}} name wideStringShiftTableKey
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 106 entries 1 params 0 frame {{[0-9]+}} name savedWideStringTableChild
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 107 entries 1 params 0 frame {{[0-9]+}} name mutatedWideStringTableKey
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 108 entries 1 params 0 frame {{[0-9]+}} name unconvertedWideStringTableKey
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
 //--- source.js
@@ -555,6 +576,12 @@ nanStringShiftTableKey();
 savedInfinityStringTableChild();
 mutatedInfinityStringTableKey();
 unconvertedInfinityStringTableKey();
+wideStringBitwiseTableKey();
+wideStringComplementTableKey();
+wideStringShiftTableKey();
+savedWideStringTableChild();
+mutatedWideStringTableKey();
+unconvertedWideStringTableKey();
 bigintTableKey(); mixedBigintTableKey(); nestedBigintTableKey();
 savedBigintTableChild(); mutatedBigintTableKey(); mixedBigintArithmeticTableKey();
 
@@ -865,6 +892,41 @@ function mutatedInfinityStringTableKey() {
 }
 function unconvertedInfinityStringTableKey() {
     var child = {}, a = [child, 0, child], keys = ["Infinity", "2"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
+    return a;
+}
+
+function wideStringBitwiseTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return a;
+}
+function wideStringComplementTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["-4294967297.9", "-4294967299.9"];
+    for (var i = 0; i < a.length; i++) a[~keys[i % 2]] = 0;
+    return a;
+}
+function wideStringShiftTableKey() {
+    var child = {}, a = [0, child, child], keys = ["4294967296.5", "4294967297.9"];
+    for (var i = 0; i < a.length; i++) a[1 << keys[i % 2]] = 0;
+    return a;
+}
+function savedWideStringTableChild() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] | 0] = 0;
+    return saved;
+}
+function mutatedWideStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = "4294967296.5";
+        a[keys[i % 2] | 0] = 0;
+    }
+    return a;
+}
+function unconvertedWideStringTableKey() {
+    var child = {}, a = [child, 0, child], keys = ["4294967296.9", "4294967298.9"];
     for (var i = 0; i < a.length; i++) a[keys[i % 2]] = 0;
     return a;
 }

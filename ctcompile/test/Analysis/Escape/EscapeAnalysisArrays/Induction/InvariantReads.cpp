@@ -529,7 +529,16 @@ void InductionCases::invariantReads() {
                 "x");
             continue;
         }
-        reject("bitwise conversion keeps complete grammar exponent and magnitude bounds",
+        if (text == "-4294967295.5") {
+            run({.what = "wide fractional conversion preserves the original retained child",
+                 .body = replace(fractionalTable, "#ctjs.string<\"0.9\">",
+                                 "#ctjs.string<\"" + text + "\">"),
+                 .arrays = "keys:[textZero,textTwo]; a:[x,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a,x}"});
+            continue;
+        }
+        reject("bitwise conversion keeps grammar exponent source-size and own-index bounds",
                replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"" + text + "\">"));
     }
     for (const std::string expression :
@@ -895,8 +904,8 @@ void InductionCases::invariantReads() {
     for (const std::string text :
          {"1e999junk", "1e2147483616", "1e-2147483616", "Infinity", "NaN", "0x10000000000000801",
           "4294967296.9", "1000000000000000000000000000e9999"}) {
-        if (text == "Infinity" || text == "NaN") {
-            run({.what = "exact nonfinite token keeps the historical overflow table body",
+        if (text == "Infinity" || text == "NaN" || text == "4294967296.9") {
+            run({.what = "numeric String conversion keeps the historical overflow table body",
                  .body = replace(overflowStringTable, "#ctjs.string<\"1e999\">",
                                  "#ctjs.string<\"" + text + "\">"),
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
@@ -986,6 +995,58 @@ void InductionCases::invariantReads() {
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject("nonfinite String conversion preserves table mutations before and after reads",
                replace(nonfiniteStringTable, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    const auto wideStringTable =
+        replace(replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"4294967296.9\">"),
+                "#ctjs.string<\"2.9\">", "#ctjs.string<\"4294967298.9\">");
+    for (const std::string expression :
+         {"bitand %slot, %two", "bitor %slot, %zero", "bitxor %slot, %zero", "shl %slot, %zero",
+          "shr %slot, %zero", "ushr %slot, %zero", "bitor %i, %textZero", "shl %i, %textZero",
+          "shr %i, %textZero", "ushr %i, %textZero"}) {
+        run({.what = "wide finite String operands masks and counts share Core bitwise conversion",
+             .body = replace(wideStringTable, "bitor %slot, %zero", expression),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string text : {"-4294967296.9", "9007199254740993", "1e100",
+                                   "1.7976931348623157e308", "0x100000000", "0xffffffffffffffff"}) {
+        run({.what = "bounded source Strings wrap the represented Number before integer casts",
+             .body = replace(wideStringTable, "#ctjs.string<\"4294967296.9\">",
+                             "#ctjs.string<\"" + text + "\">"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "wide negative String complement retains signed conversion",
+         .body =
+             replace(replace(replace(wideStringTable, "#ctjs.string<\"4294967296.9\">",
+                                     "#ctjs.string<\"-4294967297.9\">"),
+                             "#ctjs.string<\"4294967298.9\">", "#ctjs.string<\"-4294967299.9\">"),
+                     "binary_static bitor %slot, %zero", "unary bitnot %slot"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string expression :
+         {"unary plus %slot", "unary neg %slot", "binary sub %slot, %zero",
+          "binary mul %slot, %one", "binary div %slot, %one", "binary mod %slot, %three",
+          "binary pow %slot, %zero", "binary add %slot, %zero"}) {
+        reject("wide String arithmetic retains its bounded exact Number proof",
+               replace(wideStringTable, "binary_static bitor %slot, %zero", expression));
+        reject("computed wide String arithmetic cannot borrow literal bitwise provenance",
+               replace(wideStringTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                       "  %number = ctjs." + expression +
+                           "\n  %converted = ctjs.binary_static bitor %number, %zero"));
+    }
+    reject("wide String properties retain their original spelling",
+           replace(wideStringTable, "%base[%converted]", "%base[%slot]"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("wide String conversion keeps every table mutation in its census",
+               replace(wideStringTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
     reject("table conversion cannot invoke object coercion",
@@ -2067,7 +2128,7 @@ void InductionCases::invariantReads() {
                                           "#ctjs.string<\"00\">", "#ctjs.string<\"4294967296\">",
                                           "#ctjs.number<4602678819172646912>", "#ctjs.undefined"}) {
             if (subtract && literal != "#ctjs.number<0>" &&
-                (refused == "#ctjs.string<\"00\">" ||
+                (refused == "#ctjs.string<\"00\">" || refused == "#ctjs.string<\"4294967296\">" ||
                  refused == "#ctjs.number<4602678819172646912>")) {
                 run({.what = "bounded decimal conversion preserves original reads and retained "
                              "children",

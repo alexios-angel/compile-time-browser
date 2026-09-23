@@ -194,9 +194,7 @@ std::optional<double> boundedStringNumber(const ContentsValue & input) {
     const double converted = ctbrowser::string_to_number({text.data(), text.size()});
     // Decimal overflow may feed bitwise conversion. Radix overflow in Core is
     // NaN, so it still cannot supply a JavaScript conversion proof.
-    if (std::isnan(converted) || (std::isfinite(converted) && std::abs(converted) > 4294967295.0)) {
-        return std::nullopt;
-    }
+    if (std::isnan(converted)) { return std::nullopt; }
     return converted;
 }
 
@@ -213,7 +211,9 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
     if (input.string()) {
         if (input.asciiCharacter) { return negate ? std::nullopt : ownArrayIndex(input); }
         const auto converted = boundedStringNumber(input);
-        if (!converted || !std::isfinite(*converted)) { return std::nullopt; }
+        if (!converted || !std::isfinite(*converted) || std::abs(*converted) > 4294967295.0) {
+            return std::nullopt;
+        }
         const double magnitude = negate ? -*converted : *converted;
         if (magnitude >= 0 && std::floor(magnitude) == magnitude) {
             return static_cast<std::size_t>(magnitude);
