@@ -2533,6 +2533,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
         "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
     )
+    selector_before_first_write_source = selector_inside_first_argument_source.replace(
+        "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+        "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3408,6 +3412,30 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-close",
+            selector_before_first_write_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-getter-close",
+            selector_before_first_write_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-order-close",
+            selector_before_first_write_source.replace(
+                "anchor.setAttribute('data-closed', false); const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', false);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -3474,7 +3502,10 @@ def saved_throws(args, compilers, includes, libraries):
         terminal_match_read = "-terminal-match-read-" in label
         terminal_write = "-terminal-match-read-sequence-write-" in label
         terminal_write_value = "-terminal-match-read-sequence-write-value-" in label
-        selector_inside_first_argument = "-write-selector-inside-first-argument-value-" in label
+        selector_inside_first_argument = (
+            "-write-selector-before-first-value-" in label
+            or "-write-selector-inside-first-argument-value-" in label
+        )
         selector_inside_final_argument = (
             selector_inside_first_argument
             or "-write-selector-inside-final-argument-value-" in label
@@ -4343,6 +4374,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-before-first-value-order-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -5821,10 +5855,73 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-selector-before-first-write",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+            "normal-selector-before-first-write-close",
+            selector_before_first_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-before-first-write-close",
+            selector_before_first_write_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-before-first-write-selector",
+            selector_before_first_write_source.replace(
                 "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                "const first = anchor.matches('['); anchor.setAttribute('data-closed', first);",
+            ),
+        ),
+        (
+            "dynamic-selector-before-first-write-selector",
+            selector_before_first_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                "const first = anchor.matches(anchor); anchor.setAttribute('data-closed', first);",
+            ),
+        ),
+        (
+            "bad-selector-before-first-write-receiver",
+            selector_before_first_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                "const first = (0).matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+            ),
+        ),
+        (
+            "invalid-selector-before-first-write-arity",
+            selector_before_first_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                "const first = anchor.matches('[data-closed=false]', false); anchor.setAttribute('data-closed', first);",
+            ),
+        ),
+        (
+            "unsupported-selector-before-first-write-reuse",
+            selector_before_first_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first); anchor.setAttribute('data-closed', first);",
+            ),
+        ),
+        (
+            "unsupported-selector-before-first-write-extra-use",
+            selector_before_first_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first); external(first);",
+            ),
+        ),
+        (
+            "invalid-selector-before-first-write-name",
+            selector_before_first_write_source.replace(
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('bad name', first);",
+            ),
+        ),
+        (
+            "unsupported-selector-reused-by-second-write",
+            selector_before_first_write_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
+                "anchor.setAttribute('data-closed', first);",
             ),
         ),
         (

@@ -723,6 +723,21 @@ module {
                  "ctjs.call %attribute(%element, %name, %afterTerminalPresent)"),
         "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
         "ctjs.call %lateMethod(%element, %lateName, %lateValue)");
+    const auto moveReadBefore = [&](const std::string & source, llvm::StringRef start,
+                                    llvm::StringRef end, llvm::StringRef before) {
+        const auto first = source.find(start.str());
+        const auto read = source.substr(first, source.find(end.str(), first) - first);
+        return replaced(replaced(source, read, ""), before, read + before.str());
+    };
+    const auto selectorBeforeFirstWrite =
+        moveReadBefore(firstWriteSelector, "    %readKey =", "    %effect =", "    %attribute =");
+    const auto selectorBeforeSecondWrite = moveReadBefore(
+        secondWriteSelector, "    %afterReadKey =", "    %secondEffect =", "    %secondMethod =");
+    const auto earlySavedSelector =
+        moveReadBefore(selectorThroughFinalArgument,
+                       "    %terminalReadKey =", "    %afterTerminalKey =", "    %attribute =");
+    const auto ignoredEarlySelector =
+        replaced(earlySavedSelector, "%lateName, %terminalPresent)", "%lateName, %latePresent)");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -886,6 +901,29 @@ module {
              std::pair{firstWriteSelector, true},
              std::pair{secondWriteSelector, true},
              std::pair{firstSelectorWithSavedRead, true},
+             std::pair{selectorBeforeFirstWrite, true},
+             std::pair{selectorBeforeSecondWrite, true},
+             std::pair{earlySavedSelector, true},
+             std::pair{ignoredEarlySelector, true},
+             std::pair{replaced(selectorBeforeFirstWrite, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{
+                 replaced(replaced(selectorBeforeFirstWrite, "ctjs.get_property %element[%readKey]",
+                                   "ctjs.get_property %text[%readKey]"),
+                          "ctjs.call %readMethod(%element, %readName)",
+                          "ctjs.call %readMethod(%text, %readName)"),
+                 false},
+             std::pair{replaced(selectorBeforeSecondWrite, "data-final", "bad name"), false},
+             std::pair{replaced(earlySavedSelector, "#ctjs.string<\"data-after-terminal\">",
+                                "#ctjs.number<0>"),
+                       false},
+             std::pair{replaced(replaced(ignoredEarlySelector,
+                                         "ctjs.get_property %element[%terminalReadKey]",
+                                         "ctjs.get_property %text[%terminalReadKey]"),
+                                "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                                "ctjs.call %terminalReadMethod(%text, %terminalReadName)"),
+                       false},
              std::pair{replaced(firstWriteSelector, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -1268,9 +1306,12 @@ module {
         const bool reads = valid.find("%readKey") != std::string::npos;
         const bool firstReadMatches =
             valid.find("%readKey = ctjs.constant #ctjs.string<\"matches\">") != std::string::npos;
+        const bool firstReadBeforeLookup = valid.find("%present =") < valid.find("%attribute =");
         const bool secondReadMatches =
             valid.find("%afterReadKey = ctjs.constant #ctjs.string<\"matches\">") !=
             std::string::npos;
+        const bool secondReadBeforeLookup =
+            valid.find("%afterPresent =") < valid.find("%secondMethod =");
         const bool trailingReads = valid.find("%afterReadKey") != std::string::npos;
         const bool secondWrites = valid.find("%secondKey") != std::string::npos;
         const bool selectorReads = valid.find("%selectorKey") != std::string::npos;
@@ -1324,6 +1365,8 @@ module {
         const bool terminalMatches =
             valid.find("%terminalReadKey = ctjs.constant #ctjs.string<\"matches\">") !=
             std::string::npos;
+        const bool standaloneTerminalSelector =
+            terminalMatches && valid.find("%terminalPresent =") < valid.find("%attribute =");
         const unsigned suffixWrites =
             static_cast<unsigned>(valid.find("%fourthKey") != std::string::npos) +
             static_cast<unsigned>(valid.find("%fifthKey") != std::string::npos);
@@ -1343,15 +1386,47 @@ module {
                 auto read = write.getArgs()[1].getDefiningOp<ctjs::CallOp>();
                 auto readMethod = read ? read.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                        : ctjs::GetPropertyOp{};
+                const bool beforeLookup =
+                    writes == 1 ? firstReadBeforeLookup : secondReadBeforeLookup;
+                unsigned preceding = 0;
+                if (read) {
+                    for (ctjs::InvokeOp prior : invoke->getBlock()->getOps<ctjs::InvokeOp>()) {
+                        preceding += prior->isBeforeInBlock(read);
+                    }
+                }
                 check(readMethod && ctjs::constantKey(readMethod.getKey()) == "matches" &&
-                          read.getResult().hasOneUse() && read->getBlock() == invoke->getBlock() &&
-                          method->isBeforeInBlock(readMethod) &&
+                          ctjs::constantKey(read.getArgs()[0]) ==
+                              (writes == 1 ? "[data-visited]" : "[data-closed]") &&
+                          preceding == writes - 1 && read.getResult().hasOneUse() &&
+                          read->getBlock() == invoke->getBlock() &&
+                          (beforeLookup ? read->isBeforeInBlock(method)
+                                        : method->isBeforeInBlock(readMethod)) &&
                           readMethod->isBeforeInBlock(read) && read->isBeforeInBlock(invoke) &&
                           llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
-                      "initial write consumes exactly its ordered argument selector at the "
+                      "initial write consumes exactly its source-ordered selector at the "
                       "source guard");
             });
             check(writes >= 2, "argument selectors retain both initial protected writes");
+        }
+        if (standaloneTerminalSelector) {
+            unsigned earlySelectors = 0;
+            input->walk([&](ctjs::CallOp read) {
+                if (ctjs::constantKey(read.getArgs()[0]) != "[data-terminal]") { return; }
+                ++earlySelectors;
+                auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                auto first = *read->getBlock()->getOps<ctjs::InvokeOp>().begin();
+                auto write = llvm::cast<ctjs::CallOp>(first.getBody().front().front());
+                auto writeMethod = write.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                check(method && ctjs::constantKey(method.getKey()) == "matches" &&
+                          method->isBeforeInBlock(read) && read->isBeforeInBlock(writeMethod) &&
+                          writeMethod->isBeforeInBlock(first) &&
+                          llvm::isa<mlir::scf::IfOp>(read->getParentOp()) &&
+                          (savedTerminalSelector ? read.getResult().hasOneUse()
+                                                 : read.getResult().use_empty()),
+                      "early saved or ignored selector retains its identity before the first "
+                      "write lookup and under the source guard");
+            });
+            check(earlySelectors == 1, "the complete census retains exactly one early selector");
         }
         if (suffixWrites) {
             input->walk([&](ctjs::InvokeOp invoke) {
@@ -1499,7 +1574,8 @@ module {
                                        ? mlir::Attribute(ctjs::StringAttr::get(&context, "yes"))
                                        : ctjs::BooleanAttr::get(&context, false));
                 check(preceding == (alternatingReads ? 7u : 6u) -
-                                       static_cast<unsigned>(savedSelectorValue) &&
+                                       static_cast<unsigned>(savedSelectorValue ||
+                                                             standaloneTerminalSelector) &&
                           retainsValue && llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
                       "late write retains its value, selector order and source guard");
                 for (ctjs::CallOp read : invoke->getBlock()->getOps<ctjs::CallOp>()) {
@@ -1508,7 +1584,8 @@ module {
                         const auto readName = ctjs::constantKey(read.getArgs()[0]);
                         const bool argumentRead =
                             lateReads && (savedTerminalValue || savedSelectorValue) &&
-                            (readName == "data-closed" || (!typed && readName.empty()));
+                            (readName == "data-closed" ||
+                             (!typed && readName.empty() && !standaloneTerminalSelector));
                         check(argumentRead ? method->isBeforeInBlock(readMethod) &&
                                                  readMethod->isBeforeInBlock(read) &&
                                                  read->isBeforeInBlock(invoke) &&
@@ -1569,7 +1646,9 @@ module {
                         : beforeSecondWriteRead || insideSecondWriteRead ? 1u
                         : beforeFirstSelectorRead
                             ? 2u
-                            : 6u - static_cast<unsigned>(savedTerminalSelector) -
+                            : 6u -
+                                  static_cast<unsigned>(savedTerminalSelector ||
+                                                        standaloneTerminalSelector) -
                                   static_cast<unsigned>(beforeSelectorRead);
                     check(preceding == expected &&
                               (savedTerminalValue && !savedSecondTerminalValue
@@ -1671,14 +1750,16 @@ module {
                     "member lookup, read and protected write retain source order and guard");
             });
         }
-        check(invocations == 1u + static_cast<unsigned>(secondWrites) +
-                                 static_cast<unsigned>(selectorReads && !selectedWrites) +
-                                 static_cast<unsigned>(finalWrites) + suffixWrites +
-                                 static_cast<unsigned>(terminalMatches) +
-                                 static_cast<unsigned>(alternatingReads) +
-                                 static_cast<unsigned>(lateWrites) -
-                                 static_cast<unsigned>(savedSelectorValue) +
-                                 static_cast<unsigned>(lateMatches && !lateSelectorFeedsWrite) &&
+        check(invocations ==
+                      1u + static_cast<unsigned>(secondWrites) +
+                          static_cast<unsigned>(selectorReads && !selectedWrites) +
+                          static_cast<unsigned>(finalWrites) + suffixWrites +
+                          static_cast<unsigned>(terminalMatches) +
+                          static_cast<unsigned>(alternatingReads) +
+                          static_cast<unsigned>(lateWrites) -
+                          static_cast<unsigned>(savedSelectorValue) -
+                          static_cast<unsigned>(standaloneTerminalSelector && !savedSelectorValue) +
+                          static_cast<unsigned>(lateMatches && !lateSelectorFeedsWrite) &&
                   calls ==
                       1u + static_cast<unsigned>(reads) + static_cast<unsigned>(trailingReads) +
                           static_cast<unsigned>(secondWrites) +
@@ -1726,7 +1807,8 @@ module {
                           proof.call(call)->kind ==
                               (selector ? HostDOMMethod::matches : HostDOMMethod::hasAttribute) &&
                           (!selector || selectedWrites || finalReadMatches || savedSelectorValue ||
-                           lateSelectorFeedsWrite || firstReadMatches || secondReadMatches),
+                           lateSelectorFeedsWrite || firstReadMatches || secondReadMatches ||
+                           standaloneTerminalSelector),
                       "the moved read has exact typed no-source-throw evidence");
             });
             check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
@@ -1780,7 +1862,11 @@ module {
                                       readThroughFinalSelector,
                                       firstWriteSelector,
                                       secondWriteSelector,
-                                      firstSelectorWithSavedRead}) {
+                                      firstSelectorWithSavedRead,
+                                      selectorBeforeFirstWrite,
+                                      selectorBeforeSecondWrite,
+                                      earlySavedSelector,
+                                      ignoredEarlySelector}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1801,7 +1887,38 @@ module {
         }
     }
     for (const auto & invalid :
-         {replaced(readBeforeSecondWrite, "%answer = ctjs.create_object",
+         {replaced(selectorBeforeFirstWrite, "[data-visited]", "["),
+          replaced(selectorBeforeFirstWrite, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %element)"),
+          replaced(ignoredEarlySelector, "[data-terminal]", "["),
+          replaced(ignoredEarlySelector,
+                   "ctjs.call %terminalReadMethod(%element, %terminalReadName)",
+                   "ctjs.call %terminalReadMethod(%element, %element)"),
+          replaced(earlySavedSelector, "#ctjs.string<\"[data-terminal]\">", "#ctjs.number<0>"),
+          replaced(selectorBeforeFirstWrite, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %present\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(earlySavedSelector, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %terminalPresent"),
+          replaced(selectorBeforeSecondWrite, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %afterReadMethod(%element, %afterReadName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(appendWrite(earlySavedSelector, finalWrite, "reuse"),
+                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                   "ctjs.call %reuseMethod(%element, %reuseName, %terminalPresent)"),
+          replaced(selectorBeforeFirstWrite, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %readName, %name)"),
+          replaced(selectorBeforeSecondWrite,
+                   "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+          replaced(selectorBeforeFirstWrite,
+                   "%present = ctjs.call %readMethod(%element, %readName)",
+                   "%present = ctjs.constant #ctjs.boolean<false>"),
+          replaced(earlySavedSelector, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(readBeforeSecondWrite, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
           replaced(readBeforeSecondWrite, "%answer = ctjs.create_object",
@@ -2294,6 +2411,7 @@ module {
         check(static_cast<bool>(input), "unsupported protected attribute fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
+        if (!error) { llvm::errs() << "Unexpected protected admission:\n" << invalid << "\n"; }
         check(static_cast<bool>(error),
               "extra calls, object observations, getters and receiver changes refuse");
         if (error) { llvm::consumeError(std::move(error)); }

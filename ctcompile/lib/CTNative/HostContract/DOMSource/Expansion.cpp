@@ -54,13 +54,16 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             const auto selectFeedingRead = [&](ctjs::CallOp leaf,
                                                ctjs::GetPropertyOp & pendingMethod,
                                                ctjs::CallOp & pendingRead) {
-                if (!pendingRead || leaf.getArgs()[1] == pendingRead.getResult()) { return true; }
-                if (!suffixReads.erase(leaf.getArgs()[1])) { return false; }
-                // The write may consume an earlier read. Preserve the last
-                // argument read in the complete use census, in source order.
-                suffixValues.append({pendingMethod.getResult(), pendingRead.getResult()});
-                suffixUses.insert(&pendingRead->getOpOperand(0));
-                suffixReads.insert(pendingRead.getResult());
+                if (pendingMethod && !pendingRead) { return false; }
+                if (pendingRead && leaf.getArgs()[1] == pendingRead.getResult()) { return true; }
+                if (!suffixReads.erase(leaf.getArgs()[1])) { return !pendingRead; }
+                // A standalone read may feed the write without an argument read.
+                // Preserve any later argument read in the complete use census.
+                if (pendingRead) {
+                    suffixValues.append({pendingMethod.getResult(), pendingRead.getResult()});
+                    suffixUses.insert(&pendingRead->getOpOperand(0));
+                    suffixReads.insert(pendingRead.getResult());
+                }
                 pendingRead = leaf.getArgs()[1].getDefiningOp<ctjs::CallOp>();
                 pendingMethod = pendingRead.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 return true;
@@ -94,7 +97,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                                         : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                     read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
-                             ((selectorLeaf || (!secondLeaf && writeMethod)) &&
+                             ((selectorLeaf || !secondLeaf) &&
                               ctjs::constantKey(read.getKey()) == "matches"))) {
                     if (sourceReadMethod) {
                         if (suffixRead || !sourceReadCall) { return false; }
@@ -116,9 +119,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     read.getArgs().size() == 1) {
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
-                    // Initial argument reads move outside the helper's suppression.
+                    // Initial reads move outside the helper's suppression.
                     // Validate every selector there, including saved or ignored reads.
-                    if (selector && !suffixRead) { consumedSelectors.push_back(read); }
+                    if (selector && !secondLeaf) { consumedSelectors.push_back(read); }
                     if (suffixRead && (selector || !finalMethod)) {
                         // Retain standalone reads and argument selectors in source order.
                         // Unused selectors need exact suppression; all reads retain
@@ -126,7 +129,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         // hasAttribute read keeps the read-to-write proof instead.
                         suffixValues.append({sourceReadMethod.getResult(), read.getResult()});
                         suffixUses.insert(&read->getOpOperand(0));
-                        if (selector) { suffixLeaves.insert(read); }
+                        if (selector && secondLeaf) { suffixLeaves.insert(read); }
                         suffixReads.insert(read.getResult());
                         sourceReadMethod = {};
                         sourceReadCall = {};
@@ -144,7 +147,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     leaf && secondMethod && !secondLeaf &&
                     leaf.getCallee() == secondMethod.getResult() &&
                     leaf.getReceiver() == secondMethod.getObject() && leaf.getArgs().size() == 2 &&
-                    trailingCall) {
+                    (trailingCall || suffixReads.contains(leaf.getArgs()[1]))) {
                     if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) { return false; }
                     secondLeaf = leaf;
                     continue;
