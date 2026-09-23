@@ -2287,6 +2287,121 @@ def refusals():
     return variants
 
 
+def protected_attribute(args, compilers, includes, libraries):
+    # Exercise typed suppression separately from the still-refused source throw.
+    source = """module {
+  ctjs.func @protectedAttribute$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value, %other: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %same = ctjs.compare strict_eq %element, %other
+    %condition = ctjs.truthy %same
+    scf.if %condition {
+      %key = ctjs.constant #ctjs.string<"setAttribute">
+      %name = ctjs.constant #ctjs.string<"data-closed">
+      %text = ctjs.constant #ctjs.string<"yes">
+      %method = ctjs.get_property %element[%key]
+      "ctjs.invoke"() ({
+        %called = ctjs.call %method(%element, %name, %text)
+        ctjs.invoke_exit %called state()
+      }, {
+      ^bb0(%ignored: !ctjs.value):
+        ctjs.invoke_yield()
+      }, {
+      ^bb0(%error: !ctjs.value):
+        ctjs.invoke_yield()
+      }) : () -> ()
+      scf.yield
+    }
+    ctjs.return %same
+  }
+}
+"""
+    checks = r"""
+        assert(@ENTRY@(alias, alias));
+        const auto closed = atoms.intern("@ATTRIBUTE@");
+        assert(doc.read().attribute_value(button, closed) == "yes");
+        const auto writes = doc.take_writes();
+        assert(writes.size() == 1 && writes[0].node == button && writes[0].name == closed);
+        assert(!@ENTRY@(alias, foreign) && doc.take_writes().empty());
+        bool rejected = false;
+        try { (void)@ENTRY@(alias, element_ref{}); }
+        catch (const std::bad_expected_access<dom_error> & error) {
+            rejected = error.error() == dom_error::no_such_node;
+        }
+        assert(rejected && doc.take_writes().empty());
+        (void)pressed;
+"""
+    owned_checks = r"""
+        @ENTRY@_session session;
+        auto & owned = session.document();
+        const auto owned_button = owned.create_element(owned.atoms().intern("button"));
+        const auto owned_other = owned.create_element(owned.atoms().intern("button"));
+        const element_ref owned_element{&owned, owned_button};
+        owned.log_writes(true);
+        assert(session.invoke(owned_element, owned_element));
+        const auto owned_closed = owned.atoms().intern("@ATTRIBUTE@");
+        assert(owned.read().attribute_value(owned_button, owned_closed) == "yes");
+        const auto owned_writes = owned.take_writes();
+        assert(owned_writes.size() == 1 && owned_writes[0].node == owned_button &&
+               owned_writes[0].name == owned_closed);
+        assert(!session.invoke(owned_element, element_ref{&owned, owned_other}));
+        assert(owned.take_writes().empty());
+"""
+    cases = {
+        "valid": source,
+        "digit-name": source.replace("data-closed", "1:closed"),
+        "invalid-name": source.replace("data-closed", "bad name"),
+        "empty-name": source.replace("data-closed", ""),
+        "computed-name": source.replace(
+            '%name = ctjs.constant #ctjs.string<"data-closed">',
+            """%name = scf.if %condition -> (!ctjs.value) {
+        %first = ctjs.constant #ctjs.string<"data-closed">
+        scf.yield %first : !ctjs.value
+      } else {
+        %second = ctjs.constant #ctjs.string<"other">
+        scf.yield %second : !ctjs.value
+      }""",
+        ),
+        "wrong-receiver": source.replace("%method(%element,", "%method(%text,"),
+        "observed-payload": source.replace(
+            "^bb0(%ignored: !ctjs.value):",
+            "^bb0(%ignored: !ctjs.value):\n        %observed = ctjs.unary typeof %ignored",
+        ),
+    }
+    executions = refused = 0
+    for label, text in cases.items():
+        accepted = label in ("valid", "digit-name")
+        ir = args.work / f"protected-attribute-{label}.mlir"
+        ir.write_text(text)
+        contract = {
+            "version": 1,
+            "module_sha256": dom.fingerprint(args.opt, ir),
+            "entry": "protectedAttribute$0",
+            "element_parameters": [0, 1],
+        }
+        for owned in (False, True):
+            manifest = dict(
+                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+            )
+            for optimize in (False, True):
+                name = f"protected-attribute-{label}-{owned}-{optimize}"
+                native = dom.lower(args, ir, manifest, name, optimize=optimize, success=accepted)
+                if not accepted:
+                    refused += 1
+                    continue
+                dom.standalone(
+                    args,
+                    native,
+                    name,
+                    (checks + (owned_checks if owned else "")).replace(
+                        "@ATTRIBUTE@", "1:closed" if label == "digit-name" else "data-closed"
+                    ),
+                    compilers,
+                    includes,
+                    libraries,
+                )
+                executions += 2 * len(compilers)
+    print(f"Protected raw DOM attribute: {executions} native executions, {refused} refusals")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("translate", "opt", "clang", "node", "reference"):
@@ -2301,6 +2416,7 @@ def main():
     compilers = find_compilers()
     compilers[1] = args.clang
     includes, libraries = dom.link_options(args)
+    protected_attribute(args, compilers, includes, libraries)
     executions, refused = mixed_selectors(args, compilers)
     admitted = 0
     for label, text, breaking, results, resetting, closed in POSITIVES:

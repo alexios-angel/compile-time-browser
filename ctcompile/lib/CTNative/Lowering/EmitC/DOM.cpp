@@ -80,6 +80,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
             if (!entry.invocation(invocation)) { return; }
             domInvocations.insert(invocation);
             domUnusedPayloads.insert(invocation.getUnwindBody().front().getArgument(0));
+            if (invocation.getNumResults() == 0) {
+                domUnusedPayloads.insert(invocation.getNormalBody().front().getArgument(0));
+            }
         });
         function.walk([&](ctjs::CallOp call) {
             if (entry.isStringPrefixRegExp(call)) { domReads.insert(call); }
@@ -460,6 +463,14 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (domInvocations.contains(operation)) {
         auto invocation = llvm::cast<ctjs::InvokeOp>(operation);
         auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
+        if (invocation.getNumResults() == 0) {
+            // Complete DOM admission proved this exact setAttribute cannot
+            // throw a source exception. Preserve the call at the same guard.
+            call->moveBefore(invocation);
+            domInvocations.erase(invocation);
+            invocation.erase();
+            return replaceDOM(call);
+        }
         // decodeURIComponent answers std::optional<std::string>; parse_json
         // answers std::expected<json_value, std::size_t>. Both move on success.
         const bool parses = domCalls.find(call)->second.kind == HostDOMMethod::jsonParse;
@@ -640,6 +651,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     const auto found = domCalls.find(operation);
     if (found == domCalls.end()) { return false; }
     auto call = llvm::cast<ctjs::CallOp>(operation);
+    if (domInvocations.contains(call->getParentOp())) {
+        return true; // The enclosing invocation consumes its original call.
+    }
     const auto & edge = found->second;
     if (edge.kind == HostDOMMethod::symbol) {
         llvm::SmallVector<mlir::Value, 1> description;

@@ -184,8 +184,9 @@ bool admission::function(ctjs::FuncOp fn) {
                 for (mlir::BlockArgument a : block.getArguments()) {
                     if (auto invoke = llvm::dyn_cast<ctjs::InvokeOp>(o);
                         invoke && domEntry && domEntry->invocation(invoke) &&
-                        &region == &invoke.getUnwindBody() && a.getArgNumber() == 0 &&
-                        a.use_empty()) {
+                        (&region == &invoke.getUnwindBody() ||
+                         (invoke.getNumResults() == 0 && &region == &invoke.getNormalBody())) &&
+                        a.getArgNumber() == 0 && a.use_empty()) {
                         continue; // No native value represents the unobserved semantic payload.
                     }
                     if (llvm::isa<ctjs::ValueType>(a.getType()) && unsupported(a)) {

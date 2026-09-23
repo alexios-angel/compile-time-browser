@@ -20,6 +20,7 @@ add_mlir_library(CTNativeAnalysis
   LINK_LIBS PUBLIC
     CTNativeDialect
     CTJSDialect
+    ctbrowser-dom
     MLIRAnalysis
     MLIRArithDialect
     MLIRControlFlowToSCF

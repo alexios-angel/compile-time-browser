@@ -564,10 +564,31 @@ module {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             bound.provider = provider;
-            // Normalization supplies no no-throw authority, even for a valid
-            // name. Typed suppression and saved-throw emission are separate.
-            check(!DOMEntryAnalysis(*input, bound).proved(),
-                  "effectful suppression still needs complete typed DOM admission");
+            const bool typed = valid.find("bad name") == std::string::npos;
+            DOMEntryAnalysis proof(*input, bound);
+            check(proof.proved() == typed,
+                  "protected attribute needs complete DOM proof and a valid literal name");
+            if (!typed) {
+                check(noEvidence(*input, proof), "invalid attribute withholds all evidence");
+                continue;
+            }
+            if (!proof.proved()) {
+                std::fprintf(stderr, "%s\n", proof.reason().str().c_str());
+                continue;
+            }
+            input->walk([&](ctjs::InvokeOp invoke) {
+                auto call = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
+                check(proof.invocation(invoke) && proof.call(call) &&
+                          proof.call(call)->kind == HostDOMMethod::setAttribute,
+                      "typed suppression retains the exact attribute call evidence");
+            });
+            check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
+                  "protected attribute reproduces its exact proof budget");
+            for (unsigned budget : {0u, proof.steps() - 1}) {
+                DOMEntryAnalysis limited(*input, bound, budget);
+                check(limited.exhausted() && noEvidence(*input, limited),
+                      "incomplete protected attribute proof withholds all evidence");
+            }
         }
     }
     for (const auto & invalid :

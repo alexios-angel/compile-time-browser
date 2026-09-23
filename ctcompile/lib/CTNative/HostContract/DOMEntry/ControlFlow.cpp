@@ -1,5 +1,7 @@
 #include "Body.hpp"
 
+#include <ctbrowser/dom/element.hpp>
+
 namespace ctcompile::ctnative::dom_entry_detail {
 
 std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block & body,
@@ -296,6 +298,65 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         return true;
     }
     if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
+        if (invocation.getNumResults() == 0) {
+            // Only the exact unused-result wrapper can disappear. Complete
+            // DOM proof below excludes receiver failure, coercion and reentry;
+            // a valid literal name excludes the remaining source exception.
+            if (invocation->getParentOfType<ctjs::InvokeOp>() ||
+                !invocation.getBody().hasOneBlock() || !invocation.getNormalBody().hasOneBlock() ||
+                !invocation.getUnwindBody().hasOneBlock()) {
+                refusal = "DOM suppressed attribute requires complete unnested continuations";
+                return false;
+            }
+            auto & called = invocation.getBody().front();
+            auto call =
+                called.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(called.front());
+            auto exit = called.empty() ? ctjs::InvokeExitOp{}
+                                       : llvm::dyn_cast<ctjs::InvokeExitOp>(called.back());
+            if (called.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
+                exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse() ||
+                !exit.getState().empty() || !hasKind(call.getCallee(), Kind::attribute) ||
+                !hasKind(call.getReceiver(), Kind::element) || call.getArgs().size() != 2 ||
+                !hasKind(call.getArgs()[0], Kind::string) ||
+                !hasKind(call.getArgs()[1], Kind::string)) {
+                refusal = "DOM suppressed attribute requires one typed unused setAttribute call";
+                return false;
+            }
+            for (mlir::Region * region :
+                 {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
+                if (!spend()) { return false; }
+                auto & continuation = region->front();
+                auto yield = continuation.empty()
+                                 ? ctjs::InvokeYieldOp{}
+                                 : llvm::dyn_cast<ctjs::InvokeYieldOp>(continuation.front());
+                if (continuation.getNumArguments() != 1 ||
+                    !llvm::isa<ctjs::ValueType>(continuation.getArgument(0).getType()) ||
+                    !continuation.getArgument(0).use_empty() || !yield ||
+                    !yield.getValues().empty() || yield->getNextNode()) {
+                    refusal = "DOM suppressed attribute requires empty unobserved continuations";
+                    return false;
+                }
+            }
+            auto literal = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
+            auto name =
+                literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+            if (!name) {
+                refusal = "DOM suppressed attribute requires a valid literal name";
+                return false;
+            }
+            // Reserve the public validator's byte scan before invoking it.
+            for (std::size_t i = 0; i < name.getValue().size(); ++i) {
+                if (!spend()) { return false; }
+            }
+            if (!ctbrowser::is_valid_attribute_name(
+                    {name.getValue().data(), name.getValue().size()})) {
+                refusal = "DOM suppressed attribute requires a valid literal name";
+                return false;
+            }
+            if (!visit(called, depth + 1, frame)) { return false; }
+            provedInvocations.push_back(invocation);
+            return true;
+        }
         // A nested invoke may only continue the enclosing success.
         auto parent = invocation->getParentOfType<ctjs::InvokeOp>();
         if ((parent && (!llvm::is_contained(provedInvocations, parent) ||
