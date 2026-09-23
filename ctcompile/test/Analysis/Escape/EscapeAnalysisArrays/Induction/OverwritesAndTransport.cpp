@@ -634,8 +634,12 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(tightOddReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
                    "%offset = ctjs.get_property %base[%two]",
                    "%offset = ctjs.get_property %base[%zero]"));
-    reject("mixed exponent parity must still include the positive unit image",
-           replace(tightOddPower, "ctjs.binary mul %i, %two", "ctjs.unary plus %i"));
+    run({.what = "correlated mixed parity excludes an unreachable positive unit image",
+         .body = replace(tightOddPower, "ctjs.binary mul %i, %two", "ctjs.unary plus %i"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"},
+        "x");
     reject("zero exponents must still include the positive unit image",
            replace(tightOddPower, "add %even, %one", "add %even, %zero"));
     reject("positive even exponents must still include the positive unit image",
@@ -742,6 +746,54 @@ void InductionCases::overwritesAndTransport() {
            replace(dividedPower, "add %part, %one", "add %part, %two"));
     reject("zero/unit power congruence does not prove fractional division",
            replace(dividedPower, "div %numerator, %two", "div %numerator, %three"));
+    const auto boundedPower =
+        replace(replace(replace(dividedPower, "[%x, %x, %zero]", "[%zero, %x, %x]"),
+                        "add %part, %one", "add %part, %zero"),
+                "%numerator = ctjs.binary sub %power, %one\n"
+                "  %position = ctjs.binary div %numerator, %two",
+                "%position = ctjs.unary plus %power");
+    run({.what = "correlated power bounds exclude unreachable out-of-bounds union endpoints",
+         .body = boundedPower,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "refined power bounds retain children outside actual writes",
+         .body = replace(boundedPower, "[%zero, %x, %x]", "[%x, %x, %x]"),
+         .arrays = "a:[x,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    run({.what = "refined power bounds retain snapshots before overwritten elements",
+         .body = replace(replace(boundedPower, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%one]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[1]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto boundedPowerReload =
+        replace(replace(boundedPower, "[%zero, %x, %x]", "[%two, %x, %x]"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%zero]\n"
+                "  %exponent = ctjs.binary mod %i, %divisor");
+    run({.what = "power own-bound refinement independently reproves disjoint reload gaps",
+         .body = boundedPowerReload,
+         .arrays = "a:[two,zero,zero]",
+         .reads = "a[0]=two; a[0]=two; a[0]=two; a[1]=zero; a[0]=two; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("power own-bound refinement retains the complete later-store census",
+           replace(boundedPowerReload,
+                   "  %step =", "  ctjs.set_property %base[%zero], %one\n  %step ="));
+    reject("power own-bound refinement rejects actual overlapping reloads",
+           replace(replace(boundedPowerReload, "[%two, %x, %x]", "[%zero, %two, %x]"),
+                   "%divisor = ctjs.get_property %base[%zero]",
+                   "%divisor = ctjs.get_property %base[%one]"));
+    reject("power own-bound refinement rejects an actual upper-bound violation",
+           replace(boundedPower, "mul %i, %two", "mul %i, %three"));
+    reject("power own-bound refinement rejects negative actual keys",
+           replace(boundedPower, "unary plus %power", "unary neg %power"));
+    reject("power own-bound refinement does not invent integral exponents",
+           replace(boundedPower, "mod %i, %two", "div %i, %two"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :
@@ -1762,8 +1814,20 @@ void InductionCases::overwritesAndTransport() {
         reject("fixed-bit rounding retains later writes in its complete census",
                replace(fixedRounding,
                        "  %step =", "  ctjs.set_property %base[" + guard + "], %zero\n  %step ="));
-        reject("a varying low bit cannot complete the rounding suffix",
-               replace(lowRounding, "add %i, %roundTwo", "add %i, %one"));
+        const auto varyingLowBit = replace(lowRounding, "add %i, %roundTwo", "add %i, %one");
+        if (isAnd) {
+            reject("a varying low bit exposes an overlapping AND mask reload", varyingLowBit);
+        } else {
+            run({.what = "whole-key bounds refine varying OR low bits without touching its mask",
+                 .body = varyingLowBit,
+                 .arrays = "a:[mask,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero]",
+                 .reads = "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
+                          "a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=zero; "
+                          "a[0]=mask; a[6]=zero; a[0]=mask; a[7]=zero; a[0]=mask; a[8]=zero; "
+                          "a[0]=mask; a[9]=zero; a[0]=mask; a[10]=zero; a[0]=mask; a[11]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
         reject("a varying interior gap cannot borrow fixed-bit rounding endpoints",
                replace(fixedRounding,
                        "#ctjs.number<" +

@@ -725,8 +725,20 @@ void StructuredCases::reloads() {
         reject("fixed-bit rounding retains later writes in its complete census",
                replace(fixedRounding, "    %step =",
                        "    ctjs.set_property %base[" + guard + "], %zero\n    %step ="));
-        reject("a varying low bit cannot complete the rounding suffix",
-               replace(lowRounding, "add %i, %roundTwo", "add %i, %one"));
+        const auto varyingLowBit = replace(lowRounding, "add %i, %roundTwo", "add %i, %one");
+        if (isAnd) {
+            reject("a varying low bit exposes an overlapping AND mask reload", varyingLowBit);
+        } else {
+            rows.push_back(
+                {.what = "structured whole-key bounds refine varying OR bits with a disjoint mask",
+                 .body = varyingLowBit,
+                 .arrays = "a:[mask,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero,zero]",
+                 .reads = "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
+                          "a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=zero; "
+                          "a[0]=mask; a[6]=zero; a[0]=mask; a[7]=zero; a[0]=mask; a[8]=zero; "
+                          "a[0]=mask; a[9]=zero; a[0]=mask; a[10]=zero; a[0]=mask; a[11]=zero",
+                 .exit = "a -> {a}"});
+        }
         reject("a varying interior gap cannot borrow fixed-bit rounding endpoints",
                replace(fixedRounding,
                        "#ctjs.number<" +

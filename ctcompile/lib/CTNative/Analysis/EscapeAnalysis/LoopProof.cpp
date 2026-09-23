@@ -798,18 +798,52 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         return range;
     };
+    const auto refineIndexRange = [&](mlir::Value key, const auto & accepts) {
+        const auto reloadCount = guardReloads.size();
+        // Correlated operands and conversions can leave gaps in one enclosing
+        // lattice. Split only at aligned visits; bounded indices limit depth
+        // to 32 and every reproof spends the shared work budget.
+        const auto refine = [&](auto && self, std::size_t begin, std::size_t end) -> bool {
+            if (!spend()) {
+                invariantFailure = ArrayContentsFailure::WorkLimit;
+                return false;
+            }
+            indexBounds = {begin, end};
+            const auto actual = indexRange(indexRange, key, 0);
+            if (!actual || guardReloads.size() != reloadCount) { return false; }
+            if (accepts(*actual)) { return true; }
+            if (begin == end) { return false; }
+            const auto middle = begin + (end - begin) / *stride / 2 * *stride;
+            return self(self, begin, middle) && self(self, middle + *stride, end);
+        };
+        const bool accepted = refine(refine, *start, last);
+        indexBounds = {*start, last};
+        return accepted;
+    };
     for (mlir::Block * block : {header, body}) {
         for (mlir::Operation & operation : *block) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
             if (&operation == block->getTerminator()) { continue; }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 if (block != body) { return unsupported; }
-                if (const auto range = indexRange(indexRange, store.getKey(), 0)) {
+                if (auto range = indexRange(indexRange, store.getKey(), 0)) {
                     if (*start < size) {
-                        if (!range->first.integerNumber || !range->last.integerNumber ||
-                            *range->first.integerNumber >= size ||
-                            *range->last.integerNumber >= size) {
-                            return unsupported;
+                        const auto ownBounds = [&](const IndexRange & candidate) {
+                            return candidate.first.integerNumber && candidate.last.integerNumber &&
+                                   *candidate.first.integerNumber < size &&
+                                   *candidate.last.integerNumber < size;
+                        };
+                        if (!ownBounds(*range)) {
+                            if (!range->mixedShift ||
+                                !refineIndexRange(store.getKey(), ownBounds)) {
+                                return invariantFailure;
+                            }
+                            // Every visit is now proved own. Keep a conservative
+                            // footprint; reload gaps still need their own reproof.
+                            *range = {{store.getKey(), ContentsKind::NonBigInt, 0},
+                                      {store.getKey(), ContentsKind::NonBigInt, size - 1},
+                                      1,
+                                      true};
                         }
                         guardStoreRanges.push_back(
                             {*range->first.integerNumber, *range->last.integerNumber, range->stride,
@@ -850,34 +884,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (position >= first && position <= storeLast &&
                 (position - first) % writeStride == 0) {
                 if (!mixedShiftKey) { return unsupported; }
-                // Mixed rounded increments lose gaps in one enclosing lattice.
-                // Reuse the same Number transfers on aligned subranges and skip
-                // any lattice excluding the reload. Splitting at a visit keeps
-                // both halves nonempty; bounded uint32 indices limit depth to 32.
-                const auto reloadCount = guardReloads.size();
-                const auto excludesReload = [&](auto && self, std::size_t begin,
-                                                std::size_t end) -> bool {
-                    if (!spend()) {
-                        invariantFailure = ArrayContentsFailure::WorkLimit;
-                        return false;
-                    }
-                    indexBounds = {begin, end};
-                    const auto actual = indexRange(indexRange, mixedShiftKey, 0);
-                    if (!actual || guardReloads.size() != reloadCount ||
-                        !actual->first.integerNumber || !actual->last.integerNumber) {
-                        return false;
-                    }
-                    if (position < *actual->first.integerNumber ||
-                        position > *actual->last.integerNumber ||
-                        (position - *actual->first.integerNumber) % actual->stride != 0) {
-                        return true;
-                    }
-                    if (begin == end) { return false; }
-                    const auto middle = begin + (end - begin) / *stride / 2 * *stride;
-                    return self(self, begin, middle) && self(self, middle + *stride, end);
+                const auto excludesReload = [&](const IndexRange & actual) {
+                    return actual.first.integerNumber && actual.last.integerNumber &&
+                           (position < *actual.first.integerNumber ||
+                            position > *actual.last.integerNumber ||
+                            (position - *actual.first.integerNumber) % actual.stride != 0);
                 };
-                if (!excludesReload(excludesReload, *start, last)) { return invariantFailure; }
-                indexBounds = {*start, last};
+                if (!refineIndexRange(mixedShiftKey, excludesReload)) { return invariantFailure; }
             }
         }
     }

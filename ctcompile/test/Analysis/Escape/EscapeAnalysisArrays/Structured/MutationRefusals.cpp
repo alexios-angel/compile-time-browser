@@ -467,8 +467,12 @@ void StructuredCases::mutationRefusals() {
            replace(replace(tightOddReload, "create_array [%x, %y]", "create_array [%one, %y]"),
                    "%offset = ctjs.get_property %base[%two]",
                    "%offset = ctjs.get_property %base[%zero]"));
-    reject("structured mixed exponent parity includes the positive unit image",
-           replace(tightOddPower, "ctjs.binary mul %i, %two", "ctjs.unary plus %i"));
+    rows.push_back(
+        {.what = "structured correlated mixed parity excludes unreachable unit images",
+         .body = replace(tightOddPower, "ctjs.binary mul %i, %two", "ctjs.unary plus %i"),
+         .arrays = "a:[zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero",
+         .exit = "a -> {a}"});
     reject("structured zero exponents include the positive unit image",
            replace(tightOddPower, "add %even, %one", "add %even, %zero"));
     reject("structured positive even exponents include the positive unit image",
@@ -559,6 +563,39 @@ void StructuredCases::mutationRefusals() {
                    "%divisor = ctjs.get_property %base[%zero]"));
     reject("structured power unions include the unit residue before division",
            replace(dividedPower, "add %part, %one", "add %part, %two"));
+    const auto boundedPower = replace(
+        replace(replace(replace(dividedPower, "create_array [%x, %x]", "create_array [%zero, %x]"),
+                        "ctjs.append %zero to %a", "ctjs.append %x to %a"),
+                "add %part, %one", "add %part, %zero"),
+        "%numerator = ctjs.binary sub %power, %one\n"
+        "    %position = ctjs.binary div %numerator, %two",
+        "%position = ctjs.unary plus %power");
+    rows.push_back({.what = "structured correlated powers refine unreachable bound endpoints",
+                    .body = boundedPower,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto boundedPowerReload =
+        replace(replace(boundedPower, "create_array [%zero, %x]", "create_array [%two, %x]"),
+                "%exponent = ctjs.binary mod %i, %two",
+                "%divisor = ctjs.get_property %base[%zero]\n"
+                "    %exponent = ctjs.binary mod %i, %divisor");
+    rows.push_back({.what = "structured own-bound refinement independently checks reload gaps",
+                    .body = boundedPowerReload,
+                    .arrays = "a:[ctjs.binary,zero,zero]",
+                    .reads = "a[0]=ctjs.binary; a[0]=ctjs.binary; a[0]=ctjs.binary; a[1]=zero; "
+                             "a[0]=ctjs.binary; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured power own-bound refinement retains all later stores",
+           replace(boundedPowerReload,
+                   "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
+    reject("structured power own-bound refinement rejects overlapping reloads",
+           replace(
+               replace(boundedPowerReload, "create_array [%two, %x]", "create_array [%zero, %two]"),
+               "%divisor = ctjs.get_property %base[%zero]",
+               "%divisor = ctjs.get_property %base[%one]"));
+    reject("structured own-bound refinement rejects actual negative keys",
+           replace(boundedPower, "unary plus %power", "unary neg %power"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
