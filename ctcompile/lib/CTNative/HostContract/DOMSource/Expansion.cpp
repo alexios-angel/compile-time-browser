@@ -71,7 +71,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     writeMethod = read;
                     continue;
                 }
-                const bool suffixRead = protectedLeaf && (!secondMethod || secondLeaf);
+                const bool suffixRead = !writeMethod || secondLeaf;
                 auto & sourceReadMethod = suffixRead      ? finalReadMethod
                                           : protectedLeaf ? trailingMethod
                                                           : readMethod;

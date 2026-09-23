@@ -670,6 +670,11 @@ module {
     const auto alternatingReadBeforeSecondWrite =
         replaced(replaced(alternatingEarlierValue, savedRead, ""),
                  "    %secondKey =", savedRead + "    %secondKey =");
+    const auto readBeforeFirstWrite = replaced(replaced(earlierTerminalValue, savedRead, ""),
+                                               "    %attribute =", savedRead + "    %attribute =");
+    const auto alternatingReadBeforeFirstWrite =
+        replaced(replaced(alternatingEarlierValue, savedRead, ""),
+                 "    %attribute =", savedRead + "    %attribute =");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -765,6 +770,26 @@ module {
                                 "#ctjs.number<0>"),
                        false},
              std::pair{replaced(replaced(readBeforeSecondWrite,
+                                         "ctjs.get_property %element[%afterTerminalKey]",
+                                         "ctjs.get_property %text[%afterTerminalKey]"),
+                                "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
+                                "ctjs.call %afterTerminalMethod(%text, %afterTerminalName)"),
+                       false},
+             std::pair{readBeforeFirstWrite, true},
+             std::pair{alternatingReadBeforeFirstWrite, true},
+             std::pair{replaced(readBeforeFirstWrite, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(readBeforeFirstWrite,
+                                "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                                "ctjs.call %lateMethod(%element, %lateName, %lateValue)"),
+                       true},
+             std::pair{replaced(readBeforeFirstWrite, "data-late", "bad name"), false},
+             std::pair{replaced(readBeforeFirstWrite, "[data-closed]", "["), false},
+             std::pair{replaced(readBeforeFirstWrite, "#ctjs.string<\"data-after-terminal\">",
+                                "#ctjs.number<0>"),
+                       false},
+             std::pair{replaced(replaced(readBeforeFirstWrite,
                                          "ctjs.get_property %element[%afterTerminalKey]",
                                          "ctjs.get_property %text[%afterTerminalKey]"),
                                 "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
@@ -1077,6 +1102,8 @@ module {
             valid.find("%afterTerminalKey =") < valid.find("%selectorKey =");
         const bool beforeSecondWriteRead =
             valid.find("%afterTerminalKey =") < valid.find("%secondKey =");
+        const bool beforeFirstWriteRead =
+            valid.find("%afterTerminalKey =") < valid.find("%attribute =");
         const bool secondTerminalReads = valid.find("%secondTerminalKey") != std::string::npos;
         const bool alternatingReads = valid.find("%alternateTerminalKey") != std::string::npos;
         const bool lateWrites = valid.find("%lateMethod") != std::string::npos;
@@ -1272,7 +1299,8 @@ module {
                         preceding += invoke->isBeforeInBlock(method);
                     }
                     const unsigned expected =
-                        beforeSecondWriteRead ? 1u
+                        beforeFirstWriteRead    ? 0u
+                        : beforeSecondWriteRead ? 1u
                         : beforeFirstSelectorRead
                             ? 2u
                             : 6u - static_cast<unsigned>(savedTerminalSelector) -
@@ -1295,13 +1323,18 @@ module {
                 }
                 if (call.getResult().use_empty()) {
                     bool ordered = false;
+                    const bool early =
+                        beforeFirstWriteRead &&
+                        ctjs::constantKey(call.getArgs()[0]) == "data-after-terminal";
                     for (ctjs::InvokeOp invoke : call->getBlock()->getOps<ctjs::InvokeOp>()) {
                         ordered |= method->getBlock() == invoke->getBlock() &&
-                                   invoke->isBeforeInBlock(method) && method->isBeforeInBlock(call);
+                                   method->isBeforeInBlock(call) &&
+                                   (early ? call->isBeforeInBlock(invoke)
+                                          : invoke->isBeforeInBlock(method));
                     }
                     check(trailingReads && ordered &&
                               llvm::isa<mlir::scf::IfOp>(call->getParentOp()),
-                          "unused trailing read stays after the protected write at its guard");
+                          "unused read retains its source position and guard");
                     return;
                 }
                 auto consumer =
@@ -1432,7 +1465,9 @@ module {
                                       readBeforeFirstSelector,
                                       alternatingReadBeforeFirstSelector,
                                       readBeforeSecondWrite,
-                                      alternatingReadBeforeSecondWrite}) {
+                                      alternatingReadBeforeSecondWrite,
+                                      readBeforeFirstWrite,
+                                      alternatingReadBeforeFirstWrite}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1477,6 +1512,32 @@ module {
           replaced(readBeforeSecondWrite, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
                    "        ctjs.store_global \"effect\", %error"),
+          replaced(readBeforeFirstWrite, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
+          replaced(readBeforeFirstWrite, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %afterTerminalPresent\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(readBeforeFirstWrite, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %afterTerminalMethod(%element, %afterTerminalName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(appendWrite(readBeforeFirstWrite, finalWrite, "reuse"),
+                   "ctjs.call %reuseMethod(%element, %reuseName, %reuseValue)",
+                   "ctjs.call %reuseMethod(%element, %reuseName, %afterTerminalPresent)"),
+          replaced(readBeforeFirstWrite,
+                   "ctjs.call %afterTerminalMethod(%element, %afterTerminalName)",
+                   "ctjs.call %afterTerminalMethod(%element, %afterTerminalName, %name)"),
+          replaced(readBeforeFirstWrite,
+                   "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+                   "ctjs.call %lateMethod(%element, %afterTerminalPresent, %afterTerminalPresent)"),
+          replaced(readBeforeFirstWrite,
+                   "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
+                   "ctjs.call %secondMethod(%element, %secondName, %afterTerminalPresent)"),
+          replaced(readBeforeFirstWrite, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(readBeforeFirstWrite, "ctjs.call %attribute(%element, %name, %present)",
+                   "ctjs.call %attribute(%element, %name, %afterTerminalPresent)"),
           replaced(readBeforeFirstSelector, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %afterTerminalPresent"),
