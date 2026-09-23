@@ -319,6 +319,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         if (selected ? (*selected ? thenThrows : elseThrows) : (thenThrows && elseThrows)) {
             nonReturning.insert(&body);
         }
+        if (thenThrows && elseThrows) {
+            // Neither arm reaches its yield. Give only this structural padding
+            // a common primitive kind; both payloads and effects proved above.
+            for (unsigned i = 0; i < branch.getNumResults(); ++i) {
+                if (!spend()) { return false; }
+                joined.push_back(Kind::boolean);
+            }
+        }
         if (joined.size() != branch.getNumResults() ||
             (branch.getNumResults() && branch.getElseRegion().empty())) {
             refusal = "DOM entry branch is missing a scalar arm";

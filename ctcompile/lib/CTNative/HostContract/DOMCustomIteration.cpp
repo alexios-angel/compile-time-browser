@@ -1237,9 +1237,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             // and throw it at the original call, where the typed DOM proof can
             // check its ownership and the unreachable continuation.
             // The confined final state has no observer after this throw.
-            // ponytail: normal-only closes; mixed suppression still needs a
-            // separate proof for each exceptional continuation.
-            observableThrow = thrown && protectedCloses.empty();
+            // Protected calls discard this value at their exact Invoke; normal
+            // calls must rethrow it immediately, including in a mixed entry.
+            observableThrow = static_cast<bool>(thrown);
         } else if (!record || record->getBlock() != &block) {
             return error("DOM iterator method must return one fresh own-field record");
         }
@@ -1292,20 +1292,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     frame = {};
                 }
             }
-            if (!spend() || !spend() || !spend()) {
-                return error("DOM custom iterator budget exhausted");
-            }
+            if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
             mlir::OpBuilder at(thrown);
-            auto ignored = ctjs::ConstantOp::create(
-                at, thrown.getLoc(), ctjs::UndefinedAttr::get(candidate.getContext()));
             if (frame) { ctjs::FrameExitOp::create(at, thrown.getLoc(), frame); }
-            auto terminal = ctjs::ReturnOp::create(at, thrown.getLoc(), thrown.getValue());
+            ctjs::ReturnOp::create(at, thrown.getLoc(), thrown.getValue());
             thrown.erase();
             // Validate the original payload's definition, dominance and frame
             // before suppressing or propagating its value. Its producers remain for
             // scalar state transport and complete typed DOM/effect reproof.
             if (!work.checkBody(body, false, true, true)) { return error(work.reason); }
-            if (!observableThrow) { terminal.getValueMutable().assign(ignored.getResult()); }
         }
         if (!stateInitials.empty()) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
@@ -2050,8 +2045,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
         auto get =
             call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
-        if (primitiveClose && !observableThrow && get &&
-            ctjs::constantKey(get.getKey()) == "return" &&
+        if (primitiveClose && get && ctjs::constantKey(get.getKey()) == "return" &&
             !llvm::isa<ctjs::InvokeOp>(call->getParentOp())) {
             auto branch = llvm::dyn_cast<mlir::scf::IfOp>(call->getParentOp());
             auto truth =
@@ -2067,6 +2061,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 !branch.getThenRegion().hasOneBlock() ||
                 !llvm::hasSingleElement(branch.getThenRegion().front()) ||
                 !llvm::isa<mlir::scf::YieldOp>(branch.getThenRegion().front().front())) {
+                if (observableThrow) { return mlir::WalkResult::advance(); }
                 normalPrimitiveClose = true;
                 return mlir::WalkResult::interrupt();
             }

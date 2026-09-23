@@ -2403,10 +2403,11 @@ def protected_attribute(args, compilers, includes, libraries):
 
 
 def normal_throws(args, compilers, includes, libraries, cases):
-    """Observe cleanup exceptions replacing normal break and return completions."""
+    """Observe cleanup exceptions and saved body throws across completion paths."""
     executions = observations = 0
     for label, text in cases:
         selecting = "selector" in label
+        mixed = label.startswith("mixed-body-throw-")
         mutable = "mutable-" in label
         cleanup_number = (
             13
@@ -2447,16 +2448,26 @@ def normal_throws(args, compilers, includes, libraries, cases):
       return value;
     },
 """
+        if mixed:
+            payload = f"mode >= 5 && ({payload})"
+            extra_catch = """
+                catch (const ctnative::js_exception<ctnative::js_boolean_t> & error) {
+                    caught = (mode == 1 || mode == 2) && static_cast<bool>(error.value) == (mode == 2);
+                }"""
         closed = "true" if label.startswith("return-") else "yes"
         script, expected, states = text, {}, []
-        for mode in range(5 if unconditional_return else 4):
+        for mode in range(7 if mixed else 5 if unconditional_return else 4):
             setup = "saved.stop = '';" if mode in (1, 2) else ""
             if mode == 2:
                 setup += "saved['data-closed'] = 'false';"
-            elif mode >= 3:
+            elif mode >= 3 and (not mixed or mode < 5):
                 setup += "saved['data-yielded'] = 'yes';"
             if mode == 4:
                 setup += "saved['data-visited'] = 'yes';"
+            if mixed and mode >= 5:
+                setup += "saved.advance = '';"
+                if mode == 6:
+                    setup += "saved['data-closed'] = 'false';"
             name = f"normalClose{mode}"
             script += f"""
 var {name} = (function() {{
@@ -2486,13 +2497,43 @@ var {name} = (function() {{
   catch (error) {{ return 'throw:' + typeof error + ':' + error + ':' + trace; }}
 }})();
 """
-            trace = f"read:data-yielded={'true' if mode >= 3 else 'false'};"
+            exhausted = mode >= 3 and (not mixed or mode < 5)
+            trace = f"read:data-yielded={'true' if exhausted else 'false'};"
             writes = [
-                ("data-next", "true" if mode >= 3 else "false"),
+                ("data-next", "true" if exhausted else "false"),
                 ("data-yielded", "yes"),
             ]
             trace += "".join(f"write:{key}={value};" for key, value in writes)
-            if mode >= 3 and mutable:
+            if mixed:
+                if exhausted:
+                    value = "true" if mode == 4 else "false"
+                    trace += f"read:data-visited={value};"
+                    result = f"return:{value}:"
+                else:
+                    protected = mode in (1, 2)
+                    trace += f"read:stop={'true' if protected else 'false'};"
+                    if not protected:
+                        trace += f"read:advance={'true' if mode >= 5 else 'false'};"
+                    if mode == 0:
+                        trace += "write:data-visited=yes;read:data-yielded=true;write:data-next=true;write:data-yielded=yes;read:data-visited=true;"
+                        writes += [
+                            ("data-visited", "yes"),
+                            ("data-next", "true"),
+                            ("data-yielded", "yes"),
+                        ]
+                        result = "return:true:"
+                    else:
+                        trace += "write:data-visited=yes;"
+                        writes.append(("data-visited", "yes"))
+                        trace += f"read:data-closed={'true' if mode in (2, 6) else 'false'};"
+                        trace += "read:data-visited=true;write:data-closed=true;"
+                        writes.append(("data-closed", "true"))
+                        result = (
+                            f"throw:boolean:{'true' if mode == 2 else 'false'}:"
+                            if protected
+                            else f"throw:number:{cleanup_number}:"
+                        )
+            elif mode >= 3 and mutable:
                 result = "return:0:"
             elif mode >= 3:
                 value = "true" if mode == 4 else "false"
@@ -2608,14 +2649,15 @@ var {name} = (function() {{
             const auto atom = [&](std::string_view name) { return target.atoms().intern(name); };
             target.log_writes(true);
             for (unsigned mode = 0; mode < @MODES@; ++mode) {
-                for (const auto name : {"stop", "data-next", "data-yielded", "data-visited",
+                for (const auto name : {"stop", "advance", "data-next", "data-yielded", "data-visited",
                                        "data-closed", "data-after-second", "data-after-terminal"}) {
                     assert(target.remove_attribute(id, atom(name)));
                 }
                 if (mode == 1 || mode == 2) { assert(target.set_attribute(id, atom("stop"), "")); }
                 if (mode == 2) { assert(target.set_attribute(id, atom("data-closed"), "false")); }
-                if (mode >= 3) { assert(target.set_attribute(id, atom("data-yielded"), "yes")); }
+                if (mode >= 3 && (@EXHAUSTED@)) { assert(target.set_attribute(id, atom("data-yielded"), "yes")); }
                 if (mode == 4) { assert(target.set_attribute(id, atom("data-visited"), "yes")); }
+                @MIXED_SETUP@
                 (void)target.take_writes();
                 bool caught = false;
                 try { assert(@RETURN_CHECK@); }
@@ -2634,20 +2676,41 @@ var {name} = (function() {{
             .replace("@PAYLOAD@", payload)
             .replace("@STATES@", "\n".join(states))
             .replace("@EXTRA_CATCH@", extra_catch)
-            .replace("@MODES@", "5" if unconditional_return else "4")
+            .replace("@MODES@", "7" if mixed else "5" if unconditional_return else "4")
+            .replace("@EXHAUSTED@", "mode < 5" if mixed else "true")
+            .replace(
+                "@MIXED_SETUP@",
+                (
+                    'if (mode >= 5) { assert(target.set_attribute(id, atom("advance"), "")); }'
+                    'if (mode == 6) { assert(target.set_attribute(id, atom("data-closed"), "false")); }'
+                    if mixed
+                    else ""
+                ),
+            )
             .replace(
                 "@RETURN_CHECK@",
                 (
-                    "call().value() == 0.0"
-                    if mutable
+                    "static_cast<bool>(call()) == (mode == 0 || mode == 4)"
+                    if mixed
                     else (
-                        "static_cast<bool>(call()) == (mode == 4)"
-                        if unconditional_return
-                        else "static_cast<bool>(call()) == (mode == 0)"
+                        "call().value() == 0.0"
+                        if mutable
+                        else (
+                            "static_cast<bool>(call()) == (mode == 4)"
+                            if unconditional_return
+                            else "static_cast<bool>(call()) == (mode == 0)"
+                        )
                     )
                 ),
             )
-            .replace("@THROWS@", "mode < 3" if unconditional_return else "mode == 1 || mode == 2")
+            .replace(
+                "@THROWS@",
+                (
+                    "mode == 1 || mode == 2 || mode >= 5"
+                    if mixed
+                    else "mode < 3" if unconditional_return else "mode == 1 || mode == 2"
+                ),
+            )
         )
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -5651,6 +5714,46 @@ var savedThrow, savedExhausted;
             nonliteral_throwing_source.replace("throw (count += 2, count);", "break;"),
         ),
     )
+    mixed_throw_source = conditional_source.replace("return {};", "throw 2;").replace(
+        "    node.setAttribute('data-visited', 'yes');\n  }",
+        "    if (anchor.hasAttribute('advance'))\n"
+        "      return (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));\n"
+        "    node.setAttribute('data-visited', 'yes');\n  }",
+    )
+    mixed_mutable_source = (
+        mixed_throw_source.replace("  const values = {", "  let count = 0;\n  const values = {")
+        .replace("    return() {", "    return() {\n      count += 10;")
+        .replace(
+            "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+            "anchor.setAttribute('data-closed', count === 13);",
+        )
+        .replace("throw 2;", "throw count;")
+        .replace("  for (const node of values) {", "  for (const node of values) {\n    count++;")
+        .replace(
+            "(node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'))",
+            "(count += 2, node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'))",
+        )
+    )
+    mixed_close_cases = (
+        ("mixed-body-throw-return-close", mixed_throw_source),
+        (
+            "mixed-body-throw-break-close",
+            mixed_throw_source.replace(
+                "return (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        ("mixed-body-throw-return-mutable-close", mixed_mutable_source),
+    )
+    mixed_close_cases += tuple(
+        (label.replace("-close", "-getter-close"), text.replace("return() {", "get return() {"))
+        for label, text in mixed_close_cases
+    )
+    normal_cases += tuple(
+        (label, text)
+        for label, text in mixed_close_cases
+        if "-break-" not in label and "-mutable-" not in label
+    )
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
@@ -5723,2331 +5826,2350 @@ var savedThrow, savedExhausted;
     admitted = 0
     for label, text in (
         (
-            "normal-postwrite-close",
-            postwrite_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-postwrite-close",
-            postwrite_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-postwrite-getter-close",
-            postwrite_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-postwrite-getter-close",
-            postwrite_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "unsupported-postwrite-read",
-            postwrite_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "throw anchor.matches('[data-closed]');",
-            ),
-        ),
-        (
-            "bad-postwrite-receiver",
-            postwrite_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "throw (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-second-postwrite-close",
-            second_postwrite_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-second-postwrite-close",
-            second_postwrite_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-second-postwrite-getter-close",
-            second_postwrite_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-second-postwrite-getter-close",
-            second_postwrite_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-second-postwrite-name",
-            second_postwrite_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "anchor.setAttribute('bad name', anchor.hasAttribute('data-closed'));",
-            ),
-        ),
-        (
-            "bad-second-postwrite-receiver",
-            second_postwrite_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "(0).setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-            ),
-        ),
-        (
-            "escaping-second-postwrite-result",
-            second_postwrite_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "anchor.setAttribute('data-closed', "
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed')));",
-            ),
-        ),
-        (
-            "normal-second-postwrite-selector-close",
-            selector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-second-postwrite-selector-close",
-            selector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-second-postwrite-selector-getter-close",
-            selector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-second-postwrite-selector-getter-close",
-            selector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-second-postwrite-selector",
-            selector_throwing_source.replace("'[data-closed]'", "'['"),
-        ),
-        (
-            "dynamic-second-postwrite-selector",
-            selector_throwing_source.replace("'[data-closed]'", "anchor"),
-        ),
-        (
-            "bad-second-postwrite-selector-receiver",
-            selector_throwing_source.replace("anchor.matches(", "(0).matches("),
-        ),
-        (
-            "normal-third-postselector-close",
-            third_postselector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-third-postselector-close",
-            third_postselector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-third-postselector-getter-close",
-            third_postselector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-third-postselector-getter-close",
-            third_postselector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-third-postselector-selector",
-            third_postselector_throwing_source.replace("'[data-closed]'", "'['"),
-        ),
-        (
-            "dynamic-third-postselector-selector",
-            third_postselector_throwing_source.replace("'[data-closed]'", "anchor"),
-        ),
-        (
-            "invalid-third-postselector-name",
-            third_postselector_throwing_source.replace(
-                "anchor.setAttribute('data-closed', false);",
-                "anchor.setAttribute('bad name', false);",
-            ),
-        ),
-        (
-            "bad-third-postselector-receiver",
-            third_postselector_throwing_source.replace(
-                "anchor.setAttribute('data-closed', false);",
-                "(0).setAttribute('data-closed', false);",
-            ),
-        ),
-        (
-            "bad-third-postselector-selector-receiver",
-            third_postselector_throwing_source.replace("anchor.matches(", "(0).matches("),
-        ),
-        (
-            "normal-third-postselector-read-close",
-            postselector_read_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-third-postselector-read-close",
-            postselector_read_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-third-postselector-read-getter-close",
-            postselector_read_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-third-postselector-read-getter-close",
-            postselector_read_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-third-postselector-read-selector",
-            postselector_read_throwing_source.replace("'[data-closed=false]'", "'['"),
-        ),
-        (
-            "dynamic-third-postselector-read-selector",
-            postselector_read_throwing_source.replace("'[data-closed=false]'", "anchor"),
-        ),
-        (
-            "invalid-third-postselector-read-name",
-            postselector_read_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "anchor.setAttribute('bad name', anchor.hasAttribute('data-closed'));",
-            ),
-        ),
-        (
-            "bad-third-postselector-read-receiver",
-            postselector_read_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "(0).setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-            ),
-        ),
-        (
-            "bad-third-postselector-read-value-receiver",
-            postselector_read_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "anchor.setAttribute('data-closed', (0).hasAttribute('data-closed'));",
-            ),
-        ),
-        (
-            "dynamic-third-postselector-read-value-name",
-            postselector_read_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "anchor.setAttribute('data-closed', anchor.hasAttribute(anchor));",
-            ),
-        ),
-        (
-            "unsupported-third-postselector-read-escape",
-            postselector_read_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
-                "const present = anchor.hasAttribute('data-closed'); "
-                "anchor.setAttribute('data-closed', present); external(present);",
-            ),
-        ),
-        (
-            "normal-fourth-postselector-close",
-            fourth_postselector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-fourth-postselector-close",
-            fourth_postselector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-fourth-postselector-getter-close",
-            fourth_postselector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-fourth-postselector-getter-close",
-            fourth_postselector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-fourth-postselector-name",
-            fourth_postselector_throwing_source.replace(
-                "anchor.setAttribute('data-closed', false);",
-                "anchor.setAttribute('bad name', false);",
-            ),
-        ),
-        (
-            "dynamic-fourth-postselector-name",
-            fourth_postselector_throwing_source.replace(
-                "anchor.setAttribute('data-closed', false);", "anchor.setAttribute(anchor, false);"
-            ),
-        ),
-        (
-            "bad-fourth-postselector-receiver",
-            fourth_postselector_throwing_source.replace(
-                "anchor.setAttribute('data-closed', false);",
-                "(0).setAttribute('data-closed', false);",
-            ),
-        ),
-        (
-            "bad-fourth-postselector-value-receiver",
-            fourth_read_throwing_source.replace(
-                "anchor.hasAttribute('data-after-selector')",
-                "(0).hasAttribute('data-after-selector')",
-            ),
-        ),
-        (
-            "dynamic-fourth-postselector-value-name",
-            fourth_read_throwing_source.replace(
-                "anchor.hasAttribute('data-after-selector')", "anchor.hasAttribute(anchor)"
-            ),
-        ),
-        (
-            "unsupported-fourth-postselector-effect-call",
-            fourth_postselector_throwing_source.replace(
-                "throw false;", "external(anchor); throw false;"
-            ),
-        ),
-        (
-            "unsupported-fourth-postselector-read-escape",
-            fourth_read_throwing_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-after-selector'));",
-                "const present = anchor.hasAttribute('data-after-selector'); "
-                "anchor.setAttribute('data-closed', present); external(present);",
-            ),
-        ),
-        (
-            "normal-terminal-postselector-close",
-            terminal_postselector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-postselector-close",
-            terminal_postselector_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-terminal-postselector-getter-close",
-            terminal_postselector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-postselector-getter-close",
-            terminal_postselector_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-postselector-write-name",
-            terminal_postselector_throwing_source.replace(
-                "anchor.setAttribute('data-closed', false);",
-                "anchor.setAttribute('bad name', false);",
-            ),
-        ),
-        (
-            "dynamic-terminal-postselector-read-name",
-            terminal_postselector_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');", "throw anchor.hasAttribute(anchor);"
-            ),
-        ),
-        (
-            "bad-terminal-postselector-read-receiver",
-            terminal_postselector_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "throw (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-postselector-read-arity",
-            terminal_postselector_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');", "throw anchor.hasAttribute();"
-            ),
-        ),
-        (
-            "unsupported-terminal-postselector-effect-call",
-            terminal_postselector_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "external(anchor); throw anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "unsupported-terminal-postselector-read-escape",
-            terminal_postselector_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "const present = anchor.hasAttribute('data-closed'); external(present); throw present;",
-            ),
-        ),
-        (
-            "unsupported-terminal-postselector-read-order",
-            terminal_postselector_throwing_source.replace(
-                "anchor.setAttribute('data-closed', false); throw anchor.hasAttribute('data-closed');",
-                "const present = anchor.hasAttribute('data-closed'); "
-                "anchor.setAttribute('data-closed', false); throw present;",
-            ),
-        ),
-        (
-            "normal-terminal-match-close",
-            terminal_match_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-match-close",
-            terminal_match_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-terminal-match-getter-close",
-            terminal_match_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-match-getter-close",
-            terminal_match_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-match-selector",
-            terminal_match_throwing_source.replace(
-                "throw anchor.matches('[data-closed=false]');", "throw anchor.matches('[');"
-            ),
-        ),
-        (
-            "dynamic-terminal-match-selector",
-            terminal_match_throwing_source.replace(
-                "throw anchor.matches('[data-closed=false]');", "throw anchor.matches(anchor);"
-            ),
-        ),
-        (
-            "bad-terminal-match-receiver",
-            terminal_match_throwing_source.replace(
-                "throw anchor.matches('[data-closed=false]');",
-                "throw (0).matches('[data-closed=false]');",
-            ),
-        ),
-        (
-            "invalid-terminal-match-arity",
-            terminal_match_throwing_source.replace(
-                "throw anchor.matches('[data-closed=false]');", "throw anchor.matches();"
-            ),
-        ),
-        (
-            "unsupported-terminal-match-escape",
-            terminal_match_throwing_source.replace(
-                "throw anchor.matches('[data-closed=false]');",
-                "const matched = anchor.matches('[data-closed=false]'); external(matched); throw matched;",
-            ),
-        ),
-        (
-            "normal-terminal-match-read-close",
-            terminal_match_read_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "normal-terminal-match-read-getter-close",
-            terminal_match_read_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-match-read-close",
-            terminal_match_read_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "return-terminal-match-read-getter-close",
-            terminal_match_read_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "bad-terminal-match-read-receiver",
-            terminal_match_read_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "throw (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-match-read-arity",
-            terminal_match_read_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "throw anchor.hasAttribute();",
-            ),
-        ),
-        (
-            "invalid-terminal-match-read-selector",
-            terminal_match_read_throwing_source.replace(
-                "anchor.matches('[data-closed=false]'); throw",
-                "anchor.matches('['); throw",
-            ),
-        ),
-        (
-            "dynamic-terminal-match-read-selector",
-            terminal_match_read_throwing_source.replace(
-                "anchor.matches('[data-closed=false]'); throw",
-                "anchor.matches(anchor); throw",
-            ),
-        ),
-        (
-            "unsupported-terminal-match-read-escape",
-            terminal_match_read_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "const present = anchor.hasAttribute('data-closed'); external(present); throw present;",
-            ),
-        ),
-        (
-            "unsupported-terminal-match-read-order",
-            terminal_match_read_throwing_source.replace(
-                "anchor.matches('[data-closed=false]'); throw anchor.hasAttribute('data-closed');",
-                "const present = anchor.hasAttribute('data-closed'); anchor.matches('[data-closed=false]'); throw present;",
-            ),
-        ),
-        (
-            "unsupported-terminal-match-read-effect",
-            terminal_match_read_throwing_source.replace(
-                "throw anchor.hasAttribute('data-closed');",
-                "external(anchor); throw anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-terminal-read-sequence-close",
-            terminal_read_sequence_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "normal-terminal-read-sequence-getter-close",
-            terminal_read_sequence_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-read-sequence-close",
-            terminal_read_sequence_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "return-terminal-read-sequence-getter-close",
-            terminal_read_sequence_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "bad-terminal-read-sequence-first-receiver",
-            terminal_read_sequence_source.replace(
-                "anchor.hasAttribute('data-closed'); throw",
-                "(0).hasAttribute('data-closed'); throw",
-            ),
-        ),
-        (
-            "bad-terminal-read-sequence-last-receiver",
-            terminal_read_sequence_source.replace(
-                "throw anchor.hasAttribute('data-unvisited');",
-                "throw (0).hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "invalid-terminal-read-sequence-arity",
-            terminal_read_sequence_source.replace(
-                "anchor.hasAttribute('data-closed'); throw",
-                "anchor.hasAttribute(); throw",
-            ),
-        ),
-        (
-            "invalid-terminal-read-sequence-selector",
-            terminal_read_sequence_source.replace(
-                "throw anchor.hasAttribute('data-unvisited');",
-                "anchor.matches('['); throw anchor.hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "unsupported-terminal-read-sequence-escape",
-            terminal_read_sequence_source.replace(
-                "anchor.hasAttribute('data-closed'); throw",
-                "const present = anchor.hasAttribute('data-closed'); external(present); throw",
-            ),
-        ),
-        (
-            "unsupported-terminal-read-sequence-effect",
-            terminal_read_sequence_source.replace(
-                "throw anchor.hasAttribute('data-unvisited');",
-                "external(anchor); throw anchor.hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "dynamic-terminal-read-sequence-name",
-            terminal_read_sequence_source.replace(
-                "throw anchor.hasAttribute('data-unvisited');",
-                "throw anchor.hasAttribute(anchor);",
-            ),
-        ),
-        (
-            "normal-terminal-write-close",
-            terminal_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "normal-terminal-write-getter-close",
-            terminal_write_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-write-close",
-            terminal_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "return-terminal-write-getter-close",
-            terminal_write_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-write-name",
-            terminal_write_source.replace(
-                "anchor.setAttribute('data-after-terminal', false);",
-                "anchor.setAttribute('bad name', false);",
-            ),
-        ),
-        (
-            "bad-terminal-write-receiver",
-            terminal_write_source.replace(
-                "anchor.setAttribute('data-after-terminal', false);",
-                "(0).setAttribute('data-after-terminal', false);",
-            ),
-        ),
-        (
-            "invalid-terminal-write-arity",
-            terminal_write_source.replace(
-                "anchor.setAttribute('data-after-terminal', false);",
-                "anchor.setAttribute('data-after-terminal');",
-            ),
-        ),
-        (
-            "unsupported-terminal-write-value",
-            terminal_write_source.replace(
-                "anchor.setAttribute('data-after-terminal', false);",
-                "anchor.setAttribute('data-after-terminal', anchor);",
-            ),
-        ),
-        (
-            "unsupported-terminal-write-effect",
-            terminal_write_source.replace(
-                "anchor.setAttribute('data-after-terminal', false);",
-                "external(anchor); anchor.setAttribute('data-after-terminal', false);",
-            ),
-        ),
-        (
-            "normal-terminal-read-write-close",
-            terminal_write_value_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "normal-terminal-read-write-getter-close",
-            terminal_write_value_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-read-write-close",
-            terminal_write_value_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "return-terminal-read-write-getter-close",
-            terminal_write_value_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-read-write-name",
-            terminal_write_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
-                "anchor.setAttribute('bad name', anchor.hasAttribute('data-unvisited'));",
-            ),
-        ),
-        (
-            "bad-terminal-read-write-receiver",
-            terminal_write_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
-                "(0).setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
-            ),
-        ),
-        (
-            "invalid-terminal-read-write-arity",
-            terminal_write_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
-                "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'), false);",
-            ),
-        ),
-        (
-            "bad-terminal-read-write-read-receiver",
-            terminal_write_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
-                "anchor.setAttribute('data-after-terminal', (0).hasAttribute('data-unvisited'));",
-            ),
-        ),
-        (
-            "unsupported-terminal-read-write-effect",
-            terminal_write_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
-                "external(anchor); anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
-            ),
-        ),
-        (
-            "normal-terminal-earlier-read-write-close",
-            terminal_write_earlier_value_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-earlier-read-write-close",
-            terminal_write_earlier_value_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-earlier-read-write-name",
-            terminal_write_earlier_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-terminal-earlier-read-write-receiver",
-            terminal_write_earlier_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-terminal-earlier-read-write-arity",
-            terminal_write_earlier_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-terminal-earlier-read-write-read-receiver",
-            terminal_write_earlier_value_source.replace(
-                "const present = anchor.hasAttribute('data-closed');",
-                "const present = (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "unsupported-terminal-earlier-read-write-reuse",
-            terminal_write_earlier_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-terminal-earlier-read-write-effect",
-            terminal_write_earlier_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(anchor); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-before-selector-read-write-close",
-            before_selector_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-before-selector-read-write-close",
-            before_selector_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-before-selector-read-write-name",
-            before_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-before-selector-read-write-receiver",
-            before_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-before-selector-read-write-arity",
-            before_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-before-selector-read-write-read-receiver",
-            before_selector_read_source.replace(
-                "const present = anchor.hasAttribute('data-closed');",
-                "const present = (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "bad-before-selector-read-write-ignored-receiver",
-            before_selector_read_source.replace(
-                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
-                "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "unsupported-before-selector-read-write-reuse",
-            before_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-before-selector-read-write-extra-use",
-            before_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-before-first-selector-read-write-close",
-            before_first_selector_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-before-first-selector-read-write-close",
-            before_first_selector_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-before-first-selector-read-write-name",
-            before_first_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-before-first-selector-read-write-receiver",
-            before_first_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-before-first-selector-read-write-arity",
-            before_first_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-before-first-selector-read-write-read-receiver",
-            before_first_selector_read_source.replace(
-                "const present = anchor.hasAttribute('data-closed');",
-                "const present = (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "bad-before-first-selector-read-write-ignored-receiver",
-            before_first_selector_read_source.replace(
-                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
-                "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "unsupported-before-first-selector-read-write-reuse",
-            before_first_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-before-first-selector-read-write-extra-use",
-            before_first_selector_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-before-second-write-read-write-close",
-            before_second_write_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-before-second-write-read-write-close",
-            before_second_write_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-before-second-write-read-write-name",
-            before_second_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-before-second-write-read-write-receiver",
-            before_second_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-before-second-write-read-write-arity",
-            before_second_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-before-second-write-read-write-read-receiver",
-            before_second_write_read_source.replace(
-                "const present = anchor.hasAttribute('data-closed');",
-                "const present = (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "bad-before-second-write-read-write-ignored-receiver",
-            before_second_write_read_source.replace(
-                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
-                "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "unsupported-before-second-write-read-write-reuse",
-            before_second_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-before-second-write-read-write-extra-use",
-            before_second_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-before-first-write-read-write-close",
-            before_first_write_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-before-first-write-read-write-close",
-            before_first_write_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-before-first-write-read-write-name",
-            before_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-before-first-write-read-write-receiver",
-            before_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-before-first-write-read-write-arity",
-            before_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-before-first-write-read-write-read-receiver",
-            before_first_write_read_source.replace(
-                "const present = anchor.hasAttribute('data-closed');",
-                "const present = (0).hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "bad-before-first-write-read-write-ignored-receiver",
-            before_first_write_read_source.replace(
-                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
-                "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "unsupported-before-first-write-read-write-reuse",
-            before_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-before-first-write-read-write-extra-use",
-            before_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-inside-first-write-read-write-close",
-            inside_first_write_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-inside-first-write-read-write-close",
-            inside_first_write_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-inside-first-write-read-write-name",
-            inside_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-inside-first-write-read-write-receiver",
-            inside_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-inside-first-write-read-write-arity",
-            inside_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-inside-first-write-read-write-read-receiver",
-            inside_first_write_read_source.replace(
-                "present = anchor.hasAttribute('data-closed')",
-                "present = (0).hasAttribute('data-closed')",
-            ),
-        ),
-        (
-            "bad-inside-first-write-read-write-ignored-receiver",
-            inside_first_write_read_source.replace(
-                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
-                "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "unsupported-inside-first-write-read-write-reuse",
-            inside_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-inside-first-write-read-write-extra-use",
-            inside_first_write_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-feeding-first-read-write-close",
-            feeding_first_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-feeding-first-read-write-close",
-            feeding_first_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-feeding-first-read-write-name",
-            feeding_first_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-feeding-first-read-write-receiver",
-            feeding_first_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-feeding-first-read-write-arity",
-            feeding_first_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-feeding-first-read-write-read-receiver",
-            feeding_first_read_source.replace(
-                "present = anchor.hasAttribute('data-closed')",
-                "present = (0).hasAttribute('data-closed')",
-            ),
-        ),
-        (
-            "bad-feeding-first-read-write-ignored-receiver",
-            feeding_first_read_source.replace(
-                "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
-                "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
-            ),
-        ),
-        (
-            "unsupported-feeding-first-read-write-reuse",
-            feeding_first_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-feeding-first-read-write-extra-use",
-            feeding_first_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-final-argument-read-write-close",
-            final_argument_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-final-argument-read-write-close",
-            final_argument_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-final-argument-read-write-name",
-            final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "anchor.setAttribute('bad name', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "bad-final-argument-read-write-receiver",
-            final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "(0).setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "invalid-final-argument-read-write-arity",
-            final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present), false);",
-            ),
-        ),
-        (
-            "bad-final-argument-read-write-read-receiver",
-            final_argument_read_source.replace(
-                "present = anchor.hasAttribute('data-closed')",
-                "present = (0).hasAttribute('data-closed')",
-            ),
-        ),
-        (
-            "bad-final-argument-read-write-ignored-receiver",
-            final_argument_read_source.replace(
-                "anchor.hasAttribute('data-closed'), present));",
-                "(0).hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "unsupported-final-argument-read-write-reuse",
-            final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present)); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "unsupported-final-argument-read-write-extra-use",
-            final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "external(present); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "normal-selector-final-argument-read-write-close",
-            selector_final_argument_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-final-argument-read-write-close",
-            selector_final_argument_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-final-argument-read-write-name",
-            selector_final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "anchor.setAttribute('bad name', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "bad-selector-final-argument-read-write-receiver",
-            selector_final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "(0).setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "invalid-selector-final-argument-read-write-arity",
-            selector_final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present), false);",
-            ),
-        ),
-        (
-            "bad-selector-final-argument-read-write-read-receiver",
-            selector_final_argument_read_source.replace(
-                "const present = anchor.matches('[data-closed=false]')",
-                "const present = (0).matches('[data-closed=false]')",
-            ),
-        ),
-        (
-            "bad-selector-final-argument-read-write-ignored-receiver",
-            selector_final_argument_read_source.replace(
-                "anchor.hasAttribute('data-closed'), present));",
-                "(0).hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "unsupported-selector-final-argument-read-write-reuse",
-            selector_final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present)); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "unsupported-selector-final-argument-read-write-extra-use",
-            selector_final_argument_read_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-                "external(present); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
-            ),
-        ),
-        (
-            "invalid-selector-final-argument-read-selector",
-            selector_final_argument_read_source.replace(
-                "const present = anchor.matches('[data-closed=false]');",
-                "const present = anchor.matches('[');",
-            ),
-        ),
-        (
-            "normal-selector-inside-final-argument-close",
-            selector_inside_final_argument_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-inside-final-argument-close",
-            selector_inside_final_argument_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-inside-final-argument-selector",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('['), present));",
-            ),
-        ),
-        (
-            "dynamic-selector-inside-final-argument-selector",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.matches(anchor), present));",
-            ),
-        ),
-        (
-            "bad-selector-inside-final-argument-receiver",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-                "anchor.setAttribute('data-after-terminal', ((0).matches('[data-closed=false]'), present));",
-            ),
-        ),
-        (
-            "invalid-selector-inside-final-argument-arity",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]', false), present));",
-            ),
-        ),
-        (
-            "unsupported-selector-inside-final-argument-reuse",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present)); anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-            ),
-        ),
-        (
-            "unsupported-selector-inside-final-argument-extra-use",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-                "external(present); anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-            ),
-        ),
-        (
-            "invalid-selector-inside-final-argument-write-name",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
-                "anchor.setAttribute('bad name', (anchor.matches('[data-closed=false]'), present));",
-            ),
-        ),
-        (
-            "normal-selector-inside-first-argument-close",
-            selector_inside_first_argument_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-inside-first-argument-close",
-            selector_inside_first_argument_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-inside-first-argument-selector",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
-                "anchor.setAttribute('data-closed', anchor.matches('['));",
-            ),
-        ),
-        (
-            "dynamic-selector-inside-first-argument-selector",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
-                "anchor.setAttribute('data-closed', anchor.matches(anchor));",
-            ),
-        ),
-        (
-            "bad-selector-inside-first-argument-receiver",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
-                "anchor.setAttribute('data-closed', (0).matches('[data-closed=false]'));",
-            ),
-        ),
-        (
-            "invalid-selector-inside-first-argument-arity",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]', false));",
-            ),
-        ),
-        (
-            "unsupported-selector-inside-first-argument-reuse",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
-                "let first; anchor.setAttribute('data-closed', (first = anchor.matches('[data-closed=false]'))); anchor.setAttribute('data-closed', first);",
-            ),
-        ),
-        (
-            "unsupported-selector-inside-first-argument-extra-use",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
-                "let first; anchor.setAttribute('data-closed', (first = anchor.matches('[data-closed=false]'))); external(first);",
-            ),
-        ),
-        (
-            "invalid-selector-inside-first-argument-write-name",
-            selector_inside_first_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
-                "anchor.setAttribute('bad name', anchor.matches('[data-closed=false]'));",
-            ),
-        ),
-        (
-            "normal-selector-before-first-write-close",
-            selector_before_first_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-before-first-write-close",
-            selector_before_first_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-before-first-write-selector",
-            selector_before_first_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-                "const first = anchor.matches('['); anchor.setAttribute('data-closed', first);",
-            ),
-        ),
-        (
-            "dynamic-selector-before-first-write-selector",
-            selector_before_first_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-                "const first = anchor.matches(anchor); anchor.setAttribute('data-closed', first);",
-            ),
-        ),
-        (
-            "bad-selector-before-first-write-receiver",
-            selector_before_first_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-                "const first = (0).matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-            ),
-        ),
-        (
-            "invalid-selector-before-first-write-arity",
-            selector_before_first_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-                "const first = anchor.matches('[data-closed=false]', false); anchor.setAttribute('data-closed', first);",
-            ),
-        ),
-        (
-            "unsupported-selector-before-first-write-reuse",
-            selector_before_first_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first); anchor.setAttribute('data-closed', first);",
-            ),
-        ),
-        (
-            "unsupported-selector-before-first-write-extra-use",
-            selector_before_first_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first); external(first);",
-            ),
-        ),
-        (
-            "invalid-selector-before-first-write-name",
-            selector_before_first_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
-                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('bad name', first);",
-            ),
-        ),
-        (
-            "normal-selector-reused-second-write-close",
-            selector_reused_second_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-reused-second-write-close",
-            selector_reused_second_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-reused-second-write-selector",
-            selector_reused_second_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]');",
-                "const first = anchor.matches('[');",
-            ),
-        ),
-        (
-            "dynamic-selector-reused-second-write-selector",
-            selector_reused_second_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]');",
-                "const first = anchor.matches(anchor);",
-            ),
-        ),
-        (
-            "bad-selector-reused-second-write-receiver",
-            selector_reused_second_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]');",
-                "const first = (0).matches('[data-closed=false]');",
-            ),
-        ),
-        (
-            "invalid-selector-reused-second-write-arity",
-            selector_reused_second_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]');",
-                "const first = anchor.matches('[data-closed=false]', false);",
-            ),
-        ),
-        (
-            "unsupported-selector-reused-second-write-extra-use",
-            selector_reused_second_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]');",
-                "const first = anchor.matches('[data-closed=false]'); external(first);",
-            ),
-        ),
-        (
-            "invalid-selector-reused-second-write-name",
-            selector_reused_second_write_source.replace(
-                "anchor.setAttribute('data-closed', first); anchor.matches",
-                "anchor.setAttribute('bad name', first); anchor.matches",
-            ),
-        ),
-        (
-            "unsupported-selector-reused-second-write-name-use",
-            selector_reused_second_write_source.replace(
-                "anchor.setAttribute('data-closed', first); anchor.matches",
-                "anchor.setAttribute(first, first); anchor.matches",
-            ),
-        ),
-        (
-            "normal-selector-guarded-second-write-close",
-            selector_guarded_second_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-guarded-second-write-close",
-            selector_guarded_second_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-write-selector",
-            selector_guarded_second_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]');",
-                "const first = anchor.matches('[');",
-            ),
-        ),
-        (
-            "dynamic-selector-guarded-second-write-selector",
-            selector_guarded_second_write_source.replace(
-                "const first = anchor.matches('[data-closed=false]');",
-                "const first = anchor.matches(anchor);",
-            ),
-        ),
-        (
-            "bad-selector-guarded-second-write-receiver",
-            selector_guarded_second_write_source.replace(
-                "if (first) anchor.setAttribute('data-closed', first);",
-                "if (first) (0).setAttribute('data-closed', first);",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-write-arity",
-            selector_guarded_second_write_source.replace(
-                "if (first) anchor.setAttribute('data-closed', first);",
-                "if (first) anchor.setAttribute('data-closed', first, false);",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-write-extra-use",
-            selector_guarded_second_write_source.replace(
-                "if (first) anchor.setAttribute('data-closed', first);",
-                "if (first) { external(first); anchor.setAttribute('data-closed', first); }",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-write-name",
-            selector_guarded_second_write_source.replace(
-                "if (first) anchor.setAttribute('data-closed', first);",
-                "if (first) anchor.setAttribute('bad name', first);",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-write-name-use",
-            selector_guarded_second_write_source.replace(
-                "if (first) anchor.setAttribute('data-closed', first);",
-                "if (first) anchor.setAttribute(first, first);",
-            ),
-        ),
-        (
-            "normal-selector-guarded-second-read-close",
-            selector_guarded_second_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-guarded-second-read-close",
-            selector_guarded_second_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-read-selector",
-            selector_guarded_second_read_source.replace(
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
-                "if (first) anchor.setAttribute('data-closed', anchor.matches('['));",
-            ),
-        ),
-        (
-            "dynamic-selector-guarded-second-read-selector",
-            selector_guarded_second_read_source.replace(
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
-                "if (first) anchor.setAttribute('data-closed', anchor.matches(anchor));",
-            ),
-        ),
-        (
-            "bad-selector-guarded-second-read-receiver",
-            selector_guarded_second_read_source.replace(
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
-                "if (first) anchor.setAttribute('data-closed', (0).hasAttribute('data-visited'));",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-read-arity",
-            selector_guarded_second_read_source.replace(
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited', false));",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-read-extra-use",
-            selector_guarded_second_read_source.replace(
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
-                "if (first) { const read = anchor.hasAttribute('data-visited'); external(read); anchor.setAttribute('data-closed', read); }",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-read-name",
-            selector_guarded_second_read_source.replace(
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
-                "if (first) anchor.setAttribute('bad name', anchor.hasAttribute('data-visited'));",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-read-name-use",
-            selector_guarded_second_read_source.replace(
-                "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
-                "if (first) { const read = anchor.hasAttribute('data-visited'); anchor.setAttribute(read, read); }",
-            ),
-        ),
-        (
-            "normal-selector-guarded-second-two-reads-close",
-            selector_guarded_second_two_reads_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-guarded-second-two-reads-close",
-            selector_guarded_second_two_reads_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-two-reads-ignored-selector",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) anchor.setAttribute('data-closed', (anchor.matches('['), anchor.hasAttribute('data-unvisited')));",
-            ),
-        ),
-        (
-            "dynamic-selector-guarded-second-two-reads-ignored-selector",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) anchor.setAttribute('data-closed', (anchor.matches(anchor), anchor.hasAttribute('data-unvisited')));",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-two-reads-feeding-selector",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.matches('[')));",
-            ),
-        ),
-        (
-            "bad-selector-guarded-second-two-reads-receiver",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) anchor.setAttribute('data-closed', ((0).hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-two-reads-arity",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited', false), anchor.hasAttribute('data-unvisited')));",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-two-reads-extra-use",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) { const read = anchor.hasAttribute('data-visited'); external(read); anchor.setAttribute('data-closed', (read, anchor.hasAttribute('data-unvisited'))); }",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-two-reads-name",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) anchor.setAttribute('bad name', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-two-reads-name-use",
-            selector_guarded_second_two_reads_source.replace(
-                "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
-                "if (first) { const read = anchor.hasAttribute('data-visited'); anchor.setAttribute(read, anchor.hasAttribute('data-unvisited')); }",
-            ),
-        ),
-        (
-            "normal-selector-guarded-second-postread-close",
-            selector_guarded_second_postread_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-guarded-second-postread-close",
-            selector_guarded_second_postread_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-postread-selector",
-            selector_guarded_second_postread_source.replace(
-                "anchor.hasAttribute('data-closed'); }",
-                "anchor.matches('['); }",
-            ),
-        ),
-        (
-            "dynamic-selector-guarded-second-postread-selector",
-            selector_guarded_second_postread_source.replace(
-                "anchor.hasAttribute('data-closed'); }",
-                "anchor.matches(anchor); }",
-            ),
-        ),
-        (
-            "bad-selector-guarded-second-postread-receiver",
-            selector_guarded_second_postread_source.replace(
-                "anchor.hasAttribute('data-closed'); }",
-                "(0).hasAttribute('data-closed'); }",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-second-postread-arity",
-            selector_guarded_second_postread_source.replace(
-                "anchor.hasAttribute('data-closed'); }",
-                "anchor.hasAttribute('data-closed', false); }",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-postread-observer",
-            selector_guarded_second_postread_source.replace(
-                "anchor.hasAttribute('data-closed'); }",
-                "external(anchor.hasAttribute('data-closed')); }",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-second-postread-method",
-            selector_guarded_second_postread_source.replace(
-                "anchor.hasAttribute('data-closed'); }",
-                "anchor.hasAttribute; }",
-            ),
-        ),
-        (
-            "normal-selector-guarded-third-write-close",
-            selector_guarded_third_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-guarded-third-write-close",
-            selector_guarded_third_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-third-write-selector",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "anchor.setAttribute('data-after-second', anchor.matches('[')); }",
-            ),
-        ),
-        (
-            "dynamic-selector-guarded-third-write-selector",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "anchor.setAttribute('data-after-second', anchor.matches(anchor)); }",
-            ),
-        ),
-        (
-            "bad-selector-guarded-third-write-receiver",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "(0).setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-third-write-arity",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed'), false); }",
-            ),
-        ),
-        (
-            "invalid-selector-guarded-third-write-name",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "anchor.setAttribute('bad name', anchor.hasAttribute('data-closed')); }",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-third-write-observer",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "anchor.setAttribute('data-after-second', external(anchor.hasAttribute('data-closed'))); }",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-third-write-method",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute); }",
-            ),
-        ),
-        (
-            "unsupported-selector-guarded-third-write-name-use",
-            selector_guarded_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "const read = anchor.hasAttribute('data-closed'); anchor.setAttribute(read, read); }",
-            ),
-        ),
-        (
-            "normal-selector-nested-third-write-close",
-            selector_guarded_nested_third_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-nested-third-write-close",
-            selector_guarded_nested_third_write_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-nested-third-write-guard",
-            selector_guarded_nested_third_write_source.replace(
-                "if (anchor.hasAttribute('data-closed'))",
-                "if (anchor.matches('['))",
-            ),
-        ),
-        (
-            "dynamic-selector-nested-third-write-guard",
-            selector_guarded_nested_third_write_source.replace(
-                "if (anchor.hasAttribute('data-closed'))",
-                "if (anchor.matches(anchor))",
-            ),
-        ),
-        (
-            "bad-selector-nested-third-write-guard-receiver",
-            selector_guarded_nested_third_write_source.replace(
-                "if (anchor.hasAttribute('data-closed'))",
-                "if ((0).hasAttribute('data-closed'))",
-            ),
-        ),
-        (
-            "invalid-selector-nested-third-write-guard-arity",
-            selector_guarded_nested_third_write_source.replace(
-                "if (anchor.hasAttribute('data-closed'))",
-                "if (anchor.hasAttribute('data-closed', false))",
-            ),
-        ),
-        (
-            "unsupported-selector-nested-third-write-guard-observer",
-            selector_guarded_nested_third_write_source.replace(
-                "if (anchor.hasAttribute('data-closed'))",
-                "if (external(anchor.hasAttribute('data-closed')))",
-            ),
-        ),
-        (
-            "unsupported-selector-nested-third-write-value-observer",
-            selector_guarded_nested_third_write_source.replace(
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "anchor.setAttribute('data-after-second', external(anchor.hasAttribute('data-closed'))); }",
-            ),
-        ),
-        (
-            "unsupported-selector-nested-third-write-guard-method",
-            selector_guarded_nested_third_write_source.replace(
-                "if (anchor.hasAttribute('data-closed'))",
-                "if (anchor.hasAttribute)",
-            ),
-        ),
-        (
-            "unsupported-selector-nested-third-write-guard-reuse",
-            selector_guarded_nested_third_write_source.replace(
-                "if (anchor.hasAttribute('data-closed')) anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-                "const nested = anchor.hasAttribute('data-closed'); external(nested); if (nested) anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
-            ),
-        ),
-        (
-            "normal-selector-nested-third-else-close",
-            selector_nested_third_else_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-nested-third-else-close",
-            selector_nested_third_else_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-nested-third-else-selector",
-            selector_nested_third_else_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('data-after-second', anchor.matches('['));",
-            ),
-        ),
-        (
-            "dynamic-selector-nested-third-else-selector",
-            selector_nested_third_else_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('data-after-second', anchor.matches(anchor));",
-            ),
-        ),
-        (
-            "bad-selector-nested-third-else-receiver",
-            selector_nested_third_else_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "(0).setAttribute('data-after-second', false);",
-            ),
-        ),
-        (
-            "invalid-selector-nested-third-else-arity",
-            selector_nested_third_else_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('data-after-second', false, false);",
-            ),
-        ),
-        (
-            "invalid-selector-nested-third-else-name",
-            selector_nested_third_else_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('bad name', false);",
-            ),
-        ),
-        (
-            "unsupported-selector-nested-third-else-observer",
-            selector_nested_third_else_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('data-after-second', external(false));",
-            ),
-        ),
-        (
-            "unsupported-selector-nested-third-else-method",
-            selector_nested_third_else_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('data-after-second', anchor.hasAttribute);",
-            ),
-        ),
-        (
-            "normal-selector-branch-throw-close",
-            selector_nested_throw_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-branch-throw-close",
-            selector_nested_throw_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-selector-branch-throw-name",
-            selector_nested_throw_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('bad name', false);",
-            ),
-        ),
-        (
-            "bad-selector-branch-throw-receiver",
-            selector_nested_throw_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "(0).setAttribute('data-after-second', false);",
-            ),
-        ),
-        (
-            "invalid-selector-branch-throw-arity",
-            selector_nested_throw_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('data-after-second', false, false);",
-            ),
-        ),
-        (
-            "invalid-selector-branch-throw-selector",
-            selector_nested_throw_source.replace(
-                "throw true;",
-                "throw anchor.matches('[');",
-            ),
-        ),
-        (
-            "dynamic-selector-branch-throw-selector",
-            selector_nested_throw_source.replace(
-                "throw true;",
-                "throw anchor.matches(anchor);",
-            ),
-        ),
-        (
-            "unsupported-selector-branch-throw-observer",
-            selector_nested_throw_source.replace(
-                "throw true;",
-                "throw external(false);",
-            ),
-        ),
-        (
-            "normal-selector-branch-throw-read-close",
-            selector_branch_throw_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-selector-branch-throw-read-close",
-            selector_branch_throw_read_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-selector-branch-throw-read-getter-close",
-            selector_branch_throw_read_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "invalid-selector-branch-throw-read-write-name",
-            selector_branch_throw_read_source.replace(
-                "anchor.setAttribute('data-after-second', false);",
-                "anchor.setAttribute('bad name', false);",
-            ),
-        ),
-        (
-            "bad-selector-branch-throw-read-receiver",
-            selector_branch_throw_read_source.replace(
-                "anchor.getAttribute('data-closed')",
-                "(0).getAttribute('data-closed')",
-            ),
-        ),
-        (
-            "invalid-selector-branch-throw-read-arity",
-            selector_branch_throw_read_source.replace(
-                "anchor.getAttribute('data-closed')",
-                "anchor.getAttribute('data-closed', false)",
-            ),
-        ),
-        (
-            "dynamic-selector-branch-throw-read-name",
-            selector_branch_throw_read_source.replace(
-                "anchor.getAttribute('data-closed')",
-                "anchor.getAttribute(anchor)",
-            ),
-        ),
-        (
-            "unsupported-selector-branch-throw-read-observer",
-            selector_branch_throw_read_source.replace(
-                "throw anchor.getAttribute('data-closed');",
-                "throw external(anchor.getAttribute('data-closed'));",
-            ),
-        ),
-        (
-            "unsupported-selector-branch-throw-read-method",
-            selector_branch_throw_read_source.replace(
-                "throw anchor.getAttribute('data-closed');",
-                "throw anchor.getAttribute;",
-            ),
-        ),
-        (
-            "normal-terminal-selector-write-close",
-            terminal_write_selector_value_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-terminal-selector-write-close",
-            terminal_write_selector_value_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-terminal-selector-write-name",
-            terminal_write_selector_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('bad name', present);",
-            ),
-        ),
-        (
-            "bad-terminal-selector-write-receiver",
-            terminal_write_selector_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "(0).setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "invalid-terminal-selector-write-arity",
-            terminal_write_selector_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present, false);",
-            ),
-        ),
-        (
-            "bad-terminal-selector-write-selector-receiver",
-            terminal_write_selector_value_source.replace(
-                "const present = anchor.matches('[data-closed=false]');",
-                "const present = (0).matches('[data-closed=false]');",
-            ),
-        ),
-        (
-            "invalid-terminal-selector-write-selector",
-            terminal_write_selector_value_source.replace(
-                "const present = anchor.matches('[data-closed=false]');",
-                "const present = anchor.matches('[');",
-            ),
-        ),
-        (
-            "unsupported-terminal-selector-write-reuse",
-            terminal_write_selector_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "unsupported-terminal-selector-write-value-effect",
-            terminal_write_selector_value_source.replace(
-                "anchor.setAttribute('data-after-terminal', present);",
-                "external(present); anchor.setAttribute('data-after-terminal', present);",
-            ),
-        ),
-        (
-            "normal-third-postselector-result-close",
-            selector_result_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-third-postselector-result-close",
-            selector_result_throwing_source.replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "normal-third-postselector-result-getter-close",
-            selector_result_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "break;",
-            ),
-        ),
-        (
-            "return-third-postselector-result-getter-close",
-            selector_result_throwing_source.replace("return() {", "get return() {").replace(
-                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
-                "return anchor.hasAttribute('data-closed');",
-            ),
-        ),
-        (
-            "invalid-third-postselector-result-selector",
-            selector_result_throwing_source.replace("'[data-closed]'", "'['"),
-        ),
-        (
-            "dynamic-third-postselector-result-selector",
-            selector_result_throwing_source.replace("'[data-closed]'", "anchor"),
-        ),
-        (
-            "invalid-third-postselector-result-name",
-            selector_result_throwing_source.replace(
-                "anchor.setAttribute('data-closed', matched);",
-                "anchor.setAttribute('bad name', matched);",
-            ),
-        ),
-        (
-            "bad-third-postselector-result-receiver",
-            selector_result_throwing_source.replace(
-                "anchor.setAttribute('data-closed', matched);",
-                "(0).setAttribute('data-closed', matched);",
-            ),
-        ),
-        (
-            "bad-third-postselector-result-selector-receiver",
-            selector_result_throwing_source.replace("anchor.matches(", "(0).matches("),
-        ),
-        (
-            "unsupported-third-postselector-result-escape",
-            selector_result_throwing_source.replace(
-                "anchor.setAttribute('data-closed', matched);",
-                "anchor.setAttribute('data-closed', matched); external(matched);",
-            ),
-        ),
-        (
-            "unsupported-third-postselector-result-type",
-            selector_result_throwing_source.replace(
-                "anchor.setAttribute('data-closed', matched);",
-                "anchor.setAttribute('data-closed', {matched: matched});",
-            ),
-        ),
-        (
-            "invalid-postwrite-close-name",
-            postwrite_throwing_source.replace(
-                "anchor.setAttribute('data-closed',", "anchor.setAttribute('bad name',"
-            ),
-        ),
-        ("invalid-close-name", throwing_close.replace("data-closed", "bad name")),
-        ("unknown-close-throw", throwing_close.replace("throw 2;", "throw anchor;")),
-        ("normal-primitive-close", refusals()["primitive-return-result"]),
-        (
-            "return-primitive-close",
-            BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace("return {};", "return 2;"),
-        ),
-        ("normal-throwing-close", source(True).replace("return {};", "throw 2;")),
-        (
-            "return-throwing-close",
-            BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace("return {};", "throw 2;"),
-        ),
-        (
-            "normal-getter-close",
-            getter_close.replace("throw 1;", "node.setAttribute('data-visited', 'yes');"),
-        ),
-        ("return-getter-close", getter_close.replace("throw 1;", "return 1;")),
-        ("returning-getter-close", getter_close.replace("throw 2;", "return {};")),
-        ("unknown-getter-throw", getter_close.replace("throw 2;", "throw anchor;")),
-        (
-            "normal-mutable-throwing-close",
-            mutable_throwing_source.replace("throw (count += 2, count);", "break;"),
-        ),
-        (
-            "return-mutable-throwing-close",
-            mutable_throwing_source.replace("throw (count += 2, count);", "return count;"),
-        ),
-        (
-            "normal-mutable-nonliteral-close",
-            nonliteral_throwing_source.replace("throw (count += 2, count);", "break;"),
-        ),
-        (
-            "return-mutable-nonliteral-close",
-            nonliteral_throwing_source.replace("throw (count += 2, count);", "return count;"),
-        ),
-        (
-            "unknown-mutable-close-producer",
-            nonliteral_throwing_source.replace("throw count;", "throw external(count);"),
-        ),
-        (
-            "invalid-mutable-nonliteral-close-name",
-            nonliteral_throwing_source.replace("data-closed", "bad name"),
-        ),
-        (
-            "invalid-mutable-close-name",
-            mutable_throwing_source.replace("data-closed", "bad name"),
-        ),
+            (
+                "normal-postwrite-close",
+                postwrite_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-postwrite-close",
+                postwrite_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-postwrite-getter-close",
+                postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-postwrite-getter-close",
+                postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "unsupported-postwrite-read",
+                postwrite_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "throw anchor.matches('[data-closed]');",
+                ),
+            ),
+            (
+                "bad-postwrite-receiver",
+                postwrite_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "throw (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-second-postwrite-close",
+                second_postwrite_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-second-postwrite-close",
+                second_postwrite_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-second-postwrite-getter-close",
+                second_postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-second-postwrite-getter-close",
+                second_postwrite_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-second-postwrite-name",
+                second_postwrite_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "anchor.setAttribute('bad name', anchor.hasAttribute('data-closed'));",
+                ),
+            ),
+            (
+                "bad-second-postwrite-receiver",
+                second_postwrite_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "(0).setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                ),
+            ),
+            (
+                "escaping-second-postwrite-result",
+                second_postwrite_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "anchor.setAttribute('data-closed', "
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed')));",
+                ),
+            ),
+            (
+                "normal-second-postwrite-selector-close",
+                selector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-second-postwrite-selector-close",
+                selector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-second-postwrite-selector-getter-close",
+                selector_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-second-postwrite-selector-getter-close",
+                selector_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-second-postwrite-selector",
+                selector_throwing_source.replace("'[data-closed]'", "'['"),
+            ),
+            (
+                "dynamic-second-postwrite-selector",
+                selector_throwing_source.replace("'[data-closed]'", "anchor"),
+            ),
+            (
+                "bad-second-postwrite-selector-receiver",
+                selector_throwing_source.replace("anchor.matches(", "(0).matches("),
+            ),
+            (
+                "normal-third-postselector-close",
+                third_postselector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-third-postselector-close",
+                third_postselector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-third-postselector-getter-close",
+                third_postselector_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-third-postselector-getter-close",
+                third_postselector_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-third-postselector-selector",
+                third_postselector_throwing_source.replace("'[data-closed]'", "'['"),
+            ),
+            (
+                "dynamic-third-postselector-selector",
+                third_postselector_throwing_source.replace("'[data-closed]'", "anchor"),
+            ),
+            (
+                "invalid-third-postselector-name",
+                third_postselector_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', false);",
+                    "anchor.setAttribute('bad name', false);",
+                ),
+            ),
+            (
+                "bad-third-postselector-receiver",
+                third_postselector_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', false);",
+                    "(0).setAttribute('data-closed', false);",
+                ),
+            ),
+            (
+                "bad-third-postselector-selector-receiver",
+                third_postselector_throwing_source.replace("anchor.matches(", "(0).matches("),
+            ),
+            (
+                "normal-third-postselector-read-close",
+                postselector_read_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-third-postselector-read-close",
+                postselector_read_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-third-postselector-read-getter-close",
+                postselector_read_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-third-postselector-read-getter-close",
+                postselector_read_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-third-postselector-read-selector",
+                postselector_read_throwing_source.replace("'[data-closed=false]'", "'['"),
+            ),
+            (
+                "dynamic-third-postselector-read-selector",
+                postselector_read_throwing_source.replace("'[data-closed=false]'", "anchor"),
+            ),
+            (
+                "invalid-third-postselector-read-name",
+                postselector_read_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "anchor.setAttribute('bad name', anchor.hasAttribute('data-closed'));",
+                ),
+            ),
+            (
+                "bad-third-postselector-read-receiver",
+                postselector_read_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "(0).setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                ),
+            ),
+            (
+                "bad-third-postselector-read-value-receiver",
+                postselector_read_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "anchor.setAttribute('data-closed', (0).hasAttribute('data-closed'));",
+                ),
+            ),
+            (
+                "dynamic-third-postselector-read-value-name",
+                postselector_read_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute(anchor));",
+                ),
+            ),
+            (
+                "unsupported-third-postselector-read-escape",
+                postselector_read_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-closed'));",
+                    "const present = anchor.hasAttribute('data-closed'); "
+                    "anchor.setAttribute('data-closed', present); external(present);",
+                ),
+            ),
+            (
+                "normal-fourth-postselector-close",
+                fourth_postselector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-fourth-postselector-close",
+                fourth_postselector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-fourth-postselector-getter-close",
+                fourth_postselector_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-fourth-postselector-getter-close",
+                fourth_postselector_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-fourth-postselector-name",
+                fourth_postselector_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', false);",
+                    "anchor.setAttribute('bad name', false);",
+                ),
+            ),
+            (
+                "dynamic-fourth-postselector-name",
+                fourth_postselector_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', false);",
+                    "anchor.setAttribute(anchor, false);",
+                ),
+            ),
+            (
+                "bad-fourth-postselector-receiver",
+                fourth_postselector_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', false);",
+                    "(0).setAttribute('data-closed', false);",
+                ),
+            ),
+            (
+                "bad-fourth-postselector-value-receiver",
+                fourth_read_throwing_source.replace(
+                    "anchor.hasAttribute('data-after-selector')",
+                    "(0).hasAttribute('data-after-selector')",
+                ),
+            ),
+            (
+                "dynamic-fourth-postselector-value-name",
+                fourth_read_throwing_source.replace(
+                    "anchor.hasAttribute('data-after-selector')", "anchor.hasAttribute(anchor)"
+                ),
+            ),
+            (
+                "unsupported-fourth-postselector-effect-call",
+                fourth_postselector_throwing_source.replace(
+                    "throw false;", "external(anchor); throw false;"
+                ),
+            ),
+            (
+                "unsupported-fourth-postselector-read-escape",
+                fourth_read_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.hasAttribute('data-after-selector'));",
+                    "const present = anchor.hasAttribute('data-after-selector'); "
+                    "anchor.setAttribute('data-closed', present); external(present);",
+                ),
+            ),
+            (
+                "normal-terminal-postselector-close",
+                terminal_postselector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-postselector-close",
+                terminal_postselector_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-terminal-postselector-getter-close",
+                terminal_postselector_throwing_source.replace(
+                    "return() {", "get return() {"
+                ).replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-postselector-getter-close",
+                terminal_postselector_throwing_source.replace(
+                    "return() {", "get return() {"
+                ).replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-postselector-write-name",
+                terminal_postselector_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', false);",
+                    "anchor.setAttribute('bad name', false);",
+                ),
+            ),
+            (
+                "dynamic-terminal-postselector-read-name",
+                terminal_postselector_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "throw anchor.hasAttribute(anchor);",
+                ),
+            ),
+            (
+                "bad-terminal-postselector-read-receiver",
+                terminal_postselector_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "throw (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-postselector-read-arity",
+                terminal_postselector_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');", "throw anchor.hasAttribute();"
+                ),
+            ),
+            (
+                "unsupported-terminal-postselector-effect-call",
+                terminal_postselector_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "external(anchor); throw anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "unsupported-terminal-postselector-read-escape",
+                terminal_postselector_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "const present = anchor.hasAttribute('data-closed'); external(present); throw present;",
+                ),
+            ),
+            (
+                "unsupported-terminal-postselector-read-order",
+                terminal_postselector_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', false); throw anchor.hasAttribute('data-closed');",
+                    "const present = anchor.hasAttribute('data-closed'); "
+                    "anchor.setAttribute('data-closed', false); throw present;",
+                ),
+            ),
+            (
+                "normal-terminal-match-close",
+                terminal_match_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-match-close",
+                terminal_match_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-terminal-match-getter-close",
+                terminal_match_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-match-getter-close",
+                terminal_match_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-match-selector",
+                terminal_match_throwing_source.replace(
+                    "throw anchor.matches('[data-closed=false]');", "throw anchor.matches('[');"
+                ),
+            ),
+            (
+                "dynamic-terminal-match-selector",
+                terminal_match_throwing_source.replace(
+                    "throw anchor.matches('[data-closed=false]');", "throw anchor.matches(anchor);"
+                ),
+            ),
+            (
+                "bad-terminal-match-receiver",
+                terminal_match_throwing_source.replace(
+                    "throw anchor.matches('[data-closed=false]');",
+                    "throw (0).matches('[data-closed=false]');",
+                ),
+            ),
+            (
+                "invalid-terminal-match-arity",
+                terminal_match_throwing_source.replace(
+                    "throw anchor.matches('[data-closed=false]');", "throw anchor.matches();"
+                ),
+            ),
+            (
+                "unsupported-terminal-match-escape",
+                terminal_match_throwing_source.replace(
+                    "throw anchor.matches('[data-closed=false]');",
+                    "const matched = anchor.matches('[data-closed=false]'); external(matched); throw matched;",
+                ),
+            ),
+            (
+                "normal-terminal-match-read-close",
+                terminal_match_read_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "normal-terminal-match-read-getter-close",
+                terminal_match_read_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-match-read-close",
+                terminal_match_read_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "return-terminal-match-read-getter-close",
+                terminal_match_read_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "bad-terminal-match-read-receiver",
+                terminal_match_read_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "throw (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-match-read-arity",
+                terminal_match_read_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "throw anchor.hasAttribute();",
+                ),
+            ),
+            (
+                "invalid-terminal-match-read-selector",
+                terminal_match_read_throwing_source.replace(
+                    "anchor.matches('[data-closed=false]'); throw",
+                    "anchor.matches('['); throw",
+                ),
+            ),
+            (
+                "dynamic-terminal-match-read-selector",
+                terminal_match_read_throwing_source.replace(
+                    "anchor.matches('[data-closed=false]'); throw",
+                    "anchor.matches(anchor); throw",
+                ),
+            ),
+            (
+                "unsupported-terminal-match-read-escape",
+                terminal_match_read_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "const present = anchor.hasAttribute('data-closed'); external(present); throw present;",
+                ),
+            ),
+            (
+                "unsupported-terminal-match-read-order",
+                terminal_match_read_throwing_source.replace(
+                    "anchor.matches('[data-closed=false]'); throw anchor.hasAttribute('data-closed');",
+                    "const present = anchor.hasAttribute('data-closed'); anchor.matches('[data-closed=false]'); throw present;",
+                ),
+            ),
+            (
+                "unsupported-terminal-match-read-effect",
+                terminal_match_read_throwing_source.replace(
+                    "throw anchor.hasAttribute('data-closed');",
+                    "external(anchor); throw anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-terminal-read-sequence-close",
+                terminal_read_sequence_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "normal-terminal-read-sequence-getter-close",
+                terminal_read_sequence_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-read-sequence-close",
+                terminal_read_sequence_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "return-terminal-read-sequence-getter-close",
+                terminal_read_sequence_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "bad-terminal-read-sequence-first-receiver",
+                terminal_read_sequence_source.replace(
+                    "anchor.hasAttribute('data-closed'); throw",
+                    "(0).hasAttribute('data-closed'); throw",
+                ),
+            ),
+            (
+                "bad-terminal-read-sequence-last-receiver",
+                terminal_read_sequence_source.replace(
+                    "throw anchor.hasAttribute('data-unvisited');",
+                    "throw (0).hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "invalid-terminal-read-sequence-arity",
+                terminal_read_sequence_source.replace(
+                    "anchor.hasAttribute('data-closed'); throw",
+                    "anchor.hasAttribute(); throw",
+                ),
+            ),
+            (
+                "invalid-terminal-read-sequence-selector",
+                terminal_read_sequence_source.replace(
+                    "throw anchor.hasAttribute('data-unvisited');",
+                    "anchor.matches('['); throw anchor.hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "unsupported-terminal-read-sequence-escape",
+                terminal_read_sequence_source.replace(
+                    "anchor.hasAttribute('data-closed'); throw",
+                    "const present = anchor.hasAttribute('data-closed'); external(present); throw",
+                ),
+            ),
+            (
+                "unsupported-terminal-read-sequence-effect",
+                terminal_read_sequence_source.replace(
+                    "throw anchor.hasAttribute('data-unvisited');",
+                    "external(anchor); throw anchor.hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "dynamic-terminal-read-sequence-name",
+                terminal_read_sequence_source.replace(
+                    "throw anchor.hasAttribute('data-unvisited');",
+                    "throw anchor.hasAttribute(anchor);",
+                ),
+            ),
+            (
+                "normal-terminal-write-close",
+                terminal_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "normal-terminal-write-getter-close",
+                terminal_write_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-write-close",
+                terminal_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "return-terminal-write-getter-close",
+                terminal_write_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-write-name",
+                terminal_write_source.replace(
+                    "anchor.setAttribute('data-after-terminal', false);",
+                    "anchor.setAttribute('bad name', false);",
+                ),
+            ),
+            (
+                "bad-terminal-write-receiver",
+                terminal_write_source.replace(
+                    "anchor.setAttribute('data-after-terminal', false);",
+                    "(0).setAttribute('data-after-terminal', false);",
+                ),
+            ),
+            (
+                "invalid-terminal-write-arity",
+                terminal_write_source.replace(
+                    "anchor.setAttribute('data-after-terminal', false);",
+                    "anchor.setAttribute('data-after-terminal');",
+                ),
+            ),
+            (
+                "unsupported-terminal-write-value",
+                terminal_write_source.replace(
+                    "anchor.setAttribute('data-after-terminal', false);",
+                    "anchor.setAttribute('data-after-terminal', anchor);",
+                ),
+            ),
+            (
+                "unsupported-terminal-write-effect",
+                terminal_write_source.replace(
+                    "anchor.setAttribute('data-after-terminal', false);",
+                    "external(anchor); anchor.setAttribute('data-after-terminal', false);",
+                ),
+            ),
+            (
+                "normal-terminal-read-write-close",
+                terminal_write_value_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "normal-terminal-read-write-getter-close",
+                terminal_write_value_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-read-write-close",
+                terminal_write_value_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "return-terminal-read-write-getter-close",
+                terminal_write_value_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-read-write-name",
+                terminal_write_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
+                    "anchor.setAttribute('bad name', anchor.hasAttribute('data-unvisited'));",
+                ),
+            ),
+            (
+                "bad-terminal-read-write-receiver",
+                terminal_write_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
+                    "(0).setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
+                ),
+            ),
+            (
+                "invalid-terminal-read-write-arity",
+                terminal_write_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
+                    "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'), false);",
+                ),
+            ),
+            (
+                "bad-terminal-read-write-read-receiver",
+                terminal_write_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
+                    "anchor.setAttribute('data-after-terminal', (0).hasAttribute('data-unvisited'));",
+                ),
+            ),
+            (
+                "unsupported-terminal-read-write-effect",
+                terminal_write_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
+                    "external(anchor); anchor.setAttribute('data-after-terminal', anchor.hasAttribute('data-unvisited'));",
+                ),
+            ),
+            (
+                "normal-terminal-earlier-read-write-close",
+                terminal_write_earlier_value_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-earlier-read-write-close",
+                terminal_write_earlier_value_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-earlier-read-write-name",
+                terminal_write_earlier_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-terminal-earlier-read-write-receiver",
+                terminal_write_earlier_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-terminal-earlier-read-write-arity",
+                terminal_write_earlier_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-terminal-earlier-read-write-read-receiver",
+                terminal_write_earlier_value_source.replace(
+                    "const present = anchor.hasAttribute('data-closed');",
+                    "const present = (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "unsupported-terminal-earlier-read-write-reuse",
+                terminal_write_earlier_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-terminal-earlier-read-write-effect",
+                terminal_write_earlier_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(anchor); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-before-selector-read-write-close",
+                before_selector_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-before-selector-read-write-close",
+                before_selector_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-before-selector-read-write-name",
+                before_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-before-selector-read-write-receiver",
+                before_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-before-selector-read-write-arity",
+                before_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-before-selector-read-write-read-receiver",
+                before_selector_read_source.replace(
+                    "const present = anchor.hasAttribute('data-closed');",
+                    "const present = (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "bad-before-selector-read-write-ignored-receiver",
+                before_selector_read_source.replace(
+                    "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                    "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "unsupported-before-selector-read-write-reuse",
+                before_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-before-selector-read-write-extra-use",
+                before_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-before-first-selector-read-write-close",
+                before_first_selector_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-before-first-selector-read-write-close",
+                before_first_selector_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-before-first-selector-read-write-name",
+                before_first_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-before-first-selector-read-write-receiver",
+                before_first_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-before-first-selector-read-write-arity",
+                before_first_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-before-first-selector-read-write-read-receiver",
+                before_first_selector_read_source.replace(
+                    "const present = anchor.hasAttribute('data-closed');",
+                    "const present = (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "bad-before-first-selector-read-write-ignored-receiver",
+                before_first_selector_read_source.replace(
+                    "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                    "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "unsupported-before-first-selector-read-write-reuse",
+                before_first_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-before-first-selector-read-write-extra-use",
+                before_first_selector_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-before-second-write-read-write-close",
+                before_second_write_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-before-second-write-read-write-close",
+                before_second_write_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-before-second-write-read-write-name",
+                before_second_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-before-second-write-read-write-receiver",
+                before_second_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-before-second-write-read-write-arity",
+                before_second_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-before-second-write-read-write-read-receiver",
+                before_second_write_read_source.replace(
+                    "const present = anchor.hasAttribute('data-closed');",
+                    "const present = (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "bad-before-second-write-read-write-ignored-receiver",
+                before_second_write_read_source.replace(
+                    "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                    "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "unsupported-before-second-write-read-write-reuse",
+                before_second_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-before-second-write-read-write-extra-use",
+                before_second_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-before-first-write-read-write-close",
+                before_first_write_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-before-first-write-read-write-close",
+                before_first_write_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-before-first-write-read-write-name",
+                before_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-before-first-write-read-write-receiver",
+                before_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-before-first-write-read-write-arity",
+                before_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-before-first-write-read-write-read-receiver",
+                before_first_write_read_source.replace(
+                    "const present = anchor.hasAttribute('data-closed');",
+                    "const present = (0).hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "bad-before-first-write-read-write-ignored-receiver",
+                before_first_write_read_source.replace(
+                    "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                    "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "unsupported-before-first-write-read-write-reuse",
+                before_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-before-first-write-read-write-extra-use",
+                before_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-inside-first-write-read-write-close",
+                inside_first_write_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-inside-first-write-read-write-close",
+                inside_first_write_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-inside-first-write-read-write-name",
+                inside_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-inside-first-write-read-write-receiver",
+                inside_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-inside-first-write-read-write-arity",
+                inside_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-inside-first-write-read-write-read-receiver",
+                inside_first_write_read_source.replace(
+                    "present = anchor.hasAttribute('data-closed')",
+                    "present = (0).hasAttribute('data-closed')",
+                ),
+            ),
+            (
+                "bad-inside-first-write-read-write-ignored-receiver",
+                inside_first_write_read_source.replace(
+                    "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                    "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "unsupported-inside-first-write-read-write-reuse",
+                inside_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-inside-first-write-read-write-extra-use",
+                inside_first_write_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-feeding-first-read-write-close",
+                feeding_first_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-feeding-first-read-write-close",
+                feeding_first_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-feeding-first-read-write-name",
+                feeding_first_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-feeding-first-read-write-receiver",
+                feeding_first_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-feeding-first-read-write-arity",
+                feeding_first_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-feeding-first-read-write-read-receiver",
+                feeding_first_read_source.replace(
+                    "present = anchor.hasAttribute('data-closed')",
+                    "present = (0).hasAttribute('data-closed')",
+                ),
+            ),
+            (
+                "bad-feeding-first-read-write-ignored-receiver",
+                feeding_first_read_source.replace(
+                    "anchor.matches('[data-closed=false]'); anchor.hasAttribute('data-unvisited');",
+                    "anchor.matches('[data-closed=false]'); (0).hasAttribute('data-unvisited');",
+                ),
+            ),
+            (
+                "unsupported-feeding-first-read-write-reuse",
+                feeding_first_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-feeding-first-read-write-extra-use",
+                feeding_first_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-final-argument-read-write-close",
+                final_argument_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-final-argument-read-write-close",
+                final_argument_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-final-argument-read-write-name",
+                final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "anchor.setAttribute('bad name', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "bad-final-argument-read-write-receiver",
+                final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "(0).setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "invalid-final-argument-read-write-arity",
+                final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present), false);",
+                ),
+            ),
+            (
+                "bad-final-argument-read-write-read-receiver",
+                final_argument_read_source.replace(
+                    "present = anchor.hasAttribute('data-closed')",
+                    "present = (0).hasAttribute('data-closed')",
+                ),
+            ),
+            (
+                "bad-final-argument-read-write-ignored-receiver",
+                final_argument_read_source.replace(
+                    "anchor.hasAttribute('data-closed'), present));",
+                    "(0).hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "unsupported-final-argument-read-write-reuse",
+                final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present)); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "unsupported-final-argument-read-write-extra-use",
+                final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "external(present); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "normal-selector-final-argument-read-write-close",
+                selector_final_argument_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-final-argument-read-write-close",
+                selector_final_argument_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-final-argument-read-write-name",
+                selector_final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "anchor.setAttribute('bad name', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "bad-selector-final-argument-read-write-receiver",
+                selector_final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "(0).setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "invalid-selector-final-argument-read-write-arity",
+                selector_final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present), false);",
+                ),
+            ),
+            (
+                "bad-selector-final-argument-read-write-read-receiver",
+                selector_final_argument_read_source.replace(
+                    "const present = anchor.matches('[data-closed=false]')",
+                    "const present = (0).matches('[data-closed=false]')",
+                ),
+            ),
+            (
+                "bad-selector-final-argument-read-write-ignored-receiver",
+                selector_final_argument_read_source.replace(
+                    "anchor.hasAttribute('data-closed'), present));",
+                    "(0).hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "unsupported-selector-final-argument-read-write-reuse",
+                selector_final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present)); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "unsupported-selector-final-argument-read-write-extra-use",
+                selector_final_argument_read_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                    "external(present); anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
+                ),
+            ),
+            (
+                "invalid-selector-final-argument-read-selector",
+                selector_final_argument_read_source.replace(
+                    "const present = anchor.matches('[data-closed=false]');",
+                    "const present = anchor.matches('[');",
+                ),
+            ),
+            (
+                "normal-selector-inside-final-argument-close",
+                selector_inside_final_argument_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-inside-final-argument-close",
+                selector_inside_final_argument_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-inside-final-argument-selector",
+                selector_inside_final_argument_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('['), present));",
+                ),
+            ),
+            (
+                "dynamic-selector-inside-final-argument-selector",
+                selector_inside_final_argument_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches(anchor), present));",
+                ),
+            ),
+            (
+                "bad-selector-inside-final-argument-receiver",
+                selector_inside_final_argument_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                    "anchor.setAttribute('data-after-terminal', ((0).matches('[data-closed=false]'), present));",
+                ),
+            ),
+            (
+                "invalid-selector-inside-final-argument-arity",
+                selector_inside_final_argument_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]', false), present));",
+                ),
+            ),
+            (
+                "unsupported-selector-inside-final-argument-reuse",
+                selector_inside_final_argument_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present)); anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                ),
+            ),
+            (
+                "unsupported-selector-inside-final-argument-extra-use",
+                selector_inside_final_argument_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                    "external(present); anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                ),
+            ),
+            (
+                "invalid-selector-inside-final-argument-write-name",
+                selector_inside_final_argument_source.replace(
+                    "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
+                    "anchor.setAttribute('bad name', (anchor.matches('[data-closed=false]'), present));",
+                ),
+            ),
+            (
+                "normal-selector-inside-first-argument-close",
+                selector_inside_first_argument_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-inside-first-argument-close",
+                selector_inside_first_argument_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-inside-first-argument-selector",
+                selector_inside_first_argument_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                    "anchor.setAttribute('data-closed', anchor.matches('['));",
+                ),
+            ),
+            (
+                "dynamic-selector-inside-first-argument-selector",
+                selector_inside_first_argument_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                    "anchor.setAttribute('data-closed', anchor.matches(anchor));",
+                ),
+            ),
+            (
+                "bad-selector-inside-first-argument-receiver",
+                selector_inside_first_argument_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                    "anchor.setAttribute('data-closed', (0).matches('[data-closed=false]'));",
+                ),
+            ),
+            (
+                "invalid-selector-inside-first-argument-arity",
+                selector_inside_first_argument_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]', false));",
+                ),
+            ),
+            (
+                "unsupported-selector-inside-first-argument-reuse",
+                selector_inside_first_argument_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                    "let first; anchor.setAttribute('data-closed', (first = anchor.matches('[data-closed=false]'))); anchor.setAttribute('data-closed', first);",
+                ),
+            ),
+            (
+                "unsupported-selector-inside-first-argument-extra-use",
+                selector_inside_first_argument_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                    "let first; anchor.setAttribute('data-closed', (first = anchor.matches('[data-closed=false]'))); external(first);",
+                ),
+            ),
+            (
+                "invalid-selector-inside-first-argument-write-name",
+                selector_inside_first_argument_source.replace(
+                    "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                    "anchor.setAttribute('bad name', anchor.matches('[data-closed=false]'));",
+                ),
+            ),
+            (
+                "normal-selector-before-first-write-close",
+                selector_before_first_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-before-first-write-close",
+                selector_before_first_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-before-first-write-selector",
+                selector_before_first_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                    "const first = anchor.matches('['); anchor.setAttribute('data-closed', first);",
+                ),
+            ),
+            (
+                "dynamic-selector-before-first-write-selector",
+                selector_before_first_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                    "const first = anchor.matches(anchor); anchor.setAttribute('data-closed', first);",
+                ),
+            ),
+            (
+                "bad-selector-before-first-write-receiver",
+                selector_before_first_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                    "const first = (0).matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                ),
+            ),
+            (
+                "invalid-selector-before-first-write-arity",
+                selector_before_first_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                    "const first = anchor.matches('[data-closed=false]', false); anchor.setAttribute('data-closed', first);",
+                ),
+            ),
+            (
+                "unsupported-selector-before-first-write-reuse",
+                selector_before_first_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first); anchor.setAttribute('data-closed', first);",
+                ),
+            ),
+            (
+                "unsupported-selector-before-first-write-extra-use",
+                selector_before_first_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first); external(first);",
+                ),
+            ),
+            (
+                "invalid-selector-before-first-write-name",
+                selector_before_first_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
+                    "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('bad name', first);",
+                ),
+            ),
+            (
+                "normal-selector-reused-second-write-close",
+                selector_reused_second_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-reused-second-write-close",
+                selector_reused_second_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-reused-second-write-selector",
+                selector_reused_second_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]');",
+                    "const first = anchor.matches('[');",
+                ),
+            ),
+            (
+                "dynamic-selector-reused-second-write-selector",
+                selector_reused_second_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]');",
+                    "const first = anchor.matches(anchor);",
+                ),
+            ),
+            (
+                "bad-selector-reused-second-write-receiver",
+                selector_reused_second_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]');",
+                    "const first = (0).matches('[data-closed=false]');",
+                ),
+            ),
+            (
+                "invalid-selector-reused-second-write-arity",
+                selector_reused_second_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]');",
+                    "const first = anchor.matches('[data-closed=false]', false);",
+                ),
+            ),
+            (
+                "unsupported-selector-reused-second-write-extra-use",
+                selector_reused_second_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]');",
+                    "const first = anchor.matches('[data-closed=false]'); external(first);",
+                ),
+            ),
+            (
+                "invalid-selector-reused-second-write-name",
+                selector_reused_second_write_source.replace(
+                    "anchor.setAttribute('data-closed', first); anchor.matches",
+                    "anchor.setAttribute('bad name', first); anchor.matches",
+                ),
+            ),
+            (
+                "unsupported-selector-reused-second-write-name-use",
+                selector_reused_second_write_source.replace(
+                    "anchor.setAttribute('data-closed', first); anchor.matches",
+                    "anchor.setAttribute(first, first); anchor.matches",
+                ),
+            ),
+            (
+                "normal-selector-guarded-second-write-close",
+                selector_guarded_second_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-guarded-second-write-close",
+                selector_guarded_second_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-write-selector",
+                selector_guarded_second_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]');",
+                    "const first = anchor.matches('[');",
+                ),
+            ),
+            (
+                "dynamic-selector-guarded-second-write-selector",
+                selector_guarded_second_write_source.replace(
+                    "const first = anchor.matches('[data-closed=false]');",
+                    "const first = anchor.matches(anchor);",
+                ),
+            ),
+            (
+                "bad-selector-guarded-second-write-receiver",
+                selector_guarded_second_write_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', first);",
+                    "if (first) (0).setAttribute('data-closed', first);",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-write-arity",
+                selector_guarded_second_write_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', first);",
+                    "if (first) anchor.setAttribute('data-closed', first, false);",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-write-extra-use",
+                selector_guarded_second_write_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', first);",
+                    "if (first) { external(first); anchor.setAttribute('data-closed', first); }",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-write-name",
+                selector_guarded_second_write_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', first);",
+                    "if (first) anchor.setAttribute('bad name', first);",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-write-name-use",
+                selector_guarded_second_write_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', first);",
+                    "if (first) anchor.setAttribute(first, first);",
+                ),
+            ),
+            (
+                "normal-selector-guarded-second-read-close",
+                selector_guarded_second_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-guarded-second-read-close",
+                selector_guarded_second_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-read-selector",
+                selector_guarded_second_read_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                    "if (first) anchor.setAttribute('data-closed', anchor.matches('['));",
+                ),
+            ),
+            (
+                "dynamic-selector-guarded-second-read-selector",
+                selector_guarded_second_read_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                    "if (first) anchor.setAttribute('data-closed', anchor.matches(anchor));",
+                ),
+            ),
+            (
+                "bad-selector-guarded-second-read-receiver",
+                selector_guarded_second_read_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                    "if (first) anchor.setAttribute('data-closed', (0).hasAttribute('data-visited'));",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-read-arity",
+                selector_guarded_second_read_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited', false));",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-read-extra-use",
+                selector_guarded_second_read_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                    "if (first) { const read = anchor.hasAttribute('data-visited'); external(read); anchor.setAttribute('data-closed', read); }",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-read-name",
+                selector_guarded_second_read_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                    "if (first) anchor.setAttribute('bad name', anchor.hasAttribute('data-visited'));",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-read-name-use",
+                selector_guarded_second_read_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                    "if (first) { const read = anchor.hasAttribute('data-visited'); anchor.setAttribute(read, read); }",
+                ),
+            ),
+            (
+                "normal-selector-guarded-second-two-reads-close",
+                selector_guarded_second_two_reads_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-guarded-second-two-reads-close",
+                selector_guarded_second_two_reads_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-two-reads-ignored-selector",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) anchor.setAttribute('data-closed', (anchor.matches('['), anchor.hasAttribute('data-unvisited')));",
+                ),
+            ),
+            (
+                "dynamic-selector-guarded-second-two-reads-ignored-selector",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) anchor.setAttribute('data-closed', (anchor.matches(anchor), anchor.hasAttribute('data-unvisited')));",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-two-reads-feeding-selector",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.matches('[')));",
+                ),
+            ),
+            (
+                "bad-selector-guarded-second-two-reads-receiver",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) anchor.setAttribute('data-closed', ((0).hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-two-reads-arity",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited', false), anchor.hasAttribute('data-unvisited')));",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-two-reads-extra-use",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) { const read = anchor.hasAttribute('data-visited'); external(read); anchor.setAttribute('data-closed', (read, anchor.hasAttribute('data-unvisited'))); }",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-two-reads-name",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) anchor.setAttribute('bad name', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-two-reads-name-use",
+                selector_guarded_second_two_reads_source.replace(
+                    "if (first) anchor.setAttribute('data-closed', (anchor.hasAttribute('data-visited'), anchor.hasAttribute('data-unvisited')));",
+                    "if (first) { const read = anchor.hasAttribute('data-visited'); anchor.setAttribute(read, anchor.hasAttribute('data-unvisited')); }",
+                ),
+            ),
+            (
+                "normal-selector-guarded-second-postread-close",
+                selector_guarded_second_postread_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-guarded-second-postread-close",
+                selector_guarded_second_postread_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-postread-selector",
+                selector_guarded_second_postread_source.replace(
+                    "anchor.hasAttribute('data-closed'); }",
+                    "anchor.matches('['); }",
+                ),
+            ),
+            (
+                "dynamic-selector-guarded-second-postread-selector",
+                selector_guarded_second_postread_source.replace(
+                    "anchor.hasAttribute('data-closed'); }",
+                    "anchor.matches(anchor); }",
+                ),
+            ),
+            (
+                "bad-selector-guarded-second-postread-receiver",
+                selector_guarded_second_postread_source.replace(
+                    "anchor.hasAttribute('data-closed'); }",
+                    "(0).hasAttribute('data-closed'); }",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-second-postread-arity",
+                selector_guarded_second_postread_source.replace(
+                    "anchor.hasAttribute('data-closed'); }",
+                    "anchor.hasAttribute('data-closed', false); }",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-postread-observer",
+                selector_guarded_second_postread_source.replace(
+                    "anchor.hasAttribute('data-closed'); }",
+                    "external(anchor.hasAttribute('data-closed')); }",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-second-postread-method",
+                selector_guarded_second_postread_source.replace(
+                    "anchor.hasAttribute('data-closed'); }",
+                    "anchor.hasAttribute; }",
+                ),
+            ),
+            (
+                "normal-selector-guarded-third-write-close",
+                selector_guarded_third_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-guarded-third-write-close",
+                selector_guarded_third_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-third-write-selector",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "anchor.setAttribute('data-after-second', anchor.matches('[')); }",
+                ),
+            ),
+            (
+                "dynamic-selector-guarded-third-write-selector",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "anchor.setAttribute('data-after-second', anchor.matches(anchor)); }",
+                ),
+            ),
+            (
+                "bad-selector-guarded-third-write-receiver",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "(0).setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-third-write-arity",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed'), false); }",
+                ),
+            ),
+            (
+                "invalid-selector-guarded-third-write-name",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "anchor.setAttribute('bad name', anchor.hasAttribute('data-closed')); }",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-third-write-observer",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "anchor.setAttribute('data-after-second', external(anchor.hasAttribute('data-closed'))); }",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-third-write-method",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute); }",
+                ),
+            ),
+            (
+                "unsupported-selector-guarded-third-write-name-use",
+                selector_guarded_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "const read = anchor.hasAttribute('data-closed'); anchor.setAttribute(read, read); }",
+                ),
+            ),
+            (
+                "normal-selector-nested-third-write-close",
+                selector_guarded_nested_third_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-nested-third-write-close",
+                selector_guarded_nested_third_write_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-nested-third-write-guard",
+                selector_guarded_nested_third_write_source.replace(
+                    "if (anchor.hasAttribute('data-closed'))",
+                    "if (anchor.matches('['))",
+                ),
+            ),
+            (
+                "dynamic-selector-nested-third-write-guard",
+                selector_guarded_nested_third_write_source.replace(
+                    "if (anchor.hasAttribute('data-closed'))",
+                    "if (anchor.matches(anchor))",
+                ),
+            ),
+            (
+                "bad-selector-nested-third-write-guard-receiver",
+                selector_guarded_nested_third_write_source.replace(
+                    "if (anchor.hasAttribute('data-closed'))",
+                    "if ((0).hasAttribute('data-closed'))",
+                ),
+            ),
+            (
+                "invalid-selector-nested-third-write-guard-arity",
+                selector_guarded_nested_third_write_source.replace(
+                    "if (anchor.hasAttribute('data-closed'))",
+                    "if (anchor.hasAttribute('data-closed', false))",
+                ),
+            ),
+            (
+                "unsupported-selector-nested-third-write-guard-observer",
+                selector_guarded_nested_third_write_source.replace(
+                    "if (anchor.hasAttribute('data-closed'))",
+                    "if (external(anchor.hasAttribute('data-closed')))",
+                ),
+            ),
+            (
+                "unsupported-selector-nested-third-write-value-observer",
+                selector_guarded_nested_third_write_source.replace(
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "anchor.setAttribute('data-after-second', external(anchor.hasAttribute('data-closed'))); }",
+                ),
+            ),
+            (
+                "unsupported-selector-nested-third-write-guard-method",
+                selector_guarded_nested_third_write_source.replace(
+                    "if (anchor.hasAttribute('data-closed'))",
+                    "if (anchor.hasAttribute)",
+                ),
+            ),
+            (
+                "unsupported-selector-nested-third-write-guard-reuse",
+                selector_guarded_nested_third_write_source.replace(
+                    "if (anchor.hasAttribute('data-closed')) anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                    "const nested = anchor.hasAttribute('data-closed'); external(nested); if (nested) anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); }",
+                ),
+            ),
+            (
+                "normal-selector-nested-third-else-close",
+                selector_nested_third_else_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-nested-third-else-close",
+                selector_nested_third_else_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-nested-third-else-selector",
+                selector_nested_third_else_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('data-after-second', anchor.matches('['));",
+                ),
+            ),
+            (
+                "dynamic-selector-nested-third-else-selector",
+                selector_nested_third_else_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('data-after-second', anchor.matches(anchor));",
+                ),
+            ),
+            (
+                "bad-selector-nested-third-else-receiver",
+                selector_nested_third_else_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "(0).setAttribute('data-after-second', false);",
+                ),
+            ),
+            (
+                "invalid-selector-nested-third-else-arity",
+                selector_nested_third_else_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('data-after-second', false, false);",
+                ),
+            ),
+            (
+                "invalid-selector-nested-third-else-name",
+                selector_nested_third_else_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('bad name', false);",
+                ),
+            ),
+            (
+                "unsupported-selector-nested-third-else-observer",
+                selector_nested_third_else_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('data-after-second', external(false));",
+                ),
+            ),
+            (
+                "unsupported-selector-nested-third-else-method",
+                selector_nested_third_else_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('data-after-second', anchor.hasAttribute);",
+                ),
+            ),
+            (
+                "normal-selector-branch-throw-close",
+                selector_nested_throw_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-branch-throw-close",
+                selector_nested_throw_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-selector-branch-throw-name",
+                selector_nested_throw_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('bad name', false);",
+                ),
+            ),
+            (
+                "bad-selector-branch-throw-receiver",
+                selector_nested_throw_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "(0).setAttribute('data-after-second', false);",
+                ),
+            ),
+            (
+                "invalid-selector-branch-throw-arity",
+                selector_nested_throw_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('data-after-second', false, false);",
+                ),
+            ),
+            (
+                "invalid-selector-branch-throw-selector",
+                selector_nested_throw_source.replace(
+                    "throw true;",
+                    "throw anchor.matches('[');",
+                ),
+            ),
+            (
+                "dynamic-selector-branch-throw-selector",
+                selector_nested_throw_source.replace(
+                    "throw true;",
+                    "throw anchor.matches(anchor);",
+                ),
+            ),
+            (
+                "unsupported-selector-branch-throw-observer",
+                selector_nested_throw_source.replace(
+                    "throw true;",
+                    "throw external(false);",
+                ),
+            ),
+            (
+                "normal-selector-branch-throw-read-close",
+                selector_branch_throw_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-selector-branch-throw-read-close",
+                selector_branch_throw_read_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-selector-branch-throw-read-getter-close",
+                selector_branch_throw_read_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "invalid-selector-branch-throw-read-write-name",
+                selector_branch_throw_read_source.replace(
+                    "anchor.setAttribute('data-after-second', false);",
+                    "anchor.setAttribute('bad name', false);",
+                ),
+            ),
+            (
+                "bad-selector-branch-throw-read-receiver",
+                selector_branch_throw_read_source.replace(
+                    "anchor.getAttribute('data-closed')",
+                    "(0).getAttribute('data-closed')",
+                ),
+            ),
+            (
+                "invalid-selector-branch-throw-read-arity",
+                selector_branch_throw_read_source.replace(
+                    "anchor.getAttribute('data-closed')",
+                    "anchor.getAttribute('data-closed', false)",
+                ),
+            ),
+            (
+                "dynamic-selector-branch-throw-read-name",
+                selector_branch_throw_read_source.replace(
+                    "anchor.getAttribute('data-closed')",
+                    "anchor.getAttribute(anchor)",
+                ),
+            ),
+            (
+                "unsupported-selector-branch-throw-read-observer",
+                selector_branch_throw_read_source.replace(
+                    "throw anchor.getAttribute('data-closed');",
+                    "throw external(anchor.getAttribute('data-closed'));",
+                ),
+            ),
+            (
+                "unsupported-selector-branch-throw-read-method",
+                selector_branch_throw_read_source.replace(
+                    "throw anchor.getAttribute('data-closed');",
+                    "throw anchor.getAttribute;",
+                ),
+            ),
+            (
+                "normal-terminal-selector-write-close",
+                terminal_write_selector_value_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-terminal-selector-write-close",
+                terminal_write_selector_value_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-terminal-selector-write-name",
+                terminal_write_selector_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('bad name', present);",
+                ),
+            ),
+            (
+                "bad-terminal-selector-write-receiver",
+                terminal_write_selector_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "(0).setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "invalid-terminal-selector-write-arity",
+                terminal_write_selector_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present, false);",
+                ),
+            ),
+            (
+                "bad-terminal-selector-write-selector-receiver",
+                terminal_write_selector_value_source.replace(
+                    "const present = anchor.matches('[data-closed=false]');",
+                    "const present = (0).matches('[data-closed=false]');",
+                ),
+            ),
+            (
+                "invalid-terminal-selector-write-selector",
+                terminal_write_selector_value_source.replace(
+                    "const present = anchor.matches('[data-closed=false]');",
+                    "const present = anchor.matches('[');",
+                ),
+            ),
+            (
+                "unsupported-terminal-selector-write-reuse",
+                terminal_write_selector_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "anchor.setAttribute('data-after-terminal', present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "unsupported-terminal-selector-write-value-effect",
+                terminal_write_selector_value_source.replace(
+                    "anchor.setAttribute('data-after-terminal', present);",
+                    "external(present); anchor.setAttribute('data-after-terminal', present);",
+                ),
+            ),
+            (
+                "normal-third-postselector-result-close",
+                selector_result_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-third-postselector-result-close",
+                selector_result_throwing_source.replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "normal-third-postselector-result-getter-close",
+                selector_result_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "break;",
+                ),
+            ),
+            (
+                "return-third-postselector-result-getter-close",
+                selector_result_throwing_source.replace("return() {", "get return() {").replace(
+                    "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                    "return anchor.hasAttribute('data-closed');",
+                ),
+            ),
+            (
+                "invalid-third-postselector-result-selector",
+                selector_result_throwing_source.replace("'[data-closed]'", "'['"),
+            ),
+            (
+                "dynamic-third-postselector-result-selector",
+                selector_result_throwing_source.replace("'[data-closed]'", "anchor"),
+            ),
+            (
+                "invalid-third-postselector-result-name",
+                selector_result_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', matched);",
+                    "anchor.setAttribute('bad name', matched);",
+                ),
+            ),
+            (
+                "bad-third-postselector-result-receiver",
+                selector_result_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', matched);",
+                    "(0).setAttribute('data-closed', matched);",
+                ),
+            ),
+            (
+                "bad-third-postselector-result-selector-receiver",
+                selector_result_throwing_source.replace("anchor.matches(", "(0).matches("),
+            ),
+            (
+                "unsupported-third-postselector-result-escape",
+                selector_result_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', matched);",
+                    "anchor.setAttribute('data-closed', matched); external(matched);",
+                ),
+            ),
+            (
+                "unsupported-third-postselector-result-type",
+                selector_result_throwing_source.replace(
+                    "anchor.setAttribute('data-closed', matched);",
+                    "anchor.setAttribute('data-closed', {matched: matched});",
+                ),
+            ),
+            (
+                "invalid-postwrite-close-name",
+                postwrite_throwing_source.replace(
+                    "anchor.setAttribute('data-closed',", "anchor.setAttribute('bad name',"
+                ),
+            ),
+            ("invalid-close-name", throwing_close.replace("data-closed", "bad name")),
+            ("unknown-close-throw", throwing_close.replace("throw 2;", "throw anchor;")),
+            ("normal-primitive-close", refusals()["primitive-return-result"]),
+            (
+                "return-primitive-close",
+                BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace("return {};", "return 2;"),
+            ),
+            ("normal-throwing-close", source(True).replace("return {};", "throw 2;")),
+            (
+                "return-throwing-close",
+                BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace("return {};", "throw 2;"),
+            ),
+            (
+                "normal-getter-close",
+                getter_close.replace("throw 1;", "node.setAttribute('data-visited', 'yes');"),
+            ),
+            ("return-getter-close", getter_close.replace("throw 1;", "return 1;")),
+            ("returning-getter-close", getter_close.replace("throw 2;", "return {};")),
+            ("unknown-getter-throw", getter_close.replace("throw 2;", "throw anchor;")),
+            (
+                "normal-mutable-throwing-close",
+                mutable_throwing_source.replace("throw (count += 2, count);", "break;"),
+            ),
+            (
+                "return-mutable-throwing-close",
+                mutable_throwing_source.replace("throw (count += 2, count);", "return count;"),
+            ),
+            (
+                "normal-mutable-nonliteral-close",
+                nonliteral_throwing_source.replace("throw (count += 2, count);", "break;"),
+            ),
+            (
+                "return-mutable-nonliteral-close",
+                nonliteral_throwing_source.replace("throw (count += 2, count);", "return count;"),
+            ),
+            (
+                "unknown-mutable-close-producer",
+                nonliteral_throwing_source.replace("throw count;", "throw external(count);"),
+            ),
+            (
+                "invalid-mutable-nonliteral-close-name",
+                nonliteral_throwing_source.replace("data-closed", "bad name"),
+            ),
+            (
+                "invalid-mutable-close-name",
+                mutable_throwing_source.replace("data-closed", "bad name"),
+            ),
+        )
+        + tuple(
+            (label, text)
+            for label, text in mixed_close_cases
+            if "-break-" in label or "-mutable-" in label
+        )
+        + (
+            (
+                "mixed-body-throw-return-invalid-close",
+                mixed_throw_source.replace("setAttribute('data-closed'", "setAttribute('bad name'"),
+            ),
+        )
     ):
         accepted = label in accepted_normal_closes
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")

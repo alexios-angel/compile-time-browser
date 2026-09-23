@@ -385,12 +385,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 return false;
             }
-            auto literal =
-                result ? result.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-            const bool primitiveResult =
-                literal && llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                                     ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue());
-            if (!protectedLeaf || (!discardedResult && !primitiveResult) ||
+            // This exact Invoke has no result observer. Keep every producer,
+            // but discharge the return edge only at this protected call; the
+            // same helper's normal callers still need its original payload.
+            if (!protectedLeaf || !result ||
                 (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult())) ||
                 (trailingMethod && !trailingCall) || (secondMethod && !secondLeaf) ||
                 (selectorMethod && !selectorLeaf) || finalMethod ||
@@ -436,6 +434,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         root && use.getOperandNumber() == 1) {
                         continue;
                     }
+                    if (use.getOwner() == result) { continue; }
                     if ((value == method.getResult() && use.getOwner() == protectedLeaf &&
                          use.getOperandNumber() == 0) ||
                         (readMethod && value == readMethod.getResult() &&
@@ -450,9 +449,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                          use.getOwner() == secondLeaf && use.getOperandNumber() == 0) ||
                         (selectorMethod && value == selectorMethod.getResult() &&
                          use.getOwner() == selectorLeaf && use.getOperandNumber() == 0) ||
-                        suffixUses.contains(&use) ||
-                        (discardedResult && value == discardedResult.getResult() &&
-                         use.getOwner() == result)) {
+                        suffixUses.contains(&use)) {
                         continue;
                     }
                     if (discardedResult && value == discardedResult.getResult() &&

@@ -1889,10 +1889,17 @@ module {
                       llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()) &&
                       mlir::succeeded(mlir::verify(*input)),
                   "suppressed close returns only after closing its own frame");
-            auto ignored = returned ? returned.getValue().getDefiningOp<ctjs::ConstantOp>()
+            auto payload = returned ? returned.getValue().getDefiningOp<ctjs::ConstantOp>()
                                     : ctjs::ConstantOp{};
-            check(ignored && llvm::isa<ctjs::UndefinedAttr>(ignored.getValue()),
-                  "only the validated unobserved close payload is discarded");
+            auto number =
+                payload ? llvm::dyn_cast<ctjs::NumberAttr>(payload.getValue()) : ctjs::NumberAttr{};
+            auto updated = returned ? returned.getValue().getDefiningOp<ctjs::BinaryStaticOp>()
+                                    : ctjs::BinaryStaticOp{};
+            const bool statePayload =
+                source == scalarThrowingSource || source == scalarGetterSource;
+            check(statePayload ? updated && updated.getKind() == ctjs::BinaryKind::Add
+                               : number && number.getDouble() == 2,
+                  "helper retains its original payload until the exact protected call");
             if (mutableState) {
                 check(close.getBody().front().getNumArguments() == ctjs::implicit_arguments + 1,
                       "throwing close receives its current scalar state");
@@ -2077,6 +2084,37 @@ module {
         !normalMutablePayloadGetter) {
         return;
     }
+    const auto mixedThrowingSource = replaced(
+        replaced(throwingAbruptSource, "      %abrupt =",
+                 R"MLIR(      %hasName = ctjs.constant #ctjs.string<"hasAttribute">
+      %has = ctjs.get_property %item[%hasName]
+      %stopName = ctjs.constant #ctjs.string<"stop">
+      %stopping = ctjs.call %has(%item, %stopName)
+      %bodyThrow = ctjs.truthy %stopping
+      %mixed = scf.if %bodyThrow -> !ctjs.value {
+      %abrupt =)MLIR"),
+        "      scf.yield %one : !ctjs.value\n    }\n", R"MLIR(      scf.yield %one : !ctjs.value
+      } else {
+        %normalClose = ctjs.call %close(%undefined, %record, %normal)
+        scf.yield %one : !ctjs.value
+      }
+      scf.yield %mixed : !ctjs.value
+    }
+)MLIR");
+    const auto mixedMutableSource = mutableThrowingClose(mixedThrowingSource);
+    const auto mixedMutablePayloadSource =
+        replaced(mixedMutableSource, "    ctjs.throw %result",
+                 "    %payload = ctjs.get_property %this[%stateKey]\n    ctjs.throw %payload");
+    auto mixedThrowing = mlir::parseSourceString<mlir::ModuleOp>(mixedThrowingSource, &context);
+    auto mixedGetter =
+        mlir::parseSourceString<mlir::ModuleOp>(getterReturn(mixedThrowingSource), &context);
+    auto mixedMutable =
+        mlir::parseSourceString<mlir::ModuleOp>(mixedMutablePayloadSource, &context);
+    auto mixedMutableGetter =
+        mlir::parseSourceString<mlir::ModuleOp>(getterReturn(mixedMutablePayloadSource), &context);
+    check(mixedThrowing && mixedGetter && mixedMutable && mixedMutableGetter,
+          "mixed protected and normal method/getter closes parse");
+    if (!mixedThrowing || !mixedGetter || !mixedMutable || !mixedMutableGetter) { return; }
     check(normalThrowingReturn && normalThrowingBreak && normalGetterReturn && normalGetterBreak &&
               booleanThrowingReturn && booleanGetterReturn,
           "historical normal terminal-throw close controls parse unchanged");
@@ -2087,7 +2125,8 @@ module {
     for (auto fixture :
          {*normalThrowingReturn, *normalThrowingBreak, *normalGetterReturn, *normalGetterBreak,
           *booleanThrowingReturn, *booleanGetterReturn, *normalMutable, *normalMutableGetter,
-          *normalMutablePayload, *normalMutablePayloadGetter}) {
+          *normalMutablePayload, *normalMutablePayloadGetter, *mixedThrowing, *mixedGetter,
+          *mixedMutable, *mixedMutableGetter}) {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             mlir::OwningOpRef<mlir::ModuleOp> input(fixture.clone());
@@ -2113,8 +2152,10 @@ module {
                 updated ? updated.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
             auto ten = increment ? llvm::dyn_cast<ctjs::NumberAttr>(increment.getValue())
                                  : ctjs::NumberAttr{};
-            const bool statePayload =
-                fixture == *normalMutablePayload || fixture == *normalMutablePayloadGetter;
+            const bool mixedState = fixture == *mixedMutable || fixture == *mixedMutableGetter;
+            const bool mixed = fixture == *mixedThrowing || fixture == *mixedGetter || mixedState;
+            const bool statePayload = fixture == *normalMutablePayload ||
+                                      fixture == *normalMutablePayloadGetter || mixedState;
             check((statePayload
                        ? updated && updated.getKind() == ctjs::BinaryKind::Add && ten &&
                              ten.getDouble() == 10 &&
@@ -2122,11 +2163,19 @@ module {
                        : number && number.getDouble() == 2) &&
                       llvm::isa_and_nonnull<ctjs::FrameExitOp>(returned->getPrevNode()),
                   "normal close retains its original or updated-state exception after frame exit");
-            unsigned closes = 0, throws = 0;
+            unsigned closes = 0, throws = 0, protectedCalls = 0, savedThrows = 0;
             input->walk([&](ctjs::CallOp call) {
                 auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!method || ctjs::constantKey(method.getKey()) != "return") { return; }
                 ++closes;
+                if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(call->getParentOp())) {
+                    ++protectedCalls;
+                    check(mixed && !invocation.getNumResults() && call->hasOneUse() &&
+                              invocation.getNormalBody().front().getArgument(0).use_empty() &&
+                              invocation.getUnwindBody().front().getArgument(0).use_empty(),
+                          "mixed protected close ignores both cleanup outcomes");
+                    return;
+                }
                 auto region =
                     llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode());
                 auto thrown = region && region.getRegion().hasOneBlock() &&
@@ -2138,11 +2187,23 @@ module {
                           thrown.getValue() == call.getResult(),
                       "each normal close immediately throws its own saved payload");
             });
-            input->walk([&](ctjs::ThrowOp) { ++throws; });
-            check(closes > 0 && throws == closes && mlir::succeeded(mlir::verify(*input)),
-                  "normal closes retain exactly their unsuppressed throws");
+            input->walk([&](ctjs::ThrowOp thrown) {
+                ++throws;
+                auto literal = thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
+                auto saved = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
+                                     : ctjs::NumberAttr{};
+                savedThrows += saved && saved.getDouble() == 1;
+            });
+            check(closes > 0 && throws == closes && protectedCalls == (mixed ? 1U : 0U) &&
+                      savedThrows == protectedCalls && mlir::succeeded(mlir::verify(*input)),
+                  "each close preserves its own suppressed or propagated exception");
             failure = expandDOMHelpers(*input, request.entry, completeBudget);
-            check(!failure, "normal throwing close passes complete helper proof");
+            if (mixedState) {
+                check(static_cast<bool>(failure), "mixed raw arithmetic still needs typed proof");
+                llvm::consumeError(std::move(failure));
+                continue;
+            }
+            check(!failure, "normal and mixed throwing closes pass complete helper proof");
             if (failure) {
                 llvm::consumeError(std::move(failure));
                 continue;
@@ -2150,6 +2211,37 @@ module {
             request.moduleSha256 = hostContractFingerprint(*input);
             const DOMEntryAnalysis proof(*input, request);
             check(proof.proved(), "normal close exception retains complete typed DOM reproof");
+        }
+    }
+    for (const auto & invalid : {
+             replaced(mixedThrowingSource, "^caughtClose(%caught: !ctjs.value):",
+                      "^caughtClose(%caught: !ctjs.value):\n"
+                      "        ctjs.store_global \"observed\", %caught"),
+             replaced(mixedThrowingSource, "    %open =",
+                      "    ctjs.store_global \"escaped-close\", %finish\n    %open ="),
+             replaced(mixedThrowingSource, "^normalClose(%ignored: !ctjs.value):",
+                      "^normalClose(%ignored: !ctjs.value):\n"
+                      "        ctjs.store_global \"observed\", %ignored"),
+             replaced(mixedThrowingSource, "      %abrupt =",
+                      "      ctjs.set_property %holder[%returnName], %step\n      %abrupt ="),
+             replaced(mixedMutablePayloadSource, "      scf.execute_region {",
+                      "      %observed = ctjs.get_property %holder[%stateKey]\n"
+                      "      scf.execute_region {"),
+         }) {
+        for (const auto & specimen : {invalid, getterReturn(invalid)}) {
+            check(!specimen.empty(), "mixed close refusal construction matched");
+            auto input = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
+            check(static_cast<bool>(input), "mixed close observer or mutation control parses");
+            if (!input) { continue; }
+            auto request = contract;
+            request.provider = HostContract::Provider::ctbrowserDOM;
+            request.moduleSha256 = hostContractFingerprint(*input);
+            auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
+            check(static_cast<bool>(failure), "mixed closes reject observers and slot mutation");
+            llvm::consumeError(std::move(failure));
+            request.moduleSha256 = hostContractFingerprint(*input);
+            check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
+                  "refused mixed cleanup publishes no native evidence");
         }
     }
     auto booleanReturning =
@@ -2292,6 +2384,7 @@ module {
 )MLIR");
     for (const auto & specimen :
          {conditionalPrimitiveSource, throwingReturn(conditionalPrimitiveSource)}) {
+        const bool throwing = specimen != conditionalPrimitiveSource;
         auto fixture = mlir::parseSourceString<mlir::ModuleOp>(specimen, &context);
         check(static_cast<bool>(fixture), "conditional suppressed close fixture parses");
         if (!fixture) { return; }
@@ -2333,14 +2426,52 @@ module {
         check(static_cast<bool>(conflicting), "conflicting done facts parse");
         if (!conflicting) { return; }
         auto request = contract;
+        request.provider = HostContract::Provider::ctbrowserDOM;
         request.moduleSha256 = hostContractFingerprint(*conflicting);
         auto failure = normalizeDOMCustomIteration(*conflicting, request, completeBudget);
-        check(static_cast<bool>(failure), "an ordinary early exit cannot borrow exhaustion's done");
-        if (failure) {
-            check(llvm::toString(std::move(failure)).find("saved-throw suppression") !=
-                      std::string::npos,
-                  "conflicting exit facts retain normal result validation");
+        if (!throwing) {
+            check(static_cast<bool>(failure),
+                  "an ordinary early exit cannot borrow exhaustion's done");
+            if (failure) {
+                check(llvm::toString(std::move(failure)).find("saved-throw suppression") !=
+                          std::string::npos,
+                      "conflicting exit facts retain normal result validation");
+            }
+            continue;
         }
+        check(!failure, "early-exit throwing cleanup retains normal propagation");
+        if (failure) {
+            llvm::consumeError(std::move(failure));
+            continue;
+        }
+        unsigned normalCloses = 0;
+        conflicting->walk([&](ctjs::CallOp call) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!method || ctjs::constantKey(method.getKey()) != "return" ||
+                llvm::isa<ctjs::InvokeOp>(call->getParentOp())) {
+                return;
+            }
+            ++normalCloses;
+            auto region = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode());
+            auto thrown = region && region.getNoInline() && !region.getNumResults() &&
+                                  region.getRegion().hasOneBlock() &&
+                                  llvm::hasSingleElement(region.getRegion().front())
+                              ? llvm::dyn_cast<ctjs::ThrowOp>(region.getRegion().front().front())
+                              : ctjs::ThrowOp{};
+            check(thrown && call->hasOneUse() && thrown.getValue() == call.getResult(),
+                  "early-exit normal close immediately propagates its own exception");
+        });
+        check(normalCloses == 1 && mlir::succeeded(mlir::verify(*conflicting)),
+              "early exit keeps its normal cleanup invocation");
+        failure = expandDOMHelpers(*conflicting, request.entry, completeBudget);
+        check(!failure, "early-exit throwing cleanup expands");
+        if (failure) {
+            llvm::consumeError(std::move(failure));
+            continue;
+        }
+        request.moduleSha256 = hostContractFingerprint(*conflicting);
+        check(DOMEntryAnalysis(*conflicting, request).proved(),
+              "early-exit cleanup propagation retains complete DOM proof");
     }
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
@@ -5423,6 +5554,10 @@ module {
                          *normalMutableGetter,
                          *normalMutablePayload,
                          *normalMutablePayloadGetter,
+                         *mixedThrowing,
+                         *mixedGetter,
+                         *mixedMutable,
+                         *mixedMutableGetter,
                          *effectful,
                          *savedCompletion,
                          *zeroSavedCompletion,
