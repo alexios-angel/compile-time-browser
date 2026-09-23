@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Multiple cleanup reads and decimal exponents, 2026-09-23 UTC
+
+Resumed clean **7ca5d604** and retained source `04f5317c` from the previous
+handoff. **4770f5c1** preserves multiple branch-local DOM reads in the guarded
+second cleanup write using the existing snapshot/use census. Original, getter,
+order and three-read selector variants execute. Read/lookup/write order, the
+original guard and body exception, selector validation, budgets and private
+DOM/Style reproof remain. Independent native review is clean.
+
+**3eb265b9** proves bounded decimal-point/exponent String conversions through
+public Core, preserving original Strings/property keys and mutation/receiver
+checks. Review found an extreme-exponent hazard in Core; the compiler bounds
+exponent magnitude before calling it. Six measured child sites change from all
+stored to **three confined and three stored**, all six actually observed.
+Historical sources and raw inputs remain; independent final review is clean.
+No browser/runtime implementation changed.
+
+Focused checks pass: **64 native executions, 92 refusals, 32 Node/VM observations,
+30 source preflight checks, exact host/arrays CTests and one table-key lit case**.
+Final formatting passes **1126 C++, 157 Python and 114 web files**; all 11 final
+code/test hashes match the devbox. The interrupted host build resumed its
+remaining compile/link before its first CTest. Completed gates were not replayed.
+Full suites were skipped.
+
+**Next native boundary:** `unsupported-selector-guards-second-write-postread`,
+source `77866d32`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the DOM read after the guarded cleanup
+write, its original guard/order and the body exception. Broader cleanup/control
+flow, nested custom iterators, unguarded Bootstrap defaults, the application
+driver, full native Bootstrap, general powers and legacy SCF retention remain.
+Nonintegral numeric results, unsafe exponents and Strings over 32 bytes remain
+outside the conversion proof. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-multiple-cleanup-reads-decimal-exponents.md).
+
 ## Branch-local cleanup reads and radix conversions, 2026-09-23 UTC
 
 Resumed clean **ebf753aa** and retained source `164962d0` from the previous
