@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded cleanup sequences and Number bitwise operands, 2026-09-23 UTC
+
+Resumed clean **95a6e152** and retained source `006cce9f` from the preceding
+handoff. **f87a99a7** preserves repeated read/write pairs inside the existing
+cleanup guard. The shared use census and ordered clone retain saved Booleans,
+method/read/write order, per-write suppression and the original body exception.
+Selector validation, typed DOM/Style reproof and budgets remain. Original,
+getter, order and selector variants execute; independent native review is clean.
+
+**51cde33e** proves bounded fractional Number bitwise operands through public
+Core, including one original literal negation. Scalar, table, mask and count
+consumers share the proof; arithmetic, property keys, mutation and receiver gaps
+retain their separate requirements. Six measured child sites change from all
+stored to **three confined and three stored**, all six observed. Historical
+inputs remain; 23 additional expectation promotions and an exact-fact budget
+assertion resolve the first array gate's 144 failures. Parent review is complete;
+the independent escape reviewer was rate-limited before finishing.
+
+Focused checks pass: **64 native executions, 92 refusals, 32 Node/VM observations,
+30 source preflight checks, exact host/arrays CTests and one table-key lit case**.
+Two compile-only failures from const MLIR operation handles were corrected.
+Final formatting passes **1126 C++, 157 Python and 114 web files**; all 13 final
+code/test hashes match the devbox. No runtime code changed. Full suites skipped.
+
+**Next native boundary:** `unsupported-selector-guards-nested-third-write`,
+source `9d3a3639`, refuses **DOM protected helper needs an independent inert-body
+proof** under both policies. Preserve the nested guard, read/write order, saved
+Boolean and original body exception. Broader cleanup/control flow, nested custom
+iterators, unguarded Bootstrap defaults, the application driver, full native
+Bootstrap, general powers and legacy SCF retention remain. Computed fractional
+arithmetic, wider Number magnitudes, unsafe String exponents and Strings over
+32 bytes remain unproved. The known VM fractional-index discrepancy remains
+separate runtime work. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-guarded-multiwrite-number-bitwise.md).
+
 ## Post-write cleanup reads and fractional bitwise keys, 2026-09-23 UTC
 
 Resumed clean **ea386588** and retained source `77866d32` from the previous
