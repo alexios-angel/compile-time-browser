@@ -386,6 +386,49 @@ void StructuredCases::mutationRefusals() {
            replace(singletonPower, "mod %i, %one", "mod %i, %two"));
     reject("structured singleton exponents cannot prove general interior powers",
            replace(singletonPower, "add %part, %one", "add %part, %two"));
+    const auto singletonBasePower =
+        replace(replace(replace(twoPointPower, "create_array [%x]", "create_array [%x, %x]"),
+                        "ctjs.append %y to %a", "ctjs.append %zero to %a"),
+                "%position = ctjs.binary pow %i, %two",
+                "%part = ctjs.binary mod %i, %one\n"
+                "    %powerBase = ctjs.binary add %part, %two\n"
+                "    %exponent = ctjs.binary mod %i, %two\n"
+                "    %power = ctjs.binary pow %powerBase, %exponent\n"
+                "    %position = ctjs.binary sub %power, %one");
+    rows.push_back({.what = "structured singleton nonunit bases reuse exact scalar powers",
+                    .body = singletonBasePower,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back(
+        {.what = "structured singleton-base powers retain unwritten children",
+         .body = replace(singletonBasePower, "ctjs.append %zero to %a", "ctjs.append %y to %a"),
+         .arrays = "a:[zero,zero,y]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=y",
+         .exit = "a -> {a,y}"});
+    const auto singletonBaseReload =
+        replace(replace(singletonBasePower, "ctjs.append %zero to %a", "ctjs.append %two to %a"),
+                "%powerBase = ctjs.binary add %part, %two",
+                "%offset = ctjs.get_property %base[%two]\n"
+                "    %powerBase = ctjs.binary add %part, %offset");
+    rows.push_back({.what = "structured singleton-base producers preserve disjoint reloads",
+                    .body = singletonBaseReload,
+                    .arrays = "a:[zero,zero,ctjs.binary]",
+                    .reads = "a[2]=ctjs.binary; a[0]=zero; a[2]=ctjs.binary; a[1]=zero; "
+                             "a[2]=ctjs.binary; a[2]=ctjs.binary",
+                    .exit = "a -> {a}"});
+    reject("structured singleton-base producers retain later-store checks",
+           replace(singletonBaseReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured singleton-base producers cannot reload overwritten elements",
+           replace(replace(singletonBaseReload, "create_array [%x, %x]", "create_array [%two, %x]"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%zero]"));
+    reject("structured nonsingleton nonunit bases cannot borrow the invariant proof",
+           replace(singletonBasePower, "mod %i, %one", "mod %i, %two"));
+    reject("structured singleton nonunit bases do not prove general powers",
+           replace(singletonBasePower, "%exponent = ctjs.binary mod %i, %two",
+                   "%exponent = ctjs.binary add %i, %one"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

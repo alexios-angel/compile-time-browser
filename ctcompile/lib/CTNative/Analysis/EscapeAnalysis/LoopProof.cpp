@@ -356,11 +356,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                       invariantFailure != ArrayContentsFailure::WorkLimit
                                   ? self(self, expression->getOperand(1), depth + 1)
                                   : std::nullopt;
-        // A syntactically varying exponent can still have one proved value.
+        // A syntactically varying operand can still have one proved value.
         // Reuse the invariant power transfer; its producers and reloads remain
         // subject to the complete census and ordinary replay below.
         if (exponent && endpointNumber(exponent->first) == endpointNumber(exponent->last)) {
             offset = exponent->first;
+        } else if (exponent && endpointNumber(range->first) == endpointNumber(range->last)) {
+            offset = range->first;
+            range = exponent;
+            offsetOperand = 0;
         }
         // Each transfer proves bounded primitive conversion; boundedNumberSum
         // separately excludes String concatenation for Add.
