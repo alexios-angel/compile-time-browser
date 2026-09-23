@@ -970,6 +970,62 @@ void InductionCases::overwritesAndTransport() {
            replace(singletonShift, "pow %one, %i", "pow %zero, %i"));
     reject("singleton left-shift counts still require every write to be own",
            replace(singletonShift, "shr %i, %count", "shl %i, %count"));
+    const auto singletonMask = replace(singletonShift, "shr %i, %count", "bitand %i, %count");
+    for (const std::string kind : {"bitand", "bitor", "bitxor"}) {
+        const bool isAnd = kind == "bitand", isOr = kind == "bitor";
+        auto body = isAnd
+                        ? singletonMask
+                        : replace(singletonMask, "%position = ctjs.binary_static bitand %i, %count",
+                                  "%part = ctjs.binary_static shr %i, %one\n"
+                                  "  %position = ctjs.binary_static " +
+                                      kind + " %part, %count");
+        if (isOr) { body = replace(body, "[%x, %x, %zero]", "[%zero, %x, %zero]"); }
+        for (const bool commuted : {false, true}) {
+            const auto operand = isAnd ? "%i" : "%part";
+            run({.what = "singleton bitwise masks preserve both operand orders",
+                 .body = commuted ? replace(body, kind + " " + operand + ", %count",
+                                            kind + " %count, " + operand)
+                                  : body,
+                 .arrays = "a:[zero,zero,zero]",
+                 .reads = kind == "bitxor" ? "a[0]=x; a[1]=zero; a[2]=zero"
+                                           : "a[0]=zero; a[1]=zero; a[2]=zero",
+                 .exit = "a -> {a}"},
+                "x");
+        }
+    }
+    run({.what = "singleton mask replay preserves unwritten children",
+         .body = replace(singletonMask, "[%x, %x, %zero]", "[%x, %x, %x]"),
+         .arrays = "a:[zero,zero,x]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=x",
+         .exit = "a -> {a,x}"});
+    run({.what = "singleton mask replay preserves a saved child",
+         .body = replace(replace(singletonMask, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    const auto singletonMaskReload =
+        replace(singletonShiftReload, "shr %i, %count", "bitand %i, %count");
+    run({.what = "singleton mask producers independently prove reload gaps",
+         .body = singletonMaskReload,
+         .arrays = "a:[zero,zero,one]",
+         .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one",
+         .exit = "a -> {a}"},
+        "x");
+    reject("singleton masks retain the complete later-store census",
+           replace(singletonMaskReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("singleton masks cannot reload an overwritten producer",
+           replace(replace(singletonMaskReload, "[%x, %x, %one]", "[%one, %x, %zero]"),
+                   "%powerUnit = ctjs.get_property %base[%two]",
+                   "%powerUnit = ctjs.get_property %base[%zero]"));
+    reject("genuinely varying masks cannot borrow a singleton fact",
+           replace(singletonMask, "pow %one, %i", "pow %zero, %i"));
+    reject("singleton masks still require nonnegative own keys",
+           replace(singletonMask, "%position = ctjs.binary_static bitand %i, %count",
+                   "%negativeMask = ctjs.unary neg %count\n"
+                   "  %position = ctjs.binary_static bitor %i, %negativeMask"));
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

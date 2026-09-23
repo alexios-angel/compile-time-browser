@@ -231,6 +231,19 @@
 // CHECK: escape {{[0-9a-f]+}} 198 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 199 {{[0-9]+}} obj escapes:stored
 
+// Singleton bitwise masks retain both operand orders and every producer check.
+// CHECK: escape {{[0-9a-f]+}} 200 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 201 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 202 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 203 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 204 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 205 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 206 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 207 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 208 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 209 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 210 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -1355,3 +1368,65 @@ function negativeSingletonShift() {
 singletonSignedShift(); singletonUnsignedShift(); singletonLeftShift(); maskedSingletonShift();
 retainedSingletonShift(); savedSingletonShift(); reloadedSingletonShift(); laterSingletonShiftStore();
 overlappingSingletonShift(); varyingShiftCount(); negativeSingletonShift();
+
+function singletonAndMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (1 ** i)] = 0;
+    return a;
+}
+function singletonOrMask() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) | (1 ** i)] = 0;
+    return a;
+}
+function singletonXorMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) ^ (1 ** i)] = 0;
+    return a;
+}
+function commutedSingletonMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 ** i) ^ (i >> 1)] = 0;
+    return a;
+}
+function retainedSingletonMask() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i & (1 ** i)] = 0;
+    return a;
+}
+function savedSingletonMask() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i & (1 ** i)] = 0;
+    return saved;
+}
+function reloadedSingletonMask() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[i & (a[2] ** i)] = 0;
+    return a;
+}
+function laterSingletonMaskStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[i & (a[2] ** i)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingSingletonMask() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (a[0] ** i)] = 0;
+    return a;
+}
+function varyingBitwiseMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (0 ** i)] = 0;
+    return a;
+}
+function negativeSingletonMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i | -(1 ** i)] = 0;
+    return a;
+}
+singletonAndMask(); singletonOrMask(); singletonXorMask(); commutedSingletonMask();
+retainedSingletonMask(); savedSingletonMask(); reloadedSingletonMask(); laterSingletonMaskStore();
+overlappingSingletonMask(); varyingBitwiseMask(); negativeSingletonMask();

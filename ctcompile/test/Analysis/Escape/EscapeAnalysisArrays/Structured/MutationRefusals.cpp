@@ -700,6 +700,24 @@ void StructuredCases::mutationRefusals() {
                    "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
     reject("structured varying shift counts cannot borrow a singleton fact",
            replace(singletonShift, "pow %one, %i", "pow %zero, %i"));
+    const auto singletonMask = replace(singletonShift, "shr %i, %count", "bitand %count, %i");
+    rows.push_back({.what = "structured commuted singleton masks retain ordinary write replay",
+                    .body = singletonMask,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto singletonMaskReload =
+        replace(singletonShiftReload, "shr %i, %count", "bitand %count, %i");
+    rows.push_back({.what = "structured singleton masks independently prove reload gaps",
+                    .body = singletonMaskReload,
+                    .arrays = "a:[zero,zero,one]",
+                    .reads = "a[2]=one; a[0]=zero; a[2]=one; a[1]=zero; a[2]=one; a[2]=one",
+                    .exit = "a -> {a}"});
+    reject("structured singleton masks retain the complete later-store census",
+           replace(singletonMaskReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %zero\n    %step ="));
+    reject("structured varying masks cannot borrow a singleton fact",
+           replace(singletonMask, "pow %one, %i", "pow %zero, %i"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),
