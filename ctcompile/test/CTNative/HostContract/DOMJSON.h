@@ -894,6 +894,20 @@ module {
                           "    scf.yield %afterPresent : !ctjs.value\n    } else {"),
                  "    scf.yield\n    }\n    scf.yield\n    }\n",
                  "    scf.yield %elseValue : !ctjs.value\n    }\n    scf.yield\n    }\n");
+    const std::string cleanupStringRead =
+        "    %cleanupReadKey = ctjs.constant #ctjs.string<\"getAttribute\">\n"
+        "    %cleanupReadName = ctjs.constant #ctjs.string<\"data-closed\">\n"
+        "    %cleanupReadMethod = ctjs.get_property %element[%cleanupReadKey]\n"
+        "    %cleanupString = ctjs.call %cleanupReadMethod(%element, %cleanupReadName)\n";
+    const auto conditionalStringPayload =
+        replaced(conditionalIgnoredPayload, "    scf.yield %afterPresent : !ctjs.value",
+                 cleanupStringRead + "    scf.yield %cleanupString : !ctjs.value");
+    const auto conditionalElseStringPayload =
+        replaced(conditionalIgnoredPayload, "    scf.yield %elseValue : !ctjs.value",
+                 cleanupStringRead + "    scf.yield %cleanupString : !ctjs.value");
+    const auto trailingStringRead =
+        replaced(conditionalNestedWrite, "    %answer = ctjs.create_object",
+                 cleanupStringRead + "    %answer = ctjs.create_object");
     const auto conditionalElseRead =
         replaced(replaced(conditionalElseWrite, "    %elseMethod =",
                           "    %elseReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">\n"
@@ -970,6 +984,7 @@ module {
                  replaced(protectedAttribute, "#ctjs.string<\"yes\">", "#ctjs.boolean<false>"),
                  true},
              std::pair{protectedRead, true},
+             std::pair{replaced(protectedRead, "hasAttribute", "getAttribute"), false},
              std::pair{trailingRead, true},
              std::pair{secondWrite, true},
              std::pair{selectorRead, true},
@@ -2463,6 +2478,15 @@ module {
              std::pair{conditionalNestedElse, true},
              std::pair{conditionalElseWrite, true},
              std::pair{conditionalIgnoredPayload, true},
+             std::pair{conditionalStringPayload, true},
+             std::pair{conditionalElseStringPayload, true},
+             std::pair{trailingStringRead, true},
+             std::pair{replaced(replaced(conditionalStringPayload,
+                                         "ctjs.get_property %element[%cleanupReadKey]",
+                                         "ctjs.get_property %text[%cleanupReadKey]"),
+                                "ctjs.call %cleanupReadMethod(%element, %cleanupReadName)",
+                                "ctjs.call %cleanupReadMethod(%text, %cleanupReadName)"),
+                       false},
              std::pair{replaced(conditionalIgnoredPayload, "scf.yield %afterPresent : !ctjs.value",
                                 "scf.yield %present : !ctjs.value"),
                        true},
@@ -2518,7 +2542,8 @@ module {
                 std::string event;
                 if (auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                     const auto key = ctjs::constantKey(method.getKey());
-                    if (key != "setAttribute" && key != "hasAttribute" && key != "matches") {
+                    if (key != "setAttribute" && key != "hasAttribute" && key != "getAttribute" &&
+                        key != "matches") {
                         return;
                     }
                     event = "lookup " + key.str();
@@ -2740,6 +2765,9 @@ module {
                                       conditionalDeeperWrite,
                                       conditionalElseWrite,
                                       conditionalIgnoredPayload,
+                                      conditionalStringPayload,
+                                      conditionalElseStringPayload,
+                                      trailingStringRead,
                                       conditionalElseSelector,
                                       conditionalElseNested}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
@@ -2763,6 +2791,10 @@ module {
     }
     for (const auto & invalid :
          {replaced(conditionalElseSelector, "[data-else-read]", "["),
+          replaced(conditionalStringPayload,
+                   "    scf.yield %elseValue : !ctjs.value\n    }\n    scf.yield",
+                   "    scf.yield %elseValue : !ctjs.value\n    }\n"
+                   "    ctjs.store_global \"observed\", %ignoredPayload\n    scf.yield"),
           replaced(conditionalElseSelector, "#ctjs.string<\"[data-else-read]\">",
                    "#ctjs.number<0>"),
           replaced(conditionalIgnoredPayload,
@@ -3385,7 +3417,6 @@ module {
           replaced(trailingRead, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %afterPresent"),
-          replaced(protectedRead, "hasAttribute", "getAttribute"),
           replaced(replaced(protectedRead,
                             "    %present = ctjs.call %readMethod(%element, %readName)\n", ""),
                    "ctjs.call %attribute(%element, %name, %present)",

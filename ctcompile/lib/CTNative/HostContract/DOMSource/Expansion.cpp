@@ -172,6 +172,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                 }
                                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
                                     read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
+                                             ctjs::constantKey(read.getKey()) == "getAttribute" ||
                                              ctjs::constantKey(read.getKey()) == "matches")) {
                                     if (!retainTrailingRead()) { return false; }
                                     trailingMethod = read;
@@ -251,6 +252,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                                         : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                     read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
+                             ctjs::constantKey(read.getKey()) == "getAttribute" ||
                              ((selectorLeaf || !secondLeaf) &&
                               ctjs::constantKey(read.getKey()) == "matches"))) {
                     if (sourceReadMethod) {
@@ -520,13 +522,18 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 call->getResult(0).replaceAllUsesWith(
                     mapping.lookup(protectedLeaf ? protectedLeaf.getResult() : result.getValue()));
+            } else if (protectedInvocation && llvm::isa<mlir::scf::YieldOp>(operation)) {
+                // The cleanup census permits only ignored guard-result forwarding.
+                // Drop that transport, retaining every payload producer for DOM reproof.
+                mlir::scf::YieldOp::create(at, operation.getLoc());
+                ++operationCount;
             } else if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
                 mlir::OperationState state(operation.getLoc(), operation.getName());
                 for (mlir::Value operand : operation.getOperands()) {
                     if (!step()) { return false; }
                     state.addOperands(mapping.lookup(operand));
                 }
-                state.addTypes(operation.getResultTypes());
+                if (!protectedInvocation) { state.addTypes(operation.getResultTypes()); }
                 state.addAttributes(operation.getAttrs());
                 for (unsigned i = 0; i < operation.getNumRegions(); ++i) { state.addRegion(); }
                 auto * cloned = at.create(state);
@@ -542,7 +549,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     mlir::OpBuilder nested(&destination, destination.begin());
                     if (!self(self, from.front(), nested)) { return false; }
                 }
-                mapping.map(operation.getResults(), cloned->getResults());
+                if (!protectedInvocation) {
+                    mapping.map(operation.getResults(), cloned->getResults());
+                }
             } else {
                 if (&operation == protectedLeaf) { at.setInsertionPoint(call); }
                 ctjs::InvokeOp trailingInvocation;

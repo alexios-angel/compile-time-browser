@@ -2576,6 +2576,12 @@ def saved_throws(args, compilers, includes, libraries):
     selector_nested_false_throw_source = selector_nested_throw_source.replace(
         "if (anchor.hasAttribute('data-closed'))", "if (anchor.matches('[data-closed=true]'))"
     ).replace("throw true;", "throw false;")
+    selector_branch_throw_read_source = selector_nested_throw_source.replace(
+        "throw true;", "throw anchor.getAttribute('data-closed');"
+    )
+    selector_branch_throw_read_false_source = selector_branch_throw_read_source.replace(
+        "if (anchor.hasAttribute('data-closed'))", "if (anchor.matches('[data-closed=true]'))"
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3693,6 +3699,37 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-close",
+            selector_branch_throw_read_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-false-guard-close",
+            selector_branch_throw_read_false_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-getter-false-guard-close",
+            selector_branch_throw_read_false_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-then-close",
+            selector_branch_throw_read_source.replace(
+                "anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); else",
+                "{ anchor.setAttribute('data-after-second', anchor.hasAttribute('data-closed')); throw anchor.getAttribute('data-closed'); } else",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-close",
             selector_nested_throw_source,
             "js_boolean_t",
@@ -3834,7 +3871,10 @@ def saved_throws(args, compilers, includes, libraries):
     executions = refused = observations = 0
     for label, text, kind, payload, closed in cases:
         nested_branch_throw = "-branch-throw-" in label
-        takes_branch_throw = nested_branch_throw and not label.endswith("-throw-close")
+        branch_throw_read = "-branch-throw-read-" in label
+        takes_branch_throw = nested_branch_throw and not label.endswith(
+            ("-throw-close", "-throw-read-close")
+        )
         mixed = label == "conditional-boolean-throw-or-return"
         second_close = label.startswith("conditional-boolean-second-postwrite-")
         third_close = "-selector-third-" in label
@@ -4087,6 +4127,17 @@ var savedThrow, savedExhausted;
   savedExhausted = '' + customElements(anchor) + ':' + writes;
 })();
 """
+        if branch_throw_read:
+            script = script.replace(
+                "    hasAttribute(name) { return name in saved; },",
+                """
+    getAttribute(name) {
+      const value = name in saved ? saved[name] : null;
+      writes += 'getAttribute=' + name + ':' + typeof value + ':' + value + ';';
+      return value;
+    },
+    hasAttribute(name) { return name in saved; },""",
+            )
         if selecting:
             script = script.replace(
                 "    hasAttribute(name) { return name in saved; },",
@@ -4402,8 +4453,11 @@ var savedThrow, savedExhausted;
             terminal_write_trace = "data-after-second=" + (
                 "false;" if nested_guard_false else "true;"
             )
+            read_trace = "getAttribute=data-closed:string:false;" if branch_throw_read else ""
             expected["savedPrior"] = (
-                expected["savedPrior"].split(terminal_write_trace, 1)[0] + terminal_write_trace
+                expected["savedPrior"].split(terminal_write_trace, 1)[0]
+                + terminal_write_trace
+                + read_trace
             )
         if before_first_write_read and terminal_sequence[0] == "data-closed":
             expected["savedPrior"] = (
@@ -4557,6 +4611,8 @@ var savedThrow, savedExhausted;
                             'assert(target.read().has_attribute(id, after_terminal) == !repetition); if (!repetition) { assert(target.read().attribute_value(id, after_terminal) == "true"); }',
                         )
                     )
+                if branch_throw_read and "ctnative::get_attribute(" not in cpp:
+                    raise RuntimeError(f"{name}: ignored close throw lost its String read")
                 selected_includes, selected_libraries = includes, libraries
                 if selecting:
                     selected_checks = (
@@ -5129,6 +5185,10 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-false-guard-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-getter-false-guard-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-then-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-false-guard-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-getter-false-guard-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-guarded-nested-third-write-else-value-branch-throw-read-then-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-reused-second-value-throw-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
@@ -7245,10 +7305,59 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-selector-branch-throw-read",
-            selector_nested_throw_source.replace(
-                "throw true;",
+            "normal-selector-branch-throw-read-close",
+            selector_branch_throw_read_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-branch-throw-read-close",
+            selector_branch_throw_read_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-branch-throw-read-write-name",
+            selector_branch_throw_read_source.replace(
+                "anchor.setAttribute('data-after-second', false);",
+                "anchor.setAttribute('bad name', false);",
+            ),
+        ),
+        (
+            "bad-selector-branch-throw-read-receiver",
+            selector_branch_throw_read_source.replace(
+                "anchor.getAttribute('data-closed')",
+                "(0).getAttribute('data-closed')",
+            ),
+        ),
+        (
+            "invalid-selector-branch-throw-read-arity",
+            selector_branch_throw_read_source.replace(
+                "anchor.getAttribute('data-closed')",
+                "anchor.getAttribute('data-closed', false)",
+            ),
+        ),
+        (
+            "dynamic-selector-branch-throw-read-name",
+            selector_branch_throw_read_source.replace(
+                "anchor.getAttribute('data-closed')",
+                "anchor.getAttribute(anchor)",
+            ),
+        ),
+        (
+            "unsupported-selector-branch-throw-read-observer",
+            selector_branch_throw_read_source.replace(
                 "throw anchor.getAttribute('data-closed');",
+                "throw external(anchor.getAttribute('data-closed'));",
+            ),
+        ),
+        (
+            "unsupported-selector-branch-throw-read-method",
+            selector_branch_throw_read_source.replace(
+                "throw anchor.getAttribute('data-closed');",
+                "throw anchor.getAttribute;",
             ),
         ),
         (
