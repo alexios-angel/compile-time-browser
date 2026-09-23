@@ -705,6 +705,24 @@ module {
     const auto readThroughFinalSelector =
         replaced(selectorInsideFinalArgument, "%lateName, %terminalPresent)",
                  "%lateName, %afterTerminalPresent)");
+    const auto firstWriteSelector =
+        replaced(replaced(finalRead, "%readKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                          "%readKey = ctjs.constant #ctjs.string<\"matches\">"),
+                 "data-visited", "[data-visited]");
+    const auto secondWriteSelector =
+        replaced(replaced(finalRead, "%afterReadKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                          "%afterReadKey = ctjs.constant #ctjs.string<\"matches\">"),
+                 "%afterReadName = ctjs.constant #ctjs.string<\"data-closed\">",
+                 "%afterReadName = ctjs.constant #ctjs.string<\"[data-closed]\">");
+    const auto firstSelectorWithSavedRead = replaced(
+        replaced(readAfterFirstFeeding, "%readKey = ctjs.constant #ctjs.string<\"hasAttribute\">",
+                 "%readKey = ctjs.constant #ctjs.string<\"matches\">"),
+        "data-visited", "[data-visited]");
+    const auto ignoredFirstSelector = replaced(
+        replaced(firstSelectorWithSavedRead, "ctjs.call %attribute(%element, %name, %present)",
+                 "ctjs.call %attribute(%element, %name, %afterTerminalPresent)"),
+        "ctjs.call %lateMethod(%element, %lateName, %afterTerminalPresent)",
+        "ctjs.call %lateMethod(%element, %lateName, %lateValue)");
     const auto singleTerminalValue =
         replaced(terminalMatchRead, "%answer = ctjs.create_object",
                  "%lateMethod = ctjs.get_property %element[%finalKey]\n"
@@ -865,6 +883,27 @@ module {
              std::pair{alternateSelectorThroughFinalArgument, true},
              std::pair{selectorInsideFinalArgument, true},
              std::pair{readThroughFinalSelector, true},
+             std::pair{firstWriteSelector, true},
+             std::pair{secondWriteSelector, true},
+             std::pair{firstSelectorWithSavedRead, true},
+             std::pair{replaced(firstWriteSelector, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(replaced(firstWriteSelector, "ctjs.get_property %element[%readKey]",
+                                         "ctjs.get_property %text[%readKey]"),
+                                "ctjs.call %readMethod(%element, %readName)",
+                                "ctjs.call %readMethod(%text, %readName)"),
+                       false},
+             std::pair{
+                 replaced(replaced(secondWriteSelector, "ctjs.get_property %element[%afterReadKey]",
+                                   "ctjs.get_property %text[%afterReadKey]"),
+                          "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                          "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+                 false},
+             std::pair{replaced(firstWriteSelector, "data-final", "bad name"), false},
+             std::pair{replaced(firstSelectorWithSavedRead, "#ctjs.string<\"data-after-terminal\">",
+                                "#ctjs.number<0>"),
+                       false},
              std::pair{replaced(selectorInsideFinalArgument, "ctjs.call %method(%holder, %element)",
                                 "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
                        true},
@@ -1227,6 +1266,11 @@ module {
         input->walk([&](ctjs::CallOp) { ++calls; });
         input->walk([&](ctjs::CreateObjectOp) { ++allocations; });
         const bool reads = valid.find("%readKey") != std::string::npos;
+        const bool firstReadMatches =
+            valid.find("%readKey = ctjs.constant #ctjs.string<\"matches\">") != std::string::npos;
+        const bool secondReadMatches =
+            valid.find("%afterReadKey = ctjs.constant #ctjs.string<\"matches\">") !=
+            std::string::npos;
         const bool trailingReads = valid.find("%afterReadKey") != std::string::npos;
         const bool secondWrites = valid.find("%secondKey") != std::string::npos;
         const bool selectorReads = valid.find("%selectorKey") != std::string::npos;
@@ -1286,6 +1330,29 @@ module {
         const unsigned suffixReads =
             static_cast<unsigned>(valid.find("%fourthReadKey") != std::string::npos) +
             static_cast<unsigned>(valid.find("%fifthReadKey") != std::string::npos);
+        if (firstReadMatches || secondReadMatches) {
+            unsigned writes = 0;
+            input->walk([&](ctjs::InvokeOp invoke) {
+                auto write = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
+                auto method = write.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (ctjs::constantKey(method.getKey()) != "setAttribute") { return; }
+                ++writes;
+                if ((writes != 1 || !firstReadMatches) && (writes != 2 || !secondReadMatches)) {
+                    return;
+                }
+                auto read = write.getArgs()[1].getDefiningOp<ctjs::CallOp>();
+                auto readMethod = read ? read.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                       : ctjs::GetPropertyOp{};
+                check(readMethod && ctjs::constantKey(readMethod.getKey()) == "matches" &&
+                          read.getResult().hasOneUse() && read->getBlock() == invoke->getBlock() &&
+                          method->isBeforeInBlock(readMethod) &&
+                          readMethod->isBeforeInBlock(read) && read->isBeforeInBlock(invoke) &&
+                          llvm::isa<mlir::scf::IfOp>(invoke->getParentOp()),
+                      "initial write consumes exactly its ordered argument selector at the "
+                      "source guard");
+            });
+            check(writes >= 2, "argument selectors retain both initial protected writes");
+        }
         if (suffixWrites) {
             input->walk([&](ctjs::InvokeOp invoke) {
                 auto call = llvm::cast<ctjs::CallOp>(invoke.getBody().front().front());
@@ -1386,6 +1453,8 @@ module {
                     saved = call;
                 }
                 if (ctjs::constantKey(method.getKey()) != "matches" ||
+                    (firstReadMatches &&
+                     ctjs::constantKey(call.getArgs()[0]) == "[data-visited]") ||
                     (!beforeFirstSelectorRead &&
                      ctjs::constantKey(call.getArgs()[0]) == "[data-closed]")) {
                     return;
@@ -1657,7 +1726,7 @@ module {
                           proof.call(call)->kind ==
                               (selector ? HostDOMMethod::matches : HostDOMMethod::hasAttribute) &&
                           (!selector || selectedWrites || finalReadMatches || savedSelectorValue ||
-                           lateSelectorFeedsWrite),
+                           lateSelectorFeedsWrite || firstReadMatches || secondReadMatches),
                       "the moved read has exact typed no-source-throw evidence");
             });
             check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
@@ -1708,7 +1777,10 @@ module {
                                       selectorThroughFinalArgument,
                                       alternateSelectorThroughFinalArgument,
                                       selectorInsideFinalArgument,
-                                      readThroughFinalSelector}) {
+                                      readThroughFinalSelector,
+                                      firstWriteSelector,
+                                      secondWriteSelector,
+                                      firstSelectorWithSavedRead}) {
         auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(budgetSource, &context);
         check(static_cast<bool>(completeRead), "protected read budget fixture parses");
         if (completeRead) {
@@ -1908,6 +1980,35 @@ module {
                    "ctjs.call %lateMethod(%element, %lateName, %terminalPresent)",
                    "ctjs.call %lateMethod(%element, %terminalPresent, %terminalPresent)"),
           replaced(selectorInsideFinalArgument, "^bb0(%error: !ctjs.value):",
+                   "^bb0(%error: !ctjs.value):\n"
+                   "        ctjs.store_global \"effect\", %error"),
+          replaced(firstWriteSelector, "[data-visited]", "["),
+          replaced(firstWriteSelector, "#ctjs.string<\"[data-visited]\">", "#ctjs.number<0>"),
+          replaced(ignoredFirstSelector, "[data-visited]", "["),
+          replaced(ignoredFirstSelector, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %element)"),
+          replaced(firstWriteSelector, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %element)"),
+          replaced(secondWriteSelector,
+                   "%afterReadName = ctjs.constant #ctjs.string<\"[data-closed]\">",
+                   "%afterReadName = ctjs.constant #ctjs.string<\"[\">"),
+          replaced(firstWriteSelector, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %present\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(firstSelectorWithSavedRead, "%answer = ctjs.create_object",
+                   "%answer = ctjs.create_object\n"
+                   "    ctjs.set_property %answer[%name], %present"),
+          replaced(secondWriteSelector, "%answer = ctjs.create_object",
+                   "%again = ctjs.call %afterReadMethod(%element, %afterReadName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(firstWriteSelector,
+                   "ctjs.call %finalMethod(%element, %finalName, %finalPresent)",
+                   "ctjs.call %finalMethod(%element, %finalName, %present)"),
+          replaced(firstWriteSelector, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %readName, %name)"),
+          replaced(secondWriteSelector, "ctjs.call %afterReadMethod(%element, %afterReadName)",
+                   "ctjs.call %afterReadMethod(%text, %afterReadName)"),
+          replaced(firstWriteSelector, "^bb0(%error: !ctjs.value):",
                    "^bb0(%error: !ctjs.value):\n"
                    "        ctjs.store_global \"effect\", %error"),
           replaced(readBeforeFirstSelector, "%answer = ctjs.create_object",

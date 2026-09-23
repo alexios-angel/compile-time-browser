@@ -94,7 +94,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                                         : readCall;
                 if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                     read && (ctjs::constantKey(read.getKey()) == "hasAttribute" ||
-                             (selectorLeaf && ctjs::constantKey(read.getKey()) == "matches"))) {
+                             ((selectorLeaf || (!secondLeaf && writeMethod)) &&
+                              ctjs::constantKey(read.getKey()) == "matches"))) {
                     if (sourceReadMethod) {
                         if (suffixRead || !sourceReadCall) { return false; }
                         // Keep completed argument reads in the complete use
@@ -115,6 +116,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     read.getArgs().size() == 1) {
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
+                    // Initial argument reads move outside the helper's suppression.
+                    // Validate every selector there, including saved or ignored reads.
+                    if (selector && !suffixRead) { consumedSelectors.push_back(read); }
                     if (suffixRead && (selector || !finalMethod)) {
                         // Retain standalone reads and argument selectors in source order.
                         // Unused selectors need exact suppression; all reads retain

@@ -2529,6 +2529,10 @@ def saved_throws(args, compilers, includes, libraries):
         "anchor.setAttribute('data-after-terminal', (anchor.hasAttribute('data-closed'), present));",
         "anchor.setAttribute('data-after-terminal', (anchor.matches('[data-closed=false]'), present));",
     )
+    selector_inside_first_argument_source = selector_inside_final_argument_source.replace(
+        "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+        "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+    )
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -3380,6 +3384,30 @@ def saved_throws(args, compilers, includes, libraries):
             "false",
         ),
         (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-close",
+            selector_inside_first_argument_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-getter-close",
+            selector_inside_first_argument_source.replace("return() {", "get return() {"),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
+            "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-order-close",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', false); const present = anchor.matches('[data-closed=false]');",
+                "const present = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', false);",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
+        ),
+        (
             "number-close-observes-state",
             refusals()["body-throw-number-snapshot"].replace(
                 "anchor.setAttribute('data-closed', 'yes');",
@@ -3446,7 +3474,11 @@ def saved_throws(args, compilers, includes, libraries):
         terminal_match_read = "-terminal-match-read-" in label
         terminal_write = "-terminal-match-read-sequence-write-" in label
         terminal_write_value = "-terminal-match-read-sequence-write-value-" in label
-        selector_inside_final_argument = "-write-selector-inside-final-argument-value-" in label
+        selector_inside_first_argument = "-write-selector-inside-first-argument-value-" in label
+        selector_inside_final_argument = (
+            selector_inside_first_argument
+            or "-write-selector-inside-final-argument-value-" in label
+        )
         selector_final_argument_read = (
             selector_inside_final_argument or "-write-selector-final-argument-value-" in label
         )
@@ -3508,6 +3540,10 @@ def saved_throws(args, compilers, includes, libraries):
         close_writes = (
             "data-closed=true;" if second_close else ""
         ) + f"data-closed={before_selector};"
+        if selector_inside_first_argument:
+            close_writes = "matches=[data-closed=false]:false;" + close_writes.replace(
+                "data-closed=true;", "data-closed=false;", 1
+            )
         if before_first_selector_read:
             read_name = terminal_sequence[0]
             read_value = "false" if read_name == "data-unvisited" else "true"
@@ -3721,7 +3757,10 @@ var savedThrow, savedExhausted;
                 f"selectorReadPending = ++closeMatches % 2 ? {read_count} : {int(terminal_match_read)};",
             )
         if terminal_sequence:
-            selector_reads = [read_count + int(before_selector_read), 0]
+            selector_reads = ([0] if selector_inside_first_argument else []) + [
+                read_count + int(before_selector_read),
+                0,
+            ]
             for terminal_name in terminal_sequence[
                 int(
                     before_selector_read
@@ -3944,6 +3983,25 @@ var savedThrow, savedExhausted;
                         close_body = cpp[
                             cpp.index(selector_call) : cpp.index("throw ctnative::js_exception{")
                         ]
+                        if selector_inside_first_argument:
+                            first_selector = close_body[
+                                : close_body.index(selector_call, len(selector_call))
+                            ]
+                            first_operations = [
+                                (
+                                    "matches"
+                                    if selector_call in line
+                                    else "read" if "ctnative::has_attribute(" in line else "write"
+                                )
+                                for line in first_selector.splitlines()
+                                if selector_call in line
+                                or "ctnative::has_attribute(" in line
+                                or "ctnative::set_attribute(" in line
+                            ]
+                            if first_operations != ["matches", "write", "read", "write"]:
+                                raise RuntimeError(
+                                    f"{name}: first selector lost its feeding write order"
+                                )
                         if before_first_selector_read:
                             before_first_selector = cpp[: cpp.index(selector_call)]
                             if before_first_selector.rfind(
@@ -4011,7 +4069,10 @@ var savedThrow, savedExhausted;
                             close_body[:final_write] if terminal_write else close_body
                         )
                         if close_body.count(selector_call) != (
-                            2 + terminal_sequence.count(None) + selector_inside_final_argument
+                            2
+                            + terminal_sequence.count(None)
+                            + selector_inside_final_argument
+                            + selector_inside_first_argument
                         ) or (
                             not early_terminal_selector
                             and close_body.rfind(selector_call)
@@ -4028,7 +4089,9 @@ var savedThrow, savedExhausted;
                                 f"{name}: final read moved before its close selector"
                             )
                         if terminal_sequence:
-                            tail = close_body.split(selector_call, 2)[2]
+                            tail = close_body.split(
+                                selector_call, 2 + selector_inside_first_argument
+                            )[2 + selector_inside_first_argument]
                             operations = [
                                 (
                                     "read"
@@ -4277,6 +4340,9 @@ var savedThrow, savedExhausted;
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-final-argument-value-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-final-argument-value-getter-close",
                         "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-final-argument-value-order-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-getter-close",
+                        "conditional-boolean-second-postwrite-selector-third-read-fourth-terminal-match-read-sequence-write-selector-inside-first-argument-value-order-close",
                         "boolean-snapshot-primitive-close",
                         "boolean-snapshot-throwing-close",
                         "boolean-snapshot-getter-close",
@@ -5692,10 +5758,73 @@ var savedThrow, savedExhausted;
             ),
         ),
         (
-            "unsupported-selector-inside-first-write-argument",
-            selector_inside_final_argument_source.replace(
-                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+            "normal-selector-inside-first-argument-close",
+            selector_inside_first_argument_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "break;",
+            ),
+        ),
+        (
+            "return-selector-inside-first-argument-close",
+            selector_inside_first_argument_source.replace(
+                "throw (node.setAttribute('data-visited', 'yes'), anchor.hasAttribute('data-closed'));",
+                "return anchor.hasAttribute('data-closed');",
+            ),
+        ),
+        (
+            "invalid-selector-inside-first-argument-selector",
+            selector_inside_first_argument_source.replace(
                 "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "anchor.setAttribute('data-closed', anchor.matches('['));",
+            ),
+        ),
+        (
+            "dynamic-selector-inside-first-argument-selector",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "anchor.setAttribute('data-closed', anchor.matches(anchor));",
+            ),
+        ),
+        (
+            "bad-selector-inside-first-argument-receiver",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "anchor.setAttribute('data-closed', (0).matches('[data-closed=false]'));",
+            ),
+        ),
+        (
+            "invalid-selector-inside-first-argument-arity",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]', false));",
+            ),
+        ),
+        (
+            "unsupported-selector-inside-first-argument-reuse",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "let first; anchor.setAttribute('data-closed', (first = anchor.matches('[data-closed=false]'))); anchor.setAttribute('data-closed', first);",
+            ),
+        ),
+        (
+            "unsupported-selector-inside-first-argument-extra-use",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "let first; anchor.setAttribute('data-closed', (first = anchor.matches('[data-closed=false]'))); external(first);",
+            ),
+        ),
+        (
+            "invalid-selector-inside-first-argument-write-name",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "anchor.setAttribute('bad name', anchor.matches('[data-closed=false]'));",
+            ),
+        ),
+        (
+            "unsupported-selector-before-first-write",
+            selector_inside_first_argument_source.replace(
+                "anchor.setAttribute('data-closed', anchor.matches('[data-closed=false]'));",
+                "const first = anchor.matches('[data-closed=false]'); anchor.setAttribute('data-closed', first);",
             ),
         ),
         (
