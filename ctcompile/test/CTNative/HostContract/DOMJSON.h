@@ -528,15 +528,45 @@ module {
         "ctjs.func private @same$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> "
         "!ctjs.value attributes {upvalue_count = 1 : i32} {\n"
         "    %element = ctjs.load_upvalue %callee[0]");
-    for (const auto & valid : {protectedAttribute, capturedAttribute,
-                               replaced(protectedAttribute, "ctjs.call %method(%holder, %element)",
-                                        "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
-                               replaced(protectedAttribute, "data-closed", "bad name")}) {
+    const auto readThenWrite = [&](const std::string & source) {
+        return replaced(source, "%effect = ctjs.call %attribute(%element, %name, %text)", R"MLIR(
+    %readKey = ctjs.constant #ctjs.string<"hasAttribute">
+    %readName = ctjs.constant #ctjs.string<"data-visited">
+    %readMethod = ctjs.get_property %element[%readKey]
+    %present = ctjs.call %readMethod(%element, %readName)
+    %effect = ctjs.call %attribute(%element, %name, %present))MLIR");
+    };
+    const auto protectedRead = readThenWrite(protectedAttribute);
+    for (const auto & [valid, typed] : {
+             std::pair{protectedAttribute, true},
+             std::pair{capturedAttribute, true},
+             std::pair{replaced(protectedAttribute, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{
+                 replaced(protectedAttribute, "#ctjs.string<\"yes\">", "#ctjs.boolean<false>"),
+                 true},
+             std::pair{protectedRead, true},
+             std::pair{readThenWrite(capturedAttribute), true},
+             std::pair{replaced(protectedRead, "ctjs.call %method(%holder, %element)",
+                                "ctjs.call_direct @same$1(%holder, %u, %method, %element)"),
+                       true},
+             std::pair{replaced(protectedRead, "data-visited", "bad name"), true},
+             std::pair{replaced(protectedRead, "#ctjs.string<\"data-visited\">", "#ctjs.number<1>"),
+                       false},
+             std::pair{replaced(replaced(protectedRead, "ctjs.get_property %element[%readKey]",
+                                         "ctjs.get_property %text[%readKey]"),
+                                "ctjs.call %readMethod(%element, %readName)",
+                                "ctjs.call %readMethod(%text, %readName)"),
+                       false},
+             std::pair{replaced(protectedRead, "data-closed", "bad name"), false},
+             std::pair{replaced(protectedAttribute, "data-closed", "bad name"), false},
+         }) {
         auto input = mlir::parseSourceString<mlir::ModuleOp>(valid, &context);
         check(static_cast<bool>(input), "protected attribute helper fixture parses");
         if (!input) { continue; }
         auto error = expandDOMHelpers(*input, "entry$0", 100000);
-        check(!error, "one effectful attribute call expands with its suppression intact");
+        check(!error, "attribute preparation expands with write suppression intact");
         if (error) {
             llvm::consumeError(std::move(error));
             continue;
@@ -555,7 +585,24 @@ module {
         });
         input->walk([&](ctjs::CallOp) { ++calls; });
         input->walk([&](ctjs::CreateObjectOp) { ++allocations; });
-        check(invocations == 1 && calls == 1 && allocations == 0 &&
+        const bool reads = valid.find("%readKey") != std::string::npos;
+        if (reads) {
+            input->walk([&](ctjs::CallOp call) {
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (!method || ctjs::constantKey(method.getKey()) != "hasAttribute") { return; }
+                auto invoke = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getNextNode());
+                auto write = invoke ? llvm::dyn_cast<ctjs::CallOp>(invoke.getBody().front().front())
+                                    : ctjs::CallOp{};
+                auto writeMethod = write ? write.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                         : ctjs::GetPropertyOp{};
+                check(write && write.getArgs()[1] == call.getResult() && writeMethod &&
+                          writeMethod->getBlock() == method->getBlock() &&
+                          writeMethod->isBeforeInBlock(method) &&
+                          llvm::isa<mlir::scf::IfOp>(call->getParentOp()),
+                      "member lookup, read and protected write retain source order and guard");
+            });
+        }
+        check(invocations == 1 && calls == (reads ? 2u : 1u) && allocations == 0 &&
                   mlir::succeeded(mlir::verify(*input)),
               "protected expansion retains call-plus-exit and only elides unused objects");
         auto bound = contract;
@@ -564,7 +611,6 @@ module {
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             bound.provider = provider;
-            const bool typed = valid.find("bad name") == std::string::npos;
             DOMEntryAnalysis proof(*input, bound);
             check(proof.proved() == typed,
                   "protected attribute needs complete DOM proof and a valid literal name");
@@ -582,6 +628,11 @@ module {
                           proof.call(call)->kind == HostDOMMethod::setAttribute,
                       "typed suppression retains the exact attribute call evidence");
             });
+            input->walk([&](ctjs::CallOp call) {
+                if (llvm::isa<ctjs::InvokeOp>(call->getParentOp())) { return; }
+                check(proof.call(call) && proof.call(call)->kind == HostDOMMethod::hasAttribute,
+                      "the moved read has exact typed no-source-throw evidence");
+            });
             check(DOMEntryAnalysis(*input, bound, proof.steps()).proved(),
                   "protected attribute reproduces its exact proof budget");
             for (unsigned budget : {0u, proof.steps() - 1}) {
@@ -591,8 +642,48 @@ module {
             }
         }
     }
+    auto completeRead = mlir::parseSourceString<mlir::ModuleOp>(protectedRead, &context);
+    check(static_cast<bool>(completeRead), "protected read budget fixture parses");
+    if (completeRead) {
+        unsigned steps = 0;
+        auto error = expandDOMHelpers(*completeRead, "entry$0", 100000, &steps);
+        check(!error && steps > 0, "protected read records a finite expansion budget");
+        if (error) {
+            llvm::consumeError(std::move(error));
+        } else {
+            for (unsigned budget : {0u, steps - 1, steps}) {
+                auto input = mlir::parseSourceString<mlir::ModuleOp>(protectedRead, &context);
+                auto limited = expandDOMHelpers(*input, "entry$0", budget);
+                check(static_cast<bool>(limited) == (budget < steps),
+                      "protected read requires its complete expansion budget");
+                if (limited) { llvm::consumeError(std::move(limited)); }
+            }
+        }
+    }
     for (const auto & invalid :
-         {replaced(protectedAttribute, "%answer = ctjs.create_object",
+         {replaced(protectedRead, "hasAttribute", "getAttribute"),
+          replaced(replaced(protectedRead,
+                            "    %present = ctjs.call %readMethod(%element, %readName)\n", ""),
+                   "ctjs.call %attribute(%element, %name, %present)",
+                   "ctjs.call %attribute(%element, %name, %text)"),
+          replaced(protectedRead, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%text, %readName)"),
+          replaced(protectedRead, "ctjs.call %readMethod(%element, %readName)",
+                   "ctjs.call %readMethod(%element, %readName, %name)"),
+          replaced(protectedRead, "%effect = ctjs.call %attribute(%element, %name, %present)",
+                   "%secondRead = ctjs.call %readMethod(%element, %readName)\n"
+                   "    %effect = ctjs.call %attribute(%element, %name, %present)"),
+          replaced(protectedRead, "ctjs.call %attribute(%element, %name, %present)",
+                   "ctjs.call %attribute(%element, %present, %present)"),
+          replaced(protectedRead, "ctjs.call %attribute(%element, %name, %present)",
+                   "ctjs.call %attribute(%element, %name, %text)"),
+          replaced(protectedRead, "%answer = ctjs.create_object",
+                   "%late = ctjs.call %readMethod(%element, %readName)\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(protectedRead, "%answer = ctjs.create_object",
+                   "ctjs.store_global \"leaked\", %present\n"
+                   "    %answer = ctjs.create_object"),
+          replaced(protectedAttribute, "%answer = ctjs.create_object",
                    "%answer = ctjs.create_object\n"
                    "    ctjs.set_property %answer[%name], %text"),
           replaced(protectedAttribute, "%answer = ctjs.create_object",

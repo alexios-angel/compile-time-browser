@@ -31,13 +31,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             !emptyContinuation(unwind)) {
             return refuse("DOM protected helper requires exact unused-result suppression");
         }
-        // Keep the one effectful call protected. Moving its method lookup
-        // requires the caller's complete typed DOM reproof: only the initial
-        // Element method can justify that lookup, never an arbitrary getter.
-        // ponytail: one straight-line attribute call; larger protected bodies
-        // need a representation that preserves all their exceptional edges.
+        // Keep the write protected. Moving preparation and an optional
+        // hasAttribute read requires complete typed DOM reproof: the initial
+        // Element methods and primitive arguments exclude source exceptions
+        // and reentry. Clone them in order, under the original guard.
+        // ponytail: one read feeding one write; larger protected bodies need
+        // a representation that preserves all their exceptional edges.
         const auto attributeLeaf = [&] {
-            ctjs::GetPropertyOp method;
+            ctjs::GetPropertyOp method, readMethod;
+            ctjs::CallOp readCall;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             for (mlir::Operation & operation : target.getBody().front()) {
                 if (!step()) { return false; }
@@ -50,6 +52,19 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     read && !method && !protectedLeaf &&
                     ctjs::constantKey(read.getKey()) == "setAttribute") {
                     method = read;
+                    continue;
+                }
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                    read && !readMethod && !protectedLeaf &&
+                    ctjs::constantKey(read.getKey()) == "hasAttribute") {
+                    readMethod = read;
+                    continue;
+                }
+                if (auto read = llvm::dyn_cast<ctjs::CallOp>(operation);
+                    read && readMethod && !readCall && !protectedLeaf &&
+                    read.getCallee() == readMethod.getResult() &&
+                    read.getReceiver() == readMethod.getObject() && read.getArgs().size() == 1) {
+                    readCall = read;
                     continue;
                 }
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
@@ -66,9 +81,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 return false;
             }
-            if (!protectedLeaf || !discardedResult) { return false; }
-            for (mlir::Value value :
-                 {method.getResult(), protectedLeaf.getResult(), discardedResult.getResult()}) {
+            if (!protectedLeaf || !discardedResult ||
+                (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult()))) {
+                return false;
+            }
+            for (mlir::Value value : llvm::SmallVector<mlir::Value>{
+                     method.getResult(), protectedLeaf.getResult(), discardedResult.getResult(),
+                     readMethod ? readMethod.getResult() : mlir::Value{},
+                     readCall ? readCall.getResult() : mlir::Value{}}) {
+                if (!value) { continue; }
                 for (mlir::OpOperand & use : value.getUses()) {
                     if (!step()) { return false; }
                     if (auto root = llvm::dyn_cast<ctjs::RootOp>(use.getOwner());
@@ -77,6 +98,10 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     }
                     if ((value == method.getResult() && use.getOwner() == protectedLeaf &&
                          use.getOperandNumber() == 0) ||
+                        (readMethod && value == readMethod.getResult() &&
+                         use.getOwner() == readCall && use.getOperandNumber() == 0) ||
+                        (readCall && value == readCall.getResult() &&
+                         use.getOwner() == protectedLeaf && use.getOperandNumber() == 3) ||
                         (value == discardedResult.getResult() && use.getOwner() == result)) {
                         continue;
                     }

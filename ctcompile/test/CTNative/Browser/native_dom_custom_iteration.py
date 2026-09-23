@@ -2405,29 +2405,56 @@ def protected_attribute(args, compilers, includes, libraries):
 def saved_throws(args, compilers, includes, libraries):
     # Retain the historical source inventory; execute every promoted body here.
     original = refusals()["body-throw"]
+    conditional_source = refusals()["body-throw-branch-boolean-snapshot"]
     cases = (
-        ("number", original, "js_num", "error.value.value() == 1.0"),
-        ("boolean", original.replace("throw 1;", "throw false;"), "js_boolean_t", "!error.value"),
+        ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
+        (
+            "boolean",
+            original.replace("throw 1;", "throw false;"),
+            "js_boolean_t",
+            "!error.value",
+            "yes",
+        ),
         (
             "boolean-snapshot",
             refusals()["body-throw-boolean-snapshot"],
             "js_boolean_t",
             "!error.value",
+            "yes",
         ),
         (
             "conditional-boolean-snapshot",
-            refusals()["body-throw-branch-boolean-snapshot"].replace(
+            conditional_source.replace(
                 "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
                 "anchor.setAttribute('data-closed', 'yes');",
             ),
             "js_boolean_t",
             "static_cast<bool>(error.value) == (repetition != 0)",
+            "yes",
+        ),
+        (
+            "conditional-boolean-read",
+            conditional_source,
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "true",
+        ),
+        (
+            "conditional-boolean-missing-read",
+            conditional_source.replace(
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-visited'));",
+                "anchor.setAttribute('data-closed', anchor.hasAttribute('data-unvisited'));",
+            ),
+            "js_boolean_t",
+            "static_cast<bool>(error.value) == (repetition != 0)",
+            "false",
         ),
         (
             "string",
             original.replace("throw 1;", "throw 'saved';"),
             "js_string",
             'error.value.value() == "saved"',
+            "yes",
         ),
     )
     checks = r"""
@@ -2455,7 +2482,7 @@ def saved_throws(args, compilers, includes, libraries):
                        writes[1].name == yielded && writes[@CLOSED_INDEX@].name == closed);
                 for (const auto & write : writes) { assert(write.node == id && !write.text); }
                 assert(target.read().attribute_value(id, next) == "false");
-                assert(target.read().attribute_value(id, closed) == "yes");
+                assert(target.read().attribute_value(id, closed) == "@CLOSED@");
                 assert(target.read().has_attribute(id, visited) == @VISITED@);
                 if (@VISITED@) {
                     assert(writes[2].name == visited);
@@ -2476,8 +2503,8 @@ def saved_throws(args, compilers, includes, libraries):
         exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
 """
     executions = refused = observations = 0
-    for label, text, kind, payload in cases:
-        conditional = label == "conditional-boolean-snapshot"
+    for label, text, kind, payload, closed in cases:
+        conditional = label.startswith("conditional-")
         snapshot = conditional or label == "boolean-snapshot"
         js_kind = "boolean" if conditional else label.partition("-")[0]
         script = text + """
@@ -2532,7 +2559,7 @@ var savedThrow, savedExhausted;
             + {"number": "1", "boolean": "false", "string": "saved"}[js_kind]
             + ":data-next=false;data-yielded=yes;"
             + ("data-visited=yes;" if snapshot else "")
-            + "data-closed=yes;",
+            + f"data-closed={closed};",
             "savedExhausted": ("true" if snapshot else "false")
             + ":data-next=true;data-yielded=yes;",
         }
@@ -2541,7 +2568,7 @@ var savedThrow, savedExhausted;
                 savedNormal="true:data-next=false;data-yielded=yes;data-visited=yes;"
                 "data-next=true;data-yielded=yes;",
                 savedPrior="boolean:true:data-next=false;data-yielded=yes;data-visited=yes;"
-                "data-closed=yes;",
+                f"data-closed={closed};",
             )
         node = args.work / f"saved-throw-{label}-node.js"
         node.write_text(script + "".join(f"console.log({key});\n" for key in expected))
@@ -2600,6 +2627,7 @@ var savedThrow, savedExhausted;
                     )
                     .replace("@TYPE@", kind)
                     .replace("@PAYLOAD@", payload)
+                    .replace("@CLOSED@", closed)
                     .replace("@VISITED@", "true" if snapshot else "false")
                     .replace("@WRITE_COUNT@", "4" if snapshot else "3")
                     .replace("@CLOSED_INDEX@", "3" if snapshot else "2"),
@@ -2608,7 +2636,7 @@ var savedThrow, savedExhausted;
                     libraries,
                 )
                 executions += 2 * len(compilers)
-                if label == "number":
+                if label in ("number", "conditional-boolean-read"):
                     for suffix, bad, budget in (
                         ("budget", manifest, 0),
                         ("missing-element", dict(manifest, element_parameters=[]), None),
@@ -2781,7 +2809,11 @@ def main():
             dom.lower(args, ir, contract, f"compile-only-{name}-{optimize}", optimize=optimize)
             admitted += 1
     for name, text in refusals().items():
-        if name in ("body-throw", "body-throw-boolean-snapshot"):
+        if name in (
+            "body-throw",
+            "body-throw-boolean-snapshot",
+            "body-throw-branch-boolean-snapshot",
+        ):
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)

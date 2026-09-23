@@ -374,7 +374,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 !exit.getState().empty() || !hasKind(call.getCallee(), Kind::attribute) ||
                 !hasKind(call.getReceiver(), Kind::element) || call.getArgs().size() != 2 ||
                 !hasKind(call.getArgs()[0], Kind::string) ||
-                !hasKind(call.getArgs()[1], Kind::string)) {
+                (!hasKind(call.getArgs()[1], Kind::string) &&
+                 !hasKind(call.getArgs()[1], Kind::boolean))) {
                 refusal = "DOM suppressed attribute requires one typed unused setAttribute call";
                 return false;
             }
