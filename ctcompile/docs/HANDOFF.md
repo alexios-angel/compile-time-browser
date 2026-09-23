@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mutable cleanup completion projection, 2026-09-23 UTC
+
+Resumed clean **517a0878** and unchanged `mixed-body-throw-return-mutable-close`,
+source `b705b1fb`. **ecdfdfc7** reuses the exact literal completion-tag proof to
+follow protected cleanup to its saved throw. Captured count updates, the saved
+Boolean body exception, normal cleanup Number 13, original DOM effects, snapshots
+and exhaustion remain. Later state/outcome observers, wrong tags and missing
+throws still refuse. The original method and getter execute; independent native
+review is complete and clean.
+
+Focused validation passes: **64 native executions, 28 refusals, 46 Node/VM
+observations and the exact host CTest**. Formatting passes **1126 C++, 157 Python
+and 114 web files**. Three final code/test hashes match the devbox; all 32 generated
+C++ files contain no Script namespace. Historical source/raw inputs remain.
+No browser/runtime implementation changed; full suites and full Bootstrap were
+skipped.
+
+The parallel escape review found no defect in `9b83e175` and froze seven
+Node-checked witnesses for unary conversion after a table read, source `887fae3b`.
+Both index-range proof and read-time value replay need that composition. No new
+escape compiler baseline or precision gain was measured.
+
+**Next native boundary:** unchanged `return-object-getter-close`, source
+`67bd3ad9`, refuses **DOM saved throw requires a preceding owning primitive**
+under both policies. Its getter writes `data-closed`, then throws the DOM anchor;
+preserve node identity, document lifetime, cleanup effects and exhaustion.
+Protected cleanup with a later state observer, nested custom iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+Escape's next step is to measure frozen `887fae3b` before changing its shared
+read-time proof. Other recorded escape limits and the VM fractional-index
+discrepancy remain separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundaries](handoff/2026-09-23-mutable-completion-projection.md).
+
 ## Mixed break iterator completion, 2026-09-23 UTC
 
 Resumed clean **df14ba50** and unchanged `mixed-body-throw-break-close`, source
