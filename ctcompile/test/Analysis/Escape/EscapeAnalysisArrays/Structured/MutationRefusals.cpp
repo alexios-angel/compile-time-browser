@@ -206,6 +206,48 @@ void StructuredCases::mutationRefusals() {
                    "    %step =", "    ctjs.set_property %base[%zero], %one\n    %step ="));
     reject("structured two-point powers cannot borrow a third interior identity",
            replace(twoPointPower, "create_array [%x]", "create_array [%x, %x]"));
+    const auto signedUnitEven =
+        replace(replace(twoPointPower, "create_array [%x]", "create_array [%x, %y]"),
+                "%position = ctjs.binary pow %i, %two",
+                "%powerBase = ctjs.binary sub %i, %one\n"
+                "    %position = ctjs.binary pow %powerBase, %two");
+    rows.push_back({.what = "structured even powers include the interior zero minimum",
+                    .body = signedUnitEven,
+                    .arrays = "a:[zero,zero,y]",
+                    .reads = "a[0]=x; a[1]=zero; a[2]=y",
+                    .exit = "a -> {a,y}"});
+    const auto signedUnitOdd =
+        replace(replace(signedUnitEven, "  %a =", "  %three = ctjs.binary add %two, %one\n  %a ="),
+                "%position = ctjs.binary pow %powerBase, %two",
+                "%power = ctjs.binary pow %powerBase, %three\n"
+                "    %position = ctjs.binary add %power, %one");
+    rows.push_back({.what = "structured signed-unit odd powers preserve all three writes",
+                    .body = signedUnitOdd,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    const auto signedUnitReload =
+        replace(replace(signedUnitEven, "ctjs.append %y to %a", "ctjs.append %two to %a"),
+                "%position = ctjs.binary pow %powerBase, %two",
+                "%exponent = ctjs.get_property %base[%two]\n"
+                "    %position = ctjs.binary pow %powerBase, %exponent");
+    rows.push_back({.what = "structured signed-unit powers preserve invariant exponent reloads",
+                    .body = signedUnitReload,
+                    .arrays = "a:[zero,zero,ctjs.binary]",
+                    .reads = "a[2]=ctjs.binary; a[0]=x; a[2]=ctjs.binary; a[1]=zero; "
+                             "a[2]=ctjs.binary; a[2]=ctjs.binary",
+                    .exit = "a -> {a}"});
+    reject("structured signed-unit powers retain the complete later-store census",
+           replace(signedUnitReload,
+                   "    %step =", "    ctjs.set_property %base[%two], %one\n    %step ="));
+    reject("structured signed-unit powers cannot hide an interior exponent overwrite",
+           replace(replace(signedUnitReload, "create_array [%x, %y]", "create_array [%two, %y]"),
+                   "%exponent = ctjs.get_property %base[%two]",
+                   "%exponent = ctjs.get_property %base[%zero]"));
+    reject("structured signed-unit powers cannot cross zero with a negative exponent",
+           replace(signedUnitEven, "%position = ctjs.binary pow %powerBase, %two",
+                   "%negative = ctjs.unary neg %two\n"
+                   "    %position = ctjs.binary pow %powerBase, %negative"));
     const auto primitiveAnd = replace(
         replace(scaledIndex, "  %a =",
                 "  %text = ctjs.constant #ctjs.string<\"1\"> {storage_test_id = \"text\"}\n  %a ="),

@@ -328,12 +328,62 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero; a[2]=zero",
          .exit = "a -> {a}"},
         "x");
-    reject("equal power endpoints cannot conceal an unproved interior base",
-           replace(replace(signedTwoPoint, "add %i, %two", "add %i, %one"),
-                   "pow %powerBase, %three", "pow %powerBase, %two"));
+    run({.what = "equal even power endpoints include the interior zero image",
+         .body = replace(replace(signedTwoPoint, "add %i, %two", "add %i, %one"),
+                         "pow %powerBase, %three", "pow %powerBase, %two"),
+         .arrays = "a:[x,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a,x}"});
     reject("two-point powers still refuse a nonidentity scalar endpoint",
            replace(replace(twoPointExponent, "mod %i, %two", "mod %i, %three"), "add %i, %one",
                    "add %i, %two"));
+    const auto signedUnitOdd = replace(replace(signedTwoPoint, "add %i, %two", "add %i, %one"),
+                                       "[%x, %zero, %x]", "[%x, %x, %x]");
+    run({.what = "signed-unit bases preserve odd powers and all three exact writes",
+         .body = signedUnitOdd,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto signedUnitEven =
+        replace(replace(replace(signedUnitOdd, "[%x, %x, %x]", "[%x, %x, %zero]"),
+                        "pow %powerBase, %three", "pow %powerBase, %two"),
+                "add %power, %one", "add %power, %zero");
+    run({.what = "signed-unit even powers retain the interior zero minimum",
+         .body = signedUnitEven,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto signedUnitReload =
+        replace(replace(signedUnitEven, "[%x, %x, %zero]", "[%x, %x, %two]"),
+                "%power = ctjs.binary pow %powerBase, %two",
+                "%exponent = ctjs.get_property %base[%two]\n"
+                "  %power = ctjs.binary pow %powerBase, %exponent");
+    run({.what = "signed-unit powers reload an exponent outside every write",
+         .body = signedUnitReload,
+         .arrays = "a:[zero,zero,two]",
+         .reads = "a[2]=two; a[0]=x; a[2]=two; a[1]=zero; a[2]=two; a[2]=two",
+         .exit = "a -> {a}"},
+        "x");
+    reject(
+        "signed-unit powers retain the complete later-store census",
+        replace(signedUnitReload, "  %step =", "  ctjs.set_property %base[%two], %one\n  %step ="));
+    reject("equal even power endpoints cannot hide an interior exponent overwrite",
+           replace(replace(signedUnitReload, "[%x, %x, %two]", "[%two, %x, %zero]"),
+                   "%exponent = ctjs.get_property %base[%two]",
+                   "%exponent = ctjs.get_property %base[%zero]"));
+    reject("signed-unit powers cannot borrow negative exponents across zero",
+           replace(signedUnitEven, "%power = ctjs.binary pow %powerBase, %two",
+                   "%negative = ctjs.unary neg %two\n"
+                   "  %power = ctjs.binary pow %powerBase, %negative"));
+    run({.what = "signed-unit power overwrites retain pre-loop child snapshots",
+         .body = replace(replace(signedUnitEven, "  cf.br ^header(%a,",
+                                 "  %before = ctjs.get_property %a[%zero]\n  cf.br ^header(%a,"),
+                         "ctjs.return %a", "ctjs.return %before"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=x; a[0]=x; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :

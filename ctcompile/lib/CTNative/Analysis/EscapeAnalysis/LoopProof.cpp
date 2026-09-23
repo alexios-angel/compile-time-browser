@@ -381,11 +381,22 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 return IndexRange{
                     result, {operand, ContentsKind::NonBigInt, 1}, 2, range->mixedShift};
             }
+            const auto number = boundedConvertedNumber(*offset);
+            if (offsetOperand == 1 && number && *number > 0 &&
+                range->first.negativeIntegerNumber == 1 && range->last.integerNumber == 1) {
+                // The only interior integer base is zero. Positive exponents
+                // map it to zero; even powers otherwise have equal endpoints.
+                ContentsValue first{operand, ContentsKind::NonBigInt};
+                boundedNumberPower(range->first, *offset, first);
+                if (!first.integerNumber && !first.negativeIntegerNumber) { return std::nullopt; }
+                if (first.integerNumber) { first.integerNumber = 0; }
+                return IndexRange{
+                    first, {operand, ContentsKind::NonBigInt, 1}, 1, range->mixedShift};
+            }
             // ponytail: only zero/unit exponents or bases. A zero base maps
             // exponent zero to one and positive exponents to zero; its full
             // exponent range must be nonnegative. General powers need an
             // enclosure for every interior visit.
-            const auto number = boundedConvertedNumber(*offset);
             if (!number || *number > 1 ||
                 (offsetOperand == 0 && *number == 0 && !range->first.integerNumber)) {
                 return std::nullopt;
