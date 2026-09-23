@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Return completion paths and bounded unary chains, 2026-09-23 UTC
+
+Resumed clean **9108f946** and unchanged `return-getter-close`, source `7224b890`.
+**078be297** keeps a saved return on its original path when a later branch tests
+that same Boolean. The existing bounded continuation normalizer preserves the
+return expression's effects and cleanup ordering. A literal cleanup condition
+can prove that the selected arm throws; only inert constants and checked frame
+exits may follow. Ordinary scalar joins and direct-abrupt refusal rules remain.
+The original getter, method sibling and write-before-return variant execute.
+Independent native production review is complete and clean.
+
+**25552339** proves Number bitwise inputs through up to 64 original unary `+`/`-`
+operations, preserving sign parity and the separate property/arithmetic guards.
+Identical source program `9d254d34be12927c` changes six child sites from all stored
+to **three confined and three stored**, each observed once with zero unresolved
+or unchecked instances. All 120 historical source functions remain.
+
+Focused checks pass: **96 native executions, 20 refusals, 42 Node/VM observations,
+22 final source-policy checks, exact host/arrays CTests and one selected lit case**.
+Eight additional policy checks measure the next boundaries. Formatting passes
+**1126 C++, 157 Python and 114 web files**. All eight final code/test hashes match
+the devbox; all 48 generated C++ files contain no Script namespace. No browser or
+runtime implementation changed. Full suites and full Bootstrap were skipped.
+
+**Next native boundary:** unchanged `return-mutable-throwing-close`, source
+`8bab7f24`, refuses **DOM iterator primitive close requires saved-throw
+suppression** under both policies. Its body saves a numeric return; cleanup
+updates captured `count`, writes `data-closed`, then throws Number 2. Preserve
+that state/effect order and the cleanup exception. Mixed normal/protected
+cleanup, nested custom iterators, unguarded Bootstrap defaults, the application
+driver and full native Bootstrap remain. Escape still excludes unary chains
+over 64, general computed Number proofs, unsafe String exponents, Strings over
+32 bytes, general powers and legacy SCF retention. The VM fractional-index
+discrepancy remains separate. No full-Bootstrap gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-return-completion-unary-chains.md).
+
 ## Normal throwing getters and nested Number unary operations, 2026-09-23 UTC
 
 Resumed clean **d1cd1173** and retained getter source `3b17dc57`.
