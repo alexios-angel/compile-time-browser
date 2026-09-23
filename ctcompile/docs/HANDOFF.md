@@ -22,6 +22,46 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved primitive iterator throws and subtraction offsets, 2026-09-23 UTC
+
+Resumed clean **9729cf46** and unchanged `body-throw`, `f1b3f6b8`.
+**87abc570** proves its exact nonreturning region and owning primitive payload,
+then emits an ordinary C++ throw through the existing `CppThrowOp`. Only reachable
+branches contribute frame/result joins. Primitive padding for unreachable yields
+keeps the normal Boolean return typed; source effects and complete DOM reproof
+remain. The payload/terminator verifier is unchanged. Original `body-throw` and
+historical Boolean snapshot `92e23bbe` now execute unchanged, with Number,
+Boolean and String coverage. Generated code uses public DOM/Core and ordinary
+ownership, with no Script/VM or nullable-scalar fallback.
+
+Parallel **430d9620** admits bounded primitive invariant subtraction offsets
+through existing conversion, bounds, reload census and actual-write replay.
+The historical reversed String-offset source now admits unchanged; all 34 old
+source bodies survive, with twelve controls appended. Addition retains its
+Number-only invariant rule because String addition concatenates.
+
+Focused host and arrays CTests, both offset-index lit cases and the exception
+printer lit case pass. Four throw sources pass **64 native executions, 12 refusals
+and 16 Node/VM observations**; protected attributes pass **32 executions and
+20 refusals**; three prior normal/return sources pass **48 executions, 80 refusals
+and 24 Node/VM observations**. Five saved-throw oracles agree on **20 observations
+per engine**. Full formatting passes **1126 C++, 157 Python, 114 web files**;
+final scoped formatting passes. Seventeen final hashes match the devbox and
+72 final generated C++ files contain no Script/VM protocol or nullable-scalar
+fallback. All 233 historical iterator bodies and 86 metadata rows are preserved.
+Full suites were skipped; no browser/shared implementation changed.
+
+**Next native boundary:** retained conditional Boolean snapshot `9c10be3d`
+refuses **DOM helper completion observes an inactive value** in both policies.
+Prove its carried completion value without losing the saved pre-close payload.
+Number snapshots still need mutable protected-close state proof; throwing or
+primitive close methods still fail the fresh-record contract. Seven related
+throw sources remain refused. Multiple protected regions, implicit cleanup,
+nested custom iterators, unguarded Bootstrap defaults, the application driver
+and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-23-saved-primitive-throws.md).
+
 ## Typed protected attributes and primitive shift counts, 2026-09-23 UTC
 
 Resumed clean **42c0502c** and unchanged `body-throw`, `f1b3f6b8`.
