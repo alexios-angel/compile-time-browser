@@ -360,6 +360,22 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 invariantFailure = ArrayContentsFailure::WorkLimit;
                 return std::nullopt;
             }
+            if (offsetOperand == 0 && boundedConvertedNumber(*offset, true) == 1) {
+                ContentsValue result{operand, ContentsKind::NonBigInt};
+                boundedNumberPower(*offset, range->first, result);
+                if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+                // Even strides preserve parity, including negative exponents.
+                // Odd strides may alternate despite equal endpoint powers;
+                // enclose both signs and keep the unwritten zero gap.
+                if (range->stride % 2 == 0 ||
+                    endpointNumber(range->first) == endpointNumber(range->last)) {
+                    return IndexRange{result, result, 1, range->mixedShift};
+                }
+                result.integerNumber.reset();
+                result.negativeIntegerNumber = 1;
+                return IndexRange{
+                    result, {operand, ContentsKind::NonBigInt, 1}, 2, range->mixedShift};
+            }
             // ponytail: only zero/unit exponents or bases. A zero base maps
             // exponent zero to one and positive exponents to zero; its full
             // exponent range must be nonnegative. General powers need an

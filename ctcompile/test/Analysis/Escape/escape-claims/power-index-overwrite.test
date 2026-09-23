@@ -45,6 +45,20 @@
 // CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
 
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
+
 //--- source.js
 function unit() {
     var child = {}, a = [child, child];
@@ -266,3 +280,76 @@ function nonzeroZeroBaseStart() {
 falseBase(); nullBase(); zeroStringBase(); negativeZeroBase(); reloadedZeroBase();
 positiveZeroBase(); savedZeroBase(); laterZeroBaseStore(); overlappingZeroBase();
 negativeZeroExponent(); growingZeroBase(); descendingZeroExponent(); nonzeroZeroBaseStart();
+
+function negativeUnitParity() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** i] = 0;
+    return a;
+}
+function negativeStringParity() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + "-1" ** i] = 0;
+    return a;
+}
+function negativeExponentParity() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (-i)] = 0;
+    return a;
+}
+function evenExponentParity() {
+    var child = {}, a = [0, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (2 * i)] = 0;
+    return a;
+}
+function oddExponentParity() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (2 * i + 1)] = 0;
+    return a;
+}
+function singletonExponentParity() {
+    var child = {}, a = [child, 0];
+    for (var i = 1; i < a.length; i++) a[1 + (-1) ** i] = 0;
+    return a;
+}
+function reloadedParityBase() {
+    var child = {}, a = [child, -1, child];
+    for (var i = 0; i < a.length; i++) a[1 + a[1] ** i] = 0;
+    return a;
+}
+function retainedParityChild() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (-1) ** i] = 0;
+    return a;
+}
+function laterParityBaseStore() {
+    var child = {}, a = [child, -1, child];
+    for (var i = 0; i < a.length; i++) {
+        a[1 + a[1] ** i] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingParityBase() {
+    var child = {}, a = [-1, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + a[0] ** i] = 0;
+    return a;
+}
+function negativeParityKey() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-1) ** i] = 0;
+    return a;
+}
+function fractionalParityExponent() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (i / 2)] = 0;
+    return a;
+}
+function growingParityKey() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** i] = 0;
+    return a;
+}
+negativeUnitParity(); negativeStringParity(); negativeExponentParity(); evenExponentParity();
+oddExponentParity(); singletonExponentParity(); reloadedParityBase(); retainedParityChild();
+laterParityBaseStore(); overlappingParityBase(); negativeParityKey(); fractionalParityExponent();
+growingParityKey();

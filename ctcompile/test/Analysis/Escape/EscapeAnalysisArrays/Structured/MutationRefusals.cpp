@@ -131,6 +131,45 @@ void StructuredCases::mutationRefusals() {
                    "    %position = ctjs.binary pow %zero, %exponent"));
     reject("structured zero to zero cannot grow the guard array",
            replace(zeroBase, "  ctjs.append %y to %a\n", ""));
+    const auto parityPower = replace(
+        replace(
+            replace(unitPower, "  %a =",
+                    "  %two = ctjs.binary add %one, %one\n"
+                    "  %negative = ctjs.unary neg %one {storage_test_id = \"negative\"}\n  %a ="),
+            "ctjs.append %y to %a", "ctjs.append %zero to %a\n  ctjs.append %y to %a"),
+        "%position = ctjs.binary pow %i, %one",
+        "%parity = ctjs.binary pow %negative, %i\n"
+        "    %position = ctjs.binary add %parity, %one");
+    rows.push_back({.what = "structured parity powers include interior signs",
+                    .body = parityPower,
+                    .arrays = "a:[zero,zero,zero]",
+                    .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+                    .exit = "a -> {a}"});
+    rows.push_back({.what = "structured even exponent strides retain unvisited parity children",
+                    .body = replace(parityPower, "add %i, %one", "add %i, %two"),
+                    .arrays = "a:[x,zero,zero]",
+                    .reads = "a[0]=x; a[2]=zero",
+                    .exit = "a -> {a,x}"});
+    const auto parityReload =
+        replace(replace(parityPower, "ctjs.append %zero to %a", "ctjs.append %negative to %a"),
+                "%parity = ctjs.binary pow %negative, %i",
+                "%powerBase = ctjs.get_property %base[%one]\n"
+                "    %parity = ctjs.binary pow %powerBase, %i");
+    rows.push_back({.what = "structured parity bases reload from the unwritten gap",
+                    .body = parityReload,
+                    .arrays = "a:[zero,negative,zero]",
+                    .reads = "a[1]=negative; a[0]=x; a[1]=negative; a[1]=negative; "
+                             "a[1]=negative; a[2]=zero",
+                    .exit = "a -> {a}"});
+    reject("structured parity reloads retain the complete later-store census",
+           replace(parityReload,
+                   "    %step =", "    ctjs.set_property %base[%one], %zero\n    %step ="));
+    reject("structured endpoint parity cannot hide an interior base overwrite",
+           replace(replace(parityReload, "create_array [%x]", "create_array [%negative]"),
+                   "%powerBase = ctjs.get_property %base[%one]",
+                   "%powerBase = ctjs.get_property %base[%zero]"));
+    reject("structured negative powers cannot create own negative array elements",
+           replace(parityPower, "add %parity, %one", "add %parity, %zero"));
     reject("structured powers refuse nonunit varying results",
            replace(unitPower, "pow %i, %one", "pow %i, %i"));
     const auto primitiveAnd = replace(

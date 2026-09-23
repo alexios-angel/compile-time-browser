@@ -206,6 +206,58 @@ void InductionCases::overwritesAndTransport() {
                    "%exponent = ctjs.binary sub %i, %one\n"
                    "  %position = ctjs.binary pow %zero, %exponent"));
     reject("zero to zero cannot grow the guard array", replace(zeroBase, "[%one, %x]", "[%x]"));
+    const auto parityPower = replace(
+        replace(
+            replace(unitPower, "  %a =",
+                    "  %negative = ctjs.unary neg %one {storage_test_id = \"negative\"}\n  %a ="),
+            "[%one, %x]", "[%x, %zero, %x]"),
+        "%position = ctjs.binary pow %i, %one",
+        "%parity = ctjs.binary pow %negative, %i\n"
+        "  %position = ctjs.binary add %parity, %one");
+    for (const auto & body :
+         {parityPower,
+          replace(parityPower, "ctjs.unary neg %one", "ctjs.constant #ctjs.string<\"-1\">"),
+          replace(parityPower, "%parity = ctjs.binary pow %negative, %i",
+                  "%exponent = ctjs.unary neg %i\n"
+                  "  %parity = ctjs.binary pow %negative, %exponent")}) {
+        run({.what = "negative unit powers include interior parity despite equal endpoints",
+             .body = body,
+             .arrays = "a:[zero,zero,zero]",
+             .reads = "a[0]=x; a[1]=zero; a[2]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "even exponent strides retain the unvisited parity child",
+         .body = replace(parityPower, "add %i, %one", "add %i, %two"),
+         .arrays = "a:[x,zero,zero]",
+         .reads = "a[0]=x; a[2]=zero",
+         .exit = "a -> {a,x}"});
+    const auto parityReload =
+        replace(replace(parityPower, "[%x, %zero, %x]", "[%x, %negative, %x]"),
+                "%parity = ctjs.binary pow %negative, %i",
+                "%powerBase = ctjs.get_property %base[%one]\n"
+                "  %parity = ctjs.binary pow %powerBase, %i");
+    run({.what = "parity powers preserve the unwritten gap for invariant base reloads",
+         .body = parityReload,
+         .arrays = "a:[zero,negative,zero]",
+         .reads = "a[1]=negative; a[0]=x; a[1]=negative; a[1]=negative; "
+                  "a[1]=negative; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("parity base reloads retain the complete later-store census",
+           replace(parityReload, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
+    reject("equal endpoint powers cannot hide an interior overwrite of the base",
+           replace(replace(parityReload, "[%x, %negative, %x]", "[%negative, %zero, %x]"),
+                   "%powerBase = ctjs.get_property %base[%one]",
+                   "%powerBase = ctjs.get_property %base[%zero]"));
+    reject("negative power results are properties rather than own array elements",
+           replace(parityPower, "add %parity, %one", "add %parity, %zero"));
+    reject("parity powers cannot borrow fractional exponents",
+           replace(parityPower, "%parity = ctjs.binary pow %negative, %i",
+                   "%exponent = ctjs.binary div %i, %two\n"
+                   "  %parity = ctjs.binary pow %negative, %exponent"));
+    reject("parity powers cannot grow the guard array",
+           replace(parityPower, "[%x, %zero, %x]", "[%x, %zero]"));
     reject("a unit-base proof cannot borrow an object conversion",
            replace(unitBase, "pow %one, %i", "pow %x, %i"));
     reject("power exponents cannot borrow an object conversion",
