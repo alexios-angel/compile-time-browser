@@ -332,6 +332,15 @@
 // CHECK: escape {{[0-9a-f]+}} 283 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 284 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 285 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 286 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 287 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 288 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 289 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 290 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 291 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 292 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 293 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 294 {{[0-9]+}} obj escapes:stored
 
 //--- source.js
 function unit() {
@@ -1961,3 +1970,55 @@ function stringVaryingSum() {
 varyingSum(); reversedVaryingSum(); retainedVaryingSum(); savedVaryingSum();
 reloadedVaryingSum(); laterVaryingSumStore(); overlappingVaryingSum();
 interiorVaryingSumGrowth(); fractionalVaryingSum(); unboundedVaryingSum(); stringVaryingSum();
+
+function boundedRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967292) % 2] = 0;
+    return a;
+}
+function boundedRemainderProduct() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) * 1431655765) % 2] = 0;
+    return a;
+}
+function boundedRemainderDifference() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[-(-4294967292 - (i % 5)) % 2] = 0;
+    return a;
+}
+function retainedRemainderSum() {
+    var child = {}, a = [child, child, child, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967292) % 2] = 0;
+    return a;
+}
+function savedRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967292) % 2] = 0;
+    return saved;
+}
+function unboundedRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967293) % 2] = 0;
+    return a;
+}
+function fractionalRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i % 5) + 4294967292) / 2) % 2] = 0;
+    return a;
+}
+function reloadedRemainderSum() {
+    var child = {}, a = [child, child, 4294967292, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + a[2]) % 2] = 0;
+    return a;
+}
+function laterRemainderSumStore() {
+    var child = {}, a = [child, child, 4294967292, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[((i % 5) + a[2]) % 2] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+boundedRemainderSum(); boundedRemainderProduct(); boundedRemainderDifference();
+retainedRemainderSum(); savedRemainderSum(); unboundedRemainderSum();
+fractionalRemainderSum(); reloadedRemainderSum(); laterRemainderSumStore();

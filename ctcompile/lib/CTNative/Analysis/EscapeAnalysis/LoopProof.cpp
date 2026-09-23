@@ -787,7 +787,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             } else {
                 boundedNumberSum(*endpoint, *offset, result);
             }
-            if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+            if (!result.integerNumber && !result.negativeIntegerNumber) {
+                // A mixed enclosure may overstate an actual intermediate. Only
+                // subdivision can discharge it; every visited scalar must pass.
+                refinableEnclosure |= range->mixedShift;
+                return std::nullopt;
+            }
             *endpoint = result;
         }
         if (multiply) {

@@ -4893,6 +4893,73 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
     }
+    const auto boundedRemainder =
+        replace(replace(replace(replace(scaledIndex, "[%one, %x]",
+                                        "[%x, %x, %zero, %zero, %zero, %zero, %zero]"),
+                                "add %i, %one\n  cf.br", "add %i, %three\n  cf.br"),
+                        "  %a =",
+                        "  %five = ctjs.binary add %two, %three\n"
+                        "  %large = ctjs.constant #ctjs.number<4751297606867484672> "
+                        "{storage_test_id = \"large\"}\n  %a ="),
+                "%position = ctjs.binary mul %i, %one",
+                "%residue = ctjs.binary mod %i, %five\n"
+                "  %shifted = ctjs.binary add %residue, %large\n"
+                "  %position = ctjs.binary mod %shifted, %two");
+    for (const auto & expression :
+         {"ctjs.binary add %residue, %large", "ctjs.binary add %large, %residue",
+          "ctjs.binary_static add %residue, %large"}) {
+        run({.what = "mixed remainder enclosures refine bounded scalar sums",
+             .body = replace(boundedRemainder, "ctjs.binary add %residue, %large", expression),
+             .arrays = "a:[zero,zero,zero,zero,zero,zero,zero]",
+             .reads = "a[0]=zero; a[3]=zero; a[6]=zero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "mixed remainder enclosures refine bounded scalar products",
+         .body = replace(replace(boundedRemainder, "4751297606867484672", "4743791607495524352"),
+                         "ctjs.binary add %residue, %large", "ctjs.binary mul %residue, %large"),
+         .arrays = "a:[zero,zero,zero,zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[3]=zero; a[6]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "mixed remainder enclosures refine bounded signed differences",
+         .body = replace(boundedRemainder, "%shifted = ctjs.binary add %residue, %large",
+                         "%negative = ctjs.unary neg %large\n"
+                         "  %difference = ctjs.binary sub %negative, %residue\n"
+                         "  %shifted = ctjs.unary neg %difference"),
+         .arrays = "a:[zero,zero,zero,zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[3]=zero; a[6]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "scalar-bound refinement preserves children outside actual writes",
+         .body = replace(boundedRemainder, "[%x, %x, %zero,", "[%x, %x, %x,"),
+         .arrays = "a:[zero,zero,x,zero,zero,zero,zero]",
+         .reads = "a[0]=zero; a[3]=zero; a[6]=zero",
+         .exit = "a -> {a,x}"});
+    const auto boundedRemainderReload =
+        replace(replace(boundedRemainder, "[%x, %x, %zero,", "[%x, %x, %large,"),
+                "%shifted = ctjs.binary add %residue, %large",
+                "%offset = ctjs.get_property %base[%two]\n"
+                "  %shifted = ctjs.binary add %residue, %offset");
+    run({.what = "scalar-bound refinement independently proves every reload gap",
+         .body = boundedRemainderReload,
+         .arrays = "a:[zero,zero,large,zero,zero,zero,zero]",
+         .reads = "a[2]=large; a[0]=zero; a[2]=large; a[3]=zero; a[2]=large; a[6]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("scalar-bound refinement retains actual unbounded intermediates",
+           replace(boundedRemainder, "4751297606867484672", "4751297606869581824"));
+    reject("scalar-bound refinement retains actual fractional intermediates",
+           replace(boundedRemainder, "%position = ctjs.binary mod %shifted, %two",
+                   "%fraction = ctjs.binary div %shifted, %two\n"
+                   "  %position = ctjs.binary mod %fraction, %two"));
+    reject("scalar-bound refinement retains every later store",
+           replace(boundedRemainderReload,
+                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
+    reject("scalar-bound refinement cannot reload an actual overwritten element",
+           replace(replace(boundedRemainderReload, "[%x, %x, %large,", "[%x, %large, %x,"),
+                   "%offset = ctjs.get_property %base[%two]",
+                   "%offset = ctjs.get_property %base[%one]"));
     const auto varyingSum = replace(replace(scaledIndex, "[%one, %x]", "[%zero, %x, %zero]"),
                                     "%position = ctjs.binary mul %i, %one",
                                     "%offset = ctjs.binary sub %one, %i\n"
