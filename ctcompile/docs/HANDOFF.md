@@ -22,6 +22,44 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nested cleanup guards and finite Number bitwise operands, 2026-09-23 UTC
+
+Resumed clean **c46c8be0** and retained source `9d3a3639` from the preceding
+handoff. **76bdc8d1** lets the existing cleanup scanner descend through nested
+DOM-read guards. Completed reads enter the use census before crossing region
+boundaries; same-block single-use conditions, empty else arms, ordered cloning,
+per-write suppression, selector validity and private DOM/Style reproof remain.
+Original, getter, order and false-inner-guard variants execute.
+
+**bbc73532** removes the magnitude limit on finite original Number bitwise
+operands, including one source negation. Public Core reduces the represented
+double modulo 2^32 before integer conversion. Arithmetic, property keys,
+computed provenance, mutation and receiver gaps retain their own proofs.
+Six measured child sites change from all stored to **three confined and three
+stored**, each actually observed. Thirty historical Number expectations were
+promoted after the first array gate's 176 failures; their inputs remain intact.
+No browser/runtime implementation changed. Independent reviews of both
+production changes are complete and clean.
+
+Focused checks pass: **64 native executions, 92 refusals, 32 Node/VM observations,
+30 source preflight checks, exact host/arrays CTests and one table-key lit case**.
+Final formatting passes **1126 C++, 157 Python and 114 web files**; all ten final
+code/test hashes match the devbox. All 32 generated C++ files contain no Script
+namespace. Completed native/host/lit checks were not replayed after independent
+escape test updates. Full suites were skipped.
+
+**Next native boundary:** `unsupported-selector-nested-third-write-else`, source
+`fe671bbb`, refuses **DOM protected helper needs an independent inert-body proof**
+under both policies. Preserve both arms, their guards, read/write order, saved
+values and the original body exception. Broader cleanup/control flow, nested
+custom iterators, unguarded Bootstrap defaults, the application driver, full
+native Bootstrap, general powers and legacy SCF retention remain. Computed
+fractional arithmetic, nonfinite Number bitwise origins, unsafe String exponents
+and Strings over 32 bytes remain unproved. The known VM fractional-index
+discrepancy remains separate. No full-Bootstrap coverage gain is claimed.
+
+[Exact checks and next boundary](handoff/2026-09-23-nested-cleanup-wide-number-bitwise.md).
+
 ## Guarded cleanup sequences and Number bitwise operands, 2026-09-23 UTC
 
 Resumed clean **95a6e152** and retained source `006cce9f` from the preceding
