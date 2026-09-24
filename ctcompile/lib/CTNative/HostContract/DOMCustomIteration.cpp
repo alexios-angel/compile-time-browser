@@ -153,14 +153,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         open = call;
         return mlir::WalkResult::advance();
     });
-    // ponytail: one root-local custom iterator; use a state worklist when a
-    // second independent protocol must be admitted in the same entry.
-    if (opens.wasInterrupted() || !open || !undefined(open.getReceiver()) ||
-        open->getBlock() != &entry.getBody().front()) {
-        return error("DOM custom iterator requires one root-local open");
+    // A recovered open may be directly protected by one root-local Try. It
+    // still executes once; conditional or repeated opens need their own proof.
+    auto invocation = open ? llvm::dyn_cast<ctjs::InvokeOp>(open->getParentOp()) : ctjs::InvokeOp{};
+    auto attempt =
+        invocation ? llvm::dyn_cast<ctjs::TryOp>(invocation->getParentOp()) : ctjs::TryOp{};
+    mlir::Operation * openAnchor = attempt ? attempt.getOperation() : open.getOperation();
+    if (opens.wasInterrupted() || !open || !undefined(open.getReceiver()) || !openAnchor ||
+        openAnchor->getBlock() != &entry.getBody().front() ||
+        (invocation && (!attempt || invocation->getParentRegion() != &attempt.getBody()))) {
+        return error("DOM custom iterator requires one root-local or protected open");
     }
     auto object = open.getArgs()[0].getDefiningOp<ctjs::CreateObjectOp>();
-    if (object->getBlock() != open->getBlock() || !object->isBeforeInBlock(open)) {
+    if (object->getBlock() != openAnchor->getBlock() || !object->isBeforeInBlock(openAnchor)) {
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
     const auto targetOf = [&](ctjs::CreateClosureOp closure) {
@@ -205,12 +210,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!store) { continue; }
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         if (store.getObject() != object.getResult() || store->getBlock() != object->getBlock() ||
-            !object->isBeforeInBlock(store) || !store->isBeforeInBlock(open)) {
+            !object->isBeforeInBlock(store) || !store->isBeforeInBlock(openAnchor)) {
             return error("DOM custom iterator slots must be unique unconditional callables");
         }
         if (!closure) {
             auto constant = store.getValue().getDefiningOp<ctjs::ConstantOp>();
             auto name = ctjs::constantKey(store.getKey());
+            // The interpreter's well-known Symbol spelling shares this slot.
+            if (name == "@@iterator") {
+                return error("DOM custom iterator state aliases its iterator method");
+            }
             if (!constant || !llvm::isa<ctjs::NumberAttr>(constant.getValue()) ||
                 !ctjs::ordinaryKey(name) || name == "next" || name == "return" ||
                 !stateIndices.try_emplace(name, 0).second) {
@@ -288,6 +297,42 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator identity method escapes its own slot");
         }
     }
+    if (invocation) {
+        mlir::DominanceInfo dominance(entry);
+        for (mlir::OpOperand & use : object.getResult().getUses()) {
+            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+            auto * user = use.getOwner();
+            if (user == open || (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) ||
+                (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 0)) {
+                continue; // Every own initializer was proved above.
+            }
+            auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user);
+            if (exit && exit->getParentOp() == invocation && use.getOperandNumber() > 0) {
+                continue; // Saving an already evaluated value has no effects.
+            }
+            // This proves only the effects of open, not later confinement.
+            // Before-open transport/escapes refuse, so no hidden alias can
+            // mutate the slots before their reads. Later operations, including
+            // effectful Iterable, remain in place for the complete DOM proof.
+            if (!invocation->isAncestor(user) && dominance.properlyDominates(invocation, user)) {
+                continue;
+            }
+            return error("DOM protected iterator open holder has an earlier observer");
+        }
+        // Own data slots and the closed identity method prove this call cannot
+        // throw. Keep its actual result (including a possible eager fast path),
+        // every normal tuple position, and every producer at the original site.
+        // No next/close failure or record alias is proved by this projection.
+        mlir::OpBuilder at(invocation);
+        auto projected = host_detail::projectInvocationContinuation(
+            invocation, false, open.getResult(), at, work.remaining);
+        if (mlir::failed(projected) || !spend()) {
+            return error("DOM protected iterator open requires its complete normal tuple");
+        }
+        open->moveBefore(invocation);
+        invocation.replaceAllUsesWith(*projected);
+        invocation.erase();
+    }
     // Mutable captures join the existing receiver-state tuple only after a
     // complete local-cell census. Generic helper captures remain immutable.
     llvm::DenseMap<mlir::Value, unsigned> capturedState;
@@ -333,7 +378,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             auto cell = closure.getUpvalues()[static_cast<unsigned>(store.getIndex())]
                             .getDefiningOp<ctjs::CreateCellOp>();
-            if (!cell || cell->getBlock() != open->getBlock()) {
+            if (!cell || cell->getBlock() != openAnchor->getBlock()) {
                 return mlir::WalkResult::interrupt();
             }
             capturedState.try_emplace(cell.getResult(), 0);
@@ -363,7 +408,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                            .getDefiningOp<ctjs::ConstantOp>();
         if (!initial || !llvm::isa<ctjs::NumberAttr>(initial.getValue()) || !original ||
             !llvm::isa<ctjs::NumberAttr, ctjs::UndefinedAttr>(original.getValue()) ||
-            (initializer && !initializer->isBeforeInBlock(open))) {
+            (initializer && !initializer->isBeforeInBlock(openAnchor))) {
             return error("DOM iterator capture requires one literal Number initialization");
         }
         for (mlir::OpOperand & use : cell.getResult().getUses()) {

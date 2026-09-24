@@ -638,17 +638,22 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   contract.moduleSha256 == ctcompile::ctnative::hostContractFingerprint(*module),
               "original observing iterator defers suppression without changing any source state");
         if (!close) { llvm::consumeError(close.takeError()); }
+        const auto boundary = structured ? "DOM iterator close must follow its complete traversal"
+                              : method   ? "DOM Symbol.iterator must be a closed identity method"
+                                         : "DOM iterator getter requires a terminal throw";
         for (unsigned budget : {0u, 100000u}) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto proof = contract;
             auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, budget);
             const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
-            check(reason.find(budget ? "DOM custom iterator requires one root-local open"
-                                     : "budget") != std::string::npos &&
+            check(reason.find(budget ? boundary : "budget") != std::string::npos &&
                       printed(*candidate) == originalModule &&
                       proof.moduleSha256 == contract.moduleSha256,
                   "observing iterator reaches protocol proof while late or budget refusal rolls "
                   "back");
+            if (budget && reason.find(boundary) == std::string::npos) {
+                llvm::errs() << reason << '\n';
+            }
         }
         const auto checks = countChecks(function);
         mlir::DominanceInfo dominance(function);
@@ -671,22 +676,27 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   countChecks(*recovered.original) == checks &&
                   mlir::succeeded(mlir::verify(*module)),
               "iterator recovery retains the complete original snapshot and verifies");
-        for (unsigned control = 0; control < 7; ++control) {
+        for (unsigned control = 0; control < (structured ? 12u : 7u); ++control) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
-            ctjs::InvokeOp invocation;
+            ctjs::InvokeOp invocation, opening;
+            ctjs::CallOp openCall;
             entry.walk([&](ctjs::InvokeOp found) {
                 auto call = llvm::cast<ctjs::CallOp>(found.getBody().front().front());
                 auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
                 if (!invocation && load && load.getName() == "__ctbrowser_iter_close") {
                     invocation = found;
                 }
+                if (load && load.getName() == "__ctbrowser_for_of_open") {
+                    opening = found;
+                    openCall = call;
+                }
             });
-            if (!check(static_cast<bool>(invocation), "recovered close retains its helper")) {
-                continue;
-            }
+            if (!check(invocation && opening, "recovered calls retain their helpers")) { continue; }
             auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
             auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+            auto holder = openCall.getArgs()[0];
+            auto attempt = llvm::cast<ctjs::TryOp>(opening->getParentOp());
             mlir::OpBuilder at(invocation);
             if (control == 1) {
                 call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>().setName("unknown");
@@ -700,23 +710,141 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 exit.getStateMutable().slice(0, 1).assign(call.getResult());
             } else if (control == 5) {
                 call.getArgsMutable().append(entry.getBody().front().getArgument(3));
+            } else if (control == 7 || control == 8) {
+                at.setInsertionPoint(attempt);
+                mlir::Value escaped = holder;
+                if (control == 8) {
+                    auto yes = mlir::arith::ConstantIntOp::create(at, call.getLoc(), 1, 1);
+                    auto alias =
+                        mlir::scf::IfOp::create(at, call.getLoc(), holder.getType(), yes, true);
+                    for (auto & region : alias->getRegions()) {
+                        auto & arm = region.front();
+                        mlir::OpBuilder nested(&arm, arm.end());
+                        mlir::scf::YieldOp::create(nested, call.getLoc(), holder);
+                    }
+                    escaped = alias.getResult(0);
+                }
+                ctjs::StoreGlobalOp::create(at, call.getLoc(), "holder", escaped);
+            } else if (control == 9) {
+                at.setInsertionPoint(attempt);
+                auto key = ctjs::ConstantOp::create(at, call.getLoc(),
+                                                    ctjs::StringAttr::get(&context, "@@iterator"));
+                auto number =
+                    ctjs::ConstantOp::create(at, call.getLoc(), ctjs::NumberAttr::get(&context, 0));
+                ctjs::SetPropertyOp::create(at, call.getLoc(), holder, key, number);
+            } else if (control == 10) {
+                auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
+                if (!check(static_cast<bool>(identity), "iterator identity body is present")) {
+                    continue;
+                }
+                at.setInsertionPoint(identity.getBody().front().getTerminator());
+                ctjs::StoreGlobalOp::create(
+                    at, call.getLoc(), "identity-effect",
+                    identity.getBody().front().getArgument(ctjs::arg_receiver));
+            } else if (control == 11) {
+                at.setInsertionPointAfter(opening);
+                ctjs::StoreGlobalOp::create(at, call.getLoc(), "holder", holder);
             }
             auto proof = contract;
             proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
             const auto snapshot = printed(*candidate);
+            auto * openBlock = opening->getBlock();
+            llvm::SmallVector<mlir::Value> openOperands(openCall->getOperands());
+            struct NormalUse {
+                mlir::OpOperand * use;
+                mlir::Value value;
+                mlir::Attribute literal;
+                bool poison;
+            };
+            llvm::SmallVector<NormalUse> normalUses;
+            auto normal = llvm::cast<ctjs::InvokeYieldOp>(opening.getNormalBody().front().back());
+            const auto literalValue = [](mlir::Value value) -> mlir::Attribute {
+                auto * definition = value.getDefiningOp();
+                return llvm::isa_and_nonnull<ctjs::ConstantOp, mlir::arith::ConstantOp>(definition)
+                           ? definition->getAttr("value")
+                           : mlir::Attribute{};
+            };
+            const auto remember = [&](mlir::OpOperand & use, mlir::Value value) {
+                if (value == opening.getNormalBody().front().getArgument(0)) {
+                    value = openCall.getResult();
+                }
+                normalUses.push_back(
+                    {&use, value, literalValue(value),
+                     static_cast<bool>(value.getDefiningOp<mlir::ub::PoisonOp>())});
+            };
+            for (auto [result, value] : llvm::zip(opening.getResults(), normal.getValues())) {
+                for (auto & use : result.getUses()) { remember(use, value); }
+            }
+            entry.walk([&](ctjs::InvokeOp kept) {
+                if (kept == opening) { return; }
+                kept.walk([&](mlir::Operation * operation) {
+                    for (auto & use : operation->getOpOperands()) {
+                        auto value = use.get();
+                        for (auto [result, projected] :
+                             llvm::zip(opening.getResults(), normal.getValues())) {
+                            if (value == result) {
+                                value = projected;
+                                break;
+                            }
+                        }
+                        remember(use, value);
+                    }
+                });
+            });
+            // Complete preparation must roll back even after a successful open
+            // projection; later effects and unresolved record aliases still refuse.
+            if (control >= 7) {
+                mlir::OwningOpRef<mlir::ModuleOp> transactional(candidate->clone());
+                auto contractCopy = proof;
+                auto failed =
+                    ctcompile::ctnative::prepareDOMEntry(*transactional, contractCopy, 100000);
+                check(failed && printed(*transactional) == snapshot &&
+                          contractCopy.moduleSha256 == proof.moduleSha256,
+                      "protected-open mutation controls retain complete preparation rollback");
+                if (failed) { llvm::consumeError(std::move(failed)); }
+            }
             mlir::ScopedDiagnosticHandler quiet(&context,
                                                 [](mlir::Diagnostic &) { return mlir::success(); });
             auto failure = ctcompile::ctnative::normalizeDOMCustomIteration(
                 *candidate, proof, control == 6 ? 0 : 100000);
             const auto reason = failure ? llvm::toString(std::move(failure)) : std::string{};
-            const auto expected = control == 0   ? "requires one root-local open"
-                                  : control == 4 ? "requires a well-formed entry"
-                                  : control == 6 ? "budget"
-                                                 : "abrupt completion needs a handler proof";
-            check(reason.find(expected) != std::string::npos && printed(*candidate) == snapshot,
-                  "protocol discovery retains every call and tuple and rejects unproved "
-                  "identity, flags, effects, state and arity without mutation");
+            const auto expected = control == 0 || control == 11  ? boundary
+                                  : control == 4                 ? "requires a well-formed entry"
+                                  : control == 6                 ? "budget"
+                                  : control == 7 || control == 8 ? "holder has an earlier observer"
+                                  : control == 9  ? "state aliases its iterator method"
+                                  : control == 10 ? "identity method has additional effects"
+                                                  : "abrupt completion needs a handler proof";
+            check(reason.find(expected) != std::string::npos &&
+                      (!(control > 0 && control < 7) || printed(*candidate) == snapshot),
+                  "protocol proof retains calls and refuses unknown identity, effects and state");
             if (reason.find(expected) == std::string::npos) { llvm::errs() << reason << '\n'; }
+            if ((control == 0 || control == 11) && structured) {
+                check(openCall->getBlock() == openBlock &&
+                          llvm::equal(openCall->getOperands(), openOperands) &&
+                          mlir::succeeded(mlir::verify(*candidate)),
+                      "proved open retains its exact call and source position outside Invoke");
+                for (auto & expected : normalUses) {
+                    auto value = expected.use->get();
+                    check(expected.literal ? literalValue(value) == expected.literal
+                          : expected.poison
+                              ? static_cast<bool>(value.getDefiningOp<mlir::ub::PoisonOp>())
+                              : value == expected.value,
+                          "success and retained invocations keep every payload, tag, flag and "
+                          "saved value");
+                }
+                unsigned kept = 0;
+                entry.walk([&](ctjs::InvokeOp found) {
+                    ++kept;
+                    auto dispatch = llvm::cast<ctjs::InvokeExitOp>(found.getBody().front().back());
+                    check(dispatch.getState().size() == 15,
+                          "next and both closes retain their full pre-call state");
+                });
+                check(kept == 3, "only the independently proved open loses its failure edge");
+            } else if (control >= 7) {
+                check(openCall->getParentOp() == opening,
+                      "unproved open effects keep the original exceptional completion");
+            }
         }
         unsigned calls = 0;
         function.walk([&](ctjs::InvokeOp invocation) {
