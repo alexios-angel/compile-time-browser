@@ -22,6 +22,43 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Original iterator recovery and computed Number division, 2026-09-24 UTC
+
+Resumed **8e971bbf**, the latest handoff and the unchanged iterator/division
+witnesses. **cb59fd8a** and **33ed9338** establish that existing
+`CheckedInvocations` recovery already handles the original observing outer getter
+**1a7fb166** and method **7acf503b**: four reachable calls, fifteen saved
+registers per call, all 33 raw checks retained in the original snapshot, and
+**57,944 recovery steps** per source. The regression checks exact call inputs,
+failure payload/state and mutation rollback. This is structural recovery;
+native iterator admission still needs a consumer for those recovered completions.
+
+**f5d2e65e** extends independent binary64 Number snapshots through division.
+Unchanged source/program **57db40f7 / 73139a70dad89e41** changes the child from
+Stored to **Confined** and its key table from Passed to **Confined**: **two of
+four total sites**, zero soundness violations. Converted bits remain separate
+from property keys and other arithmetic. All 159 historical escape source
+functions are unchanged; three new functions cover ordinary, saved-child and
+mutation behavior.
+
+Focused checks pass: exact recovery **1/1**, exact arrays **1/1**, and the selected
+table-index lit case **1/1**. Formatting passes **1126 C++, 158 Python, 114 web
+files**. Nine final code/test hashes match the devbox and the completed clean
+independent review. No new native execution or full-Bootstrap coverage is claimed.
+
+**Next native boundary:** connect the existing raw invocation recovery to
+custom-iterator completion lowering, retaining call payload/state and proving
+every discarded non-call status edge independently. Current protocol lowering
+accepts only an unused, state-free suppressed close. Original outer catches
+remain refused; escaping nodes still need an exception-lifetime owner.
+**Next escape boundary:** source **38de654c**, program **f037892d3c412d79**, uses
+`((keys[i % 2] - 0.25 + 0.25) % 3) | 0`; the child remains Stored although Node
+returns `[0,0,0]` and the VM observes it confined once. Remainder needs independent
+computed Number evidence. Broader iterators, unguarded Bootstrap defaults, the
+application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundaries](handoff/2026-09-24-iterator-recovery-number-division.md).
+
 ## Protected DOM reads and computed Number multiplication, 2026-09-24 UTC
 
 Resumed clean **ebda7b23** and the latest handoff's native/escape boundaries.
