@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected DOM mutations and computed unit powers, 2026-09-24 UTC
+
+Resumed clean **41021e75** and the unfinished iterator/power boundaries. **e9bb1abc**
+proves protected `setAttribute` calls on original contract Elements with valid
+literal String names and values. It uses ctbrowser's public validator, preserves
+branch effects and saved state, and recognizes only identical SSA forwarding
+through branch results. The original observing outer iterator sources remain refused.
+
+**b818ceed** preserves independent Number snapshots through `** 1`, including
+signed zero and nonfinite values. Unchanged source/program **1e336918 /
+a30ea12594e7fddf** changes its child and key table to **Confined**: **two of four
+total sites**, zero violations. All 165 historical escape functions and 23 local/two
+outer native source bodies remain unchanged.
+
+Focused validation completes **432 native executions, 76 refusals, 66 Node/VM
+observations**, exact recovery/arrays CTests and one selected escape lit case.
+The native run required a reference-output comparator correction and targeted
+continuations; **no whole native-lit pass is claimed**. Formatting passes
+**1126 C++, 158 Python, 114 web files**. All nine final code/test hashes match the
+devbox and clean independent review; 216 emitted C++ files contain no Script/AOT.
+Full suites and full Bootstrap were skipped.
+
+**Next native boundary:** consume the original observing getter **1a7fb166** and
+method **7acf503b** open/next/close completion tuples, with exact payload/state,
+cleanup, exhaustion, saved returns and independent effects. Escaping nodes still
+need exception-lifetime owners. **Next escape boundary:** source **97308b39**,
+program **fa9803402523b206**, applies `** 0` to the computed remainder and keeps the
+child at array index one. It remains Stored despite one confined VM observation
+and Node `[0,0,0]`. Broader iterators, unguarded Bootstrap defaults, the application
+driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundaries](handoff/2026-09-24-protected-writes-unit-powers.md).
+
 ## Protected invocation projection and computed Number remainder, 2026-09-24 UTC
 
 Resumed clean **30a722ad** and the latest handoff's iterator/remainder boundaries.
