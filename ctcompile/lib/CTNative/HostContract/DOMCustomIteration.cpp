@@ -1433,6 +1433,84 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     });
     if (aliases.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
 
+    // A record and completion tag travel together. An equality guard may
+    // select its record even when other tags carry poison in that slot. Keep
+    // the mixed tuple and all producers; only the guarded call operand changes.
+    const auto selectedRecord = [&](auto && self, mlir::Value record, mlir::Value tag,
+                                    uint64_t expected, bool & matched, unsigned depth) -> bool {
+        if (!spend() || depth == 64) { return false; }
+        if (auto constant = tag.getDefiningOp<mlir::arith::ConstantOp>()) {
+            auto integer = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue());
+            if (!integer || !tag.getType().isInteger(32)) { return false; }
+            if (integer.getValue().getZExtValue() != expected) { return true; }
+            matched = true;
+            return record == open.getResult();
+        }
+        auto value = llvm::dyn_cast<mlir::OpResult>(record);
+        auto selector = llvm::dyn_cast<mlir::OpResult>(tag);
+        if (!value || !selector || value.getOwner() != selector.getOwner() ||
+            !llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(value.getOwner())) {
+            return false;
+        }
+        for (auto & region : value.getOwner()->getRegions()) {
+            if (!spend()) { return false; }
+            auto yield = region.hasOneBlock() && !region.front().empty()
+                             ? llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back())
+                             : mlir::scf::YieldOp{};
+            if (!yield || yield.getOperandTypes() != value.getOwner()->getResultTypes() ||
+                !self(self, yield.getOperand(value.getResultNumber()),
+                      yield.getOperand(selector.getResultNumber()), expected, matched, depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto selectedCloses = entry.walk([&](ctjs::CallOp call) {
+        if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (helper(call) != "__ctbrowser_iter_close" || call.getArgs().size() != 2 ||
+            call.getArgs()[0] == open.getResult() ||
+            !recordDominance.properlyDominates(open.getResult(), call)) {
+            return mlir::WalkResult::advance();
+        }
+        for (auto * parent = call->getParentOp(); parent && parent != entry;
+             parent = parent->getParentOp()) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
+            auto compare = branch ? branch.getCondition().getDefiningOp<mlir::arith::CmpIOp>()
+                                  : mlir::arith::CmpIOp{};
+            if (!compare || compare.getPredicate() != mlir::arith::CmpIPredicate::eq ||
+                !branch.getThenRegion().isAncestor(call->getParentRegion())) {
+                continue;
+            }
+            auto tag = compare.getLhs();
+            auto key = compare.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
+            if (!key) {
+                tag = compare.getRhs();
+                key = compare.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
+            }
+            auto cast = tag.getDefiningOp<mlir::arith::IndexCastUIOp>();
+            auto integer =
+                key ? llvm::dyn_cast<mlir::IntegerAttr>(key.getValue()) : mlir::IntegerAttr{};
+            // i32 -> index is lossless on either supported index width. No
+            // narrowing casts or unknown/truncated tags can select an identity.
+            if (!cast || !cast.getIn().getType().isInteger(32) || !tag.getType().isIndex() ||
+                !integer || integer.getValue().isNegative() ||
+                integer.getValue().getActiveBits() > 32) {
+                continue;
+            }
+            bool matched = false;
+            if (selectedRecord(selectedRecord, call.getArgs()[0], cast.getIn(),
+                               integer.getValue().getZExtValue(), matched, 0) &&
+                matched) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                call.getArgsMutable().slice(0, 1).assign(open.getResult());
+                break;
+            }
+        }
+        return work.remaining ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
+    });
+    if (selectedCloses.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+
     ctjs::CallOp next;
     llvm::SmallVector<ctjs::CallOp> closes;
     for (mlir::Operation * user : open->getUsers()) {

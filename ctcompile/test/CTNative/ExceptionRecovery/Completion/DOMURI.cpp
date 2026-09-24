@@ -638,10 +638,9 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   contract.moduleSha256 == ctcompile::ctnative::hostContractFingerprint(*module),
               "original observing iterator defers suppression without changing any source state");
         if (!close) { llvm::consumeError(close.takeError()); }
-        const auto boundary =
-            structured ? "DOM iterator close requires completion-selected record identity"
-            : method   ? "DOM Symbol.iterator must be a closed identity method"
-                       : "DOM iterator getter requires a terminal throw";
+        const auto boundary = structured ? "DOM custom next requires one direct loop test"
+                              : method   ? "DOM Symbol.iterator must be a closed identity method"
+                                         : "DOM iterator getter requires a terminal throw";
         for (unsigned budget : {0u, 100000u}) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto proof = contract;
@@ -677,16 +676,18 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   countChecks(*recovered.original) == checks &&
                   mlir::succeeded(mlir::verify(*module)),
               "iterator recovery retains the complete original snapshot and verifies");
-        for (unsigned control = 0; control < (structured ? 17u : 7u); ++control) {
+        for (unsigned control = 0; control < (structured ? 23u : 7u); ++control) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
             ctjs::InvokeOp invocation, opening;
             ctjs::CallOp openCall;
+            llvm::SmallVector<ctjs::CallOp> closeCalls;
             entry.walk([&](ctjs::InvokeOp found) {
                 auto call = llvm::cast<ctjs::CallOp>(found.getBody().front().front());
                 auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                if (!invocation && load && load.getName() == "__ctbrowser_iter_close") {
-                    invocation = found;
+                if (load && load.getName() == "__ctbrowser_iter_close") {
+                    if (!invocation) { invocation = found; }
+                    closeCalls.push_back(call);
                 }
                 if (load && load.getName() == "__ctbrowser_for_of_open") {
                     opening = found;
@@ -793,6 +794,58 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 }
                 check(observed == 1, "saved done has one exact unwind result");
             }
+            if (control >= 17 && control <= 19) {
+                // Corrupt one selected leaf, not the other tag's inactive slot.
+                // Every matching leaf must agree; an unknown tag cannot exclude it.
+                mlir::scf::YieldOp leaf;
+                entry.walk([&](mlir::scf::YieldOp yield) {
+                    if (leaf || yield.getNumOperands() != 24 ||
+                        yield.getOperand(4) != recordAlias) {
+                        return;
+                    }
+                    auto tag = yield.getOperand(23).getDefiningOp<mlir::arith::ConstantOp>();
+                    if (tag && llvm::cast<mlir::IntegerAttr>(tag.getValue()).getInt() == 0) {
+                        leaf = yield;
+                    }
+                });
+                if (!check(static_cast<bool>(leaf),
+                           "close has an exact selected record/tag leaf")) {
+                    continue;
+                }
+                at.setInsertionPoint(leaf);
+                if (control == 18) {
+                    leaf->setOperand(4, holder);
+                } else {
+                    const unsigned slot = control == 19 ? 23 : 4;
+                    leaf->setOperand(slot, mlir::ub::PoisonOp::create(
+                                               at, call.getLoc(), leaf.getOperand(slot).getType()));
+                }
+            } else if (control >= 20) {
+                auto guard = invocation->getParentOfType<mlir::scf::IfOp>();
+                auto compare = guard.getCondition().getDefiningOp<mlir::arith::CmpIOp>();
+                auto cast = compare.getLhs().getDefiningOp<mlir::arith::IndexCastUIOp>();
+                if (control == 20) {
+                    compare.setPredicate(mlir::arith::CmpIPredicate::ne);
+                } else if (control == 21) {
+                    auto lhs = compare.getLhs();
+                    compare->setOperand(0, compare.getRhs());
+                    compare->setOperand(1, lhs);
+                } else {
+                    auto tag = llvm::cast<mlir::OpResult>(cast.getIn());
+                    cast->setOperand(0, tag.getOwner()->getResult(tag.getResultNumber() - 1));
+                }
+            }
+            const auto rewrittenClose = [&](ctjs::CallOp found) {
+                if (!structured || control == 12 || control == 13 || control == 19 ||
+                    control == 22) {
+                    return false;
+                }
+                if (control == 17 || control == 18 || control == 20) {
+                    return found != closeCalls.front();
+                }
+                return control == 0 || control == 11 || control == 14 || control == 15 ||
+                       control == 16 || control == 21;
+            };
             auto proof = contract;
             proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
             const auto snapshot = printed(*candidate);
@@ -817,6 +870,11 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                     value = openCall.getResult();
                 }
                 if (value == recordAlias && control != 12 && control != 13) {
+                    value = openCall.getResult();
+                }
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                    call && llvm::is_contained(closeCalls, call) && rewrittenClose(call) &&
+                    use.getOperandNumber() == 2) {
                     value = openCall.getResult();
                 }
                 normalUses.push_back(
@@ -861,7 +919,9 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 *candidate, proof, control == 6 ? 0 : 100000);
             const auto reason = failure ? llvm::toString(std::move(failure)) : std::string{};
             const auto expected =
-                control == 0 || control == 11 || control == 15 ? boundary
+                control == 19 || control == 22
+                    ? "DOM iterator close requires completion-selected record identity"
+                : control == 0 || control == 11 || control == 15 || control >= 17 ? boundary
                 : control == 12 || control == 13
                     ? "DOM iterator close must follow its complete traversal"
                 : control == 14 ? "DOM iterator record has an unsupported observer"
@@ -889,6 +949,10 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                               : value == expected.value,
                           "success and retained invocations keep every payload, tag, flag and "
                           "saved value");
+                }
+                for (auto close : closeCalls) {
+                    check((close.getArgs()[0] == openCall.getResult()) == rewrittenClose(close),
+                          "only calls with complete matching record/tag leaves forward identity");
                 }
                 unsigned kept = 0;
                 entry.walk([&](ctjs::InvokeOp found) {

@@ -449,7 +449,7 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     optimize=optimize,
                     success=False,
                 )
-                if "DOM iterator close requires completion-selected record identity" not in result:
+                if "DOM custom next requires one direct loop test" not in result:
                     raise RuntimeError(f"{name}: lost recovered protocol diagnostic: {result}")
 
 
