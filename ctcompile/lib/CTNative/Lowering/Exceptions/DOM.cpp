@@ -1,5 +1,6 @@
 #include "../../../CTJS/Lowering/Globals/RegisterFlow.h"
 #include "Recovery.h"
+#include "ctbrowser/dom/element.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -439,8 +440,35 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     }
     const bool unconditional = alwaysThrows(alwaysThrows, exit.getIsThrow(), 0);
     const auto attributeMethod = [&](ctjs::GetPropertyOp method) {
-        if (!method || ctjs::constantKey(method.getKey()) != "hasAttribute") { return false; }
-        auto receiver = llvm::dyn_cast<mlir::BlockArgument>(method.getObject());
+        if (!method || (ctjs::constantKey(method.getKey()) != "hasAttribute" &&
+                        ctjs::constantKey(method.getKey()) != "setAttribute")) {
+            return false;
+        }
+        mlir::Value value = method.getObject();
+        // Recovery may forward an unchanged register through a branch result.
+        // Identical incoming SSA proves identity without discarding either arm's
+        // effects; differing origins still need a separate receiver proof.
+        for (unsigned depth = 0; depth < 64; ++depth) {
+            auto result = llvm::dyn_cast<mlir::OpResult>(value);
+            auto branch =
+                result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+            if (!branch) { break; }
+            if (!remaining || !branch.getThenRegion().hasOneBlock() ||
+                !branch.getElseRegion().hasOneBlock()) {
+                return false;
+            }
+            --remaining;
+            auto yes = llvm::dyn_cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
+            auto no = llvm::dyn_cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
+            if (!yes || !no || yes.getNumOperands() != branch.getNumResults() ||
+                no.getNumOperands() != branch.getNumResults() ||
+                yes.getOperand(result.getResultNumber()) !=
+                    no.getOperand(result.getResultNumber())) {
+                return false;
+            }
+            value = yes.getOperand(result.getResultNumber());
+        }
+        auto receiver = llvm::dyn_cast<mlir::BlockArgument>(value);
         if (!receiver || receiver.getOwner() != &function.getBody().front() ||
             receiver.getArgNumber() < ctjs::implicit_arguments) {
             return false;
@@ -455,13 +483,25 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     const auto attributeCall = [&](ctjs::CallOp call) {
         if (!call) { return false; }
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        auto key = call.getArgs().size() == 1
-                       ? call.getArgs().front().getDefiningOp<ctjs::ConstantOp>()
-                       : ctjs::ConstantOp{};
-        return attributeMethod(method) && call.getReceiver() == method.getObject() && key &&
-               llvm::isa<ctjs::StringAttr>(key.getValue());
+        if (!attributeMethod(method) || call.getReceiver() != method.getObject()) { return false; }
+        const bool writes = ctjs::constantKey(method.getKey()) == "setAttribute";
+        if (call.getArgs().size() != (writes ? 2u : 1u)) { return false; }
+        auto key = call.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
+        auto name = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+        if (!name) { return false; }
+        if (!writes) { return true; }
+        auto value = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
+        if (!value || !llvm::isa<ctjs::StringAttr>(value.getValue()) ||
+            name.getValue().size() > remaining) {
+            return false;
+        }
+        // setAttribute validates before mutation. Charge and call the same public
+        // validator as the VM binding; literal Strings cannot invoke coercion.
+        remaining -= static_cast<unsigned>(name.getValue().size());
+        return ctbrowser::is_valid_attribute_name(
+            std::string_view{name.getValue().data(), name.getValue().size()});
     };
-    llvm::SmallVector<ctjs::InvokeOp> reads;
+    llvm::SmallVector<ctjs::InvokeOp> nonthrowingCalls;
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : block.without_terminator()) {
@@ -487,11 +527,11 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 continue;
             }
             // The original entry contract fixes this Element and its initial
-            // method identity. A literal String needs no coercion; hasAttribute
-            // cannot throw a source exception or reenter. Keep both operations
-            // in order and reprove the complete resulting DOM body below.
-            // ponytail: direct entry parameters only; aliases need their own
-            // source identity proof before a removed status edge can trust them.
+            // method identity. Literal Strings need no coercion; reads and writes
+            // with valid names cannot throw a source exception or reenter. Keep
+            // every mutation in order and reprove the complete DOM body below.
+            // ponytail: entry parameters and identical branch forwarding only;
+            // other aliases need their own source identity proof.
             if (auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
                 attributeMethod(method)) {
                 continue;
@@ -519,7 +559,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                         return false;
                     }
                 }
-                reads.push_back(invocation);
+                nonthrowingCalls.push_back(invocation);
                 continue;
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
@@ -539,7 +579,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     if (!effects(effects, body, 0)) {
         return refuse("DOM caught throw protected effect lacks a nonthrowing proof");
     }
-    for (auto invocation : reads) {
+    for (auto invocation : nonthrowingCalls) {
         auto & invoked = invocation.getBody().front();
         auto call = llvm::cast<ctjs::CallOp>(invoked.front());
         auto dispatch = llvm::cast<ctjs::InvokeExitOp>(invoked.back());

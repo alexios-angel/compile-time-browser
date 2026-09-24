@@ -33,7 +33,33 @@ SOURCES = {
     "invocation-conditional-return": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); let saved = false; try { if (flag) { saved = anchor.hasAttribute('data-closed'); } return saved; } catch (error) { return error === anchor && saved; } }\n",
     "invocation-multiple-reads": "function customElements(anchor) { try { const first = anchor.hasAttribute('data-closed'); const second = anchor.hasAttribute('x'); return first && !second; } catch (error) { return error === anchor; } }\n",
     "invocation-read-then-throw": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
+    "write-throw": "function customElements(anchor) { try { anchor.setAttribute('data-written', 'yes'); throw anchor; } catch (error) { return error === anchor && anchor.hasAttribute('data-written'); } }\n",
+    "write-return": "function customElements(anchor) { try { anchor.setAttribute('data-written', 'yes'); return true; } catch (error) { return false; } }\n",
+    "write-conditional": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { anchor.setAttribute('data-written', 'yes'); } throw anchor; } catch (error) { return error === anchor && anchor.hasAttribute('data-written'); } }\n",
+    "write-saved-state": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-written', 'yes'); throw anchor; } catch (error) { return error === anchor && saved && anchor.hasAttribute('data-written'); } }\n",
 }
+
+
+WRITE_EXPECTED = {
+    "write-throw": 'result0="true1:yes:1"\nresult1="true1:yes:1"\n',
+    "write-return": 'result0="true0:yes:1"\nresult1="true0:yes:1"\n',
+    "write-conditional": 'result0="false2:undefined:0"\nresult1="true2:yes:1"\n',
+    "write-saved-state": 'result0="false1:yes:1"\nresult1="true2:yes:1"\n',
+}
+
+WRITE_OBSERVER = """function observe(closed) {
+  const saved = {};
+  if (closed) saved['data-closed'] = 'yes';
+  let reads = 0, writes = 0;
+  const anchor = {
+    hasAttribute(name) { reads++; return name in saved; },
+    setAttribute(name, value) { writes++; saved[name] = '' + value; }
+  };
+  const result = customElements(anchor);
+  return '' + result + reads + ':' + saved['data-written'] + ':' + writes;
+}
+var result0 = observe(false), result1 = observe(true);
+"""
 
 
 def main():
@@ -56,6 +82,8 @@ def main():
             + "return '' + customElements(anchor) + reads; }\n"
             + "var result0 = observe(false), result1 = observe(true);\n"
         )
+        if name.startswith("write-"):
+            script = source + WRITE_OBSERVER
         nested = name.startswith("mixed-node-nested-") or name == "nested-protected-normal-read"
         if nested:
             script = (
@@ -113,9 +141,12 @@ def main():
                 expected = expected.replace('result0="false2"', 'result0="false3"').replace(
                     'result1="false2"', 'result1="false3"'
                 )
+        if name in WRITE_EXPECTED:
+            expected = WRITE_EXPECTED[name]
         for command in ([args.node, str(node)], [args.reference, str(oracle)]):
             result = run(command)
-            if result.stdout != expected:
+            output = unquote(result.stdout) if command[0] == args.reference else result.stdout
+            if output != expected:
                 raise RuntimeError(f"{name}: catch oracle differs: {result}")
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
         checks = (
@@ -144,6 +175,28 @@ def main():
                 'assert(doc.set_attribute(button, atoms.intern("data-inner"), "yes")); '
                 "assert(@ENTRY@(alias)); assert(!@ENTRY@(foreign));"
             )
+        if name.startswith("write-"):
+            answer = "closed" if name in ("write-conditional", "write-saved-state") else "true"
+            count = "(closed ? 1u : 0u)" if name == "write-conditional" else "1u"
+            checks = """
+                const auto written = atoms.intern("data-written");
+                for (bool closed : {false, true}) {
+                    assert(doc.remove_attribute(button, written));
+                    if (closed) {
+                        assert(doc.set_attribute(button, atoms.intern("data-closed"), "yes"));
+                    }
+                    (void)doc.take_writes();
+                    assert(static_cast<bool>(@ENTRY@(alias)) == @ANSWER@);
+                    const auto writes = doc.take_writes();
+                    assert(writes.size() == @COUNT@);
+                    assert(doc.read().has_attribute(button, written) == !writes.empty());
+                    if (!writes.empty()) {
+                        assert(writes[0].name == written);
+                        assert(doc.read().attribute_value(button, written) == "yes");
+                    }
+                }
+                (void)foreign;
+            """.replace("@ANSWER@", answer).replace("@COUNT@", count)
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
@@ -161,6 +214,10 @@ def main():
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
     refusals = {
+        "write-invalid-name": "try { anchor.setAttribute('bad name', 'yes'); throw anchor; } catch (error) { return error === anchor; }",
+        "write-coercing-value": "try { anchor.setAttribute('data-written', anchor); throw anchor; } catch (error) { return error === anchor; }",
+        "write-forged-method": "try { ({setAttribute() { throw false; }}).setAttribute('data-written', 'yes'); throw anchor; } catch (error) { return error === anchor; }",
+        "write-wrong-receiver": "try { const write = anchor.setAttribute; write('data-written', 'yes'); throw anchor; } catch (error) { return error === anchor; }",
         "invocation-coercing-argument": "try { return anchor.hasAttribute(1); } catch (error) { return error === anchor; }",
         "invocation-wrong-receiver": "try { const read = anchor.hasAttribute; return read('data-closed'); } catch (error) { return error === anchor; }",
         "invocation-forged-method": "try { return ({hasAttribute() { throw false; }}).hasAttribute('data-closed'); } catch (error) { return error === anchor; }",
@@ -206,7 +263,7 @@ def main():
                     success=False,
                 )
     check_outer_catches(args)
-    print("confined node catch: 368 native executions, 60 refusals, 58 Node/VM observations")
+    print("confined node catch: 432 native executions, 76 refusals, 66 Node/VM observations")
 
 
 OUTER_SOURCES = {

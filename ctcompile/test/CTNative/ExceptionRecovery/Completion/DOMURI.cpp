@@ -139,7 +139,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
     testObservedIteratorRecovery(context);
-    for (unsigned control = 0; control < 40; ++control) {
+    for (unsigned control = 0; control < 50; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
         if (control == 1) {
@@ -259,6 +259,32 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                "decodeURIComponent('%')");
             }
         }
+        if (control >= 40) {
+            source = "function guarded(element) { let saved = false; try { "
+                     "element.setAttribute('data-written', 'yes'); "
+                     "saved = element.hasAttribute('data-written'); throw element; "
+                     "} catch (error) { return error === element && saved; } }";
+            if (control == 41) {
+                source.replace(source.find("throw element;"), 14, "return saved;");
+            }
+            if (control == 42) {
+                source.replace(source.find("element.setAttribute"), 20,
+                               "if (element.hasAttribute('flag')) element.setAttribute");
+            }
+            if (control == 43) { source.replace(source.find("'data-written'"), 14, "'bad name'"); }
+            if (control == 44) { source.replace(source.find("'yes'"), 5, "42"); }
+            if (control == 45) {
+                source.replace(source.find("'yes'"), 5, "element.getAttribute('value')");
+            }
+            if (control == 46) {
+                source.replace(source.find("element.setAttribute"), 20,
+                               "({setAttribute() { throw false; }}).setAttribute");
+            }
+            if (control == 49) {
+                source.insert(source.find("element.setAttribute"),
+                              "if (element.hasAttribute('flag')) element = false; ");
+            }
+        }
         auto candidate = import(context, source, true);
         if (!candidate) { continue; }
         const auto original = printed(*candidate);
@@ -266,17 +292,18 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         request.provider = ctnative::HostContract::Provider::ctbrowserDOM;
         request.entry = guarded(*candidate).getSymName().str();
         request.elementParameters = {0};
-        if (control == 32 || control == 38) { request.elementParameters.clear(); }
+        if (control == 32 || control == 38 || control == 47) { request.elementParameters.clear(); }
         request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = request.moduleSha256;
         auto error = ctnative::prepareDOMEntry(
             *candidate, request,
-            control == 6 || control == 19 || control == 26 || control == 39 ? 0
-            : control == 27                                                 ? 500
-                                                                            : 100000);
+            control == 6 || control == 19 || control == 26 || control == 39 || control == 48 ? 0
+            : control == 27 ? 500
+                            : 100000);
         if (control >= 3 && control != 5 && control != 7 && control != 8 && control != 9 &&
             !(control >= 12 && control <= 15) && !(control >= 20 && control <= 23) &&
-            control != 28 && !(control >= 33 && control <= 35)) {
+            control != 28 && !(control >= 33 && control <= 35) &&
+            !(control >= 40 && control <= 42)) {
             check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
             llvm::consumeError(std::move(error));
             check(printed(*candidate) == original && request.moduleSha256 == fingerprint,
