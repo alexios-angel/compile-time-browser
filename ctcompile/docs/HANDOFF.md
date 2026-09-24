@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inert helper completions and paired arithmetic tables, 2026-09-24 UTC
+
+Resumed clean **2b854bf8** and the original observing iterator boundary.
+**04d8eaf0** consumes observed inert-helper normal tuples while preserving the
+original payload and successful SSA state. The unchanged projector now lives in
+HostContract Analysis for both consumers. **Original outer getter 1a7fb166 and
+method 7acf503b remain refused**; their effectful protocol consumer is still missing.
+
+**05312d0b** reuses bounded singleton right-operand discovery for Add/Sub/Mul/Div/Mod.
+Unchanged source **6780b1c6**, program **c02f2a0e3255db18**, proves its child and both
+lookup tables **Confined**: **three of five total sites**, zero violations, Node
+`[0,0,0]`. All 173 historical escape source bodies are unchanged.
+
+Focused validation passes: exact recovery and host-contract CTests; **32 native
+executions, 92 refusals, eight Node/VM observations** from two selected sources and
+original outer controls; exact arrays CTest and one escape lit case. Formatting
+passes **1126 C++, 158 Python, 114 web files**. Nine final hashes match the devbox;
+sixteen generated C++ files contain no Script/AOT. No whole caught-node lit or
+full-suite pass is claimed. Agent rate limits required parent test/escape resumption;
+independent candidate review did not complete.
+
+**Next:** connect recovered open/next/close tuples to protocol discovery and
+helper expansion with independent DOM effect proofs, exhaustion, cleanup, saved
+returns and caught-node identity. Escaping nodes still need exception-lifetime
+owners. The paired-table escape witness is complete; no further source was
+measured. General powers, broader iterators, unguarded Bootstrap defaults and
+the application driver remain.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-inert-helper-paired-tables.md).
+
 ## Boolean attribute writes and finite unit-base powers, 2026-09-24 UTC
 
 Resumed clean **201595c5** and the original iterator/unit-base boundaries.
