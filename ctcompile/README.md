@@ -67,11 +67,22 @@ in the checkout and that path is retained by the installation. Keep that
 directory, or configure with `-DCTBROWSER_WITH_ANGLE=OFF` to omit WebGL support.
 Moving a packaged executable to another machine requires matching host libraries.
 
-Standalone configuration against an installed engine is also supported:
-`cmake -S ctcompile -B build-ctcompile -Dctbrowser_DIR=<prefix>/lib/cmake/ctbrowser
--DLLVM_DIR=<llvm-prefix>/lib/cmake/llvm`. Add the MLIR options above for native
-tools. A standalone compiler build does not build `ctrun`; supply a matching
-launcher with `--launcher` or use `--bundle`.
+Standalone configuration against an installed engine is also supported. Using
+the dependency prefixes above and the engine's installation prefix:
+
+```bash
+cmake -S ctcompile -B build-ctcompile -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+  -DCMAKE_PREFIX_PATH="$ctcompile_deps_prefix" \
+  -Dctbrowser_DIR=/path/to/engine/lib/cmake/ctbrowser \
+  -DLLVM_DIR="$ctcompile_llvm_prefix/lib/cmake/llvm"
+cmake --build build-ctcompile --target ctcompile-tool
+```
+
+Add the MLIR options above and build `ctjs-opt` and `ctjs-translate` for native
+tools. Keep `BUILD_TESTING=OFF`: the regression suite uses the monorepo's test
+support and browser tools. A standalone compiler build does not build `ctrun`;
+supply a matching launcher with `--launcher` or use `--bundle`.
 
 ## Package an application
 
