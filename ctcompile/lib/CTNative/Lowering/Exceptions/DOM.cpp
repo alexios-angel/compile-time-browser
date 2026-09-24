@@ -889,20 +889,24 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
                 exit.getNormalResult() != call.getResult() || !attributes.attributeCall(call)) {
                 continue;
             }
-            // The shared projector verifies both original continuations and
-            // preserves every success slot. Only this independent effect proof
-            // permits discarding failure and its saved registers.
-            // ponytail: inert continuation tuples; effectful continuations need
-            // their own ordered projection before this consumer may select them.
-            mlir::OpBuilder at(invocation);
-            auto projected = host_detail::projectInvocationContinuation(
-                invocation, false, call.getResult(), at, remaining);
-            if (mlir::failed(projected)) { continue; }
+            // Verification covered both complete continuations. Only the call's
+            // independent effect proof permits discarding failure and its saved
+            // registers. The normal continuation is outside this protection;
+            // preserve its operations, including later throws, after the call.
             call->moveBefore(invocation);
             if (attributes.attributeRead(call)) {
                 attributes.booleanReads.insert(call.getResult());
             }
-            invocation.replaceAllUsesWith(*projected);
+            auto & normal = invocation.getNormalBody().front();
+            normal.getArgument(0).replaceAllUsesWith(call.getResult());
+            if (!self(self, normal, depth + 1)) { return false; }
+            auto yield = llvm::cast<ctjs::InvokeYieldOp>(normal.back());
+            for (auto & next : llvm::make_early_inc_range(normal.without_terminator())) {
+                if (!remaining) { return false; }
+                --remaining;
+                next.moveBefore(invocation);
+            }
+            invocation.replaceAllUsesWith(yield.getValues());
             invocation.erase();
         }
         return remaining != 0;

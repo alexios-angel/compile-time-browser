@@ -106,6 +106,43 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
         });
         check(tupleStores == 3 && !tupleInvocations && mlir::succeeded(mlir::verify(*tupleSource)),
               "normal tuple transport disappears while all three observers remain");
+        auto effectSource = replace(leafSource, "    ^normal(%result: !ctjs.value):",
+                                    "    ^normal(%result: !ctjs.value):\n"
+                                    "      ctjs.store_global \"normal\", %result");
+        effectSource = replace(
+            effectSource,
+            "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):",
+            "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):\n"
+            "      ctjs.store_global \"unwind\", %error");
+        auto effects = mlir::parseSourceString<mlir::ModuleOp>(effectSource, &context);
+        auto effectError = ctcompile::ctnative::expandDOMHelpers(*effects, "entry$0", 100000);
+        if (!check(!effectError, "effectful continuations retain their helper invocation")) {
+            llvm::consumeError(std::move(effectError));
+            continue;
+        }
+        auto effectEntry = effects->lookupSymbol<ctjs::FuncOp>("entry$0");
+        effectError = ctcompile::ctnative::lowering_detail::normalizeDOMAttributeInvocations(
+            effectEntry, 100000, {0});
+        if (!check(!effectError, "nonthrowing attributes retain normal continuation effects")) {
+            llvm::consumeError(std::move(effectError));
+            continue;
+        }
+        unsigned effectsSeen = 0;
+        effectEntry.walk([&](ctjs::StoreGlobalOp store) {
+            ++effectsSeen;
+            check(store.getName() != "unwind", "only independently impossible unwind disappears");
+            if (store.getName() == "normal" || store.getName() == "payload") {
+                auto called = store.getValue().getDefiningOp<ctjs::CallOp>();
+                check(called && called->isBeforeInBlock(store),
+                      "normal payload effects execute after the original call");
+            } else {
+                check(store.getValue() == effectEntry.getBody().front().getArgument(
+                                              store.getName() == "saved" ? 4 : 3),
+                      "effectful completion preserves successful saved slots");
+            }
+        });
+        check(effectsSeen == 4 && mlir::succeeded(mlir::verify(*effects)),
+              "all normal effects and tuple observers survive ordered projection");
         auto projectedSource =
             replace(leafSource, "    ctjs.return %leaf",
                     "    %savedReturn = ctjs.constant #ctjs.string<\"saved return\">\n"
@@ -115,7 +152,7 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
                                        "    ctjs.store_global \"saved\", %tuple#2\n"}) {
             projectedSource = replace(projectedSource, line, "");
         }
-        for (unsigned control = 0; control != 6; ++control) {
+        for (unsigned control = 0; control != 9; ++control) {
             auto text = projectedSource;
             if (control == 2) {
                 text = replace(text, "    ^normal(%result: !ctjs.value):",
@@ -127,6 +164,37 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
             }
             if (control == 4) {
                 text = replace(text, "#ctjs.string<\"data-written\">", "#ctjs.number<42>");
+            }
+            if (control >= 6) {
+                text = replace(text, "    ^normal(%result: !ctjs.value):", R"MLIR(
+    ^normal(%result: !ctjs.value):
+      %writeKey = ctjs.constant #ctjs.string<"setAttribute">
+      %readKey = ctjs.constant #ctjs.string<"hasAttribute">
+      %name = ctjs.constant #ctjs.string<"data-after">
+      %write = ctjs.get_property %value[%writeKey]
+      %read = ctjs.get_property %value[%readKey]
+      %snapshot = "ctjs.invoke"() ({
+        %called = ctjs.call %read(%value, %name)
+        ctjs.invoke_exit %called state(%saved)
+      }, {
+      ^readNormal(%present: !ctjs.value):
+        %written = ctjs.call %write(%value, %name, %present)
+        "ctjs.invoke_yield"(%present) : (!ctjs.value) -> ()
+      }, {
+      ^readUnwind(%error: !ctjs.value, %oldSaved: !ctjs.value):
+        ctjs.store_global "unreachable", %error
+        "ctjs.invoke_yield"(%oldSaved) : (!ctjs.value) -> ()
+      }) : () -> !ctjs.value
+      %last = ctjs.call %write(%value, %name, %snapshot)
+)MLIR");
+                if (control == 7) {
+                    text = replace(text, "%write = ctjs.get_property %value[%writeKey]",
+                                   "%write = ctjs.get_property %new[%writeKey]");
+                }
+                if (control == 8) {
+                    text = replace(text, "%last = ctjs.call %write(%value, %name, %snapshot)",
+                                   "%last = ctjs.call %write(%value, %name, %saved)");
+                }
             }
             auto projected = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
             if (!check(static_cast<bool>(projected), "observed helper preparation parses")) {
@@ -142,9 +210,9 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
             const auto fingerprint = contract.moduleSha256;
             auto error = ctcompile::ctnative::prepareDOMEntry(*projected, contract,
                                                               control == 5 ? 0 : 100000);
-            if (control) {
+            if (control && control != 6) {
                 check(static_cast<bool>(error),
-                      "observed helper needs identity, inert tuples, arguments and budget");
+                      "observed helper needs proved effects, identity, arguments and budget");
                 if (error) { llvm::consumeError(std::move(error)); }
                 check(printed(*projected) == snapshot && contract.moduleSha256 == fingerprint,
                       "refused observed helper preserves source and contract");
@@ -160,11 +228,21 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
             entry.walk([&](ctjs::CallOp) { ++leaves; });
             auto returned = llvm::cast<ctjs::ReturnOp>(entry.getBody().front().back());
             check(
-                !invocations && leaves == 1 &&
+                !invocations && leaves == (control == 6 ? 4u : 1u) &&
                     ctjs::constantKey(returned.getValue()) == "saved return" &&
                     ctcompile::ctnative::DOMEntryAnalysis(*projected, contract).proved() &&
                     mlir::succeeded(mlir::verify(*projected)),
                 "typed original call and independent return survive without invocation transport");
+            if (control == 6) {
+                llvm::SmallVector<ctjs::CallOp> calls;
+                entry.walk([&](ctjs::CallOp call) { calls.push_back(call); });
+                check(calls.size() == 4 && calls[2].getArgs().back() == calls[1].getResult() &&
+                          calls[3].getArgs().back() == calls[1].getResult() &&
+                          calls[0]->isBeforeInBlock(calls[1]) &&
+                          calls[1]->isBeforeInBlock(calls[2]) &&
+                          calls[2]->isBeforeInBlock(calls[3]),
+                      "nested continuation reads and writes retain order and Boolean snapshot");
+            }
         }
         // Both continuations remain observable. Expansion must preserve these
         // operations, not select one path from the helper's nominal return type.
