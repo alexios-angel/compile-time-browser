@@ -1,5 +1,6 @@
 #include "Proof.hpp"
 #include "ctbrowser/style/css/parser.hpp"
+#include "mlir/IR/Verifier.h"
 
 namespace ctcompile::ctnative::dom_source_detail {
 
@@ -24,23 +25,62 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     }
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
         if (invocation.getNumResults()) {
-            // An observed completion can leave protection only after the helper's
-            // entire body is independently inert for every input. Preserve the
-            // original normal payload and successful SSA state; unwind snapshots
-            // do not replace either. The existing inliner then binds the payload.
-            if (!proveUnusedBody(target)) { return false; }
-            mlir::OpBuilder at(invocation);
-            auto projected = host_detail::projectInvocationContinuation(
-                invocation, false, call->getResult(0), at, remaining);
-            if (mlir::failed(projected)) {
-                return refuse("DOM inert helper invocation lost its completion tuple");
+            auto returned = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
+            auto leaf =
+                returned ? returned.getValue().getDefiningOp<ctjs::CallOp>() : ctjs::CallOp{};
+            auto method = leaf ? leaf.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                               : ctjs::GetPropertyOp{};
+            bool forwards = method && leaf.getReceiver() == method.getObject() &&
+                            (ctjs::constantKey(method.getKey()) == "hasAttribute" ||
+                             ctjs::constantKey(method.getKey()) == "setAttribute");
+            // Preserve the call's exceptional edge as well as its result. Only
+            // inert preparation leaves protection, conditional on complete DOM
+            // reproof of the actual receiver and initial method after binding.
+            // ponytail: one directly returned leaf; additional effects and result
+            // construction need their own completion correspondence.
+            for (auto & operation : target.getBody().front()) {
+                if (!step()) { return false; }
+                forwards &=
+                    &operation == leaf || &operation == method ||
+                    llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::RootOp,
+                              ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(operation);
             }
-            call->moveBefore(invocation);
-            invocation.replaceAllUsesWith(*projected);
-            invocation.erase();
+            if (forwards) {
+                const auto counted = invocation.walk([&](mlir::Operation * operation) {
+                    uint64_t cost =
+                        uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
+                    for (auto & region : operation->getRegions()) {
+                        for (auto & block : region) { cost += 1 + block.getNumArguments(); }
+                    }
+                    if (cost > remaining / 2) { return mlir::WalkResult::interrupt(); }
+                    remaining -= static_cast<unsigned>(cost * 2);
+                    return mlir::WalkResult::advance();
+                });
+                if (counted.wasInterrupted() || mlir::failed(mlir::verify(invocation))) {
+                    return refuse("DOM forwarded helper lost its invocation correspondence");
+                }
+                protectedInvocation = invocation;
+                protectedLeaf = leaf;
+            } else {
+                // An observed completion can leave protection only after the helper's
+                // entire body is independently inert for every input. Preserve the
+                // original normal payload and successful SSA state; unwind snapshots
+                // do not replace either. The existing inliner then binds the payload.
+                if (!proveUnusedBody(target)) { return false; }
+                mlir::OpBuilder at(invocation);
+                auto projected = host_detail::projectInvocationContinuation(
+                    invocation, false, call->getResult(0), at, remaining);
+                if (mlir::failed(projected)) {
+                    return refuse("DOM inert helper invocation lost its completion tuple");
+                }
+                call->moveBefore(invocation);
+                invocation.replaceAllUsesWith(*projected);
+                invocation.erase();
+            }
         }
     }
-    if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
+    if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp());
+        invocation && !protectedInvocation) {
         if (!step()) { return false; }
         auto & called = invocation.getBody();
         auto & normal = invocation.getNormalBody();

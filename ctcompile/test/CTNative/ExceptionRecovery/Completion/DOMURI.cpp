@@ -67,6 +67,76 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
     });
     check(stores == 3 && calls == 0 && !input->lookupSymbol<ctjs::FuncOp>("identity$1"),
           "observed inert helper expands once without retaining an invocation runtime");
+    for (const std::string method : {"hasAttribute", "setAttribute"}) {
+        auto leafSource = replace(
+            source, "    ctjs.return %value\n  }\n}",
+            "    %key = ctjs.constant #ctjs.string<\"" + method +
+                "\">\n    %name = ctjs.constant #ctjs.string<\"data-written\">\n"
+                "    %method = ctjs.get_property %value[%key]\n"
+                "    %leaf = ctjs.call %method(%value, %name" +
+                (method == "setAttribute" ? ", %name" : "") + ")\n    ctjs.return %leaf\n  }\n}");
+        // Both continuations remain observable. Expansion must preserve these
+        // operations, not select one path from the helper's nominal return type.
+        leafSource = replace(leafSource, "    ^normal(%result: !ctjs.value):",
+                             "    ^normal(%result: !ctjs.value):\n"
+                             "      ctjs.store_global \"normal\", %result");
+        leafSource = replace(
+            leafSource,
+            "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):",
+            "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):\n"
+            "      ctjs.store_global \"unwind\", %error");
+        auto candidate = mlir::parseSourceString<mlir::ModuleOp>(leafSource, &context);
+        if (!check(static_cast<bool>(candidate), "observed DOM leaf forwarding parses")) {
+            continue;
+        }
+        ctjs::InvokeOp invocation;
+        candidate->walk([&](ctjs::InvokeOp found) { invocation = found; });
+        auto normal = llvm::cast<ctjs::InvokeYieldOp>(invocation.getNormalBody().front().back());
+        auto unwind = llvm::cast<ctjs::InvokeYieldOp>(invocation.getUnwindBody().front().back());
+        auto dispatch = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+        const llvm::SmallVector<mlir::Value> normalValues(normal.getValues());
+        const llvm::SmallVector<mlir::Value> unwindValues(unwind.getValues());
+        const llvm::SmallVector<mlir::Value> state(dispatch.getState());
+        auto * normalEffect = &invocation.getNormalBody().front().front();
+        auto * unwindEffect = &invocation.getUnwindBody().front().front();
+        unsigned leafSteps = 0;
+        auto failure =
+            ctcompile::ctnative::expandDOMHelpers(*candidate, "entry$0", 100000, &leafSteps);
+        if (!check(!failure, "observed DOM helper forwards its exact protected leaf")) {
+            llvm::errs() << llvm::toString(std::move(failure)) << '\n';
+            continue;
+        }
+        check(mlir::succeeded(mlir::verify(*candidate)), "forwarded invocation verifies");
+        auto leaf = llvm::dyn_cast<ctjs::CallOp>(invocation.getBody().front().front());
+        check(leaf && dispatch.getNormalResult() == leaf.getResult() &&
+                  leaf->getNextNode() == dispatch &&
+                  ctjs::constantKey(
+                      leaf.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) == method,
+              "one original DOM leaf remains protected with its own result");
+        check(llvm::equal(normal.getValues(), normalValues) &&
+                  llvm::equal(unwind.getValues(), unwindValues) &&
+                  llvm::equal(dispatch.getState(), state) &&
+                  &invocation.getNormalBody().front().front() == normalEffect &&
+                  &invocation.getUnwindBody().front().front() == unwindEffect,
+              "normal and unwind payloads, saved registers and effects remain unchanged");
+        auto exhausted = mlir::parseSourceString<mlir::ModuleOp>(leafSource, &context);
+        auto refused = ctcompile::ctnative::expandDOMHelpers(*exhausted, "entry$0", leafSteps - 1);
+        check(static_cast<bool>(refused), "incomplete leaf forwarding budget refuses");
+        if (refused) { llvm::consumeError(std::move(refused)); }
+        for (const auto & invalid :
+             {replace(leafSource, "    ctjs.return %leaf", "    ctjs.return %value"),
+              replace(leafSource, "    ctjs.return %leaf",
+                      "    ctjs.store_global \"extra\", %value\n    ctjs.return %leaf"),
+              replace(leafSource, "    %method = ctjs.get_property",
+                      "    %coerced = ctjs.unary plus %value\n"
+                      "    %method = ctjs.get_property")}) {
+            auto hostile = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+            if (!check(static_cast<bool>(hostile), "hostile leaf forwarding parses")) { continue; }
+            auto error = ctcompile::ctnative::expandDOMHelpers(*hostile, "entry$0", 100000);
+            check(static_cast<bool>(error), "extra effects and changed leaf results refuse");
+            if (error) { llvm::consumeError(std::move(error)); }
+        }
+    }
     for (const auto & invalid :
          {replace(source, "    ctjs.return %value\n  }\n}",
                   "    %coerced = ctjs.unary plus %value\n    ctjs.return %coerced\n  }\n}"),
