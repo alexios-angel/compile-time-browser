@@ -22,6 +22,40 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nested catch dispatch and computed Number addition, 2026-09-24 UTC
+
+Resumed clean **8a9b5b4c**, the latest handoff
+and frozen next-boundary sources. **3a376ea3** carries nested local DOM completion
+flags, payloads and saved state through every original branch yield and subsequent
+tag dispatch. Unchanged source **fcd90a50** and its identity/read variants execute
+at all four Boolean input pairs. Protected effects still need an independent
+nonthrowing proof; caught nodes never become escaping C++ exceptions.
+
+**af3188b4** extends independent binary64 snapshots to Add/Sub chains and clears
+stale snapshots after negation. Unchanged source/program **b3eae66b /
+43ee068c775dc0cc** changes its child from Stored to **Confined**, with two of four
+total sites confined and zero soundness violations. The review's negation witness
+**1ab8065f / df363421614a2c28** shows the same improvement. All 153 historical
+escape source bodies remain unchanged.
+
+Focused checks pass: **224 native executions, 48 refusals, 38 Node/VM observations**,
+the selected caught-node lit case, exact recovery/arrays CTests and one selected
+escape lit case. Formatting passes **1126 C++, 158 Python and 114 web files**.
+Ten final code/test hashes match the devbox; all 112 generated C++ files contain
+no Script/runtime symbols. Native and escape production reviews are complete and
+clean; the parent reviewed the final escape test corrections after rate limits.
+
+**Next:** original outer iterator getter **1a7fb166** and method **7acf503b** still
+need original call/check payload, state and effect correspondence. Escaping node
+exceptions still need an owner that outlives the exception. Escape source
+**1d605bea**, program **ccf117847c4cd802**, multiplies the computed Add/Sub result by
+one and remains Stored; Node returns `[0,0,0]`, and the VM observes the child
+confined once. Multiplication needs separate computed Number evidence. Protected
+observers, broader/nested iterators, unguarded Bootstrap defaults, the application
+driver and full native Bootstrap remain. Full suites and full Bootstrap were skipped.
+
+[Exact checks and next boundaries](handoff/2026-09-24-nested-catch-number-addition.md).
+
 ## Mixed local catches and chained subtraction, 2026-09-24 UTC
 
 Resumed clean **8d83a00c** and the prior outer-catch/escape checkpoints.
