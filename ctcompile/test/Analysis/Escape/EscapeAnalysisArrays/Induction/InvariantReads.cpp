@@ -906,6 +906,55 @@ void InductionCases::invariantReads() {
                replace(afterSubAddDiv, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto afterSubAddMod =
+        replace(afterSubAdd, "  %converted = ctjs.binary_static bitor %number, %zero",
+                "  %remainder = ctjs.binary mod %number, %three\n"
+                "  %converted = ctjs.binary_static bitor %remainder, %zero");
+    run({.what = "remainder consumes an independent Add/Sub Number snapshot",
+         .body = afterSubAddMod,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a saved child survives computed remainder overwrites",
+         .body = replace(replace(afterSubAddMod, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    run({.what = "fractional remainder preserves a child outside the actual write image",
+         .body = replace(afterSubAddMod, "binary mod %number, %three", "binary mod %number, %half"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    run({.what = "remainder uses dividend sign even with a negative divisor",
+         .body = replace(replace(afterSubAddMod, "  %pick =",
+                                 "  %negativeDivisor = ctjs.constant "
+                                 "#ctjs.number<13837309855095848960>\n  %pick ="),
+                         "binary mod %number, %three", "binary mod %number, %negativeDivisor"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a following addition consumes the read-time remainder snapshot",
+         .body =
+             replace(afterSubAddMod, "  %converted = ctjs.binary_static bitor %remainder, %zero",
+                     "  %remainderSum = ctjs.binary add %remainder, %zero\n"
+                     "  %converted = ctjs.binary_static bitor %remainderSum, %zero"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("remainder cannot use converted bits as its fractional property key",
+           replace(afterSubAddMod, "%base[%converted]", "%base[%remainder]"));
+    reject("remainder needs original Number evidence for both operands",
+           replace(afterSubAddMod, "binary mod %number, %three", "binary mod %number, %p"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("computed remainder retains the complete table mutation census",
+               replace(afterSubAddMod, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     const auto negatedAdd =
         replace(replace(replace(numberFractionalTable, "4606281698874543309", "0"),
                         "4613712638259704627", "4611686018427387904"),
@@ -926,6 +975,7 @@ void InductionCases::invariantReads() {
     std::string additions = subtractions;
     std::string multiplications = subtractions;
     std::string divisions = subtractions;
+    std::string remainders = subtractions;
     std::string priorSubtraction = "%original";
     for (unsigned depth = 1; depth <= 64; ++depth) {
         const auto next = "%difference" + std::to_string(depth);
@@ -985,6 +1035,22 @@ void InductionCases::invariantReads() {
                 reject("computed division snapshots stop after 64 operations", quotientBody);
             }
         }
+        if (depth >= 63) {
+            const auto remainderBody = replace(
+                afterSubHalf, "  %textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                remainders + "  %textZero = ctjs.binary mod " + priorSubtraction + ", %three");
+            if (depth == 63) {
+                run({.what = "64 Mod/Sub snapshots include the final after-read operation",
+                     .body = remainderBody,
+                     .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                     .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("computed remainder snapshots stop after 64 operations", remainderBody);
+            }
+        }
+        remainders += "  " + next + " = ctjs.binary mod " + priorSubtraction + ", %three\n";
         divisions += "  " + next + " = ctjs.binary div " + priorSubtraction + ", %one\n";
         multiplications += "  " + next + " = ctjs.binary mul " + priorSubtraction + ", %one\n";
         subtractions += "  " + next + " = ctjs.binary sub " + priorSubtraction + ", %zero\n";
