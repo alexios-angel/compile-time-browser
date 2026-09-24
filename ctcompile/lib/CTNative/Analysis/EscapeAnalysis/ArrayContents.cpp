@@ -605,7 +605,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Pow) {
                     boundedNumberPower(left, right, result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
+                    if (result.integerNumber || result.negativeIntegerNumber ||
+                        result.convertedBits) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }

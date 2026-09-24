@@ -955,6 +955,83 @@ void InductionCases::invariantReads() {
                replace(afterSubAddMod, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto afterSubAddModPow =
+        replace(afterSubAddMod, "  %converted = ctjs.binary_static bitor %remainder, %zero",
+                "  %power = ctjs.binary pow %remainder, %one\n"
+                "  %converted = ctjs.binary_static bitor %power, %zero");
+    run({.what = "unit power preserves an independent computed remainder Number",
+         .body = afterSubAddModPow,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a saved child survives computed unit-power overwrites",
+         .body = replace(replace(afterSubAddModPow, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    run({.what = "unit power preserves a child outside the actual remainder image",
+         .body =
+             replace(afterSubAddModPow, "binary mod %number, %three", "binary mod %number, %half"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    run({.what = "following arithmetic consumes the Number behind unit-power bits",
+         .body = replace(afterSubAddModPow, "  %converted = ctjs.binary_static bitor %power, %zero",
+                         "  %powerSum = ctjs.binary add %power, %zero\n"
+                         "  %converted = ctjs.binary_static bitor %powerSum, %zero"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "unit power accepts a separately proved computed Number exponent",
+         .body = replace(afterSubAddModPow, "  %power = ctjs.binary pow %remainder, %one",
+                         "  %exponent = ctjs.binary add %one, %zero\n"
+                         "  %power = ctjs.binary pow %remainder, %exponent"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("unit power cannot turn fractional result bits into property authority",
+           replace(afterSubAddModPow, "%base[%converted]", "%base[%power]"));
+    for (const std::string exponent : {"%p", "%two", "%half"}) {
+        reject("computed power needs its own exact unit Number exponent",
+               replace(afterSubAddModPow, "binary pow %remainder, %one",
+                       "binary pow %remainder, " + exponent));
+    }
+    for (const std::string value : {"#ctjs.string<\"1\">", "#ctjs.number<4611235658464650854>"}) {
+        reject("unit-power Number evidence cannot borrow String conversion or exponent bits",
+               replace(afterSubAddModPow, "  %power = ctjs.binary pow %remainder, %one",
+                       "  %exponent = ctjs.constant " + value +
+                           "\n  %power = ctjs.binary pow %remainder, %exponent"));
+    }
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("computed unit power retains the complete table mutation census",
+               replace(afterSubAddModPow, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    const auto afterReadPower =
+        replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
+                "  %power = ctjs.binary pow %slot, %one\n"
+                "  %converted = ctjs.binary_static bitor %power, %zero");
+    for (const std::string bits :
+         {"9223372036854775808", "9218868437227405312", "18442240474082181120",
+          "9221120237041090560", "4751297606876816998", "13829653735729319117"}) {
+        run({.what = "unit power preserves signed zero nonfinite wide and negative Numbers",
+             .body = replace(afterReadPower, "4606281698874543309", bits),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    reject("unit power preserves a negative Number rather than its unsigned bits",
+           replace(afterReadPower, "4613712638259704627", "13837084675114480435"));
+    reject("unit power cannot reconstruct a Number from a unary conversion snapshot",
+           replace(afterReadPower, "  %power = ctjs.binary pow %slot, %one",
+                   "  %unknownNumber = ctjs.unary plus %slot\n"
+                   "  %power = ctjs.binary pow %unknownNumber, %one"));
     const auto negatedAdd =
         replace(replace(replace(numberFractionalTable, "4606281698874543309", "0"),
                         "4613712638259704627", "4611686018427387904"),
@@ -976,6 +1053,7 @@ void InductionCases::invariantReads() {
     std::string multiplications = subtractions;
     std::string divisions = subtractions;
     std::string remainders = subtractions;
+    std::string powers = subtractions;
     std::string priorSubtraction = "%original";
     for (unsigned depth = 1; depth <= 64; ++depth) {
         const auto next = "%difference" + std::to_string(depth);
@@ -1050,6 +1128,22 @@ void InductionCases::invariantReads() {
                 reject("computed remainder snapshots stop after 64 operations", remainderBody);
             }
         }
+        if (depth >= 63) {
+            const auto powerBody = replace(
+                afterSubHalf, "  %textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                powers + "  %textZero = ctjs.binary pow " + priorSubtraction + ", %one");
+            if (depth == 63) {
+                run({.what = "64 unit-Pow/Sub snapshots include the final after-read operation",
+                     .body = powerBody,
+                     .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                     .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("computed unit-power snapshots stop after 64 operations", powerBody);
+            }
+        }
+        powers += "  " + next + " = ctjs.binary pow " + priorSubtraction + ", %one\n";
         remainders += "  " + next + " = ctjs.binary mod " + priorSubtraction + ", %three\n";
         divisions += "  " + next + " = ctjs.binary div " + priorSubtraction + ", %one\n";
         multiplications += "  " + next + " = ctjs.binary mul " + priorSubtraction + ", %one\n";

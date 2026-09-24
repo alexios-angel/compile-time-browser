@@ -338,9 +338,10 @@ void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & r
     const auto a = number(left);
     const auto b = number(right);
     const auto depth = std::max(left.arithmeticDepth, right.arithmeticDepth);
-    if (a && b && depth < 64) {
-        // ponytail: at most 64 original Number Add/Sub/Mul/Div/Mod operations; other computed
-        // operations need their own binary64 result proof. Bits cannot supply it.
+    if (a && b && depth < 64 && (kind != ctjs::BinaryKind::Pow || *b == 1)) {
+        // ponytail: at most 64 Number operations; Pow only preserves the exact
+        // unit-exponent identity. Other powers need their own binary64 proof.
+        // Number x ** 1 preserves x, including signed zero and nonfinite x.
         llvm::APFloat computed(*a);
         if (kind == ctjs::BinaryKind::Mul) {
             computed.multiply(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
@@ -350,7 +351,7 @@ void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & r
             computed.mod(llvm::APFloat(*b));
         } else if (kind == ctjs::BinaryKind::Sub) {
             computed.subtract(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
-        } else {
+        } else if (kind == ctjs::BinaryKind::Add) {
             computed.add(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
         }
         result.arithmeticNumber = computed.convertToDouble();
@@ -407,6 +408,7 @@ void boundedNumberDivision(const ContentsValue & left, const ContentsValue & rig
 
 void boundedNumberPower(const ContentsValue & left, const ContentsValue & right,
                         ContentsValue & result) {
+    boundedNumberArithmetic(left, right, ctjs::BinaryKind::Pow, result);
     const auto exponent = boundedConvertedNumber(right);
     const auto positive = boundedConvertedNumber(left);
     const auto negative = boundedConvertedNumber(left, true);
