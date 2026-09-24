@@ -22,6 +22,45 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected iterator open and guarded length provenance, 2026-09-24 UTC
+
+Resumed clean **f0a30d11** and the original observing iterator thread.
+**7b5ec2d0** projects an independently nonthrowing protected open after the
+existing own-slot and closed iterator-identity proofs. The exact call stays at
+its original Try position, with every successful payload and saved tuple value.
+Next and both close(false) failures retain their payloads, flags and 15 saved
+registers. Earlier escapes, effectful identity methods and the interpreter's
+`@@iterator` slot collision refuse. Later effects remain for complete DOM proof.
+
+Original getter **1a7fb166** and method **7acf503b**, with lifted helper bodies,
+now reach the **complete-traversal record** boundary. Raw helper CFGs stop at
+the earlier getter/identity body proof. **No new native JavaScript source
+admission is claimed.** Whole-module and contract rollback remain checked.
+
+**cd6c8bb0** proves cached loaded-array lengths across bounded single-predecessor
+preheader paths. Existing immutable identity, exact extent, mutation census and
+replay remain; joins and repeated/structured origins stay conservative. Frozen
+source **65c1a06f**, program **52dd2978d4ce19c2**, changes child and holder to
+**Confined: two of four total sites**, all four observed, zero VM violations.
+Node returns `[[0,0,0],0]`; saved-child, bound and receiver controls retain escapes.
+
+Focused recovery, host-contract and arrays CTests pass; one new escape lit case
+and the selected three-source native check pass. Formatting passes **1126 C++,
+158 Python, 114 web files**. Independent six-file review is clean; final hashes
+match the devbox. Twenty-four generated C++ files pass the Script/AOT/ctjs check.
+Historical source bodies are preserved. Full suites were skipped.
+
+**Next:** follow successful open-record aliases through the remaining completion
+selections, then rewrite next/exhaustion and both unsuppressed close failure paths
+inside retained Try regions. Preserve saved returns, caught-node identity and
+every effect. Open projection grants no record identity or later confinement
+proof. Raw helper bodies also need existing CFG normalization before these proofs.
+The guarded-length witness is complete; wider joins need execution provenance.
+Escaping-node owners, broader iterators, unguarded Bootstrap defaults, the
+application driver and full native Bootstrap remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-protected-open-guarded-length.md).
+
 ## Iterator completion census and loaded length guards, 2026-09-24 UTC
 
 Resumed clean **9b2b21b0** and the original observing iterator thread.
