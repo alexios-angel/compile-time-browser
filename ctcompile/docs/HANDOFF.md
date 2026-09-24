@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Caught helper source admission, 2026-09-24 UTC
+
+Resumed clean **0fbcf02a** and the frozen next-helper source from iteration 155.
+**cf112dae** admits unchanged source **2b755d49**: one attribute read, two ordered
+writes and a fresh `{done, value}` result inside an observing local catch.
+The source previously refused before helper expansion. CFG lifting now preserves
+its closure/cell register snapshots. Fresh recovery forwards only identical
+captured identities through inactive completion padding; supplied source poison
+refuses. Calls, active payloads and effects remain until the existing capture,
+attribute, own-field and complete DOM proofs succeed.
+
+The selected native check passes **48 executions, 108 refusals and ten Node/VM
+runs** across three sources plus the original outer controls. GCC and Clang agree
+on repeated calls, read snapshots, result identity and exact DOM write order.
+Final recovery CTest passes **1/1, 5.36 s**; the preceding host-contract check passes
+**1/1, 2.96 s**. Formatting passes **1126 C++, 158 Python, 114 web files**.
+Independent static review is clean. Twenty-four emitted C++ files contain no
+Script/AOT/ctjs namespace; binary-symbol checks pass. All historical source bodies
+remain unchanged. Full suites were skipped; no escape change or measurement was
+completed after the parallel escape agent was rate-limited.
+
+**Next:** original outer getter **1a7fb166** and method **7acf503b** still refuse.
+Connect their preserved observing entry and recovered open/next/close tuples to
+custom protocol discovery and state rewriting. Discovery still rejects retained
+Try/result-bearing Invoke regions and expects a root-local open with direct users.
+Both original close calls pass **false**; they must propagate failure into the
+observing catch, not use the existing suppressed-close path. Preserve exhaustion,
+saved returns, non-call effect proofs and caught-node identity. The next-helper
+source is now complete. Escaping-node exception owners, broader iterators,
+unguarded Bootstrap defaults and the application driver remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-helper-catch-sources.md).
+
 ## Observed helper chains and result records, 2026-09-24 UTC
 
 Resumed clean **faffbb7f** and the original observing iterator thread.
