@@ -57,6 +57,18 @@ with tempfile.TemporaryDirectory(prefix="ctcompile cli ") as directory:
     run(compiler, root, "--bundle", "-o", output, "--manifest=", code=2)
 
     # Reject collisions before touching either output, including filesystem aliases.
+    run(
+        compiler,
+        root,
+        "--bundle",
+        "-o",
+        "new.ctapp",
+        "--manifest",
+        root / "new.ctapp",
+        cwd=root,
+        code=2,
+    )
+    assert not (root / "new.ctapp").exists()
     original_page = page.read_bytes()
     for option in ("--output", "--manifest"):
         run(compiler, root, "--bundle", option, page, code=2, cwd=root)

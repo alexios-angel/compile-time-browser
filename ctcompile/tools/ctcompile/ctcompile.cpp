@@ -105,7 +105,8 @@ bool write_file(const std::filesystem::path & path, std::span<const std::byte> b
 }
 
 bool same_file(const std::filesystem::path & left, const std::filesystem::path & right) {
-    if (std::filesystem::weakly_canonical(left) == std::filesystem::weakly_canonical(right)) {
+    if (std::filesystem::weakly_canonical(std::filesystem::absolute(left)) ==
+        std::filesystem::weakly_canonical(std::filesystem::absolute(right))) {
         return true;
     }
     std::error_code error;
