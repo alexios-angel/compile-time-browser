@@ -22,6 +22,38 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Helper return payloads and negative-unit powers, 2026-09-24 UTC
+
+Resumed clean **d4c29924** and the original observing iterator boundary.
+**163697b7** preserves a helper's own inert return separately from its protected
+DOM call result. Normal payload uses change; the original call dispatch, failure
+payload, saved state and continuation effects remain intact. Inert suffix values
+now dominate their normal uses. This is structural support; **original outer
+getter 1a7fb166 and method 7acf503b remain refused**, with no new source admission.
+
+**b1724158** proves exact -1 powers with independently known finite integral Number
+exponents, retaining the existing depth, provenance and replay limits. Frozen
+source **83d507fe**, program **35386f26473b5ae2**, changes child and lookup table to
+**Confined**: **two of four total sites**, zero violations, Node `[0,0,0]`.
+All 179 earlier escape function bodies are unchanged.
+
+Focused checks pass: recovery/host-contract CTests; **32 native executions,
+92 refusals, eight Node/VM observations** from two selected sources and original
+outer controls; arrays CTest and one escape lit case. Formatting passes
+**1126 C++, 158 Python, 114 web files**. Five final hashes match the devbox and
+completed independent review; sixteen generated C++ files contain no Script/AOT.
+No whole native fixture or full-suite pass is claimed.
+
+**Next:** connect recovered open/next/close tuples to protocol discovery and helper
+expansion with independent effects, exhaustion, cleanup, saved returns and
+caught-node identity. The real next method has two writes and a result record;
+close writes then throws. General observed attribute tuples still need final DOM
+proof; escaping nodes need exception-lifetime owners. The negative-unit escape
+witness is complete; no next witness was measured. General powers, broader
+iterators, unguarded Bootstrap defaults and the application driver remain.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-helper-results-negative-unit-powers.md).
+
 ## Observed DOM leaf forwarding and unary Number snapshots, 2026-09-24 UTC
 
 Resumed clean **355a3033** and the original observing iterator boundary.
