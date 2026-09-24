@@ -731,12 +731,45 @@ void InductionCases::invariantReads() {
            replace(afterSubHalf, "binary_static bitor %number, %zero", "binary add %number, %one"));
     reject("nonzero subtraction keeps String conversion separate from literal Number proof",
            replace(afterSubHalf, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
-    reject("computed fractional inputs need independent Number evidence",
-           replace(replace(afterSubHalf, "  %textZero =",
-                           "  %original = ctjs.constant #ctjs.number<4606281698874543309>\n"
-                           "  %textZero ="),
-                   "%textZero = ctjs.constant #ctjs.number<4606281698874543309>",
-                   "%textZero = ctjs.unary plus %original"));
+    run({.what = "unary Plus retains independent original Number evidence",
+         .body = replace(replace(afterSubHalf, "  %textZero =",
+                                 "  %original = ctjs.constant #ctjs.number<4606281698874543309>\n"
+                                 "  %textZero ="),
+                         "%textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                         "%textZero = ctjs.unary plus %original"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string sign : {"plus", "neg"}) {
+        const auto signedTable =
+            replace(afterSubHalf, "  %converted = ctjs.binary_static bitor %number, %zero",
+                    "  %signed = ctjs.unary " + sign +
+                        " %number\n"
+                        "  %combined = ctjs.binary add %signed, " +
+                        (sign == "neg" ? "%three" : "%zero") +
+                        "\n  %converted = ctjs.binary_static bitor %combined, %zero");
+        run({.what = "unary signs preserve computed Number snapshots before later arithmetic",
+             .body = signedTable,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "unary Number snapshots retain a child saved before overwrite",
+             .body = replace(replace(signedTable, "  cf.br ^header",
+                                     "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                             "ctjs.return %a", "ctjs.return %saved"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "x -> {x}"});
+        reject("unary Number snapshots retain the table mutation census",
+               replace(signedTable,
+                       "  %step =", "  ctjs.set_property %keys[%one], %textZero\n  %step ="));
+        reject("unary Number snapshots do not become original property keys",
+               replace(signedTable, "%base[%converted]", "%base[%combined]"));
+        reject("unary arithmetic still needs original Number rather than String evidence",
+               replace(signedTable, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    }
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject(
             "fractional subtraction preserves the complete table mutation census",
@@ -853,6 +886,15 @@ void InductionCases::invariantReads() {
            replace(afterSubQuarters, "binary_static bitor %number, %zero",
                    "binary add %number, %one"));
     for (const std::string expression : {"unary plus %slot", "binary_static bitor %slot, %zero"}) {
+        if (expression == "unary plus %slot") {
+            run({.what = "subtraction consumes an independently proved unary Number",
+                 .body = replace(afterSubQuarters, "binary sub %slot, %half", expression),
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+            continue;
+        }
         reject("subtraction cannot reconstruct binary64 from another result's converted bits",
                replace(afterSubQuarters, "binary sub %slot, %half", expression));
     }
@@ -1108,10 +1150,14 @@ void InductionCases::invariantReads() {
     }
     reject("unit power preserves a negative Number rather than its unsigned bits",
            replace(afterReadPower, "4613712638259704627", "13837084675114480435"));
-    reject("unit power cannot reconstruct a Number from a unary conversion snapshot",
-           replace(afterReadPower, "  %power = ctjs.binary pow %slot, %one",
-                   "  %unknownNumber = ctjs.unary plus %slot\n"
-                   "  %power = ctjs.binary pow %unknownNumber, %one"));
+    run({.what = "unit power consumes an independently proved unary Number",
+         .body = replace(afterReadPower, "  %power = ctjs.binary pow %slot, %one",
+                         "  %unknownNumber = ctjs.unary plus %slot\n"
+                         "  %power = ctjs.binary pow %unknownNumber, %one"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     const auto zeroPower =
         replace(replace(afterSubAddModPow, "[%x, %zero, %x]", "[%zero, %x, %zero]"),
                 "binary pow %remainder, %one", "binary pow %remainder, %zero");
@@ -1206,10 +1252,14 @@ void InductionCases::invariantReads() {
     }
     reject("unit base cannot use a computed nonfinite exponent as finite evidence",
            replace(unitBase, "binary mod %number, %three", "binary mod %number, %zero"));
-    reject("unit base cannot reconstruct the exponent Number from unary conversion bits",
-           replace(unitBaseRead, "  %power = ctjs.binary pow %one, %slot",
-                   "  %exponent = ctjs.unary plus %slot\n"
-                   "  %power = ctjs.binary pow %one, %exponent"));
+    run({.what = "unit base consumes an independently proved unary Number exponent",
+         .body = replace(unitBaseRead, "  %power = ctjs.binary pow %one, %slot",
+                         "  %exponent = ctjs.unary plus %slot\n"
+                         "  %power = ctjs.binary pow %one, %exponent"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     reject("unit base cannot use String bits as independent Number exponent evidence",
            replace(unitBaseRead, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
     const auto negatedAdd =

@@ -325,18 +325,19 @@ void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & righ
 
 namespace {
 
+std::optional<double> arithmeticNumber(const ContentsValue & input) {
+    if (input.arithmeticNumber) { return input.arithmeticNumber; }
+    auto literal =
+        input.origin() ? input.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+    const auto value =
+        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    return value ? std::optional<double>{value.getDouble()} : std::nullopt;
+}
+
 void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & right,
                              ctjs::BinaryKind kind, ContentsValue & result) {
-    const auto number = [](const ContentsValue & input) -> std::optional<double> {
-        if (input.arithmeticNumber) { return input.arithmeticNumber; }
-        auto literal =
-            input.origin() ? input.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-        const auto value =
-            literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
-        return value ? std::optional<double>{value.getDouble()} : std::nullopt;
-    };
-    const auto a = number(left);
-    const auto b = number(right);
+    const auto a = arithmeticNumber(left);
+    const auto b = arithmeticNumber(right);
     const auto depth = std::max(left.arithmeticDepth, right.arithmeticDepth);
     if (a && b && depth < 64 &&
         (kind != ctjs::BinaryKind::Pow || *b == 0 || *b == 1 || (*a == 1 && std::isfinite(*b)))) {
@@ -363,6 +364,16 @@ void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & r
 }
 
 } // namespace
+
+void boundedNumberUnary(const ContentsValue & input, bool negate, ContentsValue & result) {
+    const auto number = arithmeticNumber(input);
+    if (!number || input.arithmeticDepth >= 64) { return; }
+    // Unary sign/identity preserves binary64, including signed zero and nonfinite
+    // values. Converted bits and String coercions cannot supply this Number fact.
+    result.arithmeticNumber = negate ? -*number : *number;
+    result.arithmeticDepth = input.arithmeticDepth + 1;
+    result.convertedBits = ctbrowser::number_to_uint32(*result.arithmeticNumber);
+}
 
 void boundedNumberProduct(const ContentsValue & left, const ContentsValue & right,
                           ContentsValue & result) {

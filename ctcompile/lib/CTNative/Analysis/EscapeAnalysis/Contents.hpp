@@ -96,6 +96,7 @@ std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result);
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, bool negate = false);
 std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input);
+void boundedNumberUnary(const ContentsValue & input, bool negate, ContentsValue & result);
 void boundedNumberComplement(const ContentsValue & input, ContentsValue & result);
 void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & right,
                           ctjs::BinaryKind kind, ContentsValue & result);

@@ -124,6 +124,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 if (unary.getKind() == ctjs::UnaryKind::Neg && result.integerNumber != 0) {
                     std::swap(result.integerNumber, result.negativeIntegerNumber);
                 }
+                boundedNumberUnary(*input, unary.getKind() == ctjs::UnaryKind::Neg, result);
             }
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition);
                    binary && (binary.getKind() == ctjs::BinaryKind::Add ||
@@ -347,6 +348,16 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             return IndexRange{result, result, 1, key->mixedShift};
+        }
+        if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression);
+            use == IndexUse::ArithmeticOperand && unary && unary->getBlock() == body &&
+            (unary.getKind() == ctjs::UnaryKind::Plus || unary.getKind() == ctjs::UnaryKind::Neg)) {
+            const auto input = self(self, unary.getOperand(), depth + 1, use);
+            if (!input) { return std::nullopt; }
+            ContentsValue result{operand, ContentsKind::NonBigInt};
+            boundedNumberUnary(input->first, unary.getKind() == ctjs::UnaryKind::Neg, result);
+            if (!result.arithmeticNumber) { return std::nullopt; }
+            return IndexRange{result, result, 1, input->mixedShift};
         }
         if (use == IndexUse::ArithmeticOperand && !subtract && !add && !multiply && !divide &&
             !remainder && !power) {

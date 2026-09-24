@@ -467,6 +467,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 state.values[unary.getResult()] = {
                     unary.getResult(), kind,          integerNumber, negativeIntegerNumber,
                     std::nullopt,      convertedBits, unaryDepth};
+                if (unary.getKind() == ctjs::UnaryKind::Plus ||
+                    unary.getKind() == ctjs::UnaryKind::Neg) {
+                    auto & result = state.values[unary.getResult()];
+                    boundedNumberUnary(held(unary.getOperand()),
+                                       unary.getKind() == ctjs::UnaryKind::Neg, result);
+                    if (result.arithmeticNumber && !spend()) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
+                }
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {
