@@ -2,12 +2,141 @@
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
 #include "ClassTransactions.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "mlir/IR/Dominance.h"
 
 #include "check.hpp"
 
 namespace ctcompile::test::exception_recovery {
 
+static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
+    const std::string getter = R"js(function customElements(anchor) {
+  const values = {
+    [Symbol.iterator]() { return this; },
+    next() {
+      const done = anchor.hasAttribute('data-yielded');
+      anchor.setAttribute('data-next', done);
+      anchor.setAttribute('data-yielded', 'yes');
+      return {done: done, value: anchor};
+    },
+    get return() {
+      anchor.setAttribute('data-closed', 'yes');
+      throw anchor;
+    }
+  };
+  try {
+  for (const node of values) {
+    return 1;
+    if (anchor.hasAttribute('stop')) break;
+  }
+  } catch (error) { return error === anchor; }
+  return anchor.hasAttribute('data-visited');
+}
+)js";
+    for (bool method : {false, true}) {
+        auto source = getter;
+        if (method) { source.replace(source.find("get return()"), 12, "return()"); }
+        auto module = import(context, source, false);
+        if (!module) { continue; }
+        auto function = module->lookupSymbol<ctjs::FuncOp>("customElements$1");
+        if (!check(static_cast<bool>(function), "original iterator entry survives raw import")) {
+            continue;
+        }
+        mlir::OwningOpRef<ctjs::FuncOp> original(llvm::cast<ctjs::FuncOp>(function->clone()));
+        const auto before = printed(*original);
+        const auto checks = countChecks(function);
+        mlir::DominanceInfo dominance(function);
+        llvm::SmallVector<ctjs::CallOp> originalCalls;
+        function.walk([&](ctjs::CallOp call) {
+            if (dominance.isReachableFromEntry(call->getBlock()) &&
+                llvm::isa_and_nonnull<ctjs::CheckOp>(call->getNextNode())) {
+                originalCalls.push_back(call);
+            }
+        });
+        check(originalCalls.size() == 4 && checks == 33,
+              "original iterator keeps four checked calls and every non-call check");
+        auto recovered = recoverPrimitiveExceptionRegion(function, 100000,
+                                                         ExceptionRecoveryMode::CheckedInvocations);
+        if (!check(recovered.recovered, "original observing iterator retains checked calls")) {
+            llvm::errs() << recovered.refusal << '\n';
+            continue;
+        }
+        check(recovered.original && printed(*recovered.original) == before &&
+                  countChecks(*recovered.original) == checks &&
+                  mlir::succeeded(mlir::verify(*module)),
+              "iterator recovery retains the complete original snapshot and verifies");
+        unsigned calls = 0;
+        function.walk([&](ctjs::InvokeOp invocation) {
+            ++calls;
+            auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
+            auto dispatch = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+            check(dispatch.getState().size() == 15,
+                  "each iterator call retains its complete pre-call register vector");
+            const auto source = llvm::find_if(originalCalls, [&](ctjs::CallOp originalCall) {
+                return originalCall.getLoc() == call.getLoc();
+            });
+            if (!check(source != originalCalls.end(), "recovered call keeps its original site")) {
+                return;
+            }
+            for (auto [value, input] : llvm::zip(call->getOperands(), (*source)->getOperands())) {
+                if (auto slot = llvm::dyn_cast<mlir::BlockArgument>(input)) {
+                    check(value == dispatch.getState()[slot.getArgNumber()],
+                          "iterator callee, receiver and inputs use their original saved slots");
+                } else {
+                    auto literal = input.getDefiningOp<ctjs::ConstantOp>();
+                    auto copied = value.getDefiningOp<ctjs::ConstantOp>();
+                    check(literal && copied && literal.getValue() == copied.getValue(),
+                          "iterator invocation keeps its original literal operands");
+                }
+            }
+            originalCalls.erase(source);
+            check(dispatch.getNormalResult() == call.getResult() &&
+                      llvm::all_of(dispatch.getState(),
+                                   [&](mlir::Value state) {
+                                       return !invocation.getBody().isAncestor(
+                                           state.getParentRegion());
+                                   }),
+                  "a failed iterator result cannot enter the pre-call snapshot");
+            auto unwind =
+                llvm::cast<ctjs::InvokeYieldOp>(invocation.getUnwindBody().front().back());
+            check(llvm::equal(unwind.getValues().drop_front(2),
+                              invocation.getUnwindBody().front().getArguments()),
+                  "each iterator failure forwards its own payload and saved state together");
+        });
+        check(calls == 4 && originalCalls.empty(),
+              "open, next and both normal closes have distinct completions");
+        for (unsigned control = 0; control < 3; ++control) {
+            mlir::OwningOpRef<ctjs::FuncOp> broken(llvm::cast<ctjs::FuncOp>(original->clone()));
+            ctjs::CallOp call;
+            broken->walk([&](ctjs::CallOp found) {
+                if (!call && llvm::isa_and_nonnull<ctjs::CheckOp>(found->getNextNode())) {
+                    call = found;
+                }
+            });
+            auto checked = llvm::cast<ctjs::CheckOp>(call->getNextNode());
+            if (control == 0) {
+                checked->setOperand(static_cast<unsigned>(checked.getContOperands().size()),
+                                    call.getResult());
+            } else if (control == 1) {
+                // Register zero is not this invocation's result scratch slot.
+                checked->setOperand(0, checked.getHandlerOperands()[1]);
+            }
+            const auto snapshot = printed(*broken);
+            auto refused = recoverPrimitiveExceptionRegion(
+                *broken, control == 2 ? 0 : 100000, ExceptionRecoveryMode::CheckedInvocations);
+            check(
+                !refused.recovered && !refused.original && printed(*broken) == snapshot &&
+                    countChecks(*broken) == checks &&
+                    refused.refusal.find(control == 2 ? "budget" : "invocation") !=
+                        std::string::npos,
+                "bad iterator failure state, changed normal state and zero budget preserve source");
+        }
+        llvm::outs() << "observing iterator recovery: " << calls << " calls, " << checks
+                     << " original checks, " << recovered.steps << " steps\n";
+    }
+}
+
 void testDOMURITransaction(mlir::MLIRContext & context) {
+    testObservedIteratorRecovery(context);
     for (unsigned control = 0; control < 33; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
