@@ -27,11 +27,6 @@ packages.
 ctcompile requires LLVM 23, including its headers, libraries and `llvm-tblgen`,
 even when the native pipeline is disabled. The tested version is 23.1.0.
 
-As of September 24, 2026, `ctcompile-v1` pins a JavaScript parser commit that
-hasn't been published upstream. A fresh submodule checkout will fail until
-that commit is available. The [merge notes](ctcompile/docs/merge-main.md)
-record the exact pin and the remaining publication step.
-
 Run these commands from the repository root, replacing the two prefixes with
 your dependency locations. CMake uses the system compiler; set `CXX` to choose
 another one.
