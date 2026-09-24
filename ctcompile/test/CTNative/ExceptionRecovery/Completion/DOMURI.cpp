@@ -8,6 +8,8 @@
 
 namespace ctcompile::test::exception_recovery {
 
+using ctcompile::ctnative::lowering_detail::projectInvocationContinuation;
+
 static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     const std::string getter = R"js(function customElements(anchor) {
   const values = {
@@ -103,6 +105,80 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             check(llvm::equal(unwind.getValues().drop_front(2),
                               invocation.getUnwindBody().front().getArguments()),
                   "each iterator failure forwards its own payload and saved state together");
+            llvm::SmallVector<std::pair<mlir::Operation *, llvm::SmallVector<mlir::Value>>>
+                unchanged;
+            invocation.walk([&](mlir::Operation * operation) {
+                unchanged.emplace_back(operation,
+                                       llvm::SmallVector<mlir::Value>(operation->getOperands()));
+            });
+            mlir::OpBuilder at(invocation);
+            for (bool failed : {false, true}) {
+                auto & selected =
+                    (failed ? invocation.getUnwindBody() : invocation.getNormalBody()).front();
+                auto incoming = llvm::cast<ctjs::InvokeYieldOp>(selected.back());
+                mlir::Value payload = failed
+                                          ? mlir::Value{function.getBody().front().getArgument(3)}
+                                          : call.getResult();
+                unsigned remaining = 100000;
+                auto projected =
+                    projectInvocationContinuation(invocation, failed, payload, at, remaining);
+                if (!check(mlir::succeeded(projected),
+                           "original iterator continuation tuple can be projected")) {
+                    continue;
+                }
+                check(projected->size() == invocation.getNumResults(),
+                      "projection keeps the entire original tuple width");
+                for (auto [value, input] : llvm::zip(*projected, incoming.getValues())) {
+                    if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(input);
+                        argument && argument.getOwner() == &selected) {
+                        auto expected = argument.getArgNumber() == 0
+                                            ? payload
+                                            : dispatch.getState()[argument.getArgNumber() - 1];
+                        check(value == expected,
+                              "projection separates call payload from every saved register");
+                    } else if (auto * producer = input.getDefiningOp();
+                               producer && producer->getBlock() == &selected) {
+                        auto * copied = value.getDefiningOp();
+                        check(copied && copied != producer &&
+                                  copied->getName() == producer->getName() &&
+                                  copied->getAttrs() == producer->getAttrs() &&
+                                  value.getType() == input.getType(),
+                              "projection copies original completion tags and inactive padding");
+                    } else {
+                        check(value == input, "projection retains successful outer SSA state");
+                    }
+                }
+                unsigned operationCount = 0;
+                invocation.walk([&](mlir::Operation *) { ++operationCount; });
+                check(operationCount == unchanged.size() &&
+                          llvm::all_of(unchanged,
+                                       [](const auto & original) {
+                                           return llvm::equal(original.first->getOperands(),
+                                                              original.second);
+                                       }),
+                      "projection grants no authority to erase a call or its other edge");
+                const unsigned used = 100000 - remaining;
+                for (unsigned budget : {0u, used - 1}) {
+                    const auto beforeProjection = printed(function);
+                    auto refused =
+                        projectInvocationContinuation(invocation, failed, payload, at, budget);
+                    check(mlir::failed(refused) && printed(function) == beforeProjection,
+                          "incomplete projection budgets leave all source IR unchanged");
+                }
+            }
+            // A failed call result is never a saved pre-call register, even if
+            // a caller forges otherwise well-typed invocation operands.
+            auto saved = dispatch.getState()[0];
+            dispatch.getStateMutable().slice(0, 1).assign(call.getResult());
+            const auto invalid = printed(function);
+            unsigned budget = 100000;
+            mlir::ScopedDiagnosticHandler quiet(&context,
+                                                [](mlir::Diagnostic &) { return mlir::success(); });
+            auto refused = projectInvocationContinuation(
+                invocation, true, function.getBody().front().getArgument(3), at, budget);
+            check(mlir::failed(refused) && printed(function) == invalid,
+                  "projection rejects a forged failed-result snapshot without rewriting");
+            dispatch.getStateMutable().slice(0, 1).assign(saved);
         });
         check(calls == 4 && originalCalls.empty(),
               "open, next and both normal closes have distinct completions");

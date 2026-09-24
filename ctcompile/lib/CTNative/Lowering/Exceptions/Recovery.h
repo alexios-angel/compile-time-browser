@@ -15,6 +15,15 @@ struct HostContract;
 
 namespace ctcompile::ctnative::lowering_detail {
 
+// Copy a recovered invocation's inert continuation tuple at the builder's
+// insertion point. The supplied payload is the normal result or caught value;
+// only unwind adds the original pre-call state. This does not execute/remove the
+// call or select an exceptional edge: the consumer must prove that separately.
+// Failure changes no IR. The invocation and both continuations remain intact.
+mlir::FailureOr<llvm::SmallVector<mlir::Value>> projectInvocationContinuation(
+    ctjs::InvokeOp invocation, bool unwind, mlir::Value payload, mlir::OpBuilder & at,
+    unsigned & remaining);
+
 // Normalize lifted switch dispatch and unused/all-poison if results on a
 // disposable function clone. Failure can leave that clone partly rewritten;
 // the caller must withhold it. This grants no exception or effect authority.
