@@ -2,6 +2,7 @@
 #include "ctbrowser/core/algorithms.hpp"
 #include "ctbrowser/core/number.hpp"
 #include "ctbrowser/core/number_format.hpp"
+#include "llvm/ADT/APFloat.h"
 
 #include <limits>
 
@@ -448,6 +449,19 @@ void boundedNumberDifference(const ContentsValue & left, const ContentsValue & r
                 result.negativeIntegerNumber = *negative - *magnitude;
             }
         }
+    }
+    if (result.integerNumber || result.negativeIntegerNumber) { return; }
+    auto lhs = left.origin() ? left.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+    auto rhs =
+        right.origin() ? right.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+    const auto a = lhs ? llvm::dyn_cast<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
+    const auto b = rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+    if (a && b) {
+        // ponytail: two original Number literals only; computed operands need
+        // independent Number evidence, never their saved ToUint32 snapshots.
+        llvm::APFloat difference(a.getDouble());
+        difference.subtract(llvm::APFloat(b.getDouble()), llvm::APFloat::rmNearestTiesToEven);
+        result.convertedBits = ctbrowser::number_to_uint32(difference.convertToDouble());
     }
 }
 

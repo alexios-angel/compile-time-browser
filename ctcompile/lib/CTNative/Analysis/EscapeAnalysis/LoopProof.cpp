@@ -269,7 +269,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         Number,
         PropertyKey,
         Conversion,
-        BitwiseConversion
+        BitwiseConversion,
+        TableElement
     };
     const auto indexRange = [&](auto && self, mlir::Value operand, unsigned depth,
                                 IndexUse use = IndexUse::Number) -> std::optional<IndexRange> {
@@ -304,6 +305,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto position = ownArrayIndex(key->first);
             if (!position || *position >= table->second.size()) { return std::nullopt; }
             auto result = table->second[*position];
+            if (use == IndexUse::TableElement) {
+                // This demand returns the original singleton, not a numeric range.
+                return IndexRange{result, result, 1, key->mixedShift};
+            }
             if (use == IndexUse::PropertyKey) {
                 // Exact primitive keys name own positions without becoming
                 // Number operands. Arithmetic recursion keeps its original proof;
@@ -333,6 +338,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             return IndexRange{result, result, 1, key->mixedShift};
         }
+        if (use == IndexUse::TableElement) { return std::nullopt; }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression)) {
             if (unary->getBlock() != body || (unary.getKind() != ctjs::UnaryKind::Plus &&
                                               unary.getKind() != ctjs::UnaryKind::Neg &&
@@ -415,6 +421,21 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     converted->first.original = operand;
                     converted->last.original = operand;
                     return converted;
+                }
+            }
+            if (right) {
+                const auto left = self(self, binary.getLhs(), depth + 1, IndexUse::TableElement);
+                if (left) {
+                    if (!spend()) {
+                        invariantFailure = ArrayContentsFailure::WorkLimit;
+                        return std::nullopt;
+                    }
+                    ContentsValue result{operand, ContentsKind::NonBigInt};
+                    boundedNumberDifference(left->first, *right, result);
+                    if (result.convertedBits) {
+                        result.integerNumber = *result.convertedBits;
+                        return IndexRange{result, result, 1, left->mixedShift};
+                    }
                 }
             }
         }

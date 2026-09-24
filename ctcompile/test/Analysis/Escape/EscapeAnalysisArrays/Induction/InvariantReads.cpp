@@ -701,8 +701,45 @@ void InductionCases::invariantReads() {
            replace(afterSubZero, "%base[%converted]", "%base[%number]"));
     reject("subtract-zero bits cannot become an arithmetic value",
            replace(afterSubZero, "binary_static bitor %number, %zero", "binary add %number, %one"));
-    reject("nonzero subtraction needs an independent arithmetic result proof",
-           replace(afterSubZero, "binary sub %slot, %zero", "binary sub %slot, %one"));
+    run({.what = "nonzero literal subtraction preserves a retained child",
+         .body = replace(afterSubZero, "binary sub %slot, %zero", "binary sub %slot, %one"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    const auto afterSubHalf =
+        replace(replace(afterSubZero, "  %textZero =",
+                        "  %half = ctjs.constant #ctjs.number<4602678819172646912>\n  %textZero ="),
+                "binary sub %slot, %zero", "binary sub %slot, %half");
+    run({.what = "literal fractional subtraction snapshots only its bitwise result",
+         .body = afterSubHalf,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a saved child still escapes after fractional subtraction overwrites",
+         .body = replace(replace(afterSubHalf, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    reject("fractional subtraction bits do not prove its original property key",
+           replace(afterSubHalf, "%base[%converted]", "%base[%number]"));
+    reject("fractional subtraction bits do not prove an exact arithmetic Number",
+           replace(afterSubHalf, "binary_static bitor %number, %zero", "binary add %number, %one"));
+    reject("nonzero subtraction keeps String conversion separate from literal Number proof",
+           replace(afterSubHalf, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    reject("computed fractional inputs need independent Number evidence",
+           replace(replace(afterSubHalf, "  %textZero =",
+                           "  %original = ctjs.constant #ctjs.number<4606281698874543309>\n"
+                           "  %textZero ="),
+                   "%textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                   "%textZero = ctjs.unary plus %original"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject(
+            "fractional subtraction preserves the complete table mutation census",
+            replace(afterSubHalf, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject(
             "subtract-zero conversion retains the complete table mutation census",
