@@ -729,6 +729,44 @@ void InductionCases::invariantReads() {
            replace(afterSubHalf, "%base[%converted]", "%base[%number]"));
     reject("fractional subtraction bits do not prove an exact arithmetic Number",
            replace(afterSubHalf, "binary_static bitor %number, %zero", "binary add %number, %one"));
+    const auto arithmeticOwnIndex =
+        replace(replace(replace(replace(afterSubHalf, "4602678819172646912", "4598175219545276416"),
+                                "4606281698874543309", "4598175219545276416"),
+                        "4613712638259704627", "4612248968380809216"),
+                "%base[%converted]", "%base[%number]");
+    run({.what = "exact integral arithmetic Number results name own array indices",
+         .body = arithmeticOwnIndex,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "integral Number indices preserve a previously saved child",
+         .body = replace(replace(arithmeticOwnIndex, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    run({.what = "integral Number indices retain children outside the actual write image",
+         .body = replace(arithmeticOwnIndex, "[%textZero, %textTwo]", "[%textZero, %textZero]"),
+         .arrays = "keys:[textZero,textZero]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textZero; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("integral Number indices retain the complete table mutation census",
+               replace(arithmeticOwnIndex, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    for (const std::string value :
+         {"#ctjs.number<4606281698874543309>", "#ctjs.number<13833932155375321088>",
+          "#ctjs.number<4751297606874300416>", "#ctjs.number<4751297606876135424>",
+          "#ctjs.number<9218868437227405312>", "#ctjs.number<9221120237041090560>",
+          "#ctjs.string<\"0.25\">", "#ctjs.bigint<\"0\">"}) {
+        reject("own indices cannot borrow truncated wrapped nonfinite or coercing Number bits",
+               replace(arithmeticOwnIndex,
+                       "%textZero = ctjs.constant #ctjs.number<4598175219545276416>",
+                       "%textZero = ctjs.constant " + value));
+    }
     reject("nonzero subtraction keeps String conversion separate from literal Number proof",
            replace(afterSubHalf, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
     run({.what = "unary Plus retains independent original Number evidence",
@@ -1223,8 +1261,12 @@ void InductionCases::invariantReads() {
          .arrays = "keys:[textZero,textTwo]; a:[x,zero,zero]",
          .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
          .exit = "a -> {a,x}"});
-    reject("unit-base arithmetic snapshots do not widen property-key authority",
-           replace(unitBase, "%base[%converted]", "%base[%power]"));
+    run({.what = "independently integral unit-base results name own indices",
+         .body = replace(unitBase, "%base[%converted]", "%base[%power]"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     for (const std::string operands : {"%p, %remainder", "%two, %remainder", "%one, %p"}) {
         reject("computed unit-base powers need independently proved Number operands",
                replace(unitBase, "binary pow %one, %remainder", "binary pow " + operands));
@@ -1301,8 +1343,12 @@ void InductionCases::invariantReads() {
         reject("negative unit parity requires independent finite integral Number evidence",
                replace(negativeUnitBase, "#ctjs.number<4608308318706860032>", value));
     }
-    reject("negative unit snapshots keep their property-key boundary",
-           replace(negativeUnitBase, "%base[%converted]", "%base[%powerIndex]"));
+    run({.what = "independently integral negative-unit arithmetic names own indices",
+         .body = replace(negativeUnitBase, "%base[%converted]", "%base[%powerIndex]"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
     reject("negative unit snapshots retain table mutation checks",
            replace(negativeUnitBase,
                    "  %pick =", "  ctjs.set_property %keys[%one], %textZero\n  %pick ="));

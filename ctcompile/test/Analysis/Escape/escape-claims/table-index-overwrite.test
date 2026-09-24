@@ -260,6 +260,11 @@
 // CHECK: escape {{[0-9a-f]+}} 181 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 182 {{[0-9]+}} obj escapes:stored
 
+// Exact integral Number results supply own indices without bitwise truncation.
+// CHECK: escape {{[0-9a-f]+}} 183 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 184 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 185 {{[0-9]+}} obj escapes:stored
+
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 // RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
@@ -531,6 +536,13 @@
 // RECORD-LABEL: fn 173 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadUnitBase
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
+// RECORD-LABEL: fn 183 entries 1 params 0 frame {{[0-9]+}} name arithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 184 entries 1 params 0 frame {{[0-9]+}} name savedArithmeticOwnIndex
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 185 entries 1 params 0 frame {{[0-9]+}} name mutatedArithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
 //--- source.js
 function varyingTableKey() {
     var child = {}, a = [child, 0, child], keys = [0, 2];
@@ -604,6 +616,7 @@ afterReadNumberUnitBase(); savedAfterReadUnitBase(); mutatedAfterReadUnitBase();
 pairedTableIndex(); savedPairedTableIndex(); mutatedPairedTableIndex();
 arithmeticUnaryTableIndex(); savedArithmeticUnaryTableIndex(); mutatedArithmeticUnaryTableIndex();
 negativeUnitPowerTableIndex(); savedNegativeUnitPowerTableIndex(); mutatedNegativeUnitPowerTableIndex();
+arithmeticOwnIndex(); savedArithmeticOwnIndex(); mutatedArithmeticOwnIndex();
 afterReadNumberSubHalf();
 afterReadNumberSubZero();
 afterReadNumberPlus();
@@ -1699,6 +1712,28 @@ function mutatedNegativeUnitPowerTableIndex() {
     for (var i = 0; i < a.length; i++) {
         keys[1] = 1.25;
         a[(((-1) ** (keys[i % 2] - 0.25)) + 1) | 0] = 0;
+    }
+    return a;
+}
+
+function arithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, 2.25];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0.25] = 0;
+    return a;
+}
+
+function savedArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, 2.25];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[keys[i % 2] - 0.25] = 0;
+    return saved;
+}
+
+function mutatedArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, 2.25];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.25;
+        a[keys[i % 2] - 0.25] = 0;
     }
     return a;
 }

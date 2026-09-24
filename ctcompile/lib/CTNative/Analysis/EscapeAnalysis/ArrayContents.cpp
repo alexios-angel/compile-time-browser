@@ -864,7 +864,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         continue;
                     }
                 }
-                const auto index = ownArrayIndex(keyValue);
+                auto index = ownArrayIndex(keyValue);
+                // The loop guard independently bounded every key before replay.
+                // Retain its exact Number snapshot without generalizing scalar
+                // contents, length writes or conversion facts.
+                if (!index && state.loop) { index = arithmeticArrayIndex(keyValue); }
                 if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
                 // Overwrite only. Extending with set_property can leave holes or
                 // consult a prototype setter; literal append has neither behavior.

@@ -92,6 +92,9 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value);
 mlir::StringAttr ownObjectKey(mlir::StringAttr key);
 mlir::StringAttr ownObjectKey(mlir::Value value);
 std::optional<std::size_t> ownArrayIndex(const ContentsValue & key);
+// Independent binary64 snapshots used only by certified loop keys and replay.
+// This grants no general Number, array-length or String conversion authority.
+std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key);
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result);
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, bool negate = false);

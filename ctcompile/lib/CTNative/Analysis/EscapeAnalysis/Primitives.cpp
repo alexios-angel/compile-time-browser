@@ -108,6 +108,16 @@ std::optional<std::size_t> ownArrayIndex(const ContentsValue & key) {
     return ownArrayIndex(key.origin());
 }
 
+std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key) {
+    if (!key.origin() || !key.arithmeticNumber) { return std::nullopt; }
+    const double number = *key.arithmeticNumber;
+    if (!std::isfinite(number) || number < 0 || number >= 4294967295.0 ||
+        std::trunc(number) != number) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(number);
+}
+
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result) {
     if (!base.string() || !base.origin() || !key.origin()) { return std::nullopt; }

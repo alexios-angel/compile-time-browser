@@ -435,7 +435,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return std::nullopt;
         }
         if ((subtract || add || multiply || divide || remainder || power) &&
-            (use == IndexUse::BitwiseConversion || use == IndexUse::ArithmeticOperand)) {
+            (use == IndexUse::BitwiseConversion || use == IndexUse::ArithmeticOperand ||
+             use == IndexUse::PropertyKey)) {
             auto right = invariant(invariant, expression->getOperand(1), 0);
             bool rightMixed = false;
             if (!right && invariantFailure != ArrayContentsFailure::WorkLimit) {
@@ -484,8 +485,16 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                         if (!result.arithmeticNumber) { return std::nullopt; }
                         return IndexRange{result, result, 1, left->mixedShift || rightMixed};
                     }
-                    if (result.convertedBits) {
+                    if (use == IndexUse::BitwiseConversion && result.convertedBits) {
                         result = {operand, ContentsKind::NonBigInt, *result.convertedBits};
+                        return IndexRange{result, result, 1, left->mixedShift || rightMixed};
+                    }
+                    if (const auto position = arithmeticArrayIndex(result);
+                        use == IndexUse::PropertyKey && position) {
+                        // Only the exact arithmetic snapshot supplies a key;
+                        // converted bits cannot lend truncation to this demand.
+                        result.integerNumber = position;
+                        result.negativeIntegerNumber.reset();
                         return IndexRange{result, result, 1, left->mixedShift || rightMixed};
                     }
                 }
