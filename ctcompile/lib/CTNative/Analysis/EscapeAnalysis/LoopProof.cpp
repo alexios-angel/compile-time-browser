@@ -292,6 +292,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                          (addition && addition.getKind() == ctjs::BinaryKind::Add);
         const bool subtract = binary && binary.getKind() == ctjs::BinaryKind::Sub;
         const bool multiply = binary && binary.getKind() == ctjs::BinaryKind::Mul;
+        const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
         if (auto load = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(expression)) {
             if (load->getBlock() != body) { return std::nullopt; }
             const auto receiver = invariant(invariant, load.getObject(), 0);
@@ -345,7 +346,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             return IndexRange{result, result, 1, key->mixedShift};
         }
-        if (use == IndexUse::ArithmeticOperand && !subtract && !add && !multiply) {
+        if (use == IndexUse::ArithmeticOperand && !subtract && !add && !multiply && !divide) {
             const auto scalar = invariant(invariant, operand, 0);
             if (!scalar) { return std::nullopt; }
             return IndexRange{*scalar, *scalar, 1};
@@ -407,7 +408,6 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             return range;
         }
-        const bool divide = binary && binary.getKind() == ctjs::BinaryKind::Div;
         const bool remainder = binary && binary.getKind() == ctjs::BinaryKind::Mod;
         const bool power = binary && binary.getKind() == ctjs::BinaryKind::Pow;
         const bool bitAnd = addition && addition.getKind() == ctjs::BinaryKind::BitAnd;
@@ -422,7 +422,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
-        if ((subtract || add || multiply) &&
+        if ((subtract || add || multiply || divide) &&
             (use == IndexUse::BitwiseConversion || use == IndexUse::ArithmeticOperand)) {
             const auto right = invariant(invariant, expression->getOperand(1), 0);
             if (subtract && use == IndexUse::BitwiseConversion && right &&
@@ -449,6 +449,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                         boundedNumberDifference(left->first, *right, result);
                     } else if (multiply) {
                         boundedNumberProduct(left->first, *right, result);
+                    } else if (divide) {
+                        boundedNumberDivision(left->first, *right, false, result);
                     } else {
                         boundedNumberSum(left->first, *right, result);
                     }

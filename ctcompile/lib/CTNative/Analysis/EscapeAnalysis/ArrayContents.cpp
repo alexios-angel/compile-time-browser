@@ -598,7 +598,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     binary.getKind() == ctjs::BinaryKind::Mod) {
                     boundedNumberDivision(left, right, binary.getKind() == ctjs::BinaryKind::Mod,
                                           result);
-                    if (result.integerNumber || result.negativeIntegerNumber) {
+                    if (result.integerNumber || result.negativeIntegerNumber ||
+                        result.convertedBits) {
                         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     }
                 }

@@ -6726,10 +6726,14 @@ void InductionCases::overwritesAndTransport() {
          .arrays = "a:[zero,x,x]",
          .reads = "a[0]=zero; a[1]=x; a[2]=x",
          .exit = "a -> {a,x}"});
-    reject("invariant shift bases retain fractional primitive refusals",
-           replace(replace(invariantShiftBase,
-                           "  %a =", "  %fraction = ctjs.binary div %three, %two\n  %a ="),
-                   "shl %one, %count", "shl %fraction, %count"));
+    run({.what = "invariant shift bases convert an independent fractional division result",
+         .body = replace(replace(invariantShiftBase,
+                                 "  %a =", "  %fraction = ctjs.binary div %three, %two\n  %a ="),
+                         "shl %one, %count", "shl %fraction, %count"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
 
     const auto structuredShift =
         replace(replace(structuredNumerator, "[%x, %zero, %x]", "[%zero, %x, %x]"),

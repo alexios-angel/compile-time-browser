@@ -290,7 +290,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         const auto expanded =
             computeArrayContents(*wideModule->template getOps<ctjs::FuncOp>().begin());
         const unsigned extraWork =
-            spelling == "sub" || spelling == "add" || spelling == "mul" ? 96U : 64U;
+            spelling == "sub" || spelling == "add" || spelling == "mul" || spelling == "div" ? 96U
+                                                                                             : 64U;
         if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + extraWork) {
             fail(row{.what = "comparison snapshots charge every independent primitive origin",
                      .body = wide.contents.body,

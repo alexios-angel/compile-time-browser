@@ -339,11 +339,13 @@ void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & r
     const auto b = number(right);
     const auto depth = std::max(left.arithmeticDepth, right.arithmeticDepth);
     if (a && b && depth < 64) {
-        // ponytail: at most 64 original Number Add/Sub/Mul operations; other computed
+        // ponytail: at most 64 original Number Add/Sub/Mul/Div operations; other computed
         // operations need their own binary64 result proof. Bits cannot supply it.
         llvm::APFloat computed(*a);
         if (kind == ctjs::BinaryKind::Mul) {
             computed.multiply(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        } else if (kind == ctjs::BinaryKind::Div) {
+            computed.divide(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
         } else if (kind == ctjs::BinaryKind::Sub) {
             computed.subtract(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
         } else {
@@ -380,6 +382,7 @@ void boundedNumberProduct(const ContentsValue & left, const ContentsValue & righ
 
 void boundedNumberDivision(const ContentsValue & left, const ContentsValue & right, bool remainder,
                            ContentsValue & result) {
+    if (!remainder) { boundedNumberArithmetic(left, right, ctjs::BinaryKind::Div, result); }
     auto a = boundedConvertedNumber(left);
     auto b = boundedConvertedNumber(right);
     const bool negative = remainder ? !a : a.has_value() != b.has_value();
