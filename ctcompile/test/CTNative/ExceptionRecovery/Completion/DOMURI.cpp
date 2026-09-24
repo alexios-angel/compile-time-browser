@@ -139,7 +139,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
     testObservedIteratorRecovery(context);
-    for (unsigned control = 0; control < 33; ++control) {
+    for (unsigned control = 0; control < 40; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
         if (control == 1) {
@@ -242,6 +242,23 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                "decodeURIComponent('%')");
             }
         }
+        if (control >= 33) {
+            source = "function guarded(element) { let saved = false; try { "
+                     "saved = element.hasAttribute('flag'); return saved; "
+                     "} catch (error) { return error === element && saved; } }";
+            if (control == 34) {
+                source.replace(source.find("return saved;"), 13,
+                               "return saved && element.hasAttribute('second');");
+            }
+            if (control == 35) {
+                source.replace(source.find("saved = element"), 15, "if (element) saved = element");
+            }
+            if (control == 36) { source.replace(source.find("'flag'"), 6, "42"); }
+            if (control == 37) {
+                source.replace(source.find("element.hasAttribute('flag')"), 28,
+                               "decodeURIComponent('%')");
+            }
+        }
         auto candidate = import(context, source, true);
         if (!candidate) { continue; }
         const auto original = printed(*candidate);
@@ -249,16 +266,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         request.provider = ctnative::HostContract::Provider::ctbrowserDOM;
         request.entry = guarded(*candidate).getSymName().str();
         request.elementParameters = {0};
-        if (control == 32) { request.elementParameters.clear(); }
+        if (control == 32 || control == 38) { request.elementParameters.clear(); }
         request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = request.moduleSha256;
-        auto error = ctnative::prepareDOMEntry(*candidate, request,
-                                               control == 6 || control == 19 || control == 26 ? 0
-                                               : control == 27 ? 500
-                                                               : 100000);
+        auto error = ctnative::prepareDOMEntry(
+            *candidate, request,
+            control == 6 || control == 19 || control == 26 || control == 39 ? 0
+            : control == 27                                                 ? 500
+                                                                            : 100000);
         if (control >= 3 && control != 5 && control != 7 && control != 8 && control != 9 &&
             !(control >= 12 && control <= 15) && !(control >= 20 && control <= 23) &&
-            control != 28) {
+            control != 28 && !(control >= 33 && control <= 35)) {
             check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
             llvm::consumeError(std::move(error));
             check(printed(*candidate) == original && request.moduleSha256 == fingerprint,

@@ -29,7 +29,8 @@ llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contr
                             unsigned maxSteps = 100000, llvm::StringRef function = {});
 
 // On the private DOM candidate only: consume explicit throws inside their
-// original catch. Entry parameter indices come from its fingerprinted contract;
+// original catch, or project a proved nonthrowing call completion. Entry parameter
+// indices come from its fingerprinted contract;
 // helpers have no such authority. Final DOM proof still validates all values and
 // catch effects; no borrowed C++ exception or native payload authority is added.
 llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps,

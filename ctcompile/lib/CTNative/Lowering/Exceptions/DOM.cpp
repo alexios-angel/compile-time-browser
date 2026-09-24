@@ -374,8 +374,9 @@ struct DOMURI {
 
 } // namespace
 
-llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps,
-                                             llvm::ArrayRef<unsigned> elementParameters) {
+static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, unsigned maxSteps,
+                                                         llvm::ArrayRef<unsigned> elementParameters,
+                                                         ExceptionRecoveryMode mode) {
     const auto refuse = [](llvm::StringRef reason) -> llvm::Expected<bool> {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
@@ -389,8 +390,8 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
         return mlir::WalkResult::advance();
     });
     if (scanned.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
-    if (!throws) { return false; }
-    auto recovered = recoverPrimitiveExceptionRegion(function, remaining);
+    if (!throws && mode == ExceptionRecoveryMode::ExplicitThrows) { return false; }
+    auto recovered = recoverPrimitiveExceptionRegion(function, remaining, mode);
     if (!recovered.recovered) { return false; }
     remaining -= recovered.steps;
     const auto rewritten = function.walk([&](mlir::Operation * operation) {
@@ -451,6 +452,16 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
         }
         return false;
     };
+    const auto attributeCall = [&](ctjs::CallOp call) {
+        if (!call) { return false; }
+        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        auto key = call.getArgs().size() == 1
+                       ? call.getArgs().front().getDefiningOp<ctjs::ConstantOp>()
+                       : ctjs::ConstantOp{};
+        return attributeMethod(method) && call.getReceiver() == method.getObject() && key &&
+               llvm::isa<ctjs::StringAttr>(key.getValue());
+    };
+    llvm::SmallVector<ctjs::InvokeOp> reads;
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : block.without_terminator()) {
@@ -485,15 +496,31 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
                 attributeMethod(method)) {
                 continue;
             }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
-                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                auto key = call.getArgs().size() == 1
-                               ? call.getArgs().front().getDefiningOp<ctjs::ConstantOp>()
-                               : ctjs::ConstantOp{};
-                if (attributeMethod(method) && call.getReceiver() == method.getObject() && key &&
-                    llvm::isa<ctjs::StringAttr>(key.getValue())) {
-                    continue;
+            if (attributeCall(llvm::dyn_cast<ctjs::CallOp>(operation))) { continue; }
+            if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
+                auto & invoked = invocation.getBody().front();
+                auto call = llvm::dyn_cast<ctjs::CallOp>(invoked.front());
+                auto dispatch = llvm::dyn_cast<ctjs::InvokeExitOp>(invoked.back());
+                auto & normal = invocation.getNormalBody().front();
+                if (invoked.getNumArguments() || !attributeCall(call) || !dispatch ||
+                    call->getNextNode() != dispatch ||
+                    dispatch.getNormalResult() != call.getResult() ||
+                    normal.getNumArguments() != 1 ||
+                    !llvm::isa<ctjs::InvokeYieldOp>(normal.getTerminator())) {
+                    return false;
                 }
+                // Recovery's normal tuple contains only its tag, inactive padding
+                // and original saved values. Never infer effects from result types.
+                for (auto & projection : normal.without_terminator()) {
+                    if (!remaining) { return false; }
+                    --remaining;
+                    if (!llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp>(
+                            projection)) {
+                        return false;
+                    }
+                }
+                reads.push_back(invocation);
+                continue;
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                 for (auto & region : branch->getRegions()) {
@@ -511,6 +538,28 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
     };
     if (!effects(effects, body, 0)) {
         return refuse("DOM caught throw protected effect lacks a nonthrowing proof");
+    }
+    for (auto invocation : reads) {
+        auto & invoked = invocation.getBody().front();
+        auto call = llvm::cast<ctjs::CallOp>(invoked.front());
+        auto dispatch = llvm::cast<ctjs::InvokeExitOp>(invoked.back());
+        auto & normal = invocation.getNormalBody().front();
+        auto projected = llvm::cast<ctjs::InvokeYieldOp>(normal.getTerminator());
+        const uint64_t cost = uint64_t(1) + normal.getNumArguments() + invocation.getNumResults() +
+                              normal.getOperations().size();
+        if (cost > remaining) { return refuse("DOM caught throw work budget exhausted"); }
+        remaining -= static_cast<unsigned>(cost);
+        // Only the independent nonthrowing call proof permits selecting normal.
+        // Preserve the complete normal tuple, including its inactive failure
+        // padding. Live success state already follows the original outer SSA;
+        // the saved unwind registers never replace that state or the result.
+        normal.getArgument(0).replaceAllUsesWith(dispatch.getNormalResult());
+        call->moveBefore(invocation);
+        for (auto & operation : llvm::make_early_inc_range(normal.without_terminator())) {
+            operation.moveBefore(invocation);
+        }
+        invocation.replaceAllUsesWith(projected.getValues());
+        invocation.erase();
     }
     if (!unconditional) {
         const auto spend = [&](uint64_t cost) {
@@ -603,8 +652,19 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
                     }
                     return selected.getResult(0);
                 }
-                // Fold only the exact integer dispatch operations introduced by
-                // recovery. Source truthiness and comparisons still execute.
+                // Fold exact Boolean/integer completion dispatch. Other source
+                // truthiness and comparisons still execute in their original order.
+                if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(next)) {
+                    auto value =
+                        mapping.lookupOrDefault(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
+                    auto flag = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
+                                      : ctjs::BooleanAttr{};
+                    if (flag) {
+                        mapping.map(truth.getResult(), mlir::arith::ConstantIntOp::create(
+                                                           at, truth.getLoc(), flag.getValue(), 1));
+                        continue;
+                    }
+                }
                 if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(next)) {
                     mapping.map(cast.getResult(), at.createOrFold<mlir::arith::IndexCastUIOp>(
                                                       cast.getLoc(), cast.getType(),
@@ -670,6 +730,42 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
         if (constant->use_empty()) { constant.erase(); }
     });
     return true;
+}
+
+llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps,
+                                             llvm::ArrayRef<unsigned> elementParameters) {
+    bool throws = false;
+    uint64_t size = 0;
+    const auto scanned = function.walk([&](mlir::Operation * operation) {
+        size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
+        throws |= llvm::isa<ctjs::ThrowOp>(operation);
+        return size <= maxSteps ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
+    });
+    if (scanned.wasInterrupted()) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       "DOM caught throw work budget exhausted");
+    }
+    if (throws) {
+        return normalizeDOMCaughtCompletion(function, maxSteps - static_cast<unsigned>(size),
+                                            elementParameters,
+                                            ExceptionRecoveryMode::ExplicitThrows);
+    }
+    // Probe on a bounded clone: URI/JSON handlers still need their existing
+    // throwing-call consumer when this narrower nonthrowing proof does not apply.
+    if (size > maxSteps / 3) { return false; }
+    mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->clone()));
+    auto normalized =
+        normalizeDOMCaughtCompletion(*copy, maxSteps - static_cast<unsigned>(size * 3),
+                                     elementParameters, ExceptionRecoveryMode::CheckedInvocations);
+    if (!normalized) {
+        llvm::consumeError(normalized.takeError());
+        return false;
+    }
+    if (*normalized) {
+        function->setAttrs((*copy)->getAttrs());
+        function.getBody().takeBody(copy->getBody());
+    }
+    return *normalized;
 }
 
 llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,

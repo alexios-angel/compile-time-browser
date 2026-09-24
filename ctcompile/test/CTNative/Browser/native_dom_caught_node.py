@@ -28,6 +28,11 @@ SOURCES = {
     "mixed-protected-normal-read": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { anchor.hasAttribute('x'); } } catch (error) { return error === anchor; } return false; }\n",
     "nested-protected-normal-read": "function customElements(anchor) {  const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); let saved = false; try { if (flag) { saved = true; if (inner) { throw anchor; } } else { anchor.hasAttribute('x'); saved = true; } } catch (error) { return error === anchor && saved; } return !saved;  }\n",
     "protected-conditional-node-state": "function customElements(anchor) { let saved = false; try { if (anchor.hasAttribute('data-closed')) { saved = true; throw anchor; } else { throw anchor; } } catch (error) { return error === anchor && saved; } }\n",
+    "invocation-return": "function customElements(anchor) { try { return anchor.hasAttribute('data-closed'); } catch (error) { return error === anchor; } }\n",
+    "invocation-saved-state": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); return saved; } catch (error) { return error === anchor && saved; } }\n",
+    "invocation-conditional-return": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); let saved = false; try { if (flag) { saved = anchor.hasAttribute('data-closed'); } return saved; } catch (error) { return error === anchor && saved; } }\n",
+    "invocation-multiple-reads": "function customElements(anchor) { try { const first = anchor.hasAttribute('data-closed'); const second = anchor.hasAttribute('x'); return first && !second; } catch (error) { return error === anchor; } }\n",
+    "invocation-read-then-throw": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
 }
 
 
@@ -90,11 +95,13 @@ def main():
                 "conditional-node-read": 'result0="false2"\nresult1="true2"\n',
                 "conditional-node-state": 'result0="false1"\nresult1="true1"\n',
             }[name]
+        if name == "invocation-multiple-reads":
+            expected = 'result0="false2"\nresult1="true2"\n'
         if name == "protected-read":
             expected = 'result0="true1"\nresult1="true1"\n'
         if name == "mixed-protected-normal-read":
             expected = 'result0="false2"\nresult1="true1"\n'
-        if name == "mixed-node-read":
+        if name in ("mixed-node-read", "invocation-conditional-return"):
             expected = 'result0="false1"\nresult1="true2"\n'
         if name == "mixed-node-reversed-state":
             expected = 'result0="true1"\nresult1="false1"\n'
@@ -154,6 +161,11 @@ def main():
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
     refusals = {
+        "invocation-coercing-argument": "try { return anchor.hasAttribute(1); } catch (error) { return error === anchor; }",
+        "invocation-wrong-receiver": "try { const read = anchor.hasAttribute; return read('data-closed'); } catch (error) { return error === anchor; }",
+        "invocation-forged-method": "try { return ({hasAttribute() { throw false; }}).hasAttribute('data-closed'); } catch (error) { return error === anchor; }",
+        "invocation-unknown-call": "try { return decodeURIComponent('%'); } catch (error) { return error === anchor; }",
+        "invocation-without-contract": "try { return anchor.hasAttribute('data-closed'); } catch (error) { return error === anchor; }",
         "protected-forged-method": "try { ({hasAttribute() { throw false; }}).hasAttribute('x'); throw anchor; } catch (error) { return error === anchor; }",
         "rethrow": "try { throw anchor; } catch (error) { throw error; }",
         "return-borrow": "try { throw anchor; } catch (error) { return error; }",
@@ -183,6 +195,8 @@ def main():
                 manifest = dict(
                     contract, provider=provider, initial_intrinsics=["decodeURIComponent"]
                 )
+                if name == "invocation-without-contract":
+                    manifest["element_parameters"] = []
                 dom.lower(
                     args,
                     ir,
@@ -192,7 +206,7 @@ def main():
                     success=False,
                 )
     check_outer_catches(args)
-    print("confined node catch: 288 native executions, 40 refusals, 48 Node/VM observations")
+    print("confined node catch: 368 native executions, 60 refusals, 58 Node/VM observations")
 
 
 OUTER_SOURCES = {
