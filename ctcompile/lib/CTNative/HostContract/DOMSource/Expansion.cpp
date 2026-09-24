@@ -26,18 +26,23 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
         if (invocation.getNumResults()) {
             auto returned = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
-            auto leaf =
-                returned ? returned.getValue().getDefiningOp<ctjs::CallOp>() : ctjs::CallOp{};
+            auto calls = target.getBody().front().getOps<ctjs::CallOp>();
+            auto leaf = llvm::hasSingleElement(calls) ? *calls.begin() : ctjs::CallOp{};
             auto method = leaf ? leaf.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                : ctjs::GetPropertyOp{};
-            bool forwards = method && leaf.getReceiver() == method.getObject() &&
+            bool forwards = returned && method &&
+                            (returned.getValue() == leaf.getResult() ||
+                             llvm::isa<mlir::BlockArgument>(returned.getValue()) ||
+                             returned.getValue().getDefiningOp<ctjs::ConstantOp>() ||
+                             returned.getValue().getDefiningOp<ctjs::LoadUpvalueOp>()) &&
+                            leaf.getReceiver() == method.getObject() &&
                             (ctjs::constantKey(method.getKey()) == "hasAttribute" ||
                              ctjs::constantKey(method.getKey()) == "setAttribute");
             // Preserve the call's exceptional edge as well as its result. Only
             // inert preparation leaves protection, conditional on complete DOM
             // reproof of the actual receiver and initial method after binding.
-            // ponytail: one directly returned leaf; additional effects and result
-            // construction need their own completion correspondence.
+            // ponytail: one leaf and an inert result; additional effects and
+            // result construction need their own completion correspondence.
             for (auto & operation : target.getBody().front()) {
                 if (!step()) { return false; }
                 forwards &=
@@ -585,6 +590,18 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 mapping.map(load.getResult(), value);
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                if (protectedInvocation && protectedInvocation.getNumResults() &&
+                    result.getValue() != protectedLeaf.getResult()) {
+                    // The protected call still dispatches its own result. Only
+                    // success observes the helper's return; failure retains the
+                    // original payload and saved state.
+                    auto payload = protectedInvocation.getNormalBody().front().getArgument(0);
+                    for (auto & use : payload.getUses()) {
+                        (void)use;
+                        if (!step()) { return false; }
+                    }
+                    payload.replaceAllUsesWith(mapping.lookup(result.getValue()));
+                }
                 call->getResult(0).replaceAllUsesWith(
                     mapping.lookup(protectedLeaf ? protectedLeaf.getResult() : result.getValue()));
             } else if (protectedInvocation && llvm::isa<mlir::scf::YieldOp>(operation)) {
@@ -693,7 +710,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 // Suffix producers follow the original suppression at the
                 // same guard. Complete DOM proof must show the write and
                 // every moved read cannot throw or reenter source code.
-                if (&operation == protectedLeaf) { at.setInsertionPointAfter(protectedInvocation); }
+                if (&operation == protectedLeaf) {
+                    if (protectedInvocation.getNumResults()) {
+                        // Inert suffix constants/captures must dominate the
+                        // normal continuation that observes the helper result.
+                        at.setInsertionPoint(protectedInvocation);
+                    } else {
+                        at.setInsertionPointAfter(protectedInvocation);
+                    }
+                }
             }
         }
         return true;

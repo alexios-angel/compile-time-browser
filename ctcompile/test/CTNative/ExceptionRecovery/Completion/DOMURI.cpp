@@ -123,8 +123,62 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
         auto refused = ctcompile::ctnative::expandDOMHelpers(*exhausted, "entry$0", leafSteps - 1);
         check(static_cast<bool>(refused), "incomplete leaf forwarding budget refuses");
         if (refused) { llvm::consumeError(std::move(refused)); }
+        for (const bool suffix : {false, true}) {
+            // The argument case preserves the former refusal body unchanged.
+            // The suffix literal must move before Invoke to dominate success.
+            const auto ownResult =
+                replace(leafSource, "    ctjs.return %leaf",
+                        suffix ? "    %suffix = ctjs.constant #ctjs.string<\"saved result\">\n"
+                                 "    ctjs.return %suffix"
+                               : "    ctjs.return %value");
+            auto candidate = mlir::parseSourceString<mlir::ModuleOp>(ownResult, &context);
+            if (!check(static_cast<bool>(candidate), "independent helper result parses")) {
+                continue;
+            }
+            ctjs::InvokeOp invoke;
+            candidate->walk([&](ctjs::InvokeOp found) { invoke = found; });
+            auto exit = llvm::cast<ctjs::InvokeExitOp>(invoke.getBody().front().back());
+            auto yes = llvm::cast<ctjs::InvokeYieldOp>(invoke.getNormalBody().front().back());
+            auto no = llvm::cast<ctjs::InvokeYieldOp>(invoke.getUnwindBody().front().back());
+            const llvm::SmallVector<mlir::Value> savedState(exit.getState());
+            const llvm::SmallVector<mlir::Value> failedValues(no.getValues());
+            const llvm::SmallVector<mlir::Value> successfulState(yes.getValues().drop_front());
+            auto normalEffect =
+                llvm::cast<ctjs::StoreGlobalOp>(invoke.getNormalBody().front().front());
+            auto * failureEffect = &invoke.getUnwindBody().front().front();
+            unsigned steps = 0;
+            auto error =
+                ctcompile::ctnative::expandDOMHelpers(*candidate, "entry$0", 100000, &steps);
+            if (!check(!error, "helper return is independent of its protected call result")) {
+                llvm::errs() << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            check(mlir::succeeded(mlir::verify(*candidate)),
+                  "helper result dominates its continuation");
+            auto payload = yes.getValues().front();
+            check(suffix ? ctjs::constantKey(payload) == "saved result"
+                         : payload == candidate->lookupSymbol<ctjs::FuncOp>("entry$0")
+                                          .getBody()
+                                          .front()
+                                          .getArgument(3),
+                  "normal continuation observes the actual helper return");
+            check(normalEffect.getValue() == payload &&
+                      invoke.getNormalBody().front().getArgument(0).use_empty() &&
+                      llvm::equal(yes.getValues().drop_front(), successfulState) &&
+                      llvm::equal(no.getValues(), failedValues) &&
+                      llvm::equal(exit.getState(), savedState) &&
+                      &invoke.getUnwindBody().front().front() == failureEffect &&
+                      exit.getNormalResult() == invoke.getBody().front().front().getResult(0),
+                  "success effect sees its payload while call dispatch and failure stay unchanged");
+            auto limited = mlir::parseSourceString<mlir::ModuleOp>(ownResult, &context);
+            auto exhausted = ctcompile::ctnative::expandDOMHelpers(*limited, "entry$0", steps - 1);
+            check(static_cast<bool>(exhausted), "independent result charges its complete rewrite");
+            if (exhausted) { llvm::consumeError(std::move(exhausted)); }
+        }
         for (const auto & invalid :
-             {replace(leafSource, "    ctjs.return %leaf", "    ctjs.return %value"),
+             {replace(leafSource, "    ctjs.return %leaf", "    ctjs.return %method"),
+              replace(leafSource, "    ctjs.return %leaf",
+                      "    %second = ctjs.call %method(%value, %name)\n    ctjs.return %leaf"),
               replace(leafSource, "    ctjs.return %leaf",
                       "    ctjs.store_global \"extra\", %value\n    ctjs.return %leaf"),
               replace(leafSource, "    %method = ctjs.get_property",
@@ -133,7 +187,7 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
             auto hostile = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
             if (!check(static_cast<bool>(hostile), "hostile leaf forwarding parses")) { continue; }
             auto error = ctcompile::ctnative::expandDOMHelpers(*hostile, "entry$0", 100000);
-            check(static_cast<bool>(error), "extra effects and changed leaf results refuse");
+            check(static_cast<bool>(error), "extra effects, calls and method results refuse");
             if (error) { llvm::consumeError(std::move(error)); }
         }
     }
