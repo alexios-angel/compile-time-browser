@@ -36,6 +36,12 @@ llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contr
 llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps,
                                              llvm::ArrayRef<unsigned> elementParameters = {});
 
+// After helper binding, select normal only for independently nonthrowing Element
+// attribute calls. Preserve their complete inert tuples; final DOM proof remains
+// mandatory. The caller owns a disposable candidate on failure.
+llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned maxSteps,
+                                             llvm::ArrayRef<unsigned> elementParameters);
+
 struct ExceptionRecoveryResult {
     bool recovered = false;
     std::string refusal;

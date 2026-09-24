@@ -442,6 +442,11 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
     if (auto error = normalizeDOMElementGuards(*composed, transformed, maxSteps)) {
         return refuse("native DOM element guard: " + llvm::toString(std::move(error)));
     }
+    if (auto error = lowering_detail::normalizeDOMAttributeInvocations(
+            composed->lookupSymbol<ctjs::FuncOp>(transformed.entry), maxSteps,
+            transformed.elementParameters)) {
+        return refuse("native DOM attribute completion: " + llvm::toString(std::move(error)));
+    }
     transformed.moduleSha256 = hostContractFingerprint(*composed);
     if (auto error = normalizeDOMIteration(*composed, transformed, maxSteps)) {
         return refuse("native DOM iteration: " + llvm::toString(std::move(error)));

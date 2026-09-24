@@ -75,6 +75,97 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
                 "    %method = ctjs.get_property %value[%key]\n"
                 "    %leaf = ctjs.call %method(%value, %name" +
                 (method == "setAttribute" ? ", %name" : "") + ")\n    ctjs.return %leaf\n  }\n}");
+        auto tupleSource = mlir::parseSourceString<mlir::ModuleOp>(leafSource, &context);
+        auto tupleError = ctcompile::ctnative::expandDOMHelpers(*tupleSource, "entry$0", 100000);
+        if (!check(!tupleError, "observed tuple helper expands before projection")) {
+            llvm::consumeError(std::move(tupleError));
+            continue;
+        }
+        auto tupleEntry = tupleSource->lookupSymbol<ctjs::FuncOp>("entry$0");
+        const auto tupleSnapshot = printed(*tupleSource);
+        auto budgetError = ctcompile::ctnative::lowering_detail::normalizeDOMAttributeInvocations(
+            tupleEntry, 0, {0});
+        check(static_cast<bool>(budgetError) && printed(*tupleSource) == tupleSnapshot,
+              "attribute projection requires its own verification budget before mutation");
+        if (budgetError) { llvm::consumeError(std::move(budgetError)); }
+        tupleError = ctcompile::ctnative::lowering_detail::normalizeDOMAttributeInvocations(
+            tupleEntry, 100000, {0});
+        if (!check(!tupleError, "observed attribute tuple projects after helper binding")) {
+            llvm::consumeError(std::move(tupleError));
+            continue;
+        }
+        unsigned tupleStores = 0, tupleInvocations = 0;
+        tupleEntry.walk([&](ctjs::InvokeOp) { ++tupleInvocations; });
+        tupleEntry.walk([&](ctjs::StoreGlobalOp store) {
+            ++tupleStores;
+            check(store.getName() == "payload"
+                      ? static_cast<bool>(store.getValue().getDefiningOp<ctjs::CallOp>())
+                      : store.getValue() == tupleEntry.getBody().front().getArgument(
+                                                store.getName() == "saved" ? 4 : 3),
+                  "every normal payload and saved slot keeps its original source identity");
+        });
+        check(tupleStores == 3 && !tupleInvocations && mlir::succeeded(mlir::verify(*tupleSource)),
+              "normal tuple transport disappears while all three observers remain");
+        auto projectedSource =
+            replace(leafSource, "    ctjs.return %leaf",
+                    "    %savedReturn = ctjs.constant #ctjs.string<\"saved return\">\n"
+                    "    ctjs.return %savedReturn");
+        for (const std::string line : {"    ctjs.store_global \"payload\", %tuple#0\n",
+                                       "    ctjs.store_global \"value\", %tuple#1\n",
+                                       "    ctjs.store_global \"saved\", %tuple#2\n"}) {
+            projectedSource = replace(projectedSource, line, "");
+        }
+        for (unsigned control = 0; control != 6; ++control) {
+            auto text = projectedSource;
+            if (control == 2) {
+                text = replace(text, "    ^normal(%result: !ctjs.value):",
+                               "    ^normal(%result: !ctjs.value):\n"
+                               "      ctjs.store_global \"effect\", %result");
+            }
+            if (control == 3) {
+                text = replace(text, "ctjs.call %method(%value", "ctjs.call %method(%new");
+            }
+            if (control == 4) {
+                text = replace(text, "#ctjs.string<\"data-written\">", "#ctjs.number<42>");
+            }
+            auto projected = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+            if (!check(static_cast<bool>(projected), "observed helper preparation parses")) {
+                continue;
+            }
+            const auto snapshot = printed(*projected);
+            ctcompile::ctnative::HostContract contract;
+            contract.provider = ctcompile::ctnative::HostContract::Provider::ctbrowserDOM;
+            contract.entry = "entry$0";
+            contract.elementParameters =
+                control == 1 ? std::vector<unsigned>{} : std::vector<unsigned>{0, 1};
+            contract.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*projected);
+            const auto fingerprint = contract.moduleSha256;
+            auto error = ctcompile::ctnative::prepareDOMEntry(*projected, contract,
+                                                              control == 5 ? 0 : 100000);
+            if (control) {
+                check(static_cast<bool>(error),
+                      "observed helper needs identity, inert tuples, arguments and budget");
+                if (error) { llvm::consumeError(std::move(error)); }
+                check(printed(*projected) == snapshot && contract.moduleSha256 == fingerprint,
+                      "refused observed helper preserves source and contract");
+                continue;
+            }
+            if (!check(!error, "observed helper return passes complete DOM preparation")) {
+                llvm::errs() << llvm::toString(std::move(error)) << '\n';
+                continue;
+            }
+            auto entry = projected->lookupSymbol<ctjs::FuncOp>("entry$0");
+            unsigned invocations = 0, leaves = 0;
+            entry.walk([&](ctjs::InvokeOp) { ++invocations; });
+            entry.walk([&](ctjs::CallOp) { ++leaves; });
+            auto returned = llvm::cast<ctjs::ReturnOp>(entry.getBody().front().back());
+            check(
+                !invocations && leaves == 1 &&
+                    ctjs::constantKey(returned.getValue()) == "saved return" &&
+                    ctcompile::ctnative::DOMEntryAnalysis(*projected, contract).proved() &&
+                    mlir::succeeded(mlir::verify(*projected)),
+                "typed original call and independent return survive without invocation transport");
+        }
         // Both continuations remain observable. Expansion must preserve these
         // operations, not select one path from the helper's nominal return type.
         leafSource = replace(leafSource, "    ^normal(%result: !ctjs.value):",
