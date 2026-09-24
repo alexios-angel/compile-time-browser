@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Mixed local catches and chained subtraction, 2026-09-24 UTC
+
+Resumed clean **8d83a00c** and the prior outer-catch/escape checkpoints.
+**80db2f07** handles mixed normal/throw local DOM completions by projecting the
+original completion flag, payload and saved state through the same branch yield.
+Only the selected throwing arm runs the catch; the normal arm keeps its original
+result. Protected effects are checked independently, and complete DOM reproof
+still precedes publication. No borrowed C++ exception is introduced.
+
+**63037202** retains independent binary64 Number results through up to 64
+subtractions. Their bitwise conversions remain separate from property keys and
+other arithmetic. Unchanged source/program **8ecfabd8 / 51d9a9499f905cba** changes
+its child from Stored to **Confined**, with two of four total sites confined and
+zero soundness violations. All 150 historical escape source bodies remain.
+
+Focused checks pass: **176 native executions, 44 refusals, 26 Node/VM observations**,
+the selected caught-node lit case, exact recovery/arrays CTests and one selected
+escape lit case. After the final clone-budget accounting correction, recovery
+passes again and all 44 emitted modules are byte-identical; executions were not
+replayed. Formatting passes **1126 C++, 158 Python and 114 web files**. Eight final
+code/test hashes match the devbox, and all 88 generated C++ files contain no Script
+symbols. Agent checkpoints were resumed after rate limits; the parent reviewed
+the final changes. Independent investigation completed, but final independent
+reviews were interrupted.
+
+**Next:** original outer iterator getter **1a7fb166** and method **7acf503b** still
+need call/check payload, state and effect correspondence. Nested local catch
+**fcd90a50** still fails protected-effect proof. Escape source **b3eae66b**, program
+**43ee068c775dc0cc**, uses `(keys[i % 2] - 0.25 + 0.25) | 0` and remains Stored;
+Node returns `[0,0,0]`, and the VM observes its child confined once. Addition needs
+independent computed Number evidence. Protected observers, broader iterators,
+unguarded Bootstrap defaults, the application driver and full native Bootstrap
+remain unfinished. Full suites and full Bootstrap were skipped.
+
+[Exact checks and next boundaries](handoff/2026-09-24-mixed-catch-chained-subtraction.md).
+
 ## Conditional caught-node state and fractional subtraction, 2026-09-24 UTC
 
 Resumed clean **3e1ea9d7**, the original observing iterator catch `1a7fb166`,
