@@ -22,6 +22,37 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Invocation tuple projection and computed zero powers, 2026-09-24 UTC
+
+Resumed clean **e13636f0** and the unfinished iterator/power boundaries.
+**82b527fb** adds bounded projection of recovered invocation tuples, reused by the
+existing independently proved nonthrowing DOM consumer. The original getter
+**1a7fb166** and method **7acf503b** each exercise four calls, both completion paths
+and fifteen saved registers. Projection preserves the original call and both
+continuations; **the observing outer iterators remain refused**.
+
+**1025b9fd** retains independent Number snapshots through `** 0`, including
+nonfinite bases. Unchanged source **97308b39**, program **fa9803402523b206**, now
+proves its child and key table **Confined**: **two of four total sites**, zero
+violations. All 168 historical escape function bodies remain unchanged.
+
+Focused validation passes: **80 native executions, 76 refusals, 14 Node/VM
+observations** from five selected local sources plus original outer controls;
+exact recovery/arrays CTests; one selected escape lit case. Formatting passes
+**1126 C++, 158 Python, 114 web files**. Seven final code/test hashes match the
+devbox; forty emitted C++ files contain no Script/AOT symbols. Full suites and
+full Bootstrap were skipped; no whole caught-node lit pass is claimed.
+
+**Next native boundary:** use these tuples in protocol discovery and helper
+expansion for the original outer catches, proving open/next/close effects,
+exhaustion, cleanup and saved returns. Escaping nodes still need exception-lifetime
+owners. **Next escape boundary:** source **39cf843e**, program **2672f8901b7e3947**,
+uses `1 ** computedExponent`; its child remains Stored and key table Passed,
+although Node returns `[0,0,0]` and the VM observes the child confined once.
+Unguarded Bootstrap defaults, broader iterators and the application driver remain.
+
+[Exact focused checks and next boundaries](handoff/2026-09-24-invocation-tuples-zero-powers.md).
+
 ## Protected DOM mutations and computed unit powers, 2026-09-24 UTC
 
 Resumed clean **41021e75** and the unfinished iterator/power boundaries. **e9bb1abc**
