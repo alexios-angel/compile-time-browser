@@ -37,6 +37,10 @@ SOURCES = {
     "write-return": "function customElements(anchor) { try { anchor.setAttribute('data-written', 'yes'); return true; } catch (error) { return false; } }\n",
     "write-conditional": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { anchor.setAttribute('data-written', 'yes'); } throw anchor; } catch (error) { return error === anchor && anchor.hasAttribute('data-written'); } }\n",
     "write-saved-state": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-written', 'yes'); throw anchor; } catch (error) { return error === anchor && saved && anchor.hasAttribute('data-written'); } }\n",
+    "write-boolean-constants": "function customElements(anchor) { try { anchor.setAttribute('data-first', true); anchor.setAttribute('data-written', false); throw anchor; } catch (error) { return error === anchor; } }\n",
+    "write-boolean-read-return": "function customElements(anchor) { try { const saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); return saved; } catch (error) { return false; } }\n",
+    "write-boolean-snapshot": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-closed', true); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
+    "write-boolean-conditional": "function customElements(anchor) { let saved = false; try { if (anchor.hasAttribute('data-closed')) { saved = anchor.hasAttribute('data-closed'); } anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
 }
 
 
@@ -45,6 +49,10 @@ WRITE_EXPECTED = {
     "write-return": 'result0="true0:yes:1"\nresult1="true0:yes:1"\n',
     "write-conditional": 'result0="false2:undefined:0"\nresult1="true2:yes:1"\n',
     "write-saved-state": 'result0="false1:yes:1"\nresult1="true2:yes:1"\n',
+    "write-boolean-constants": 'result0="true0:false:2"\nresult1="true0:false:2"\n',
+    "write-boolean-read-return": 'result0="false1:false:1"\nresult1="true1:true:1"\n',
+    "write-boolean-snapshot": 'result0="false1:false:2"\nresult1="true1:true:2"\n',
+    "write-boolean-conditional": 'result0="false1:false:1"\nresult1="true2:true:1"\n',
 }
 
 WRITE_OBSERVER = """function observe(closed) {
@@ -178,7 +186,29 @@ def main():
         if name.startswith("write-"):
             answer = "closed" if name in ("write-conditional", "write-saved-state") else "true"
             count = "(closed ? 1u : 0u)" if name == "write-conditional" else "1u"
-            checks = """
+            text = '"yes"'
+            first_name = '"data-written"'
+            extra = ""
+            if name.startswith("write-boolean-"):
+                answer = "true" if name == "write-boolean-constants" else "closed"
+                count = (
+                    "2u" if name in ("write-boolean-constants", "write-boolean-snapshot") else "1u"
+                )
+                text = (
+                    '"false"'
+                    if name == "write-boolean-constants"
+                    else '(closed ? "true" : "false")'
+                )
+                if name == "write-boolean-constants":
+                    first_name = '"data-first"'
+                elif name == "write-boolean-snapshot":
+                    first_name = '"data-closed"'
+                if count == "2u":
+                    extra = 'assert(writes[1].name == written); assert(doc.read().attribute_value(button, atoms.intern(@FIRST@)) == "true");'.replace(
+                        "@FIRST@", first_name
+                    )
+            checks = (
+                """
                 const auto written = atoms.intern("data-written");
                 for (bool closed : {false, true}) {
                     assert(doc.remove_attribute(button, written));
@@ -191,12 +221,18 @@ def main():
                     assert(writes.size() == @COUNT@);
                     assert(doc.read().has_attribute(button, written) == !writes.empty());
                     if (!writes.empty()) {
-                        assert(writes[0].name == written);
-                        assert(doc.read().attribute_value(button, written) == "yes");
+                        assert(writes[0].name == atoms.intern(@FIRST@));
+                        assert(doc.read().attribute_value(button, written) == @TEXT@);
+                        @EXTRA@
                     }
                 }
                 (void)foreign;
-            """.replace("@ANSWER@", answer).replace("@COUNT@", count)
+            """.replace("@ANSWER@", answer)
+                .replace("@COUNT@", count)
+                .replace("@FIRST@", first_name)
+                .replace("@TEXT@", text)
+                .replace("@EXTRA@", extra)
+            )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
@@ -214,6 +250,10 @@ def main():
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
     refusals = {
+        "write-boolean-unknown-value": "try { anchor.setAttribute('data-written', anchor.unknown); throw anchor; } catch (error) { return error === anchor; }",
+        "write-boolean-forged-read": "try { const saved = ({hasAttribute() { return true; }}).hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+        "write-boolean-mixed-join": "let saved = anchor; try { if (anchor.hasAttribute('data-closed')) { saved = true; } anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
+        "write-boolean-invalid-name": "try { anchor.setAttribute('bad name', true); throw anchor; } catch (error) { return error === anchor; }",
         "write-invalid-name": "try { anchor.setAttribute('bad name', 'yes'); throw anchor; } catch (error) { return error === anchor; }",
         "write-coercing-value": "try { anchor.setAttribute('data-written', anchor); throw anchor; } catch (error) { return error === anchor; }",
         "write-forged-method": "try { ({setAttribute() { throw false; }}).setAttribute('data-written', 'yes'); throw anchor; } catch (error) { return error === anchor; }",
@@ -263,7 +303,7 @@ def main():
                     success=False,
                 )
     check_outer_catches(args)
-    print("confined node catch: 432 native executions, 76 refusals, 66 Node/VM observations")
+    print("confined node catch: 496 native executions, 92 refusals, 74 Node/VM observations")
 
 
 OUTER_SOURCES = {

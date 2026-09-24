@@ -532,6 +532,16 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         }
         return false;
     };
+    llvm::DenseSet<mlir::Value> booleanReads;
+    const auto booleanValue = [&](mlir::Value value) {
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        return booleanReads.contains(value) ||
+               (constant && llvm::isa<ctjs::BooleanAttr>(constant.getValue()));
+    };
+    const auto attributeRead = [](ctjs::CallOp call) {
+        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        return method && ctjs::constantKey(method.getKey()) == "hasAttribute";
+    };
     const auto attributeCall = [&](ctjs::CallOp call) {
         if (!call) { return false; }
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -543,12 +553,13 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         if (!name) { return false; }
         if (!writes) { return true; }
         auto value = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-        if (!value || !llvm::isa<ctjs::StringAttr>(value.getValue()) ||
-            name.getValue().size() > remaining) {
+        if ((!value || !llvm::isa<ctjs::StringAttr>(value.getValue())) &&
+            !booleanValue(call.getArgs()[1])) {
             return false;
         }
+        if (name.getValue().size() > remaining) { return false; }
         // setAttribute validates before mutation. Charge and call the same public
-        // validator as the VM binding; literal Strings cannot invoke coercion.
+        // validator as the VM binding; Strings and proved Booleans cannot reenter.
         remaining -= static_cast<unsigned>(name.getValue().size());
         return ctbrowser::is_valid_attribute_name(
             std::string_view{name.getValue().data(), name.getValue().size()});
@@ -579,8 +590,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 continue;
             }
             // The original entry contract fixes this Element and its initial
-            // method identity. Literal Strings need no coercion; reads and writes
-            // with valid names cannot throw a source exception or reenter. Keep
+            // method identity. Literal Strings and proved Booleans cannot invoke
+            // user coercion; valid-name writes cannot throw or reenter. Keep
             // every mutation in order and reprove the complete DOM body below.
             // ponytail: entry parameters and identical branch forwarding only;
             // other aliases need their own source identity proof.
@@ -588,7 +599,10 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 attributeMethod(method)) {
                 continue;
             }
-            if (attributeCall(llvm::dyn_cast<ctjs::CallOp>(operation))) { continue; }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation); attributeCall(call)) {
+                if (attributeRead(call)) { booleanReads.insert(call.getResult()); }
+                continue;
+            }
             if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
                 auto & invoked = invocation.getBody().front();
                 auto call = llvm::dyn_cast<ctjs::CallOp>(invoked.front());
@@ -611,6 +625,20 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                         return false;
                     }
                 }
+                // Only the independently nonthrowing read gives its normal
+                // payload Boolean authority. Saved values retain their own
+                // evidence; neither unwind padding nor a later read substitutes
+                // for this invocation's snapshot.
+                auto incoming = llvm::cast<ctjs::InvokeYieldOp>(normal.getTerminator());
+                for (auto [result, value] :
+                     llvm::zip(invocation.getResults(), incoming.getValues())) {
+                    if (!remaining) { return false; }
+                    --remaining;
+                    if (booleanValue(value) ||
+                        (attributeRead(call) && value == normal.getArgument(0))) {
+                        booleanReads.insert(result);
+                    }
+                }
                 nonthrowingCalls.push_back(invocation);
                 continue;
             }
@@ -621,6 +649,14 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                         !self(self, region.front(), depth + 1)) {
                         return false;
                     }
+                }
+                auto yes = llvm::cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
+                auto no = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
+                for (auto [result, left, right] :
+                     llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
+                    if (!remaining) { return false; }
+                    --remaining;
+                    if (booleanValue(left) && booleanValue(right)) { booleanReads.insert(result); }
                 }
                 continue;
             }
