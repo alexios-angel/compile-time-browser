@@ -37,6 +37,7 @@ set(PROJECT_DESCRIPTION "Ahead-of-time compiler for ctbrowser applications.")
 
 get_filename_component(CTCOMPILE_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}" DIRECTORY)
 include(CTest)
+include(GNUInstallDirs)
 
 # THE ENGINE. Inside the monorepo its targets already exist and are used
 # directly; standalone, the installed package is found. Either way what is
@@ -145,6 +146,24 @@ add_subdirectory(lib)
 add_subdirectory(include)
 add_subdirectory(tools)
 add_subdirectory(probes)
+
+# Install the command-line tools, with the existing launcher beside the packager
+# when building in the monorepo. External runtime dependencies stay on the host.
+# ponytail: host library paths stay fixed; bundle dependencies for a portable release.
+set(CTCOMPILE_INSTALL_TARGETS ctcompile-tool)
+if(CTCOMPILE_ENABLE_MLIR)
+  list(APPEND CTCOMPILE_INSTALL_TARGETS ctjs-opt ctjs-translate)
+endif()
+if(TARGET ctbrowser-tool-ctrun)
+  list(APPEND CTCOMPILE_INSTALL_TARGETS ctbrowser-tool-ctrun)
+endif()
+set_target_properties(${CTCOMPILE_INSTALL_TARGETS} PROPERTIES
+  INSTALL_RPATH_USE_LINK_PATH TRUE)
+install(TARGETS ${CTCOMPILE_INSTALL_TARGETS}
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT ctcompile-tools)
+set(CTCOMPILE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/ctcompile")
+install(FILES "${CTCOMPILE_MONOREPO_ROOT}/LICENSE" "${CTCOMPILE_MONOREPO_ROOT}/NOTICE"
+  DESTINATION "${CTCOMPILE_INSTALL_DOCDIR}" COMPONENT ctcompile-tools)
 
 if(BUILD_TESTING)
   add_subdirectory(test)
