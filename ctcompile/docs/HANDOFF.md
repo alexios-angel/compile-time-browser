@@ -16,11 +16,37 @@ are recorded below.
 > `~/Downloads/claude/AGENT-SYNC.jsonl`. Just branch from the current `ctcompile-v1`
 > tip - nothing about the native work changed.
 
-Native work continues on `ctcompile-v1` in the `compile-time-browser` monorepo.
+Native work continues on `main` after the `ctcompile-v1` merge.
 The native application driver remains incomplete; native compiler development uses
 `ctjs-translate` and `ctjs-opt`. Build on the devbox using `tools/remote-build.sh`
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
+
+## Main merge completed, 2026-09-24 UTC
+
+The user authorized parser publication, the prepared branch push, a fresh
+recursive checkout and the main merge. Parser upstream main advanced from
+**41e23cd** to the exact tested pin **83275ba**; the monorepo gitlink did not
+change. The prepared `ctcompile-v1` branch was pushed at **4a947d58**.
+
+A fresh shallow recursive clone from GitHub retrieved the candidate and all
+three pinned submodules. Root and submodule worktrees were clean, with no
+local object references. After verification, local main **33c93892** and
+GitHub main **d495cd76** fast-forwarded to **4a947d58**. The README's obsolete
+publication blocker is removed, and the merge report records the outcome.
+
+The earlier monorepo and standalone builds, focused **3/3** tests and formatting
+gates remain the implementation evidence. No build, CTest, broad suite or
+platform qualification was rerun for publication; only documentation changed.
+Publication logs and checkout hashes are in
+`../test-results/2026-09-24-main-publication` relative to the monorepo root.
+
+**Next native boundary:** traversal and close coverage through retained
+result-bearing Invoke regions, then next/exhaustion and unsuppressed close
+failures through Try state. Preserve saved returns, caught-node identity and
+effects. Raw helper CFG normalization, the native application driver and full
+native Bootstrap remain unfinished. Continue from `main`; no rebase, forced
+push or release tag was used.
 
 ## README refresh, 2026-09-24 UTC
 

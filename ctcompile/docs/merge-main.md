@@ -1,8 +1,10 @@
-# Preparing ctcompile-v1 for main, 2026-09-24
+# ctcompile-v1 merged into main, 2026-09-24
 
-**The parser dependency must be published before this branch can be merged
-for other users.** The local build works, but a fresh checkout cannot fetch
-the pinned JavaScript parser commit. No push, tag or merge into main was made.
+**Merged and pushed.** The parser's 21 commits were published at the exact
+pin `83275ba`, and the prepared `ctcompile-v1` branch was pushed at `4a947d58`.
+A fresh recursive checkout from GitHub passed before `main` was fast-forwarded
+to that candidate and pushed. The user explicitly authorized these operations.
+No forced push, history rewrite or release tag was used.
 
 ## Comparison
 
@@ -41,34 +43,45 @@ they are not promised by this preview. Sampled native emission uses public
 subsystem APIs and retains compile-time refusals for unproved programs.
 
 Review totals: one standards finding and one spec finding, both corrected.
-The dependency publication blocker below remains open.
+The dependency publication blocker below is resolved.
 
-## Dependency blocker
+## Parser publication and checkout verification
 
 The gitlink `third-party/compile-time-javascript` pins
-`83275ba11898de490705aedcb39b4a0eed887805`. Its configured upstream,
-`alexios-angel/compile-time-javascript`, has main at
-`41e23cdc3508f59ea7c0cddeb7b2ab2ac067d787`: the pin is 21 commits ahead.
-Authenticated GitHub lookup returns HTTP 422, and fetching the exact pin into
-an empty repository fails with `upload-pack: not our ref`. Those parser changes
-are used by this branch; downgrading the pin would change the tested code.
+`83275ba11898de490705aedcb39b4a0eed887805`. Before publication, its upstream
+main was `41e23cdc3508f59ea7c0cddeb7b2ab2ac067d787`, 21 commits behind the pin.
+GitHub returned HTTP 422 and an empty-repository fetch failed with
+`upload-pack: not our ref`. Publishing those commits resolved the failure;
+the gitlink and tested parser source did not change. Upstream main now points
+to the pin, which also resolves through the authenticated GitHub API.
 
 The CSS pin `164c390486e0f4dccf21c717a07a906e1716b819` and nested containers pin
 `e122a6a4a3a81a61709378d7eaef6c2aa96037d2` both resolve upstream. All three local
 submodule checkouts are clean. A verified, complete-history
-`ctjs-83275ba.bundle` preserves the missing parser history in the evidence
-directory below; it is a recovery artifact, not a substitute for publication.
+`ctjs-83275ba.bundle` preserves the exact parser history in the evidence
+directory below as a recovery artifact.
 
-Before merging, publish the exact parser commit to an advertised ref in its
-configured upstream, then verify recursive submodule initialization from a
-fresh clone. Recheck main and the candidate tip because either may have moved.
-The standing no-push instruction leaves publication to a separately authorized
-step; no dependency or main history was rewritten here.
+The checkout check used `git clone --depth 1 --branch ctcompile-v1
+--recurse-submodules --shallow-submodules` against the GitHub repository.
+It retrieved all three submodules at their exact pins, without local object
+references. The root and submodule worktrees were clean. Candidate
+`4a947d5865e22c8f2c1b640ca67dbdc8cee873b1` had the expected tree
+`2e7e7143b3fababb98f6c98bacd8f0572588f118`.
+
+After verification, local main advanced from `33c93892` and GitHub main from
+`d495cd76` to `4a947d58`. The following documentation cleanup removes the
+obsolete README blocker and records the completed merge; implementation files
+remain unchanged. Publication and checkout evidence is in
+`../test-results/2026-09-24-main-publication` relative to the monorepo root.
 
 ## Validation
 
 The Linux x86_64 devbox uses CMake 3.28.3, the pinned clang-std-embed compiler
 and LLVM/MLIR 23.1.0. Every build/test command holds the devbox lock.
+These build and test results were measured during preparation. Publication
+reused those checks because only documentation changed afterward; no build or
+CTest was rerun for the merge. The fresh checkout verifies source availability,
+not another platform or build environment.
 
 - `tools/remote-build.sh all`: passed, 523 build steps; this runs no CTests.
 - After the target fix, `tools/remote-build.sh ctcompile-tool ctbrowser-tool-ctrun
