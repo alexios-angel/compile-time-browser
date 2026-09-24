@@ -1,4 +1,5 @@
 #include "../../../CTJS/Lowering/Globals/RegisterFlow.h"
+#include "../../HostContract/Analysis.h"
 #include "Recovery.h"
 #include "ctbrowser/dom/element.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -16,56 +17,6 @@
 #include <utility>
 
 namespace ctcompile::ctnative::lowering_detail {
-
-mlir::FailureOr<llvm::SmallVector<mlir::Value>> projectInvocationContinuation(
-    ctjs::InvokeOp invocation, bool unwind, mlir::Value payload, mlir::OpBuilder & at,
-    unsigned & remaining) {
-    if (!invocation || !payload) { return mlir::failure(); }
-    const auto spend = [&](uint64_t cost) {
-        if (cost > remaining) { return false; }
-        remaining -= static_cast<unsigned>(cost);
-        return true;
-    };
-    // Reserve verification, mapping and copying before creating any operation.
-    // Recovered continuations contain only tags/padding and a complete yield.
-    for (auto & region : invocation->getRegions()) {
-        if (!region.hasOneBlock() || region.front().empty() ||
-            !spend(uint64_t(1) + region.front().getNumArguments())) {
-            return mlir::failure();
-        }
-        for (auto & operation : region.front()) {
-            if (operation.getNumRegions() || operation.getNumSuccessors() ||
-                !spend(3 *
-                       (uint64_t(1) + operation.getNumOperands() + operation.getNumResults()))) {
-                return mlir::failure();
-            }
-            if (&region != &invocation.getBody() &&
-                !llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp,
-                           ctjs::InvokeYieldOp>(operation)) {
-                return mlir::failure();
-            }
-        }
-    }
-    if (mlir::failed(mlir::verify(invocation))) { return mlir::failure(); }
-    auto & continuation =
-        (unwind ? invocation.getUnwindBody() : invocation.getNormalBody()).front();
-    if (payload.getType() != continuation.getArgument(0).getType()) { return mlir::failure(); }
-    auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
-    mlir::IRMapping mapping;
-    mapping.map(continuation.getArgument(0), payload);
-    if (unwind) {
-        for (auto [argument, value] :
-             llvm::zip(continuation.getArguments().drop_front(), exit.getState())) {
-            mapping.map(argument, value);
-        }
-    }
-    for (auto & operation : continuation.without_terminator()) { at.clone(operation, mapping); }
-    llvm::SmallVector<mlir::Value> values;
-    for (auto value : llvm::cast<ctjs::InvokeYieldOp>(continuation.back()).getValues()) {
-        values.push_back(mapping.lookupOrDefault(value));
-    }
-    return values;
-}
 
 namespace {
 
@@ -675,8 +626,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         // padding. Live success state already follows the original outer SSA;
         // the saved unwind registers never replace that state or the result.
         mlir::OpBuilder at(invocation);
-        auto projected =
-            projectInvocationContinuation(invocation, false, call.getResult(), at, remaining);
+        auto projected = host_detail::projectInvocationContinuation(
+            invocation, false, call.getResult(), at, remaining);
         if (mlir::failed(projected)) {
             return refuse("DOM caught throw invocation projection failed or exhausted its budget");
         }

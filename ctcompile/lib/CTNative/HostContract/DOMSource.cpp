@@ -9,6 +9,7 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Verifier.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -18,6 +19,56 @@
 
 namespace ctcompile::ctnative {
 using dom_source_detail::DOMSource;
+
+mlir::FailureOr<llvm::SmallVector<mlir::Value>> host_detail::projectInvocationContinuation(
+    ctjs::InvokeOp invocation, bool unwind, mlir::Value payload, mlir::OpBuilder & at,
+    unsigned & remaining) {
+    if (!invocation || !payload) { return mlir::failure(); }
+    const auto spend = [&](uint64_t cost) {
+        if (cost > remaining) { return false; }
+        remaining -= static_cast<unsigned>(cost);
+        return true;
+    };
+    // Reserve verification, mapping and copying before creating any operation.
+    // Recovered continuations contain only tags/padding and a complete yield.
+    for (auto & region : invocation->getRegions()) {
+        if (!region.hasOneBlock() || region.front().empty() ||
+            !spend(uint64_t(1) + region.front().getNumArguments())) {
+            return mlir::failure();
+        }
+        for (auto & operation : region.front()) {
+            if (operation.getNumRegions() || operation.getNumSuccessors() ||
+                !spend(3 *
+                       (uint64_t(1) + operation.getNumOperands() + operation.getNumResults()))) {
+                return mlir::failure();
+            }
+            if (&region != &invocation.getBody() &&
+                !llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp,
+                           ctjs::InvokeYieldOp>(operation)) {
+                return mlir::failure();
+            }
+        }
+    }
+    if (mlir::failed(mlir::verify(invocation))) { return mlir::failure(); }
+    auto & continuation =
+        (unwind ? invocation.getUnwindBody() : invocation.getNormalBody()).front();
+    if (payload.getType() != continuation.getArgument(0).getType()) { return mlir::failure(); }
+    auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+    mlir::IRMapping mapping;
+    mapping.map(continuation.getArgument(0), payload);
+    if (unwind) {
+        for (auto [argument, value] :
+             llvm::zip(continuation.getArguments().drop_front(), exit.getState())) {
+            mapping.map(argument, value);
+        }
+    }
+    for (auto & operation : continuation.without_terminator()) { at.clone(operation, mapping); }
+    llvm::SmallVector<mlir::Value> values;
+    for (auto value : llvm::cast<ctjs::InvokeYieldOp>(continuation.back()).getValues()) {
+        values.push_back(mapping.lookupOrDefault(value));
+    }
+    return values;
+}
 
 bool host_detail::isLowercaseReplacement(ctjs::FuncOp function, llvm::function_ref<bool()> step) {
     if (!function.getBody().hasOneBlock() || function.getUpvalueCount() != 0) { return false; }

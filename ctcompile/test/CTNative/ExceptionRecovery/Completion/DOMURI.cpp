@@ -1,4 +1,5 @@
 #include "DOMURI.hpp"
+#include "../../../../lib/CTNative/HostContract/Analysis.h"
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
 #include "ClassTransactions.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -8,7 +9,96 @@
 
 namespace ctcompile::test::exception_recovery {
 
-using ctcompile::ctnative::lowering_detail::projectInvocationContinuation;
+using ctcompile::ctnative::host_detail::projectInvocationContinuation;
+
+static void testInertHelperCompletion(mlir::MLIRContext & context) {
+    const std::string source = R"MLIR(module {
+  ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %value: !ctjs.value, %saved: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 1
+    %u = ctjs.constant #ctjs.undefined
+    %tuple:3 = "ctjs.invoke"() ({
+      %result = ctjs.call_direct @identity$1(%u, %u, %u, %value)
+      ctjs.invoke_exit %result state(%saved, %value)
+    }, {
+    ^normal(%result: !ctjs.value):
+      "ctjs.invoke_yield"(%result, %value, %saved) : (!ctjs.value, !ctjs.value, !ctjs.value) -> ()
+    }, {
+    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):
+      "ctjs.invoke_yield"(%error, %oldSaved, %oldValue) : (!ctjs.value, !ctjs.value, !ctjs.value) -> ()
+    }) : () -> (!ctjs.value, !ctjs.value, !ctjs.value)
+    ctjs.store_global "payload", %tuple#0
+    ctjs.store_global "value", %tuple#1
+    ctjs.store_global "saved", %tuple#2
+    ctjs.frame_exit %frame
+    ctjs.return %tuple#0
+  }
+  ctjs.func private @identity$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %value: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %frame = ctjs.frame_enter 1
+    ctjs.frame_exit %frame
+    ctjs.return %value
+  }
+})MLIR";
+    const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
+        text.replace(text.find(from.str()), from.size(), to.str());
+        return text;
+    };
+    auto original = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    if (!check(static_cast<bool>(original), "observed inert helper completion parses")) { return; }
+    const auto snapshot = printed(*original);
+    unsigned used = 0;
+    auto input = mlir::OwningOpRef<mlir::ModuleOp>(original->clone());
+    auto failure = ctcompile::ctnative::expandDOMHelpers(*input, "entry$0", 100000, &used);
+    if (!check(!failure, "independently inert helper admits its observed normal tuple")) {
+        llvm::errs() << llvm::toString(std::move(failure)) << '\n';
+        return;
+    }
+    check(mlir::succeeded(mlir::verify(*input)), "observed helper expansion verifies");
+    auto entry = input->lookupSymbol<ctjs::FuncOp>("entry$0");
+    auto value = entry.getBody().front().getArgument(3);
+    auto saved = entry.getBody().front().getArgument(4);
+    unsigned stores = 0, calls = 0;
+    entry.walk([&](ctjs::StoreGlobalOp store) {
+        ++stores;
+        check(store.getValue() == (store.getName() == "saved" ? saved : value),
+              "normal payload and successful SSA retain their own slots, not unwind order");
+    });
+    entry.walk([&](mlir::Operation * operation) {
+        calls += llvm::isa<ctjs::InvokeOp, ctjs::CallDirectOp, ctjs::CallOp>(operation);
+    });
+    check(stores == 3 && calls == 0 && !input->lookupSymbol<ctjs::FuncOp>("identity$1"),
+          "observed inert helper expands once without retaining an invocation runtime");
+    for (const auto & invalid :
+         {replace(source, "    ctjs.return %value\n  }\n}",
+                  "    %coerced = ctjs.unary plus %value\n    ctjs.return %coerced\n  }\n}"),
+          replace(source, "    ctjs.return %value\n  }\n}",
+                  "    ctjs.store_global \"effect\", %value\n    ctjs.return %value\n  }\n}"),
+          replace(source, "    ctjs.return %value\n  }\n}", "    ctjs.throw %value\n  }\n}"),
+          replace(
+              source, "    ^normal(%result: !ctjs.value):",
+              "    ^normal(%result: !ctjs.value):\n      ctjs.store_global \"effect\", %result"),
+          replace(
+              source,
+              "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):",
+              "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):\n "
+              "     ctjs.store_global \"effect\", %error")}) {
+        auto candidate = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
+        if (!check(static_cast<bool>(candidate), "hostile observed helper fixture parses")) {
+            continue;
+        }
+        auto refused = ctcompile::ctnative::expandDOMHelpers(*candidate, "entry$0", 100000);
+        check(static_cast<bool>(refused),
+              "coercions, throws, body effects and effectful continuations refuse");
+        if (refused) { llvm::consumeError(std::move(refused)); }
+    }
+    for (unsigned budget : {0u, used - 1}) {
+        auto candidate = mlir::OwningOpRef<mlir::ModuleOp>(original->clone());
+        auto refused = ctcompile::ctnative::expandDOMHelpers(*candidate, "entry$0", budget);
+        check(static_cast<bool>(refused), "incomplete observed helper proof budget refuses");
+        if (refused) { llvm::consumeError(std::move(refused)); }
+    }
+    check(printed(*original) == snapshot,
+          "disposable helper attempts preserve the source snapshot");
+}
 
 static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     const std::string getter = R"js(function customElements(anchor) {
@@ -215,6 +305,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
     testObservedIteratorRecovery(context);
+    testInertHelperCompletion(context);
     for (unsigned control = 0; control < 50; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";

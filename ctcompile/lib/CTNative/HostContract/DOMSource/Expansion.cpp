@@ -23,6 +23,24 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         rethrow = {};
     }
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
+        if (invocation.getNumResults()) {
+            // An observed completion can leave protection only after the helper's
+            // entire body is independently inert for every input. Preserve the
+            // original normal payload and successful SSA state; unwind snapshots
+            // do not replace either. The existing inliner then binds the payload.
+            if (!proveUnusedBody(target)) { return false; }
+            mlir::OpBuilder at(invocation);
+            auto projected = host_detail::projectInvocationContinuation(
+                invocation, false, call->getResult(0), at, remaining);
+            if (mlir::failed(projected)) {
+                return refuse("DOM inert helper invocation lost its completion tuple");
+            }
+            call->moveBefore(invocation);
+            invocation.replaceAllUsesWith(*projected);
+            invocation.erase();
+        }
+    }
+    if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
         if (!step()) { return false; }
         auto & called = invocation.getBody();
         auto & normal = invocation.getNormalBody();
