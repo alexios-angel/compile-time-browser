@@ -411,30 +411,68 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
     auto & caught = attempt.getCatchBody().front();
     auto exit = llvm::dyn_cast<ctjs::TryExitOp>(body.getTerminator());
     auto yield = llvm::dyn_cast<ctjs::TryYieldOp>(caught.getTerminator());
-    auto flag = exit ? exit.getIsThrow().getDefiningOp<mlir::arith::ConstantOp>()
-                     : mlir::arith::ConstantOp{};
-    auto literal = flag ? llvm::dyn_cast<mlir::IntegerAttr>(flag.getValue()) : mlir::IntegerAttr{};
-    // ponytail: only an unconditional explicit throw; mixed completions need
-    // their own branch/state proof before a caught borrow can be selected.
-    if (!exit || !yield || !literal || !literal.getValue().isOne() ||
+    const auto alwaysThrows = [&](auto && self, mlir::Value flag, unsigned depth) -> bool {
+        if (!remaining || depth == 64) { return false; }
+        --remaining;
+        if (auto constant = flag.getDefiningOp<mlir::arith::ConstantOp>()) {
+            auto literal = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue());
+            return flag.getType().isInteger(1) && literal && literal.getValue().isOne();
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(flag);
+        auto branch =
+            result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+        if (!branch) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto incoming = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!incoming || incoming.getNumOperands() != branch.getNumResults() ||
+                !self(self, incoming.getOperand(result.getResultNumber()), depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    // ponytail: every protected path must explicitly throw; mixed normal/throw
+    // completions still need a separate path-correlated catch-state proof.
+    if (!exit || !yield || !alwaysThrows(alwaysThrows, exit.getIsThrow(), 0) ||
         exit.getCaughtValues().size() != caught.getNumArguments()) {
         return refuse("DOM caught throw requires an unconditional local completion");
     }
-    for (mlir::Operation & operation : body.without_terminator()) {
-        if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation);
-            poison && poison.getResult() == exit.getNormalResult() &&
-            poison.getResult().hasOneUse()) {
-            continue; // The unconditional throw cannot observe its normal result.
+    const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
+        if (depth == 64) { return false; }
+        for (mlir::Operation & operation : block.without_terminator()) {
+            if (!remaining) { return false; }
+            --remaining;
+            if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation);
+                poison && poison.getResult() == exit.getNormalResult() &&
+                poison.getResult().hasOneUse()) {
+                continue; // The all-throw completion cannot observe its normal result.
+            }
+            // Recovery removed protected checks. Prove their effects independently
+            // of DOM result typing: even a typed URI/JSON call can throw implicitly.
+            if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, ctjs::TruthyOp, mlir::arith::ConstantOp>(
+                    operation)) {
+                continue;
+            }
+            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                continue;
+            }
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                for (auto & region : branch->getRegions()) {
+                    if (!region.hasOneBlock() || region.front().getNumArguments() ||
+                        !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
+                        !self(self, region.front(), depth + 1)) {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            return false;
         }
-        // Recovery removed protected checks. Prove their effects independently
-        // of DOM result typing: even a typed URI/JSON call can throw implicitly.
-        if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, mlir::arith::ConstantOp>(operation)) {
-            continue;
-        }
-        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
-            compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
-            continue;
-        }
+        return true;
+    };
+    if (!effects(effects, body, 0)) {
         return refuse("DOM caught throw protected effect lacks a nonthrowing proof");
     }
     for (auto [argument, value] : llvm::zip(caught.getArguments(), exit.getCaughtValues())) {
@@ -449,6 +487,7 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
     }
     attempt.getResult().replaceAllUsesWith(yield.getValue());
     attempt.erase();
+    if (auto error = normalizeStructuredExits(function, remaining)) { return std::move(error); }
     // CFG structuring can leave unused dispatch constants in the outer prefix.
     function.walk([](mlir::arith::ConstantOp constant) {
         if (constant->use_empty()) { constant.erase(); }

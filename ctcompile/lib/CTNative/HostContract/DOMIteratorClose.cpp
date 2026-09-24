@@ -200,6 +200,10 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
             }
         }
     }
+    if (pushes == 1 && landings == 1 && push.getHandler() == landing->getBlock() &&
+        !landing.getThrown().use_empty()) {
+        return refuse("DOM iterator observing catch requires call/check payload and state proof");
+    }
     if (pushes != 1 || landings != 1 || push.getHandler() != landing->getBlock() ||
         push.getBody() == push.getHandler() || !push.getBodyOperands().empty() ||
         !push.getHandlerOperands().empty() || !landing->use_empty()) {
