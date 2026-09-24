@@ -17,10 +17,50 @@ are recorded below.
 > tip - nothing about the native work changed.
 
 Native work continues on `ctcompile-v1` in the `compile-time-browser` monorepo.
-The application driver remains incomplete; native compiler development uses
+The native application driver remains incomplete; native compiler development uses
 `ctjs-translate` and `ctjs-opt`. Build on the devbox using `tools/remote-build.sh`
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
+
+## Initial release preparation, 2026-09-24 UTC
+
+Resumed clean **c22da35e** after iteration 162 stopped during read-only iterator
+tracing. No uncommitted patch remained; the old WIP branch was already an
+ancestor. The current request prioritized initial release preparation, so the
+existing Bootstrap refusal boundary was retained and gated.
+
+**b2b8d184** and **566d4d96** make CLI output replacement atomic per file and
+reject output/manifest aliases, empty paths and entry/launcher overwrites.
+Relative and absolute names for a new file are normalized before comparison.
+Help now states that this command packages bytecode. **280a8db9** adds the
+`ctcompile-tools` install component and a focused relocated-install smoke.
+
+The README and release notes define **0.1.0 as a developer preview**: a working
+bytecode packager plus native subset tools. The installation retains host
+libraries, including fetched ANGLE at its checkout location when enabled.
+It is not a portable binary bundle or an installed compiler SDK.
+
+Final focused checks: CLI **1/1, 0.41 s**; MLIR-enabled install **1/1, 1.01 s**
+(**1.43 s combined**); packaging-only install **1/1, 0.26 s**; unchanged exception
+recovery **1/1, 5.47 s**. Installed native output prints `answer=42`, compiles
+without Script/AOT dependencies, and passes binary-symbol checks. Module
+packaging, native eval and malformed source refuse. The write-limit test
+preserves the previous output and leaves no temporary file. Formatting passes
+**1126 C++, 159 Python, 114 web files**. MLIR-enabled devbox configuration is
+restored. Full suites, broad matrices and platform qualification were skipped.
+
+**Next:** the native boundary remains traversal/close coverage through retained
+result-bearing Invoke regions, followed by next/exhaustion and unsuppressed
+close failures through Try state. Preserve saved returns, caught-node identity
+and effects; raw helper CFG normalization also remains. The native application
+driver, unguarded Bootstrap defaults and full native Bootstrap are unfinished.
+No new native source admission, release publication or whole-plan completion
+is claimed. Release docs and installation were delegated; the parent completed
+the install candidate and review after agent rate limits. Claude availability
+was uncertain (Linux permission failures); no browser/shared implementation
+was edited.
+
+[Release scope, exact validation and remaining limits](release-0.1.0.md).
 
 ## Guarded iterator records and joined length guards, 2026-09-24 UTC
 
