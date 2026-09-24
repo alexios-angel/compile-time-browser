@@ -350,14 +350,26 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return IndexRange{result, result, 1, key->mixedShift};
         }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression);
-            use == IndexUse::ArithmeticOperand && unary && unary->getBlock() == body &&
+            (use == IndexUse::ArithmeticOperand || use == IndexUse::PropertyKey) && unary &&
+            unary->getBlock() == body &&
             (unary.getKind() == ctjs::UnaryKind::Plus || unary.getKind() == ctjs::UnaryKind::Neg)) {
-            const auto input = self(self, unary.getOperand(), depth + 1, use);
-            if (!input) { return std::nullopt; }
-            ContentsValue result{operand, ContentsKind::NonBigInt};
-            boundedNumberUnary(input->first, unary.getKind() == ctjs::UnaryKind::Neg, result);
-            if (!result.arithmeticNumber) { return std::nullopt; }
-            return IndexRange{result, result, 1, input->mixedShift};
+            const auto input =
+                self(self, unary.getOperand(), depth + 1, IndexUse::ArithmeticOperand);
+            if (input) {
+                ContentsValue result{operand, ContentsKind::NonBigInt};
+                boundedNumberUnary(input->first, unary.getKind() == ctjs::UnaryKind::Neg, result);
+                if (use == IndexUse::ArithmeticOperand && result.arithmeticNumber) {
+                    return IndexRange{result, result, 1, input->mixedShift};
+                }
+                if (const auto position = arithmeticArrayIndex(result);
+                    use == IndexUse::PropertyKey && position) {
+                    // Only this exact Number supplies an own key. Keep the
+                    // ordinary conversion/range proof below for other inputs.
+                    result.integerNumber = position;
+                    return IndexRange{result, result, 1, input->mixedShift};
+                }
+            }
+            if (use == IndexUse::ArithmeticOperand) { return std::nullopt; }
         }
         if (use == IndexUse::ArithmeticOperand && !subtract && !add && !multiply && !divide &&
             !remainder && !power) {

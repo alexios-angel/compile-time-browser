@@ -767,6 +767,53 @@ void InductionCases::invariantReads() {
                        "%textZero = ctjs.constant #ctjs.number<4598175219545276416>",
                        "%textZero = ctjs.constant " + value));
     }
+    for (const std::string sign : {"plus", "neg"}) {
+        auto signedOwnIndex =
+            replace(replace(arithmeticOwnIndex, "  %converted =",
+                            "  %signed = ctjs.unary " + sign + " %number\n  %converted ="),
+                    "%base[%number]", "%base[%signed]");
+        if (sign == "neg") {
+            signedOwnIndex = replace(signedOwnIndex, "4612248968380809216", "13833932155375321088");
+        }
+        run({.what = "unary signs preserve exact integral arithmetic own indices",
+             .body = signedOwnIndex,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "unary arithmetic own indices preserve saved child identity",
+             .body = replace(replace(signedOwnIndex, "  cf.br ^header",
+                                     "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                             "ctjs.return %a", "ctjs.return %saved"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "x -> {x}"});
+        run({.what = "unary arithmetic own indices retain the actual write image",
+             .body = replace(signedOwnIndex, "[%textZero, %textTwo]", "[%textZero, %textZero]"),
+             .arrays = "keys:[textZero,textZero]; a:[zero,zero,x]",
+             .reads = "keys[0]=textZero; keys[1]=textZero; keys[0]=textZero",
+             .exit = "a -> {a,x}"});
+        for (const std::string before : {"  %pick =", "  %step ="}) {
+            reject("unary arithmetic own indices retain the complete mutation census",
+                   replace(signedOwnIndex, before,
+                           "  ctjs.set_property %keys[%one], %textZero\n" + before));
+        }
+        for (const std::string value :
+             {"#ctjs.number<4606281698874543309>", "#ctjs.number<9218868437227405312>",
+              "#ctjs.number<9221120237041090560>", "#ctjs.string<\"0.25\">",
+              "#ctjs.bigint<\"0\">"}) {
+            reject("unary own indices cannot borrow fractional nonfinite or coerced Number bits",
+                   replace(signedOwnIndex,
+                           "%textZero = ctjs.constant #ctjs.number<4598175219545276416>",
+                           "%textZero = ctjs.constant " + value));
+        }
+        reject("unary arithmetic own indices reject negative results",
+               replace(
+                   signedOwnIndex, "%textZero = ctjs.constant #ctjs.number<4598175219545276416>",
+                   "%textZero = ctjs.constant #ctjs.number<" +
+                       std::string(sign == "neg" ? "4612248968380809216" : "13833932155375321088") +
+                       ">"));
+    }
     reject("nonzero subtraction keeps String conversion separate from literal Number proof",
            replace(afterSubHalf, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
     run({.what = "unary Plus retains independent original Number evidence",

@@ -265,6 +265,11 @@
 // CHECK: escape {{[0-9a-f]+}} 184 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 185 {{[0-9]+}} obj escapes:stored
 
+// Unary signs retain independent exact Number evidence for certified loop keys.
+// CHECK: escape {{[0-9a-f]+}} 186 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 187 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 188 {{[0-9]+}} obj escapes:stored
+
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 // RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
@@ -543,6 +548,13 @@
 // RECORD-LABEL: fn 185 entries 1 params 0 frame {{[0-9]+}} name mutatedArithmeticOwnIndex
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
+// RECORD-LABEL: fn 186 entries 1 params 0 frame {{[0-9]+}} name unaryArithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 187 entries 1 params 0 frame {{[0-9]+}} name savedUnaryArithmeticOwnIndex
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+// RECORD-LABEL: fn 188 entries 1 params 0 frame {{[0-9]+}} name mutatedUnaryArithmeticOwnIndex
+// RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
 //--- source.js
 function varyingTableKey() {
     var child = {}, a = [child, 0, child], keys = [0, 2];
@@ -617,6 +629,7 @@ pairedTableIndex(); savedPairedTableIndex(); mutatedPairedTableIndex();
 arithmeticUnaryTableIndex(); savedArithmeticUnaryTableIndex(); mutatedArithmeticUnaryTableIndex();
 negativeUnitPowerTableIndex(); savedNegativeUnitPowerTableIndex(); mutatedNegativeUnitPowerTableIndex();
 arithmeticOwnIndex(); savedArithmeticOwnIndex(); mutatedArithmeticOwnIndex();
+unaryArithmeticOwnIndex(); savedUnaryArithmeticOwnIndex(); mutatedUnaryArithmeticOwnIndex();
 afterReadNumberSubHalf();
 afterReadNumberSubZero();
 afterReadNumberPlus();
@@ -1734,6 +1747,28 @@ function mutatedArithmeticOwnIndex() {
     for (var i = 0; i < a.length; i++) {
         keys[1] = 0.25;
         a[keys[i % 2] - 0.25] = 0;
+    }
+    return a;
+}
+
+function unaryArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, -1.75];
+    for (var i = 0; i < a.length; i++) a[-(keys[i % 2] - 0.25)] = 0;
+    return a;
+}
+
+function savedUnaryArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, -1.75];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[-(keys[i % 2] - 0.25)] = 0;
+    return saved;
+}
+
+function mutatedUnaryArithmeticOwnIndex() {
+    var child = {}, a = [child, 0, child], keys = [0.25, -1.75];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 0.25;
+        a[-(keys[i % 2] - 0.25)] = 0;
     }
     return a;
 }
