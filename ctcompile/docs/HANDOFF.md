@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Boolean attribute writes and finite unit-base powers, 2026-09-24 UTC
+
+Resumed clean **201595c5** and the original iterator/unit-base boundaries.
+**8fcf2405** proves protected Boolean attribute writes from literal values or
+independently proved `hasAttribute` results, retaining read snapshots across
+mutation, normal invocation tuples and conditional saved state. The existing
+public validator and typed DOM emitter are reused. **Original outer getter
+1a7fb166 and method 7acf503b remain refused.**
+
+**2ce0740f** proves `1 ** computedFiniteExponent` with independent Number evidence
+and bounded singleton exponent discovery. Unchanged source **39cf843e**, program
+**2672f8901b7e3947**, changes its child and key table to **Confined**: **two of four
+total sites**, zero violations. All 170 prior escape function bodies remain unchanged.
+
+Focused validation passes: **96 native executions, 92 refusals, 16 Node/VM
+observations** from six selected local sources plus original outer controls;
+exact recovery/arrays CTests; one selected escape lit case. Formatting passes
+**1126 C++, 158 Python, 114 web files**. Six final hashes match the devbox and clean
+independent review; 48 emitted C++ files contain no Script/AOT symbols. Full suites
+and full Bootstrap were skipped; no whole caught-node lit pass is claimed.
+
+**Next native boundary:** connect recovered open/next/close tuples to protocol
+discovery and helper expansion, with independent effects, exhaustion, cleanup,
+saved returns and caught-node identity. Escaping nodes still need exception-lifetime
+owners. The measured unit-base escape thread is complete; no further source was
+measured. General powers, broader iterators, unguarded Bootstrap defaults and the
+application driver remain.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-boolean-writes-finite-unit-bases.md).
+
 ## Invocation tuple projection and computed zero powers, 2026-09-24 UTC
 
 Resumed clean **e13636f0** and the unfinished iterator/power boundaries.
