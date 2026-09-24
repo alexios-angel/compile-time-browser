@@ -569,6 +569,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     boundedNumberSum(left, right, result);
+                    if (result.convertedBits && !spend()) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
                 }
                 if (binary.getKind() == ctjs::BinaryKind::Sub) {
                     boundedNumberDifference(left, right, result);
@@ -667,6 +670,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     boundedNumberSum(left, right, result);
+                    if (result.convertedBits && !spend()) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
                 } else {
                     boundedNumberBitwise(left, right, binary.getKind(), result);
                     if (result.integerNumber || result.negativeIntegerNumber) {

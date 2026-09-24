@@ -391,11 +391,44 @@ void boundedNumberPower(const ContentsValue & left, const ContentsValue & right,
     }
 }
 
+namespace {
+
+void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & right, bool subtract,
+                             ContentsValue & result) {
+    const auto number = [](const ContentsValue & input) -> std::optional<double> {
+        if (input.arithmeticNumber) { return input.arithmeticNumber; }
+        auto literal =
+            input.origin() ? input.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+        const auto value =
+            literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+        return value ? std::optional<double>{value.getDouble()} : std::nullopt;
+    };
+    const auto a = number(left);
+    const auto b = number(right);
+    const auto depth = std::max(left.arithmeticDepth, right.arithmeticDepth);
+    if (a && b && depth < 64) {
+        // ponytail: at most 64 original Number Add/Sub operations; other computed
+        // operations need their own binary64 result proof. Bits cannot supply it.
+        llvm::APFloat computed(*a);
+        if (subtract) {
+            computed.subtract(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        } else {
+            computed.add(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        }
+        result.arithmeticNumber = computed.convertToDouble();
+        result.arithmeticDepth = depth + 1;
+        result.convertedBits = ctbrowser::number_to_uint32(*result.arithmeticNumber);
+    }
+}
+
+} // namespace
+
 void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
                       ContentsValue & result) {
     // Add selects concatenation before Number conversion; even canonical
     // Strings cannot borrow the numeric proof used by the other operations.
     if (left.string() || right.string()) { return; }
+    boundedNumberArithmetic(left, right, false, result);
     const auto a = boundedConvertedNumber(left);
     const auto b = boundedConvertedNumber(right);
     // Both original primitives must convert exactly. Guard before adding so
@@ -425,26 +458,7 @@ void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
 
 void boundedNumberDifference(const ContentsValue & left, const ContentsValue & right,
                              ContentsValue & result) {
-    const auto number = [](const ContentsValue & input) -> std::optional<double> {
-        if (input.subtractionNumber) { return input.subtractionNumber; }
-        auto literal =
-            input.origin() ? input.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-        const auto value =
-            literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
-        return value ? std::optional<double>{value.getDouble()} : std::nullopt;
-    };
-    const auto a = number(left);
-    const auto b = number(right);
-    const auto depth = std::max(left.subtractionDepth, right.subtractionDepth);
-    if (a && b && depth < 64) {
-        // ponytail: at most 64 original Number subtractions; other computed
-        // operations need their own binary64 result proof. Bits cannot supply it.
-        llvm::APFloat difference(*a);
-        difference.subtract(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
-        result.subtractionNumber = difference.convertToDouble();
-        result.subtractionDepth = depth + 1;
-        result.convertedBits = ctbrowser::number_to_uint32(*result.subtractionNumber);
-    }
+    boundedNumberArithmetic(left, right, true, result);
     const auto original = boundedConvertedNumber(left);
     const auto offset = boundedConvertedNumber(right);
     // Boolean/null and canonical Strings share unary's exact conversion.

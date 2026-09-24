@@ -51,9 +51,9 @@ struct ContentsValue {
     // Result-only ToUint32 snapshot; never an arithmetic value or property key.
     std::optional<std::uint32_t> convertedBits = std::nullopt;
     unsigned unaryDepth = 0;
-    // Independent binary64 Sub result, never reconstructed from converted bits.
-    std::optional<double> subtractionNumber = std::nullopt;
-    unsigned subtractionDepth = 0;
+    // Independent binary64 Add/Sub result, never reconstructed from converted bits.
+    std::optional<double> arithmeticNumber = std::nullopt;
+    unsigned arithmeticDepth = 0;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
     bool nonBigInt() const {

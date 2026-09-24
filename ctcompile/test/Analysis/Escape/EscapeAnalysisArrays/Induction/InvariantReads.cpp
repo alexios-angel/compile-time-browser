@@ -670,7 +670,8 @@ void InductionCases::invariantReads() {
             replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero" ||
+            expression == "binary add %slot, %zero") {
             run({.what = "Number identity conversion after a read keeps its bitwise snapshot",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
@@ -781,7 +782,60 @@ void InductionCases::invariantReads() {
                replace(afterSubQuarters, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto afterSubAdd =
+        replace(afterSubQuarters, "binary sub %first, %half", "binary add %first, %half");
+    for (const std::string operation : {"binary add", "binary_static add"}) {
+        const auto source = replace(afterSubAdd, "binary add", operation);
+        run({.what = "Number addition keeps the preceding binary64 subtraction result",
+             .body = source,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+        run({.what = "a saved child still escapes after computed Number addition overwrites",
+             .body = replace(replace(source, "  cf.br ^header",
+                                     "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                             "ctjs.return %a", "ctjs.return %saved"),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "x -> {x}"});
+        reject("computed Number addition does not lend converted bits to property keys",
+               replace(source, "%base[%converted]", "%base[%number]"));
+        reject("String addition cannot borrow a Number snapshot",
+               replace(source, "  %number = ctjs." + operation + " %first, %half",
+                       "  %text = ctjs.constant #ctjs.string<\"0.25\">\n"
+                       "  %number = ctjs." +
+                           operation + " %first, %text"));
+    }
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject(
+            "computed Number addition retains the complete table mutation census",
+            replace(afterSubAdd, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    run({.what = "subtraction consumes an independently computed Number addition",
+         .body = replace(afterSubQuarters, "binary sub %slot, %half", "binary add %slot, %half"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    const auto negatedAdd =
+        replace(replace(replace(numberFractionalTable, "4606281698874543309", "0"),
+                        "4613712638259704627", "4611686018427387904"),
+                "  %converted = ctjs.binary_static bitor %slot, %zero",
+                "  %positiveSum = ctjs.binary add %slot, %one\n"
+                "  %negative = ctjs.unary neg %positiveSum\n"
+                "  %number = ctjs.binary add %negative, %three\n"
+                "  %converted = ctjs.binary_static bitor %number, %zero");
+    run({.what = "negation cannot reuse a preceding sum's positive Number snapshot",
+         .body = negatedAdd,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("negated sum snapshots cannot invent nonnegative property writes",
+           replace(negatedAdd, "binary add %negative, %three", "binary add %negative, %zero"));
     std::string subtractions = "  %original = ctjs.constant #ctjs.number<4606281698874543309>\n";
+    std::string additions = subtractions;
     std::string priorSubtraction = "%original";
     for (unsigned depth = 1; depth <= 64; ++depth) {
         const auto next = "%difference" + std::to_string(depth);
@@ -798,7 +852,21 @@ void InductionCases::invariantReads() {
         } else if (depth == 64) {
             reject("computed binary64 subtraction snapshots stop after 64 operations", body);
         }
+        const auto additionBody =
+            replace(afterSubHalf, "  %textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                    additions + "  %textZero = ctjs.binary add " + priorSubtraction + ", %zero");
+        if (depth == 63) {
+            run({.what = "64 mixed Add/Sub snapshots include the final after-read operation",
+                 .body = additionBody,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else if (depth == 64) {
+            reject("computed binary64 Add/Sub snapshots stop after 64 operations", additionBody);
+        }
         subtractions += "  " + next + " = ctjs.binary sub " + priorSubtraction + ", %zero\n";
+        additions += "  " + next + " = ctjs.binary add " + priorSubtraction + ", %zero\n";
         priorSubtraction = next;
     }
     for (const std::string before : {"  %pick =", "  %step ="}) {
@@ -1227,7 +1295,8 @@ void InductionCases::invariantReads() {
             replace(wideNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero" ||
+            expression == "binary add %slot, %zero") {
             run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
@@ -1318,7 +1387,8 @@ void InductionCases::invariantReads() {
             replace(nonfiniteNumberTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                     "  %number = ctjs." + expression +
                         "\n  %converted = ctjs.binary_static bitor %number, %zero");
-        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero") {
+        if (expression == "unary plus %slot" || expression == "binary sub %slot, %zero" ||
+            expression == "binary add %slot, %zero") {
             run({.what = "original table identity arithmetic supplies its bitwise conversion",
                  .body = converted,
                  .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
