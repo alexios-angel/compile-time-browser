@@ -613,10 +613,11 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
   return anchor.hasAttribute('data-visited');
 }
 )js";
-    for (bool method : {false, true}) {
+    for (auto [method, structured] : {std::pair{false, false}, std::pair{true, false},
+                                      std::pair{false, true}, std::pair{true, true}}) {
         auto source = getter;
         if (method) { source.replace(source.find("get return()"), 12, "return()"); }
-        auto module = import(context, source, false);
+        auto module = import(context, source, structured);
         if (!module) { continue; }
         auto function = module->lookupSymbol<ctjs::FuncOp>("customElements$1");
         if (!check(static_cast<bool>(function), "original iterator entry survives raw import")) {
@@ -624,6 +625,31 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
         }
         mlir::OwningOpRef<ctjs::FuncOp> original(llvm::cast<ctjs::FuncOp>(function->clone()));
         const auto before = printed(*original);
+        ctcompile::ctnative::HostContract contract;
+        contract.provider = ctcompile::ctnative::HostContract::Provider::ctbrowserDOM;
+        contract.entry = "customElements$1";
+        contract.elementParameters = {0};
+        contract.initialIntrinsics = {"Object", "Symbol", "__ctbrowser_for_of_open",
+                                      "__ctbrowser_iter_next", "__ctbrowser_iter_close"};
+        contract.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*module);
+        const auto originalModule = printed(*module);
+        auto close = ctcompile::ctnative::normalizeDOMIteratorClose(*module, contract);
+        check(close && !*close && printed(*module) == originalModule &&
+                  contract.moduleSha256 == ctcompile::ctnative::hostContractFingerprint(*module),
+              "original observing iterator defers suppression without changing any source state");
+        if (!close) { llvm::consumeError(close.takeError()); }
+        for (unsigned budget : {0u, 100000u}) {
+            mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+            auto proof = contract;
+            auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, budget);
+            const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
+            check(reason.find(budget ? "DOM custom iterator abrupt completion needs a handler proof"
+                                     : "budget") != std::string::npos &&
+                      printed(*candidate) == originalModule &&
+                      proof.moduleSha256 == contract.moduleSha256,
+                  "observing iterator reaches protocol proof while late or budget refusal rolls "
+                  "back");
+        }
         const auto checks = countChecks(function);
         mlir::DominanceInfo dominance(function);
         llvm::SmallVector<ctjs::CallOp> originalCalls;

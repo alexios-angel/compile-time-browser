@@ -449,11 +449,8 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     optimize=optimize,
                     success=False,
                 )
-                if (
-                    "DOM iterator observing catch requires call/check payload and state proof"
-                    not in result
-                ):
-                    raise RuntimeError(f"{name}: lost observing catch diagnostic: {result}")
+                if "DOM custom iterator abrupt completion needs a handler proof" not in result:
+                    raise RuntimeError(f"{name}: lost recovered protocol diagnostic: {result}")
 
 
 if __name__ == "__main__":

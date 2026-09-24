@@ -111,9 +111,22 @@ module {
     refuses(replaced(source, "    ctjs.pop_handler\n", ""));
     refuses(replaced(source, "    ctjs.pop_handler\n",
                      "    ctjs.pop_handler\n    ctjs.store_global \"after\", %closed\n"));
-    refuses(replaced(source, "    %pad, %error = ctjs.catch_land\n",
-                     "    %pad, %error = ctjs.catch_land\n"
-                     "    ctjs.store_global \"observed\", %error\n"));
+    const auto observed = replaced(source, "    %pad, %error = ctjs.catch_land\n",
+                                   "    %pad, %error = ctjs.catch_land\n"
+                                   "    ctjs.store_global \"observed\", %error\n");
+    for (bool abrupt : {false, true}) {
+        auto text =
+            abrupt ? observed : replaced(observed, "#ctjs.boolean<true>", "#ctjs.boolean<false>");
+        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        auto contract = contractForClose(*input);
+        const auto before = hostContractFingerprint(*input);
+        auto result = normalizeDOMIteratorClose(*input, contract);
+        check(result && !*result && hostContractFingerprint(*input) == before,
+              "an observing catch keeps both close flags and all original effects for recovery");
+        if (!result) { llvm::consumeError(result.takeError()); }
+        check(!DOMEntryAnalysis(*input, contract).proved(),
+              "deferring an observing catch never bypasses complete source proof");
+    }
     refuses(replaced(source, "    ctjs.check ^args caught ^caught\n",
                      "    ctjs.store_global \"protected\", %saved\n"
                      "    ctjs.check ^args caught ^caught\n"));
