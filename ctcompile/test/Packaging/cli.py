@@ -11,9 +11,15 @@ compiler, baseline, pageload = map(lambda arg: str(Path(arg).resolve()), sys.arg
 env = dict(os.environ, CTBROWSER_FONTS="font8x8", CTBROWSER_NETWORK="0")
 
 
-def run(tool, *args, code=0, cwd=None):
+def run(tool, *args, code=0, cwd=None, **kwargs):
     result = subprocess.run(
-        [tool, *map(str, args)], text=True, capture_output=True, env=env, cwd=cwd, timeout=60
+        [tool, *map(str, args)],
+        text=True,
+        capture_output=True,
+        env=env,
+        cwd=cwd,
+        timeout=60,
+        **kwargs,
     )
     assert result.returncode == code, (tool, args, result)
     return result.stdout
@@ -26,6 +32,8 @@ for tool in (compiler, baseline, pageload):
 
 assert run(compiler, "-v") == run(compiler, "--version")
 assert "application-directory" in run(compiler, "-h")
+assert "bytecode" in run(compiler, "--help")
+assert "does not compile JavaScript to native C++" in run(compiler, "--help")
 for option in ("--output", "-o", "--entry", "--manifest", "--fonts", "--launcher"):
     run(compiler, option, code=2)
 
@@ -45,6 +53,48 @@ with tempfile.TemporaryDirectory(prefix="ctcompile cli ") as directory:
     run(compiler, root, "-o", output, "--output", output, code=2)
     run(compiler, root, "--bundle", "-o", output, "--not-an-option", code=2)
     assert not output.exists()
+    run(compiler, root, "--bundle", "--output=", code=2)
+    run(compiler, root, "--bundle", "-o", output, "--manifest=", code=2)
+
+    # Reject collisions before touching either output, including filesystem aliases.
+    original_page = page.read_bytes()
+    for option in ("--output", "--manifest"):
+        run(compiler, root, "--bundle", option, page, code=2, cwd=root)
+        assert page.read_bytes() == original_page
+    output.write_bytes(b"previous application")
+    for alias in (output, root / "subdir" / ".." / output.name):
+        (root / "subdir").mkdir(exist_ok=True)
+        run(compiler, root, "--bundle", "-o", output, "--manifest", alias, code=2)
+        assert output.read_bytes() == b"previous application"
+    for link in (os.link, os.symlink):
+        alias = root / "output-alias"
+        link(output, alias)
+        run(compiler, root, "--bundle", "-o", output, "--manifest", alias, code=2)
+        assert output.read_bytes() == alias.read_bytes() == b"previous application"
+        alias.unlink()
+        link(page, alias)
+        run(compiler, root, "--bundle", "-o", alias, code=2)
+        assert page.read_bytes() == original_page
+        alias.unlink()
+    launcher = root / "launcher"
+    launcher.write_bytes(b"launcher template")
+    for option in ("--output", "--manifest"):
+        run(compiler, root, "--launcher", launcher, option, launcher, code=2, cwd=root)
+        assert launcher.read_bytes() == b"launcher template"
+
+    if sys.platform == "linux":
+        import resource
+        import signal
+
+        def limit_output():
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64))
+
+        before = set(root.iterdir())
+        run(compiler, root, "--bundle", "-o", output, code=1, preexec_fn=limit_output)
+        assert output.read_bytes() == b"previous application"
+        assert set(root.iterdir()) == before, "failed write left a temporary file"
+    output.unlink()
     run(pageload, page, page, code=2)
     run(pageload, root / "missing.html", code=2)
     run(baseline, root / "missing.js", code=1)
@@ -80,5 +130,7 @@ with tempfile.TemporaryDirectory(prefix="ctcompile cli ") as directory:
     (dashed / "index.html").write_text(page.read_text())
     run(compiler, "--bundle", "-o", output, "--", dashed.name, cwd=root)
     assert output.stat().st_size > 0
+    run(compiler, root, "--bundle", "-o", "-", cwd=root)
+    assert (root / "-").stat().st_size > 0
 
 print("CLI parsing, bundle output, baseline inputs and page images passed")

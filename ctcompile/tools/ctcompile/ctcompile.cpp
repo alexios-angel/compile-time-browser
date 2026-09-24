@@ -34,6 +34,7 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/OptTable.h"
 #include "llvm/Support/Allocator.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <bitset>
@@ -89,17 +90,26 @@ std::vector<std::byte> bytes_of(std::string_view text) {
 }
 
 bool write_file(const std::filesystem::path & path, std::span<const std::byte> bytes) {
-    std::ofstream out{path, std::ios::binary};
-    if (out) {
-        out.write(reinterpret_cast<const char *>(bytes.data()),
-                  static_cast<std::streamsize>(bytes.size()));
-        out.close();
-    }
-    if (!out) {
-        std::cerr << "ctcompile: cannot write " << path << " (output may be incomplete)\n";
+    // LLVM writes a sibling temporary and renames only after a successful write.
+    // An absolute path keeps a literal output named "-" from selecting stdout.
+    if (auto error = llvm::writeToOutput(
+            std::filesystem::absolute(path).string(), [&](llvm::raw_ostream & out) {
+                out.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                return llvm::Error::success();
+            })) {
+        std::cerr << "ctcompile: cannot write " << path << ": " << llvm::toString(std::move(error))
+                  << '\n';
         return false;
     }
     return true;
+}
+
+bool same_file(const std::filesystem::path & left, const std::filesystem::path & right) {
+    if (std::filesystem::weakly_canonical(left) == std::filesystem::weakly_canonical(right)) {
+        return true;
+    }
+    std::error_code error;
+    return std::filesystem::equivalent(left, right, error);
 }
 
 int main(int argc, char ** argv) try {
@@ -129,7 +139,9 @@ int main(int argc, char ** argv) try {
     if (options.hasArg(OPT_help)) {
         table.printHelp(llvm::outs(), "ctcompile [options] <application-directory>",
                         "ctcompile - ahead-of-time compiler for ctbrowser applications");
-        llvm::outs() << "\nPackages an application into a .ctapp its launcher can run.\n";
+        llvm::outs() << "\nPackages classic scripts as bytecode in a launcher executable "
+                        "(or a .ctapp with --bundle).\n"
+                        "This command does not compile JavaScript to native C++.\n";
         return 0;
     }
     if (options.hasArg(OPT_version)) {
@@ -158,6 +170,28 @@ int main(int argc, char ** argv) try {
         std::cerr << "ctcompile: " << entry << " is not a file - name the page with --entry\n";
         return 2;
     }
+    const bool bundle_only = options.hasArg(OPT_bundle);
+    const std::filesystem::path out =
+        options.hasArg(OPT_output)
+            ? std::filesystem::path{options.getLastArgValue(OPT_output).str()}
+            : std::filesystem::path{entry.stem().string() + (bundle_only ? ".ctapp" : "")};
+    const std::filesystem::path manifest_path{options.getLastArgValue(OPT_manifest).str()};
+    if (out.empty() || (options.hasArg(OPT_manifest) && manifest_path.empty())) {
+        std::cerr << "ctcompile: output and manifest paths must not be empty\n";
+        return 2;
+    }
+    if (!manifest_path.empty() && same_file(out, manifest_path)) {
+        std::cerr << "ctcompile: output and manifest must name different files\n";
+        return 2;
+    }
+    const auto aliases_input = [&](const std::filesystem::path & input) {
+        if (same_file(out, input) || (!manifest_path.empty() && same_file(manifest_path, input))) {
+            std::cerr << "ctcompile: output or manifest would overwrite input " << input << '\n';
+            return true;
+        }
+        return false;
+    };
+    if (aliases_input(entry)) { return 2; }
 
     // ASK THE ENGINE WHAT THIS APPLICATION IS, rather than working it out here.
     // The page is loaded once, headless, by the same browser that will run it -
@@ -400,12 +434,6 @@ int main(int argc, char ** argv) try {
     // and a trailer saying where that starts. A linked ELF does not care what
     // follows its last section - so the machine that RUNS the result needs no
     // toolchain, and this needs no linker.
-    const bool bundle_only = options.hasArg(OPT_bundle);
-    const std::filesystem::path out =
-        options.hasArg(OPT_output)
-            ? std::filesystem::path{options.getLastArgValue(OPT_output).str()}
-            : std::filesystem::path{entry.stem().string() + (bundle_only ? ".ctapp" : "")};
-
     std::vector<std::byte> written = bytes;
     if (!bundle_only) {
         std::filesystem::path launcher{options.getLastArgValue(OPT_launcher).str()};
@@ -425,6 +453,7 @@ int main(int argc, char ** argv) try {
                          "with --bundle\n";
             return 1;
         }
+        if (aliases_input(launcher)) { return 2; }
         std::vector<std::byte> base;
         {
             std::ifstream in{launcher, std::ios::binary};
@@ -446,18 +475,16 @@ int main(int argc, char ** argv) try {
     // changes it.
     if (options.hasArg(OPT_manifest)) {
         record.bundle_bytes = written.size();
-        const std::filesystem::path where{options.getLastArgValue(OPT_manifest).str()};
         const std::string manifest = ctcompile::to_json(record);
-        if (!write_file(where, std::as_bytes(std::span{manifest}))) { return 1; }
+        if (!write_file(manifest_path, std::as_bytes(std::span{manifest}))) { return 1; }
     }
 
     if (!bundle_only) {
-        std::error_code ignored;
         std::filesystem::permissions(out,
                                      std::filesystem::perms::owner_exec |
                                          std::filesystem::perms::group_exec |
                                          std::filesystem::perms::others_exec,
-                                     std::filesystem::perm_options::add, ignored);
+                                     std::filesystem::perm_options::add);
     }
 
     std::cerr << "ctcompile: " << out << " - " << scripts.size() << " script"
