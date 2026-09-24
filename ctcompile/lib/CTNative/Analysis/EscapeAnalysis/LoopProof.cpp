@@ -270,7 +270,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         PropertyKey,
         Conversion,
         BitwiseConversion,
-        TableElement
+        SubtractionOperand
     };
     const auto indexRange = [&](auto && self, mlir::Value operand, unsigned depth,
                                 IndexUse use = IndexUse::Number) -> std::optional<IndexRange> {
@@ -279,6 +279,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return std::nullopt;
         }
         if (fromHeader(operand) == index) {
+            if (use == IndexUse::SubtractionOperand) { return std::nullopt; }
             return IndexRange{{index, ContentsKind::NonBigInt, indexBounds.first},
                               {index, ContentsKind::NonBigInt, indexBounds.second},
                               *stride};
@@ -305,7 +306,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const auto position = ownArrayIndex(key->first);
             if (!position || *position >= table->second.size()) { return std::nullopt; }
             auto result = table->second[*position];
-            if (use == IndexUse::TableElement) {
+            if (use == IndexUse::SubtractionOperand) {
                 // This demand returns the original singleton, not a numeric range.
                 return IndexRange{result, result, 1, key->mixedShift};
             }
@@ -338,7 +339,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             return IndexRange{result, result, 1, key->mixedShift};
         }
-        if (use == IndexUse::TableElement) { return std::nullopt; }
+        if (use == IndexUse::SubtractionOperand &&
+            (!llvm::isa_and_nonnull<ctjs::BinaryOp>(expression) ||
+             llvm::cast<ctjs::BinaryOp>(expression).getKind() != ctjs::BinaryKind::Sub)) {
+            const auto scalar = invariant(invariant, operand, 0);
+            if (!scalar) { return std::nullopt; }
+            return IndexRange{*scalar, *scalar, 1};
+        }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression)) {
             if (unary->getBlock() != body || (unary.getKind() != ctjs::UnaryKind::Plus &&
                                               unary.getKind() != ctjs::UnaryKind::Neg &&
@@ -411,9 +418,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
-        if (subtract && use == IndexUse::BitwiseConversion) {
+        if (subtract &&
+            (use == IndexUse::BitwiseConversion || use == IndexUse::SubtractionOperand)) {
             const auto right = invariant(invariant, binary.getRhs(), 0);
-            if (right && boundedConvertedNumber(*right) == 0) {
+            if (use == IndexUse::BitwiseConversion && right &&
+                boundedConvertedNumber(*right) == 0) {
                 // Subtracting exact zero changes neither the converted bits nor
                 // their range. Keep this algebraic proof local to bitwise demand.
                 auto converted = self(self, binary.getLhs(), depth + 1, use);
@@ -424,7 +433,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 }
             }
             if (right) {
-                const auto left = self(self, binary.getLhs(), depth + 1, IndexUse::TableElement);
+                const auto left =
+                    self(self, binary.getLhs(), depth + 1, IndexUse::SubtractionOperand);
                 if (left) {
                     if (!spend()) {
                         invariantFailure = ArrayContentsFailure::WorkLimit;
@@ -432,12 +442,17 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     }
                     ContentsValue result{operand, ContentsKind::NonBigInt};
                     boundedNumberDifference(left->first, *right, result);
+                    if (use == IndexUse::SubtractionOperand) {
+                        if (!result.subtractionNumber) { return std::nullopt; }
+                        return IndexRange{result, result, 1, left->mixedShift};
+                    }
                     if (result.convertedBits) {
-                        result.integerNumber = *result.convertedBits;
+                        result = {operand, ContentsKind::NonBigInt, *result.convertedBits};
                         return IndexRange{result, result, 1, left->mixedShift};
                     }
                 }
             }
+            if (use == IndexUse::SubtractionOperand) { return std::nullopt; }
         }
         // Add keeps String concatenation; every other admitted binary
         // operation converts its primitive operands before computing a Number.

@@ -425,6 +425,26 @@ void boundedNumberSum(const ContentsValue & left, const ContentsValue & right,
 
 void boundedNumberDifference(const ContentsValue & left, const ContentsValue & right,
                              ContentsValue & result) {
+    const auto number = [](const ContentsValue & input) -> std::optional<double> {
+        if (input.subtractionNumber) { return input.subtractionNumber; }
+        auto literal =
+            input.origin() ? input.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
+        const auto value =
+            literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+        return value ? std::optional<double>{value.getDouble()} : std::nullopt;
+    };
+    const auto a = number(left);
+    const auto b = number(right);
+    const auto depth = std::max(left.subtractionDepth, right.subtractionDepth);
+    if (a && b && depth < 64) {
+        // ponytail: at most 64 original Number subtractions; other computed
+        // operations need their own binary64 result proof. Bits cannot supply it.
+        llvm::APFloat difference(*a);
+        difference.subtract(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
+        result.subtractionNumber = difference.convertToDouble();
+        result.subtractionDepth = depth + 1;
+        result.convertedBits = ctbrowser::number_to_uint32(*result.subtractionNumber);
+    }
     const auto original = boundedConvertedNumber(left);
     const auto offset = boundedConvertedNumber(right);
     // Boolean/null and canonical Strings share unary's exact conversion.
@@ -449,19 +469,6 @@ void boundedNumberDifference(const ContentsValue & left, const ContentsValue & r
                 result.negativeIntegerNumber = *negative - *magnitude;
             }
         }
-    }
-    if (result.integerNumber || result.negativeIntegerNumber) { return; }
-    auto lhs = left.origin() ? left.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-    auto rhs =
-        right.origin() ? right.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-    const auto a = lhs ? llvm::dyn_cast<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
-    const auto b = rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
-    if (a && b) {
-        // ponytail: two original Number literals only; computed operands need
-        // independent Number evidence, never their saved ToUint32 snapshots.
-        llvm::APFloat difference(a.getDouble());
-        difference.subtract(llvm::APFloat(b.getDouble()), llvm::APFloat::rmNearestTiesToEven);
-        result.convertedBits = ctbrowser::number_to_uint32(difference.convertToDouble());
     }
 }
 

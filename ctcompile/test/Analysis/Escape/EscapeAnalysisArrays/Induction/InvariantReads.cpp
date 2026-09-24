@@ -740,6 +740,67 @@ void InductionCases::invariantReads() {
             "fractional subtraction preserves the complete table mutation census",
             replace(afterSubHalf, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    const auto afterSubQuarters =
+        replace(replace(afterSubHalf, "4602678819172646912", "4598175219545276416"),
+                "  %number = ctjs.binary sub %slot, %half",
+                "  %first = ctjs.binary sub %slot, %half\n"
+                "  %number = ctjs.binary sub %first, %half");
+    run({.what = "chained subtraction keeps each binary64 result before bitwise conversion",
+         .body = afterSubQuarters,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "a saved child survives chained subtraction overwrites",
+         .body = replace(replace(afterSubQuarters, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[0]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    run({.what = "chained subtraction retains a child at an unwritten position",
+         .body = replace(afterSubQuarters, "[%textZero, %textTwo]", "[%textZero, %textZero]"),
+         .arrays = "keys:[textZero,textZero]; a:[zero,zero,x]",
+         .reads = "keys[0]=textZero; keys[1]=textZero; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    for (const std::string key : {"%slot", "%first", "%number"}) {
+        reject("chained subtraction never lends converted bits to a property key",
+               replace(afterSubQuarters, "%base[%converted]", "%base[" + key + "]"));
+    }
+    reject("chained subtraction keeps other arithmetic's independent Number proof",
+           replace(afterSubQuarters, "binary_static bitor %number, %zero",
+                   "binary add %number, %one"));
+    for (const std::string expression : {"unary plus %slot", "binary_static bitor %slot, %zero"}) {
+        reject("subtraction cannot reconstruct binary64 from another result's converted bits",
+               replace(afterSubQuarters, "binary sub %slot, %half", expression));
+    }
+    reject("chained subtraction retains the original String conversion boundary",
+           replace(afterSubQuarters, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("chained subtraction retains the complete table mutation census",
+               replace(afterSubQuarters, before,
+                       "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    std::string subtractions = "  %original = ctjs.constant #ctjs.number<4606281698874543309>\n";
+    std::string priorSubtraction = "%original";
+    for (unsigned depth = 1; depth <= 64; ++depth) {
+        const auto next = "%difference" + std::to_string(depth);
+        const auto body =
+            replace(afterSubHalf, "  %textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                    subtractions + "  %textZero = ctjs.binary sub " + priorSubtraction + ", %zero");
+        if (depth == 63) {
+            run({.what = "64 subtraction snapshots include the final after-read operation",
+                 .body = body,
+                 .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                 .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                 .exit = "a -> {a}"},
+                "x");
+        } else if (depth == 64) {
+            reject("computed binary64 subtraction snapshots stop after 64 operations", body);
+        }
+        subtractions += "  " + next + " = ctjs.binary sub " + priorSubtraction + ", %zero\n";
+        priorSubtraction = next;
+    }
     for (const std::string before : {"  %pick =", "  %step ="}) {
         reject(
             "subtract-zero conversion retains the complete table mutation census",
