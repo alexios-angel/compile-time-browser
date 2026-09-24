@@ -22,6 +22,46 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Record aliases and transported length guards, 2026-09-24 UTC
+
+Resumed clean **2ab9ba43** and the original observing iterator thread.
+**d3ad9a90** forwards an open result through a completion tuple only when every
+arm yields that exact dominating value. Selections and their effects remain.
+The done-field proof follows exact tuple and saved-unwind slots to truth tests
+or unused results; publishing a saved done value refuses. Next and both
+close(false) calls retain their payloads, flags and 15 saved registers.
+
+Original getter **1a7fb166** and method **7acf503b**, with lifted helper bodies,
+now reach **completion-selected close-record identity** from both direct recovery
+and full preparation. Raw helper CFGs retain their earlier body-proof refusals.
+**No new native JavaScript source admission is claimed.** Unknown/poison record
+arms and escaped aliases remain refused; complete preparation still rolls back.
+
+**39d2080a** proves cached loaded-array lengths through preheader block arguments
+using existing exact state transport and bounded single-predecessor provenance.
+The immutable extent, mutation and replay checks remain. Frozen source
+**ff068494**, program **47d8cf7cab0bbfde**, changes child and holder to
+**Confined: two of four total sites**, all four observed, zero VM violations.
+Node returns `[[0,0,0],0]`; saved-child, bound and receiver controls retain escapes.
+
+Focused recovery, host-contract and arrays CTests, one new escape lit case and
+the selected three-source native check pass. Formatting passes **1126 C++,
+158 Python, 114 web files**. Independent six-file review is clean; final hashes
+match the devbox. Twenty-four generated C++ files pass the Script/AOT/ctjs check.
+All 34 frozen artifacts and historical source bodies remain unchanged.
+Full suites were skipped.
+
+**Next:** prove each close-record operand together with its completion-tag slot
+under the enclosing equality guard; only matching leaves may supply identity.
+Never globally replace a mixed record/poison tuple. Then rewrite next/exhaustion
+and both unsuppressed close failures inside retained Try regions, preserving
+saved returns, caught-node identity and every effect. Raw helper CFG normalization
+also remains. Wider cached origins, escaping-node exception owners, broader
+iterators, unguarded Bootstrap defaults, the application driver and full native
+Bootstrap remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-record-aliases-transported-length.md).
+
 ## Protected iterator open and guarded length provenance, 2026-09-24 UTC
 
 Resumed clean **f0a30d11** and the original observing iterator thread.
