@@ -22,6 +22,44 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Main merge preparation, 2026-09-24 UTC
+
+Resumed clean **3ee1f76a** for the request to prepare `ctcompile-v1` for `main`.
+Local main **33c93892** and live GitHub main **d495cd76** are ancestors; no
+rebase or conflict resolution is needed at those refs. The pinned review spans
+3,522 commits and 2,960 files, so the parallel review was bounded to integration,
+preview scope and dependencies. No main merge, push or tag was performed.
+
+**de496dd3** fixes root onboarding: system-compiler configuration, accurate
+CMake/LLVM requirements, preview scope and configure-dependent test inventory.
+**05014744** replaces build-only DOM/style target names with exported aliases;
+the installed-engine MLIR configuration failed before that fix and now builds
+all three compiler tools. Standalone docs disable the monorepo regression suite.
+
+Validation: monorepo `all` **523 build steps**, without running full CTest;
+affected targets pass; standalone compiler **221 build steps** and all three
+version commands pass. Focused CLI, exception recovery and relocated install
+tests pass **3/3, 7.12 s**. Native install smoke prints `answer=42`, checks binary
+symbols and refusals. Formatting passes **1126 C++, 159 Python, 114 web files**;
+seven README Bash blocks and 29 local links pass. Final CMake hash matches the
+devbox; the shared build remains MLIR enabled. Full suites, broad matrices,
+WPT/test262, other platforms, sanitizers and performance checks were skipped.
+
+**Merge blocker:** parser pin **83275ba** is 21 commits ahead of upstream main
+**41e23cd** and cannot be fetched from GitHub (`not our ref`; API HTTP 422).
+The exact parser history is preserved in a verified bundle; CSS and nested
+containers pins resolve upstream. Publish the parser pin under separate push
+authorization, verify a fresh recursive checkout, then recheck the candidate
+and main refs before merging. Do not downgrade the dependency to hide the issue.
+
+Claude availability remains uncertain because Linux process identities were
+not all readable; no browser implementation was edited. The native boundary
+remains traversal/close coverage through retained result-bearing Invoke regions,
+then next/exhaustion and unsuppressed close failures through Try state.
+The native application driver and full native Bootstrap remain unfinished.
+
+[Review, exact gates, evidence and publication boundary](merge-main.md).
+
 ## Initial release preparation, 2026-09-24 UTC
 
 Resumed clean **c22da35e** after iteration 162 stopped during read-only iterator
