@@ -236,6 +236,10 @@
 // CHECK: escape {{[0-9a-f]+}} 167 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 168 {{[0-9]+}} obj escapes:stored
 
+// Computed Number zero powers overwrite index one, preserving saved aliases.
+// CHECK: escape {{[0-9a-f]+}} 169 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 170 {{[0-9]+}} obj escapes:stored
+
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 // RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
@@ -495,6 +499,11 @@
 // RECORD-LABEL: fn 168 entries 1 params 0 frame {{[0-9]+}} name mutatedAfterReadSubAddModPow
 // RECORD: site 4 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
 
+// RECORD-LABEL: fn 169 entries 1 params 0 frame {{[0-9]+}} name afterReadNumberZeroPower
+// RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
+// RECORD-LABEL: fn 170 entries 1 params 0 frame {{[0-9]+}} name savedAfterReadZeroPower
+// RECORD: site 5 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes temporaries:1
+
 //--- source.js
 function varyingTableKey() {
     var child = {}, a = [child, 0, child], keys = [0, 2];
@@ -563,6 +572,7 @@ afterReadNumberSubAddMul(); savedAfterReadSubAddMul(); mutatedAfterReadSubAddMul
 afterReadNumberSubAddDiv(); savedAfterReadSubAddDiv(); mutatedAfterReadSubAddDiv();
 afterReadNumberSubAddMod(); savedAfterReadSubAddMod(); mutatedAfterReadSubAddMod();
 afterReadNumberSubAddModPow(); savedAfterReadSubAddModPow(); mutatedAfterReadSubAddModPow();
+afterReadNumberZeroPower(); savedAfterReadZeroPower();
 afterReadNumberSubHalf();
 afterReadNumberSubZero();
 afterReadNumberPlus();
@@ -1566,4 +1576,16 @@ function mutatedAfterReadSubAddModPow() {
         a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 1) | 0] = 0;
     }
     return a;
+}
+
+function afterReadNumberZeroPower() {
+    var child = {}, a = [0, child, 0], keys = [0.9, 2.9];
+    for (var i = 0; i < a.length; i++) a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 0) | 0] = 0;
+    return a;
+}
+function savedAfterReadZeroPower() {
+    var child = {}, a = [0, child, 0], keys = [0.9, 2.9];
+    var saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(((keys[i % 2] - 0.25 + 0.25) % 3) ** 0) | 0] = 0;
+    return saved;
 }

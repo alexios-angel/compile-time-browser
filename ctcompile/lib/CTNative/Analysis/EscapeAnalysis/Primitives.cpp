@@ -338,11 +338,11 @@ void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & r
     const auto a = number(left);
     const auto b = number(right);
     const auto depth = std::max(left.arithmeticDepth, right.arithmeticDepth);
-    if (a && b && depth < 64 && (kind != ctjs::BinaryKind::Pow || *b == 1)) {
+    if (a && b && depth < 64 && (kind != ctjs::BinaryKind::Pow || *b == 0 || *b == 1)) {
         // ponytail: at most 64 Number operations; Pow only preserves the exact
-        // unit-exponent identity. Other powers need their own binary64 proof.
-        // Number x ** 1 preserves x, including signed zero and nonfinite x.
-        llvm::APFloat computed(*a);
+        // zero/unit-exponent identities. Other powers need their own binary64 proof.
+        // Number x ** +/-0 is one, including NaN x; x ** 1 preserves x.
+        llvm::APFloat computed(kind == ctjs::BinaryKind::Pow && *b == 0 ? 1.0 : *a);
         if (kind == ctjs::BinaryKind::Mul) {
             computed.multiply(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
         } else if (kind == ctjs::BinaryKind::Div) {

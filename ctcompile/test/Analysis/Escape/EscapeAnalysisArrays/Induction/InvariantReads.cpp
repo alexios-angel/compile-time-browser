@@ -1032,6 +1032,42 @@ void InductionCases::invariantReads() {
            replace(afterReadPower, "  %power = ctjs.binary pow %slot, %one",
                    "  %unknownNumber = ctjs.unary plus %slot\n"
                    "  %power = ctjs.binary pow %unknownNumber, %one"));
+    const auto zeroPower =
+        replace(replace(afterSubAddModPow, "[%x, %zero, %x]", "[%zero, %x, %zero]"),
+                "binary pow %remainder, %one", "binary pow %remainder, %zero");
+    for (const auto & body :
+         {zeroPower, replace(zeroPower, "  %power = ctjs.binary pow %remainder, %zero",
+                             "  %exponent = ctjs.binary sub %one, %one\n"
+                             "  %power = ctjs.binary pow %remainder, %exponent")}) {
+        run({.what = "computed Number to the zero power overwrites only index one",
+             .body = body,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "zero power preserves children outside index one",
+         .body = replace(zeroPower, "[%zero, %x, %zero]", "[%x, %x, %zero]"),
+         .arrays = "keys:[textZero,textTwo]; a:[x,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    for (const std::string bits : {"9223372036854775808", "9218868437227405312",
+                                   "18442240474082181120", "9221120237041090560"}) {
+        run({.what = "zero power of signed zero or nonfinite Number is one",
+             .body =
+                 replace(replace(replace(afterReadPower, "[%x, %zero, %x]", "[%zero, %x, %zero]"),
+                                 "binary pow %slot, %one", "binary pow %slot, %zero"),
+                         "4606281698874543309", bits),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    reject("zero-power Number evidence still requires a Number base",
+           replace(zeroPower, "binary pow %remainder, %zero", "binary pow %p, %zero"));
+    reject(
+        "zero power does not authorize a stale mutated table snapshot",
+        replace(zeroPower, "  %pick =", "  ctjs.set_property %keys[%one], %textZero\n  %pick ="));
     const auto negatedAdd =
         replace(replace(replace(numberFractionalTable, "4606281698874543309", "0"),
                         "4613712638259704627", "4611686018427387904"),
