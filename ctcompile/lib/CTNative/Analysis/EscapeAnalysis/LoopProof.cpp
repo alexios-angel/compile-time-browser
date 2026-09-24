@@ -425,7 +425,19 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if ((subtract || add || multiply || divide || remainder || power) &&
             (use == IndexUse::BitwiseConversion || use == IndexUse::ArithmeticOperand)) {
-            const auto right = invariant(invariant, expression->getOperand(1), 0);
+            auto right = invariant(invariant, expression->getOperand(1), 0);
+            bool rightMixed = false;
+            if (!right && power && invariantFailure != ArrayContentsFailure::WorkLimit) {
+                // Arithmetic demand retains the original singleton Number, even
+                // when a table read varies between visits. The shared power
+                // transfer must still prove finiteness and its exact identity.
+                const auto exponent =
+                    self(self, expression->getOperand(1), depth + 1, IndexUse::ArithmeticOperand);
+                if (exponent) {
+                    right = exponent->first;
+                    rightMixed = exponent->mixedShift;
+                }
+            }
             if (subtract && use == IndexUse::BitwiseConversion && right &&
                 boundedConvertedNumber(*right) == 0) {
                 // Subtracting exact zero changes neither the converted bits nor
@@ -459,11 +471,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     }
                     if (use == IndexUse::ArithmeticOperand) {
                         if (!result.arithmeticNumber) { return std::nullopt; }
-                        return IndexRange{result, result, 1, left->mixedShift};
+                        return IndexRange{result, result, 1, left->mixedShift || rightMixed};
                     }
                     if (result.convertedBits) {
                         result = {operand, ContentsKind::NonBigInt, *result.convertedBits};
-                        return IndexRange{result, result, 1, left->mixedShift};
+                        return IndexRange{result, result, 1, left->mixedShift || rightMixed};
                     }
                 }
             }

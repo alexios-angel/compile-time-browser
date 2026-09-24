@@ -1068,6 +1068,70 @@ void InductionCases::invariantReads() {
     reject(
         "zero power does not authorize a stale mutated table snapshot",
         replace(zeroPower, "  %pick =", "  ctjs.set_property %keys[%one], %textZero\n  %pick ="));
+    const auto unitBase =
+        replace(zeroPower, "binary pow %remainder, %zero", "binary pow %one, %remainder");
+    for (const auto & body :
+         {unitBase,
+          replace(unitBase, "  %power = ctjs.binary pow %one, %remainder",
+                  "  %unit = ctjs.binary add %one, %zero\n"
+                  "  %power = ctjs.binary pow %unit, %remainder"),
+          replace(unitBase, "  %converted = ctjs.binary_static bitor %power, %zero",
+                  "  %powerSum = ctjs.binary add %power, %zero\n"
+                  "  %converted = ctjs.binary_static bitor %powerSum, %zero")}) {
+        run({.what = "unit base with independently finite Number exponent overwrites index one",
+             .body = body,
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    run({.what = "a saved child survives computed unit-base overwrites",
+         .body = replace(replace(unitBase, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%one]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "a[1]=x; keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "x -> {x}"});
+    run({.what = "unit-base powers preserve children outside index one",
+         .body = replace(unitBase, "[%zero, %x, %zero]", "[%x, %x, %zero]"),
+         .arrays = "keys:[textZero,textTwo]; a:[x,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a,x}"});
+    reject("unit-base arithmetic snapshots do not widen property-key authority",
+           replace(unitBase, "%base[%converted]", "%base[%power]"));
+    for (const std::string operands : {"%p, %remainder", "%two, %remainder", "%one, %p"}) {
+        reject("computed unit-base powers need independently proved Number operands",
+               replace(unitBase, "binary pow %one, %remainder", "binary pow " + operands));
+    }
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("unit-base powers retain the complete table mutation census",
+               replace(unitBase, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
+    }
+    const auto unitBaseRead =
+        replace(replace(afterReadPower, "[%x, %zero, %x]", "[%zero, %x, %zero]"),
+                "binary pow %slot, %one", "binary pow %one, %slot");
+    for (const std::string bits :
+         {"9223372036854775808", "13829653735729319117", "4751297606876816998"}) {
+        run({.what = "unit base accepts signed zero negative fractional and wide finite exponents",
+             .body = replace(unitBaseRead, "4606281698874543309", bits),
+             .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = "a -> {a}"},
+            "x");
+    }
+    for (const std::string bits :
+         {"9218868437227405312", "18442240474082181120", "9221120237041090560"}) {
+        reject("unit base with a nonfinite exponent is not one",
+               replace(unitBaseRead, "4606281698874543309", bits));
+    }
+    reject("unit base cannot use a computed nonfinite exponent as finite evidence",
+           replace(unitBase, "binary mod %number, %three", "binary mod %number, %zero"));
+    reject("unit base cannot reconstruct the exponent Number from unary conversion bits",
+           replace(unitBaseRead, "  %power = ctjs.binary pow %one, %slot",
+                   "  %exponent = ctjs.unary plus %slot\n"
+                   "  %power = ctjs.binary pow %one, %exponent"));
+    reject("unit base cannot use String bits as independent Number exponent evidence",
+           replace(unitBaseRead, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
     const auto negatedAdd =
         replace(replace(replace(numberFractionalTable, "4606281698874543309", "0"),
                         "4613712638259704627", "4611686018427387904"),
@@ -1177,6 +1241,19 @@ void InductionCases::invariantReads() {
                     "x");
             } else {
                 reject("computed unit-power snapshots stop after 64 operations", powerBody);
+            }
+            const auto unitBaseBody = replace(
+                unitBaseRead, "  %textZero = ctjs.constant #ctjs.number<4606281698874543309>",
+                subtractions + "  %textZero = ctjs.binary sub " + priorSubtraction + ", %zero");
+            if (depth == 63) {
+                run({.what = "unit-base powers include the independently proved exponent depth",
+                     .body = unitBaseBody,
+                     .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+                     .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+                     .exit = "a -> {a}"},
+                    "x");
+            } else {
+                reject("unit-base powers cannot reset the 64-operation Number limit", unitBaseBody);
             }
         }
         powers += "  " + next + " = ctjs.binary pow " + priorSubtraction + ", %one\n";
