@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator completion census and loaded length guards, 2026-09-24 UTC
+
+Resumed clean **9b2b21b0** and the original observing iterator thread.
+**e3e6f76f** recognizes verified result-bearing open, next and close invocations
+under retained Try regions. The complete tuples, calls and close flags remain
+unchanged; observed close(false) never becomes suppressed cleanup. Original
+getter **1a7fb166** and method **7acf503b** now reach the **root-local open**
+restriction from both raw and lifted imports. **No new native source admission
+is claimed.** Mutation controls and whole-module/contract rollback pass.
+
+**5cece494** proves cached own-length guards for an array loaded from a private
+holder when allocation, receiver read and length read share one preheader block.
+The existing immutable identity, exact extent, mutation census and replay remain.
+Frozen source **0d5c48f8**, program **28b9564421efedd4**, changes child and holder
+to **Confined: two of four total sites**, all four observed, zero VM violations.
+Node returns `[0,0,0]`; saved-child, changed-bound and changed-receiver controls
+retain their escapes.
+
+Focused recovery, host-contract and arrays CTests pass; one new escape lit case
+and the selected three-source native check pass. Formatting passes **1126 C++,
+158 Python, 114 web files**. Independent six-file review is clean; final hashes
+match the devbox. Twenty-four generated C++ files contain no Script/AOT/ctjs
+namespace. Historical source bodies remain unchanged; full suites were skipped.
+
+**Next:** prove and follow the original successful open-record aliases through
+normal completion tuples, then carry next/exhaustion and both close(false) failure
+paths, saved returns and caught-node identity. Discovery now accepts the recovered
+completion shape, but root-local open/direct record users and exceptional state
+rewriting remain unresolved. Do not select open success using shape alone.
+The loaded-length witness is complete; broader cached origins need execution
+provenance. Escaping-node owners, broader iterators, unguarded Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-protocol-census-loaded-length.md).
+
 ## Observed iterator recovery and cached length guards, 2026-09-24 UTC
 
 Resumed clean **78ff4513** and the original observing iterator thread.
