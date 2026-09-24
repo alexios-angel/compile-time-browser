@@ -432,21 +432,19 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
         }
         return true;
     };
-    // ponytail: every protected path must explicitly throw; mixed normal/throw
-    // completions still need a separate path-correlated catch-state proof.
-    if (!exit || !yield || !alwaysThrows(alwaysThrows, exit.getIsThrow(), 0) ||
-        exit.getCaughtValues().size() != caught.getNumArguments()) {
-        return refuse("DOM caught throw requires an unconditional local completion");
+    if (!exit || !yield || exit.getCaughtValues().size() != caught.getNumArguments()) {
+        return refuse("DOM caught throw lost its local completion correspondence");
     }
+    const bool unconditional = alwaysThrows(alwaysThrows, exit.getIsThrow(), 0);
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : block.without_terminator()) {
             if (!remaining) { return false; }
             --remaining;
             if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation);
-                poison && poison.getResult() == exit.getNormalResult() &&
-                poison.getResult().hasOneUse()) {
-                continue; // The all-throw completion cannot observe its normal result.
+                poison && (!unconditional || (poison.getResult() == exit.getNormalResult() &&
+                                              poison.getResult().hasOneUse()))) {
+                continue; // Mixed completions select their active values below.
             }
             // Recovery removed protected checks. Prove their effects independently
             // of DOM result typing: even a typed URI/JSON call can throw implicitly.
@@ -456,6 +454,10 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
             }
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
                 compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                continue;
+            }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
+                unary && unary.getKind() == ctjs::UnaryKind::Not) {
                 continue;
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
@@ -474,6 +476,121 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
     };
     if (!effects(effects, body, 0)) {
         return refuse("DOM caught throw protected effect lacks a nonthrowing proof");
+    }
+    if (!unconditional) {
+        const auto spend = [&](uint64_t cost) {
+            if (cost > remaining) { return false; }
+            remaining -= static_cast<unsigned>(cost);
+            return true;
+        };
+        const auto clone = [&](mlir::Operation & operation, mlir::IRMapping & mapping,
+                               mlir::OpBuilder & at) {
+            const auto counted = operation.walk([&](mlir::Operation * nested) {
+                return spend(uint64_t(1) + nested->getNumOperands() + nested->getNumResults())
+                           ? mlir::WalkResult::advance()
+                           : mlir::WalkResult::interrupt();
+            });
+            if (counted.wasInterrupted()) { return false; }
+            at.clone(operation, mapping);
+            return true;
+        };
+        // Consume the original completion tuple inside its selected arm, before
+        // inactive poison values or borrowed payloads cross a result join.
+        const auto emit = [&](auto && self, mlir::Block & block, mlir::ValueRange values,
+                              mlir::IRMapping & mapping, mlir::OpBuilder & at,
+                              unsigned depth) -> mlir::Value {
+            if (depth == 64 || !spend(uint64_t(1) + values.size())) { return {}; }
+            auto flag = values.front().getDefiningOp<mlir::arith::ConstantOp>();
+            auto literal =
+                flag ? llvm::dyn_cast<mlir::IntegerAttr>(flag.getValue()) : mlir::IntegerAttr{};
+            auto result = llvm::dyn_cast<mlir::OpResult>(values.front());
+            auto branch =
+                result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+            if (!literal && (!branch || branch->getBlock() != &block)) { return {}; }
+            bool suffix = false;
+            for (mlir::Operation & operation : block.without_terminator()) {
+                if (&operation == branch.getOperation()) {
+                    suffix = true;
+                    continue;
+                }
+                // ponytail: only inert padding after the completion branch;
+                // broader continuations need their own ordering proof.
+                if (suffix &&
+                    !llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp>(
+                        operation)) {
+                    return {};
+                }
+                if (!clone(operation, mapping, at)) { return {}; }
+            }
+            if (literal) {
+                if (!values.front().getType().isInteger(1)) { return {}; }
+                if (literal.getValue().isZero()) { return mapping.lookupOrDefault(values[1]); }
+                for (auto [argument, value] :
+                     llvm::zip(caught.getArguments(), values.drop_front(2))) {
+                    mapping.map(argument, mapping.lookupOrDefault(value));
+                }
+                for (mlir::Operation & operation : caught.without_terminator()) {
+                    if (!clone(operation, mapping, at)) { return {}; }
+                }
+                return mapping.lookupOrDefault(yield.getValue());
+            }
+            auto selected = mlir::scf::IfOp::create(
+                at, branch.getLoc(), attempt.getResult().getType(),
+                mapping.lookupOrDefault(branch.getCondition()), false, false);
+            for (auto [source, destination] :
+                 llvm::zip(branch->getRegions(), selected->getRegions())) {
+                if (!spend(uint64_t(mapping.getValueMap().size()) +
+                           mapping.getOperationMap().size() + mapping.getBlockMap().size() +
+                           values.size() + 2)) {
+                    return {};
+                }
+                auto incoming = llvm::cast<mlir::scf::YieldOp>(source.front().getTerminator());
+                llvm::SmallVector<mlir::Value> projected;
+                for (mlir::Value value : values) {
+                    auto slot = llvm::dyn_cast<mlir::OpResult>(value);
+                    projected.push_back(slot && slot.getOwner() == branch
+                                            ? incoming.getOperand(slot.getResultNumber())
+                                            : value);
+                }
+                mlir::IRMapping path(mapping);
+                auto & target = destination.emplaceBlock();
+                auto inside = mlir::OpBuilder::atBlockEnd(&target);
+                auto value = self(self, source.front(), projected, path, inside, depth + 1);
+                if (!value) { return {}; }
+                mlir::scf::YieldOp::create(inside, branch.getLoc(), value);
+            }
+            return selected.getResult(0);
+        };
+        mlir::IRMapping mapping;
+        mlir::OpBuilder at(attempt);
+        auto result = emit(emit, body, exit.getOperands(), mapping, at, 0);
+        if (!result) {
+            return refuse("DOM caught throw requires exact branch completion projection");
+        }
+        const auto isolated = attempt.walk([&](mlir::Operation * operation) {
+            if (operation == attempt) { return mlir::WalkResult::advance(); }
+            for (auto value : operation->getResults()) {
+                for (auto * user : value.getUsers()) {
+                    if (!spend(1) || !attempt->isProperAncestor(user)) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                }
+            }
+            return spend(1) ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
+        });
+        if (isolated.wasInterrupted()) {
+            return refuse("DOM caught throw projection retained an inactive completion value");
+        }
+        attempt.getResult().replaceAllUsesWith(result);
+        attempt.erase();
+        if (auto error = normalizeStructuredExits(function, remaining)) { return std::move(error); }
+        function.walk([](mlir::Operation * operation) {
+            if (llvm::isa<mlir::arith::ConstantOp, mlir::ub::PoisonOp>(operation) &&
+                operation->use_empty()) {
+                operation->erase();
+            }
+        });
+        return true;
     }
     for (auto [argument, value] : llvm::zip(caught.getArguments(), exit.getCaughtValues())) {
         argument.replaceAllUsesWith(value);

@@ -8,7 +8,7 @@
 namespace ctcompile::test::exception_recovery {
 
 void testDOMURITransaction(mlir::MLIRContext & context) {
-    for (unsigned control = 0; control < 12; ++control) {
+    for (unsigned control = 0; control < 20; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
         if (control == 1) {
@@ -47,6 +47,32 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                                "return error;");
             }
         }
+        if (control >= 12) {
+            source = "function guarded(element) { "
+                     "const flag = element.hasAttribute('flag'); let saved = false; "
+                     "try { if (flag) { saved = true; throw element; } "
+                     "else { saved = true; } } catch (error) { "
+                     "return error === element && saved; } return !saved; }";
+            if (control == 13) { source.replace(source.find("if (flag)"), 9, "if (!flag)"); }
+            if (control == 14) {
+                source.replace(source.find("throw element;"), 14,
+                               "if (flag) { throw element; } return false;");
+            }
+            if (control == 15) {
+                source.insert(source.find("else { saved") + 7, "element.hasAttribute('inside'); ");
+            }
+            if (control == 16) {
+                source.replace(source.find("return error === element && saved;"), 34,
+                               "throw error;");
+            }
+            if (control == 17) {
+                source.replace(source.find("return error === element && saved;"), 34,
+                               "return error;");
+            }
+            if (control == 18) {
+                source.replace(source.find("return !saved;"), 14, "return element;");
+            }
+        }
         auto candidate = import(context, source, true);
         if (!candidate) { continue; }
         const auto original = printed(*candidate);
@@ -56,8 +82,10 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         request.elementParameters = {0};
         request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = request.moduleSha256;
-        auto error = ctnative::prepareDOMEntry(*candidate, request, control == 6 ? 0 : 100000);
-        if (control >= 2 && control != 7 && control != 8) {
+        auto error = ctnative::prepareDOMEntry(*candidate, request,
+                                               control == 6 || control == 19 ? 0 : 100000);
+        if (control >= 2 && control != 5 && control != 7 && control != 8 &&
+            !(control >= 12 && control <= 14)) {
             check(static_cast<bool>(error), "confined catch needs complete effects and lifetime");
             llvm::consumeError(std::move(error));
             check(printed(*candidate) == original && request.moduleSha256 == fingerprint,

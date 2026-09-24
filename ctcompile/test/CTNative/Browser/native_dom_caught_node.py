@@ -15,6 +15,12 @@ SOURCES = {
     "conditional-node-identity": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { throw anchor; } } catch (error) { return error === anchor; } }\n",
     "conditional-node-read": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { throw anchor; } } catch (error) { return error.hasAttribute('data-closed'); } }\n",
     "conditional-node-state": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); let saved = false; try { if (flag) { saved = true; throw anchor; } else { throw anchor; } } catch (error) { return error === anchor && saved; } }\n",
+    "mixed-node-identity": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error === anchor; } return false; }\n",
+    "mixed-node-read": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error.hasAttribute('data-closed'); } return false; }\n",
+    "mixed-node-state": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); let saved = false; try { if (flag) { saved = true; throw anchor; } else { saved = true; } } catch (error) { return error === anchor && saved; } return !saved; }\n",
+    "mixed-node-normal-return": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { return false; } } catch (error) { return error === anchor; } }\n",
+    "mixed-node-reversed-state": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); let saved = false; try { if (flag) { saved = true; } else { saved = true; throw anchor; } } catch (error) { return error === anchor && saved; } return !saved; }\n",
+    "conditional": "function customElements(anchor) { try { if (anchor) throw anchor; } catch (error) { return error === anchor; } }\n",
 }
 
 
@@ -48,7 +54,7 @@ def main():
         )
         expected = (
             'result0="true0"\nresult1="true0"\n'
-            if name in ("identity", "conditional-node-identity")
+            if name in ("identity", "conditional-node-identity", "conditional")
             else 'result0="false1"\nresult1="true1"\n'
         )
         if name.startswith("conditional-"):
@@ -57,6 +63,10 @@ def main():
                 "conditional-node-read": 'result0="false2"\nresult1="true2"\n',
                 "conditional-node-state": 'result0="false1"\nresult1="true1"\n',
             }[name]
+        if name == "mixed-node-read":
+            expected = 'result0="false1"\nresult1="true2"\n'
+        if name == "mixed-node-reversed-state":
+            expected = 'result0="true1"\nresult1="false1"\n'
         for command in ([args.node, str(node)], [args.reference, str(oracle)]):
             result = run(command)
             if result.stdout != expected:
@@ -64,13 +74,19 @@ def main():
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
         checks = (
             "assert(@ENTRY@(element)); assert(@ENTRY@(alias)); assert(@ENTRY@(foreign));"
-            if name in ("identity", "conditional-node-identity")
+            if name in ("identity", "conditional-node-identity", "conditional")
             else "assert(!@ENTRY@(element)); "
             'assert(doc.set_attribute(button, atoms.intern("data-closed"), "yes")); '
             "assert(@ENTRY@(alias)); assert(!@ENTRY@(foreign));"
         )
         if name == "conditional-node-identity":
             checks += ' assert(doc.set_attribute(button, atoms.intern("data-closed"), "yes")); assert(@ENTRY@(alias));'
+        if name == "mixed-node-reversed-state":
+            checks = (
+                "assert(@ENTRY@(element)); "
+                + 'assert(doc.set_attribute(button, atoms.intern("data-closed"), "yes")); '
+                + "assert(!@ENTRY@(alias)); assert(@ENTRY@(foreign));"
+            )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
@@ -92,8 +108,16 @@ def main():
         "return-borrow": "try { throw anchor; } catch (error) { return error; }",
         "protected-read": "try { anchor.hasAttribute('x'); throw anchor; } catch (error) { return error === anchor; }",
         "protected-call": "try { decodeURIComponent('%'); throw anchor; } catch (error) { return error === anchor; }",
-        "conditional": "try { if (anchor) throw anchor; } catch (error) { return error === anchor; }",
     }
+    refusals.update(
+        {
+            "mixed-protected-normal-read": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { anchor.hasAttribute('x'); } } catch (error) { return error === anchor; } return false;",
+            "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
+            "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
+            "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
+            "mixed-node-nested-state": "const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); let saved = false; try { if (flag) { saved = true; if (inner) { throw anchor; } } else { saved = true; } } catch (error) { return error === anchor && saved; } return !saved;",
+        }
+    )
     for name, body in refusals.items():
         ir, contract = dom.prepare(args, name, f"function customElements(anchor) {{ {body} }}\n", 1)
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -110,7 +134,7 @@ def main():
                     success=False,
                 )
     check_outer_catches(args)
-    print("confined node catch: 80 native executions, 28 refusals, 14 Node/VM observations")
+    print("confined node catch: 176 native executions, 44 refusals, 26 Node/VM observations")
 
 
 OUTER_SOURCES = {
