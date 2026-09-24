@@ -77,6 +77,8 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             if (!check(source != originalCalls.end(), "recovered call keeps its original site")) {
                 return;
             }
+            check(call->getNumOperands() == (*source)->getNumOperands(),
+                  "iterator invocation retains every original argument");
             for (auto [value, input] : llvm::zip(call->getOperands(), (*source)->getOperands())) {
                 if (auto slot = llvm::dyn_cast<mlir::BlockArgument>(input)) {
                     check(value == dispatch.getState()[slot.getArgNumber()],
