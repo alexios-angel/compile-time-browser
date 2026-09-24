@@ -22,6 +22,45 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional caught-node state and fractional subtraction, 2026-09-24 UTC
+
+Resumed clean **3e1ea9d7**, the original observing iterator catch `1a7fb166`,
+and frozen arithmetic source `4f39da6e`. **6765f9bc** preserves conditional
+local catch identity, reads and saved Boolean state when every protected path
+explicitly throws. Existing recovery supplies the original payload/state;
+both branch bodies receive an independent nonthrowing check before complete
+DOM reproof. No borrowed C++ exception is introduced. The original outer
+iterator catch remains refused, now with the precise diagnostic **observing
+catch requires call/check payload and state proof**.
+
+**dd894f23** proves result-only bitwise conversion of subtraction between two
+original Number literals, using LLVM's binary64 arithmetic. It does not reuse
+converted bits as an exact Number or property key. Identical source/program
+`4f39da6e` / `362f023c9aaba83c` changes its child from Stored to **Confined**;
+two of four total sites are confined, with zero soundness violations or unresolved
+instances. All 149 historical source function bodies remain unchanged.
+
+Focused validation completes **80 native executions, 28 refusals and 14 Node/VM
+observations**, exact recovery/arrays CTests, and one selected escape lit case.
+The native lit case reached all 80 executions and 20 refusals before a new trace
+comparison exposed the reference tool's percent escaping. After fixing the
+comparison, only the remaining outer-catch checks were run; **no final whole
+native-lit pass is claimed**. Formatting passes **1126 C++, 158 Python and 114
+web files**. Eight final code/test hashes match the devbox; all 40 generated
+C++ files contain no Script namespace. Native production and escape independent
+reviews are complete and clean; the parent reviewed the final source harness.
+
+**Next:** unchanged outer iterator getter `1a7fb166` and method `7acf503b` need
+actual call/check payload, state and effect correspondence. Mixed normal/throw
+local catches remain refused. Escape's new measured source `8ecfabd8`,
+`(keys[i % 2] - 0.25 - 0.25) | 0`, remains Stored although Node returns
+`[0,0,0]` and the VM observes the child confined once. Computed arithmetic needs
+independent Number-result evidence. Protected observers, nested iterators,
+unguarded Bootstrap defaults and the application driver remain. Full suites and
+full Bootstrap were skipped; no full-Bootstrap gain is claimed.
+
+[Exact checks and next boundaries](handoff/2026-09-24-conditional-catch-fractional-subtraction.md).
+
 ## Confined node catches and zero subtraction, 2026-09-23 UTC
 
 Resumed clean **bed8328f** from the previous ownership handoff and frozen
