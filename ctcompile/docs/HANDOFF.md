@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Observed attribute tuples and integral loop indices, 2026-09-24 UTC
+
+Resumed clean **e706879a** and the original observing iterator thread.
+**022c8b38** consumes independently nonthrowing attribute invocation tuples after
+helper binding and Element guards. Raw helper cases now pass complete DOM
+preparation with their original call, normal payload, saved slots and independent
+return intact. The shared effect proof and inert tuple projector are reused;
+final DOM proof remains mandatory. **No new JavaScript source admission is claimed.**
+Original outer getter **1a7fb166** and method **7acf503b** remain refused.
+
+**8dfa3dd1** uses independently proved integral binary64 results as own array
+indices inside certified loops and their replay. General scalar/length authority
+is unchanged. Frozen source **f29263f2**, program **b442a881eb54c6d3**, changes child
+and lookup table to **Confined**: **two of four total sites**, zero violations.
+Its function is identical to the original Node witness **67995082**, which returns
+`[0,0,0]`; the VM driver omits unsupported console access. All 182 historical
+escape functions are unchanged.
+
+Focused recovery/host CTests and selected native checks pass: **32 executions,
+92 refusals, eight Node/VM observations**. Arrays CTest and one escape lit case
+pass. Formatting passes **1126 C++, 158 Python, 114 web files**. Ten final hashes
+match the devbox; sixteen emitted C++ files contain no Script/AOT namespace.
+No full-suite or full-Bootstrap pass is claimed.
+
+**Next:** connect original recovered open/next/close tuples to protocol discovery
+and helper expansion, retaining independent effects, exhaustion, cleanup, saved
+returns and caught-node identity. The entry still refuses before that consumer;
+next writes twice and returns a record, while close writes then throws. Effectful
+observed continuations remain unsupported; escaping nodes need exception-lifetime
+owners. The integral loop-index witness is complete; no further witness was
+measured. Broader iterators, unguarded Bootstrap defaults and the application driver
+remain unfinished.
+
+[Exact checks, corrected escape scope and next boundary](handoff/2026-09-24-attribute-tuples-integral-indices.md).
+
 ## Helper return payloads and negative-unit powers, 2026-09-24 UTC
 
 Resumed clean **d4c29924** and the original observing iterator boundary.
