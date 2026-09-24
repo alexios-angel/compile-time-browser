@@ -21,6 +21,9 @@ SOURCES = {
     "mixed-node-normal-return": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { return false; } } catch (error) { return error === anchor; } }\n",
     "mixed-node-reversed-state": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); let saved = false; try { if (flag) { saved = true; } else { saved = true; throw anchor; } } catch (error) { return error === anchor && saved; } return !saved; }\n",
     "conditional": "function customElements(anchor) { try { if (anchor) throw anchor; } catch (error) { return error === anchor; } }\n",
+    "mixed-node-nested-state": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); let saved = false; try { if (flag) { saved = true; if (inner) { throw anchor; } } else { saved = true; } } catch (error) { return error === anchor && saved; } return !saved; }\n",
+    "mixed-node-nested-identity": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); try { if (flag) { if (inner) { throw anchor; } } } catch (error) { return error === anchor; } return false; }\n",
+    "mixed-node-nested-read": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); try { if (flag) { if (inner) { throw anchor; } } } catch (error) { return error.hasAttribute('data-closed'); } return false; }\n",
 }
 
 
@@ -44,6 +47,20 @@ def main():
             + "return '' + customElements(anchor) + reads; }\n"
             + "var result0 = observe(false), result1 = observe(true);\n"
         )
+        nested = name.startswith("mixed-node-nested-")
+        if nested:
+            script = (
+                script.replace("observe(closed)", "observe(closed, inner)")
+                .replace(
+                    "key === 'data-closed' && closed",
+                    "(key === 'data-closed' && closed) || (key === 'data-inner' && inner)",
+                )
+                .replace(
+                    "var result0 = observe(false), result1 = observe(true);",
+                    "var result0 = observe(false, false), result1 = observe(false, true), "
+                    "result2 = observe(true, false), result3 = observe(true, true);",
+                )
+            )
         oracle = args.work / f"{name}.oracle.js"
         oracle.write_text(script)
         node = args.work / f"{name}.node.js"
@@ -51,6 +68,12 @@ def main():
             script
             + "console.log('result0=' + JSON.stringify(result0));\n"
             + "console.log('result1=' + JSON.stringify(result1));\n"
+            + (
+                "console.log('result2=' + JSON.stringify(result2));\n"
+                "console.log('result3=' + JSON.stringify(result3));\n"
+                if nested
+                else ""
+            )
         )
         expected = (
             'result0="true0"\nresult1="true0"\n'
@@ -67,6 +90,10 @@ def main():
             expected = 'result0="false1"\nresult1="true2"\n'
         if name == "mixed-node-reversed-state":
             expected = 'result0="true1"\nresult1="false1"\n'
+        if nested:
+            expected = 'result0="false2"\nresult1="false2"\nresult2="false2"\n' + (
+                'result3="true3"\n' if name.endswith("-read") else 'result3="true2"\n'
+            )
         for command in ([args.node, str(node)], [args.reference, str(oracle)]):
             result = run(command)
             if result.stdout != expected:
@@ -86,6 +113,17 @@ def main():
                 "assert(@ENTRY@(element)); "
                 + 'assert(doc.set_attribute(button, atoms.intern("data-closed"), "yes")); '
                 + "assert(!@ENTRY@(alias)); assert(@ENTRY@(foreign));"
+            )
+        if nested:
+            checks = (
+                "assert(!@ENTRY@(element)); "
+                'assert(doc.set_attribute(button, atoms.intern("data-inner"), "yes")); '
+                "assert(!@ENTRY@(alias)); "
+                'assert(doc.remove_attribute(button, atoms.intern("data-inner"))); '
+                'assert(doc.set_attribute(button, atoms.intern("data-closed"), "yes")); '
+                "assert(!@ENTRY@(alias)); "
+                'assert(doc.set_attribute(button, atoms.intern("data-inner"), "yes")); '
+                "assert(@ENTRY@(alias)); assert(!@ENTRY@(foreign));"
             )
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
@@ -115,8 +153,14 @@ def main():
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
-            "mixed-node-nested-state": "const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); let saved = false; try { if (flag) { saved = true; if (inner) { throw anchor; } } else { saved = true; } } catch (error) { return error === anchor && saved; } return !saved;",
         }
+    )
+    nested_body = SOURCES["mixed-node-nested-state"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals["nested-protected-normal-read"] = nested_body.replace(
+        "else { saved = true; }", "else { anchor.hasAttribute('x'); saved = true; }"
+    )
+    refusals["nested-protected-throw-call"] = nested_body.replace(
+        "throw anchor;", "decodeURIComponent('%'); throw anchor;"
     )
     for name, body in refusals.items():
         ir, contract = dom.prepare(args, name, f"function customElements(anchor) {{ {body} }}\n", 1)
@@ -134,7 +178,7 @@ def main():
                     success=False,
                 )
     check_outer_catches(args)
-    print("confined node catch: 176 native executions, 44 refusals, 26 Node/VM observations")
+    print("confined node catch: 224 native executions, 48 refusals, 38 Node/VM observations")
 
 
 OUTER_SOURCES = {

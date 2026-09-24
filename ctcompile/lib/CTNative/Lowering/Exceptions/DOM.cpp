@@ -448,8 +448,8 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
             }
             // Recovery removed protected checks. Prove their effects independently
             // of DOM result typing: even a typed URI/JSON call can throw implicitly.
-            if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, ctjs::TruthyOp, mlir::arith::ConstantOp>(
-                    operation)) {
+            if (llvm::isa<ctjs::RootOp, ctjs::ConstantOp, ctjs::TruthyOp, mlir::arith::ConstantOp,
+                          mlir::arith::IndexCastUIOp, mlir::arith::CmpIOp>(operation)) {
                 continue;
             }
             if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
@@ -494,76 +494,101 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
             at.clone(operation, mapping);
             return true;
         };
-        // Consume the original completion tuple inside its selected arm, before
-        // inactive poison values or borrowed payloads cross a result join.
-        const auto emit = [&](auto && self, mlir::Block & block, mlir::ValueRange values,
-                              mlir::IRMapping & mapping, mlir::OpBuilder & at,
+        // Follow each original yield with its complete result mapping. Recovery
+        // may dispatch a nested completion after its first join; consuming the
+        // tuple along that same path keeps inactive poison out of the catch.
+        const auto emit = [&](auto && self, mlir::Operation * next, mlir::IRMapping & mapping,
+                              mlir::OpBuilder & at, llvm::SmallVector<mlir::scf::IfOp> pending,
                               unsigned depth) -> mlir::Value {
-            if (depth == 64 || !spend(uint64_t(1) + values.size())) { return {}; }
-            auto flag = values.front().getDefiningOp<mlir::arith::ConstantOp>();
-            auto literal =
-                flag ? llvm::dyn_cast<mlir::IntegerAttr>(flag.getValue()) : mlir::IntegerAttr{};
-            auto result = llvm::dyn_cast<mlir::OpResult>(values.front());
-            auto branch =
-                result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
-            if (!literal && (!branch || branch->getBlock() != &block)) { return {}; }
-            bool suffix = false;
-            for (mlir::Operation & operation : block.without_terminator()) {
-                if (&operation == branch.getOperation()) {
-                    suffix = true;
-                    continue;
+            if (depth == 64 || !spend(uint64_t(1) + pending.size())) { return {}; }
+            for (; next; next = next->getNextNode()) {
+                if (!spend(uint64_t(1) + next->getNumOperands())) { return {}; }
+                if (auto returned = llvm::dyn_cast<ctjs::TryExitOp>(next)) {
+                    if (!pending.empty() || returned != exit) { return {}; }
+                    auto flag = mapping.lookupOrDefault(returned.getIsThrow())
+                                    .getDefiningOp<mlir::arith::ConstantOp>();
+                    auto literal = flag ? llvm::dyn_cast<mlir::IntegerAttr>(flag.getValue())
+                                        : mlir::IntegerAttr{};
+                    if (!literal || !flag.getType().isInteger(1)) { return {}; }
+                    if (literal.getValue().isZero()) {
+                        return mapping.lookupOrDefault(returned.getNormalResult());
+                    }
+                    for (auto [argument, value] :
+                         llvm::zip(caught.getArguments(), returned.getCaughtValues())) {
+                        mapping.map(argument, mapping.lookupOrDefault(value));
+                    }
+                    for (mlir::Operation & operation : caught.without_terminator()) {
+                        if (!clone(operation, mapping, at)) { return {}; }
+                    }
+                    return mapping.lookupOrDefault(yield.getValue());
                 }
-                // ponytail: only inert padding after the completion branch;
-                // broader continuations need their own ordering proof.
-                if (suffix &&
-                    !llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp>(
-                        operation)) {
+                if (auto incoming = llvm::dyn_cast<mlir::scf::YieldOp>(next)) {
+                    if (pending.empty()) { return {}; }
+                    auto branch = pending.pop_back_val();
+                    if (incoming->getParentOp() != branch ||
+                        incoming.getNumOperands() != branch.getNumResults()) {
+                        return {};
+                    }
+                    for (auto [result, value] :
+                         llvm::zip(branch.getResults(), incoming.getOperands())) {
+                        mapping.map(result, mapping.lookupOrDefault(value));
+                    }
+                    return self(self, branch->getNextNode(), mapping, at, std::move(pending),
+                                depth + 1);
+                }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(next)) {
+                    auto condition = mapping.lookupOrDefault(branch.getCondition());
+                    pending.push_back(branch);
+                    auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>();
+                    auto literal = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
+                                            : mlir::IntegerAttr{};
+                    if (literal && condition.getType().isInteger(1)) {
+                        auto & selected = literal.getValue().isZero() ? branch.getElseRegion()
+                                                                      : branch.getThenRegion();
+                        return self(self, &selected.front().front(), mapping, at,
+                                    std::move(pending), depth + 1);
+                    }
+                    auto selected =
+                        mlir::scf::IfOp::create(at, branch.getLoc(), attempt.getResult().getType(),
+                                                condition, false, false);
+                    for (auto [source, destination] :
+                         llvm::zip(branch->getRegions(), selected->getRegions())) {
+                        if (!spend(uint64_t(mapping.getValueMap().size()) +
+                                   mapping.getOperationMap().size() + mapping.getBlockMap().size() +
+                                   pending.size() + 2)) {
+                            return {};
+                        }
+                        mlir::IRMapping path(mapping);
+                        auto & target = destination.emplaceBlock();
+                        auto inside = mlir::OpBuilder::atBlockEnd(&target);
+                        auto value =
+                            self(self, &source.front().front(), path, inside, pending, depth + 1);
+                        if (!value) { return {}; }
+                        mlir::scf::YieldOp::create(inside, branch.getLoc(), value);
+                    }
+                    return selected.getResult(0);
+                }
+                // Fold only the exact integer dispatch operations introduced by
+                // recovery. Source truthiness and comparisons still execute.
+                if (auto cast = llvm::dyn_cast<mlir::arith::IndexCastUIOp>(next)) {
+                    mapping.map(cast.getResult(), at.createOrFold<mlir::arith::IndexCastUIOp>(
+                                                      cast.getLoc(), cast.getType(),
+                                                      mapping.lookupOrDefault(cast.getIn())));
+                } else if (auto compare = llvm::dyn_cast<mlir::arith::CmpIOp>(next)) {
+                    mapping.map(compare.getResult(),
+                                at.createOrFold<mlir::arith::CmpIOp>(
+                                    compare.getLoc(), compare.getPredicate(),
+                                    mapping.lookupOrDefault(compare.getLhs()),
+                                    mapping.lookupOrDefault(compare.getRhs())));
+                } else if (!clone(*next, mapping, at)) {
                     return {};
                 }
-                if (!clone(operation, mapping, at)) { return {}; }
             }
-            if (literal) {
-                if (!values.front().getType().isInteger(1)) { return {}; }
-                if (literal.getValue().isZero()) { return mapping.lookupOrDefault(values[1]); }
-                for (auto [argument, value] :
-                     llvm::zip(caught.getArguments(), values.drop_front(2))) {
-                    mapping.map(argument, mapping.lookupOrDefault(value));
-                }
-                for (mlir::Operation & operation : caught.without_terminator()) {
-                    if (!clone(operation, mapping, at)) { return {}; }
-                }
-                return mapping.lookupOrDefault(yield.getValue());
-            }
-            auto selected = mlir::scf::IfOp::create(
-                at, branch.getLoc(), attempt.getResult().getType(),
-                mapping.lookupOrDefault(branch.getCondition()), false, false);
-            for (auto [source, destination] :
-                 llvm::zip(branch->getRegions(), selected->getRegions())) {
-                if (!spend(uint64_t(mapping.getValueMap().size()) +
-                           mapping.getOperationMap().size() + mapping.getBlockMap().size() +
-                           values.size() + 2)) {
-                    return {};
-                }
-                auto incoming = llvm::cast<mlir::scf::YieldOp>(source.front().getTerminator());
-                llvm::SmallVector<mlir::Value> projected;
-                for (mlir::Value value : values) {
-                    auto slot = llvm::dyn_cast<mlir::OpResult>(value);
-                    projected.push_back(slot && slot.getOwner() == branch
-                                            ? incoming.getOperand(slot.getResultNumber())
-                                            : value);
-                }
-                mlir::IRMapping path(mapping);
-                auto & target = destination.emplaceBlock();
-                auto inside = mlir::OpBuilder::atBlockEnd(&target);
-                auto value = self(self, source.front(), projected, path, inside, depth + 1);
-                if (!value) { return {}; }
-                mlir::scf::YieldOp::create(inside, branch.getLoc(), value);
-            }
-            return selected.getResult(0);
+            return {};
         };
         mlir::IRMapping mapping;
         mlir::OpBuilder at(attempt);
-        auto result = emit(emit, body, exit.getOperands(), mapping, at, 0);
+        auto result = emit(emit, &body.front(), mapping, at, {}, 0);
         if (!result) {
             return refuse("DOM caught throw requires exact branch completion projection");
         }
