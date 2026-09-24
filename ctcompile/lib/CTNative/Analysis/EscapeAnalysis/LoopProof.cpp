@@ -427,15 +427,15 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             (use == IndexUse::BitwiseConversion || use == IndexUse::ArithmeticOperand)) {
             auto right = invariant(invariant, expression->getOperand(1), 0);
             bool rightMixed = false;
-            if (!right && power && invariantFailure != ArrayContentsFailure::WorkLimit) {
+            if (!right && invariantFailure != ArrayContentsFailure::WorkLimit) {
                 // Arithmetic demand retains the original singleton Number, even
-                // when a table read varies between visits. The shared power
-                // transfer must still prove finiteness and its exact identity.
-                const auto exponent =
+                // when a table read varies between visits. The shared arithmetic
+                // transfer still proves both original operands independently.
+                const auto operand =
                     self(self, expression->getOperand(1), depth + 1, IndexUse::ArithmeticOperand);
-                if (exponent) {
-                    right = exponent->first;
-                    rightMixed = exponent->mixedShift;
+                if (operand) {
+                    right = operand->first;
+                    rightMixed = operand->mixedShift;
                 }
             }
             if (subtract && use == IndexUse::BitwiseConversion && right &&

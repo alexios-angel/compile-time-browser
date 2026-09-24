@@ -742,6 +742,86 @@ void InductionCases::invariantReads() {
             "fractional subtraction preserves the complete table mutation census",
             replace(afterSubHalf, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    auto pairedTable =
+        replace(replace(afterSubHalf, "  cf.br ^header",
+                        "  %quarter = ctjs.constant #ctjs.number<4598175219545276416> "
+                        "{storage_test_id = \"quarter\"}\n"
+                        "  %offsets = ctjs.create_array [%quarter, %half] {storage_test_id = "
+                        "\"offsets\"}\n  cf.br ^header"),
+                "  %number = ctjs.binary sub %slot, %half",
+                "  %offset = ctjs.get_property %offsets[%pick]\n"
+                "  %number = ctjs.binary sub %slot, %offset");
+    pairedTable = replace(pairedTable, "#ctjs.number<4602678819172646912>\n",
+                          "#ctjs.number<4602678819172646912> {storage_test_id = \"half\"}\n");
+    const std::string pairedReads =
+        "keys[0]=textZero; offsets[0]=quarter; keys[1]=textTwo; offsets[1]=half; "
+        "keys[0]=textZero; offsets[0]=quarter";
+    run({.what = "independently varying arithmetic tables retain exact binary64 operands",
+         .body = pairedTable,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]; offsets:[quarter,half]",
+         .reads = pairedReads.c_str(),
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "binary add keeps both varying Number table operands",
+         .body =
+             replace(replace(replace(pairedTable, "4598175219545276416", "13821547256400052224"),
+                             "4602678819172646912", "13826050856027422720"),
+                     "binary sub %slot, %offset", "binary add %slot, %offset"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]; offsets:[quarter,half]",
+         .reads = pairedReads.c_str(),
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "binary_static add keeps both varying Number table operands",
+         .body =
+             replace(replace(replace(pairedTable, "4598175219545276416", "13821547256400052224"),
+                             "4602678819172646912", "13826050856027422720"),
+                     "binary sub %slot, %offset", "binary_static add %slot, %offset"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]; offsets:[quarter,half]",
+         .reads = pairedReads.c_str(),
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "binary mul keeps both varying Number table operands",
+         .body = replace(replace(replace(pairedTable, "4598175219545276416", "4602678819172646912"),
+                                 "4602678819172646912", "4607182418800017408"),
+                         "binary sub %slot, %offset", "binary mul %slot, %offset"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]; offsets:[quarter,half]",
+         .reads = pairedReads.c_str(),
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "binary div keeps both varying Number table operands",
+         .body = replace(replace(replace(pairedTable, "4598175219545276416", "4611686018427387904"),
+                                 "4602678819172646912", "4607182418800017408"),
+                         "binary sub %slot, %offset", "binary div %slot, %offset"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]; offsets:[quarter,half]",
+         .reads = pairedReads.c_str(),
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "binary mod keeps both varying Number table operands",
+         .body = replace(replace(replace(pairedTable, "4598175219545276416", "4607182418800017408"),
+                                 "4602678819172646912", "4613937818241073152"),
+                         "binary sub %slot, %offset", "binary mod %slot, %offset"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]; offsets:[quarter,half]",
+         .reads = pairedReads.c_str(),
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "paired arithmetic table overwrites retain a previously saved child",
+         .body = replace(replace(pairedTable, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %a[%zero]\n  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]; offsets:[quarter,half]",
+         .reads = ("a[0]=x; " + pairedReads).c_str(),
+         .exit = "x -> {x}"});
+    for (const std::string before : {"  %pick =", "  %step ="}) {
+        reject("right arithmetic tables retain their complete mutation census",
+               replace(pairedTable, before,
+                       "  ctjs.set_property %offsets[%one], %quarter\n" + before));
+    }
+    reject("paired arithmetic snapshots do not become original property keys",
+           replace(pairedTable, "%base[%converted]", "%base[%number]"));
+    reject("a changing induction value is not an independent arithmetic singleton",
+           replace(pairedTable, "sub %slot, %offset", "sub %slot, %i"));
+    reject("String operands cannot borrow the independent Number snapshot",
+           replace(pairedTable, "#ctjs.number<4598175219545276416>", "#ctjs.string<\"0.25\">"));
     const auto afterSubQuarters =
         replace(replace(afterSubHalf, "4602678819172646912", "4598175219545276416"),
                 "  %number = ctjs.binary sub %slot, %half",
