@@ -22,6 +22,39 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Ordered continuations and unary loop indices, 2026-09-24 UTC
+
+Resumed clean **c26df86e** and the original observing iterator thread.
+**2ec0f332** retains normal continuation effects after an independently proved
+nonthrowing attribute call. The original call executes first; nested invocations,
+Boolean read snapshots, saved return values and complete successful tuples retain
+their order and identity. The existing effect proof and final DOM proof remain
+mandatory. **No new JavaScript source admission is claimed**; original outer getter
+**1a7fb166** and method **7acf503b** remain refused.
+
+**cb065f5f** lets certified loop keys use unary Plus/Neg over independently computed
+Number snapshots. Frozen source **ac656079**, program **e72ab328ce2ed714**, changes
+child and lookup table to **Confined**: **two of four total sites**, all four observed,
+zero violations. Node returns `[0,0,0]`; saved-child and mutation controls retain
+their escapes. All 185 historical escape function bodies are unchanged.
+
+Focused recovery/host/arrays CTests, one escape lit case and selected native checks
+pass: **32 native executions, 92 refusals, eight Node/VM observations**. Formatting
+passes **1126 C++, 158 Python, 114 web files**. Five final hashes match the devbox
+and completed independent review. No full-suite or full-Bootstrap pass is claimed.
+
+**Next:** connect original recovered open/next/close tuples to entry normalization,
+protocol discovery and helper expansion. Discovery still requires a root-local
+open and unused, state-free close; recovered tuple aliases need an explicit
+correspondence through iterator state. Preserve independent effects, exhaustion,
+cleanup, saved returns and caught-node identity. Actual next writes twice and
+constructs a result record; close writes then throws. Escaping nodes still need
+exception-lifetime owners. The unary loop-key witness is complete; no further
+witness was measured. Broader iterators, unguarded Bootstrap defaults and the
+application driver remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-ordered-continuations-unary-indices.md).
+
 ## Observed attribute tuples and integral loop indices, 2026-09-24 UTC
 
 Resumed clean **e706879a** and the original observing iterator thread.
