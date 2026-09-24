@@ -463,7 +463,8 @@ struct DOMAttributeProof {
 
 static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, unsigned maxSteps,
                                                          llvm::ArrayRef<unsigned> elementParameters,
-                                                         ExceptionRecoveryMode mode) {
+                                                         ExceptionRecoveryMode mode,
+                                                         bool recoveredBody = false) {
     const auto refuse = [](llvm::StringRef reason) -> llvm::Expected<bool> {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
@@ -477,10 +478,12 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         return mlir::WalkResult::advance();
     });
     if (scanned.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
-    if (!throws && mode == ExceptionRecoveryMode::ExplicitThrows) { return false; }
-    auto recovered = recoverPrimitiveExceptionRegion(function, remaining, mode);
-    if (!recovered.recovered) { return false; }
-    remaining -= recovered.steps;
+    if (!recoveredBody) {
+        if (!throws && mode == ExceptionRecoveryMode::ExplicitThrows) { return false; }
+        auto recovered = recoverPrimitiveExceptionRegion(function, remaining, mode);
+        if (!recovered.recovered) { return false; }
+        remaining -= recovered.steps;
+    }
     const auto rewritten = function.walk([&](mlir::Operation * operation) {
         const uint64_t cost = uint64_t(1) + operation->getNumOperands();
         if (cost > remaining / 3) { return mlir::WalkResult::interrupt(); }
@@ -821,6 +824,18 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     return true;
 }
 
+llvm::Error normalizeDOMRecoveredCatch(ctjs::FuncOp function, unsigned maxSteps,
+                                       llvm::ArrayRef<unsigned> elementParameters) {
+    auto result = normalizeDOMCaughtCompletion(function, maxSteps, elementParameters,
+                                               ExceptionRecoveryMode::CheckedInvocations, true);
+    if (!result) { return result.takeError(); }
+    if (!*result) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       "DOM recovered helper catch lost its completion");
+    }
+    return llvm::Error::success();
+}
+
 llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned maxSteps,
                                              llvm::ArrayRef<unsigned> elementParameters) {
     unsigned remaining = maxSteps;
@@ -848,6 +863,14 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
         for (auto & operation : llvm::make_early_inc_range(block)) {
             if (!remaining) { return false; }
             --remaining;
+            if (auto attempt = llvm::dyn_cast<ctjs::TryOp>(operation)) {
+                for (auto & region : attempt->getRegions()) {
+                    if (!region.hasOneBlock() || !self(self, region.front(), depth + 1)) {
+                        return false;
+                    }
+                }
+                continue;
+            }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                 for (auto & region : branch->getRegions()) {
                     if (region.empty()) { continue; }

@@ -44,7 +44,7 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
             // inlined result before anything is published.
             if ((operation.getNumRegions() &&
                  !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ExecuteRegionOp,
-                            ctjs::InvokeOp>(operation)) ||
+                            ctjs::InvokeOp, ctjs::TryOp>(operation)) ||
                 operation.getNumSuccessors() || returned ||
                 (nonReturning && !llvm::isa<mlir::scf::YieldOp>(operation))) {
                 return refuse("DOM helper requires complete structured branches");

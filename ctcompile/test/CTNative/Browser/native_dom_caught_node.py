@@ -41,6 +41,19 @@ SOURCES = {
     "write-boolean-read-return": "function customElements(anchor) { try { const saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); return saved; } catch (error) { return false; } }\n",
     "write-boolean-snapshot": "function customElements(anchor) { let saved = false; try { saved = anchor.hasAttribute('data-closed'); anchor.setAttribute('data-closed', true); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
     "write-boolean-conditional": "function customElements(anchor) { let saved = false; try { if (anchor.hasAttribute('data-closed')) { saved = anchor.hasAttribute('data-closed'); } anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor && saved; } }\n",
+    "helper-next-record": """function customElements(anchor) {
+  function next() {
+    const done = anchor.hasAttribute('data-yielded');
+    anchor.setAttribute('data-next', done);
+    anchor.setAttribute('data-yielded', 'yes');
+    return {done: done, value: anchor};
+  }
+  try {
+    const result = next();
+    return result.done && result.value === anchor;
+  } catch (error) { return error === anchor; }
+}
+""",
 }
 
 
@@ -69,6 +82,29 @@ WRITE_OBSERVER = """function observe(closed) {
 var result0 = observe(false), result1 = observe(true);
 """
 
+HELPER_OBSERVER = """function observe(repeat) {
+  const saved = {};
+  let trace = '';
+  const anchor = {
+    hasAttribute(name) {
+      const value = name in saved;
+      trace += 'read:' + name + '=' + value + ';';
+      return value;
+    },
+    setAttribute(name, value) {
+      saved[name] = '' + value;
+      trace += 'write:' + name + '=' + saved[name] + ';';
+    }
+  };
+  const first = customElements(anchor);
+  if (!repeat) return first + ':' + trace;
+  trace = '';
+  const second = customElements(anchor);
+  return first + ',' + second + ':' + trace;
+}
+var result0 = observe(false), result1 = observe(true);
+"""
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -92,6 +128,8 @@ def main():
         )
         if name.startswith("write-"):
             script = source + WRITE_OBSERVER
+        if name == "helper-next-record":
+            script = source + HELPER_OBSERVER
         nested = name.startswith("mixed-node-nested-") or name == "nested-protected-normal-read"
         if nested:
             script = (
@@ -151,6 +189,11 @@ def main():
                 )
         if name in WRITE_EXPECTED:
             expected = WRITE_EXPECTED[name]
+        if name == "helper-next-record":
+            expected = (
+                'result0="false:read:data-yielded=false;write:data-next=false;write:data-yielded=yes;"\n'
+                'result1="false,true:read:data-yielded=true;write:data-next=true;write:data-yielded=yes;"\n'
+            )
         for command in ([args.node, str(node)], [args.reference, str(oracle)]):
             result = run(command)
             output = unquote(result.stdout) if command[0] == args.reference else result.stdout
@@ -233,6 +276,25 @@ def main():
                 .replace("@TEXT@", text)
                 .replace("@EXTRA@", extra)
             )
+        if name == "helper-next-record":
+            checks = r"""
+                const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+                    const auto next = target.atoms().intern("data-next");
+                    const auto yielded = target.atoms().intern("data-yielded");
+                    target.log_writes(true);
+                    for (bool repeated : {false, true}) {
+                        (void)target.take_writes();
+                        assert(static_cast<bool>(call()) == repeated);
+                        const auto writes = target.take_writes();
+                        assert(writes.size() == 2 && writes[0].name == next && writes[1].name == yielded);
+                        for (const auto & write : writes) { assert(write.node == id && !write.text); }
+                        assert(target.read().attribute_value(id, next) == (repeated ? "true" : "false"));
+                        assert(target.read().attribute_value(id, yielded) == "yes");
+                    }
+                };
+                exercise(doc, button, [&] { return @ENTRY@(alias); });
+                exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+            """
         checks += " (void)pressed; (void)alias;"
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
@@ -249,6 +311,16 @@ def main():
                 if "throw " in source_cpp or "catch (" in source_cpp:
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
+                if name == "helper-next-record":
+                    dom.lower(
+                        args,
+                        ir,
+                        dict(contract, provider=provider),
+                        label + "-zero-budget",
+                        optimize=optimize,
+                        success=False,
+                        max_steps=0,
+                    )
     refusals = {
         "write-boolean-unknown-value": "try { anchor.setAttribute('data-written', anchor.unknown); throw anchor; } catch (error) { return error === anchor; }",
         "write-boolean-forged-read": "try { const saved = ({hasAttribute() { return true; }}).hasAttribute('data-closed'); anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
@@ -279,6 +351,18 @@ def main():
     refusals["nested-protected-throw-call"] = nested_body.replace(
         "throw anchor;", "decodeURIComponent('%'); throw anchor;"
     )
+    helper_body = SOURCES["helper-next-record"].split("{", 1)[1].rsplit("}", 1)[0]
+    refusals.update(
+        {
+            "helper-invalid-name": helper_body.replace("'data-next'", "'bad name'"),
+            "helper-impure-call": helper_body.replace(
+                "const done =", "anchor.unknown(); const done ="
+            ),
+            "helper-protected-getter": helper_body.replace(
+                "const result = next();", "anchor.unknown; const result = next();"
+            ),
+        }
+    )
     for name, body in refusals.items():
         ir, contract = dom.prepare(
             args,
@@ -303,7 +387,7 @@ def main():
                     success=False,
                 )
     check_outer_catches(args)
-    print("confined node catch: 496 native executions, 92 refusals, 74 Node/VM observations")
+    print("confined node catch checks passed")
 
 
 OUTER_SOURCES = {

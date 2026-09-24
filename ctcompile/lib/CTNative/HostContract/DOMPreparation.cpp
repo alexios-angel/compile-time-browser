@@ -12,6 +12,151 @@
 
 namespace ctcompile::ctnative {
 
+// Called only immediately after recovery of a source without poison. Recovery's
+// inactive padding is not an alternate capture identity. Keep the call and all
+// live payloads; forward a capture only when every active incoming value agrees.
+static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned remaining) {
+    const auto refuse = [] {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       "DOM recovered capture correspondence exhausted its budget");
+    };
+    const auto spend = [&](uint64_t cost = 1) {
+        if (cost > remaining) { return false; }
+        remaining -= static_cast<unsigned>(cost);
+        return true;
+    };
+    mlir::DominanceInfo dominance(function);
+    const auto origin = [&](auto && self, mlir::Value value,
+                            unsigned depth) -> mlir::FailureOr<mlir::Value> {
+        if (!spend() || depth == 64) { return mlir::failure(); }
+        if (value.getDefiningOp<mlir::ub::PoisonOp>()) { return mlir::Value{}; }
+        if (llvm::isa_and_nonnull<ctjs::CreateCellOp, ctjs::CreateClosureOp>(
+                value.getDefiningOp())) {
+            return value;
+        }
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+            auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(argument.getOwner()->getParentOp());
+            if (!invocation || argument.getOwner()->getParent() != &invocation.getUnwindBody() ||
+                !argument.getArgNumber()) {
+                return mlir::failure();
+            }
+            auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+            return self(self, exit.getState()[argument.getArgNumber() - 1], depth + 1);
+        }
+        auto result = llvm::dyn_cast<mlir::OpResult>(value);
+        if (!result || !llvm::isa<mlir::scf::IfOp, ctjs::InvokeOp>(result.getOwner())) {
+            return mlir::failure();
+        }
+        mlir::Value common;
+        auto regions = result.getOwner()->getRegions();
+        if (llvm::isa<ctjs::InvokeOp>(result.getOwner())) { regions = regions.drop_front(); }
+        for (auto & region : regions) {
+            if (!spend() || !region.hasOneBlock()) { return mlir::failure(); }
+            auto incoming =
+                self(self, region.front().back().getOperand(result.getResultNumber()), depth + 1);
+            if (mlir::failed(incoming) || (common && *incoming && common != *incoming)) {
+                return mlir::failure();
+            }
+            if (*incoming) { common = *incoming; }
+        }
+        return common;
+    };
+    const auto aliases = function.walk([&](mlir::Operation * operation) {
+        if (!spend(1 + operation->getNumOperands())) { return mlir::WalkResult::interrupt(); }
+        if (auto attempt = llvm::dyn_cast<ctjs::TryOp>(operation)) {
+            auto exit = llvm::cast<ctjs::TryExitOp>(attempt.getBody().front().back());
+            for (auto [argument, value] :
+                 llvm::zip(attempt.getCatchBody().front().getArguments().drop_front(),
+                           exit.getCaughtValues().drop_front())) {
+                auto capture = origin(origin, value, 0);
+                if (mlir::succeeded(capture) && *capture &&
+                    dominance.dominates(*capture, attempt)) {
+                    argument.replaceAllUsesWith(*capture);
+                }
+            }
+        }
+        for (auto result : operation->getResults()) {
+            auto capture = origin(origin, result, 0);
+            if (mlir::succeeded(capture) && *capture && *capture != result &&
+                dominance.properlyDominates(*capture, operation)) {
+                result.replaceAllUsesWith(*capture);
+            }
+        }
+        return remaining ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
+    });
+    if (aliases.wasInterrupted()) { return refuse(); }
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        const auto trimmed = function.walk([&](mlir::Operation * operation) {
+            if (!spend(1 + operation->getNumOperands() + operation->getNumResults())) {
+                return mlir::WalkResult::interrupt();
+            }
+            if (auto attempt = llvm::dyn_cast<ctjs::TryOp>(operation)) {
+                auto & caught = attempt.getCatchBody().front();
+                auto exit = llvm::cast<ctjs::TryExitOp>(attempt.getBody().front().back());
+                for (unsigned i = caught.getNumArguments(); i-- > 1;) {
+                    if (caught.getArgument(i).use_empty()) {
+                        exit->eraseOperand(i + 2);
+                        caught.eraseArgument(i);
+                        changed = true;
+                    }
+                }
+            }
+            auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation);
+            if (!invocation && !llvm::isa<mlir::scf::IfOp>(operation)) {
+                return mlir::WalkResult::advance();
+            }
+            llvm::SmallVector<unsigned> kept;
+            llvm::SmallVector<mlir::Type> types;
+            for (auto [i, result] : llvm::enumerate(operation->getResults())) {
+                if (!result.use_empty()) {
+                    kept.push_back(static_cast<unsigned>(i));
+                    types.push_back(result.getType());
+                }
+            }
+            if (kept.size() != operation->getNumResults()) {
+                mlir::OperationState state(operation->getLoc(), operation->getName());
+                state.addOperands(operation->getOperands());
+                state.addTypes(types);
+                state.addAttributes(operation->getAttrs());
+                for (auto & region : operation->getRegions()) {
+                    state.addRegion()->takeBody(region);
+                }
+                mlir::OpBuilder at(operation);
+                auto * replacement = at.create(state);
+                for (auto & region : replacement->getRegions()) {
+                    if (invocation && &region == &replacement->getRegion(0)) { continue; }
+                    auto * yield = region.front().getTerminator();
+                    llvm::SmallVector<mlir::Value> values;
+                    for (unsigned i : kept) { values.push_back(yield->getOperand(i)); }
+                    yield->setOperands(values);
+                }
+                for (auto [i, result] : llvm::enumerate(replacement->getResults())) {
+                    operation->getResult(kept[i]).replaceAllUsesWith(result);
+                }
+                operation->erase();
+                invocation = llvm::dyn_cast<ctjs::InvokeOp>(replacement);
+                changed = true;
+            }
+            if (invocation) {
+                auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+                auto & unwind = invocation.getUnwindBody().front();
+                for (unsigned i = unwind.getNumArguments(); i-- > 1;) {
+                    if (unwind.getArgument(i).use_empty()) {
+                        exit->eraseOperand(i);
+                        unwind.eraseArgument(i);
+                        changed = true;
+                    }
+                }
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (trimmed.wasInterrupted()) { return refuse(); }
+    }
+    return llvm::Error::success();
+}
+
 static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::StringRef entry,
                                              unsigned & remaining, unsigned sourceSize) {
     const auto refuse = [](llvm::StringRef reason) {
@@ -394,6 +539,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         if (hasHandler) { handlers.push_back(function.getSymName().str()); }
     }
     bool entryHandler = llvm::is_contained(handlers, contract.entry);
+    bool deferredCatch = false;
     llvm::Error sourceError = llvm::Error::success();
     for (const std::string & handler : handlers) {
         if (sourceError) { break; }
@@ -421,6 +567,36 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             if (handler == contract.entry) { entryHandler = false; }
             transformed.moduleSha256 = hostContractFingerprint(*composed);
             continue;
+        }
+        if (handler == contract.entry) {
+            auto entry = composed->lookupSymbol<ctjs::FuncOp>(handler);
+            unsigned remaining = maxSteps;
+            bool hasHelper = false, sourcePoison = false;
+            const auto scanned = entry.walk([&](mlir::Operation * operation) {
+                const uint64_t cost = uint64_t(1) + operation->getNumOperands();
+                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                remaining -= static_cast<unsigned>(cost);
+                hasHelper |= llvm::isa<ctjs::CreateClosureOp>(operation);
+                sourcePoison |= llvm::isa<mlir::ub::PoisonOp>(operation);
+                return mlir::WalkResult::advance();
+            });
+            if (hasHelper && !sourcePoison && !scanned.wasInterrupted()) {
+                auto recovered = lowering_detail::recoverPrimitiveExceptionRegion(
+                    entry, remaining, lowering_detail::ExceptionRecoveryMode::CheckedInvocations);
+                if (recovered.recovered) {
+                    sourceError = forwardRecoveredCaptures(entry, remaining - recovered.steps);
+                    if (sourceError) { break; }
+                    // Keep the catch and every represented call. Expansion may
+                    // resolve local captures and own records, but only the later
+                    // independent effect proof can select a normal completion.
+                    deferredCatch = true;
+                    entryHandler = false;
+                    transformed.moduleSha256 = hostContractFingerprint(*composed);
+                    continue;
+                }
+                sourceError = refuse("DOM helper catch recovery: " + recovered.refusal);
+                break;
+            }
         }
         sourceError = lowering_detail::normalizeDOMURI(*composed, transformed, maxSteps, handler);
         transformed.moduleSha256 = hostContractFingerprint(*composed);
@@ -453,6 +629,13 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
     dom_source_detail::DOMSource fields(maxSteps);
     if (!fields.forwardFields(composed->lookupSymbol<ctjs::FuncOp>(transformed.entry))) {
         return refuse("native DOM result fields: " + fields.reason);
+    }
+    if (deferredCatch) {
+        if (auto error = lowering_detail::normalizeDOMRecoveredCatch(
+                composed->lookupSymbol<ctjs::FuncOp>(transformed.entry), maxSteps,
+                transformed.elementParameters)) {
+            return refuse("native DOM helper catch: " + llvm::toString(std::move(error)));
+        }
     }
     transformed.moduleSha256 = hostContractFingerprint(*composed);
     if (auto error = normalizeDOMIteration(*composed, transformed, maxSteps)) {

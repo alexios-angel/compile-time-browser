@@ -531,6 +531,64 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
           "disposable helper attempts preserve the source snapshot");
 }
 
+static void testHelperCatchSource(mlir::MLIRContext & context) {
+    const std::string source = R"js(function customElements(anchor) {
+  function next() {
+    const done = anchor.hasAttribute('data-yielded');
+    anchor.setAttribute('data-next', done);
+    anchor.setAttribute('data-yielded', 'yes');
+    return {done: done, value: anchor};
+  }
+  try {
+    const result = next();
+    return result.done && result.value === anchor;
+  } catch (error) { return error === anchor; }
+}
+)js";
+    for (unsigned control = 0; control != 7; ++control) {
+        auto text = source;
+        if (control == 1) {
+            text.replace(text.find("'data-next'"), 11, "'bad name'");
+        } else if (control == 2) {
+            text.insert(text.find("    const done"), "    unknown();\n");
+        } else if (control == 3) {
+            text.replace(text.find("result.done && result.value === anchor"), 38,
+                         "anchor.unproved");
+        }
+        auto module = import(context, text);
+        if (!module) { continue; }
+        if (control == 6) {
+            auto function = module->lookupSymbol<ctjs::FuncOp>("customElements$1");
+            auto at = mlir::OpBuilder::atBlockBegin(&function.getBody().front());
+            mlir::ub::PoisonOp::create(at, function.getLoc(), ctjs::ValueType::get(&context));
+        }
+        const auto before = printed(*module);
+        ctcompile::ctnative::HostContract contract;
+        contract.provider = ctcompile::ctnative::HostContract::Provider::ctbrowserDOM;
+        contract.entry = "customElements$1";
+        if (control != 4) { contract.elementParameters = {0}; }
+        contract.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*module);
+        const auto fingerprint = contract.moduleSha256;
+        auto error =
+            ctcompile::ctnative::prepareDOMEntry(*module, contract, control == 5 ? 0 : 100000);
+        if (control) {
+            check(static_cast<bool>(error) && printed(*module) == before &&
+                      contract.moduleSha256 == fingerprint,
+                  "helper catch refuses unproved effects, receivers and budget without mutation");
+        } else if (check(!error, "original next helper source completes its local catch")) {
+            unsigned remaining = 0, calls = 0;
+            module->walk([&](mlir::Operation * operation) {
+                remaining += llvm::isa<ctjs::TryOp, ctjs::InvokeOp, ctjs::PushHandlerOp,
+                                       ctjs::CheckOp, ctjs::CreateCellOp>(operation);
+                calls += llvm::isa<ctjs::CallOp>(operation);
+            });
+            check(!remaining && calls == 3 && mlir::succeeded(mlir::verify(*module)),
+                  "helper catch retains exactly its read and two ordered writes");
+        }
+        if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+    }
+}
+
 static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     const std::string getter = R"js(function customElements(anchor) {
   const values = {
@@ -737,6 +795,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
 void testDOMURITransaction(mlir::MLIRContext & context) {
     testObservedIteratorRecovery(context);
     testInertHelperCompletion(context);
+    testHelperCatchSource(context);
     for (unsigned control = 0; control < 50; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";

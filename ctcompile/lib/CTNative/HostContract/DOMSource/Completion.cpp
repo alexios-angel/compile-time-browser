@@ -871,10 +871,11 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 return self(self, selected->front(), selected->front().begin(), values, at, &tail,
                             terminal, depth + 1);
             }
-            if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
+            if (llvm::isa<ctjs::InvokeOp, ctjs::TryOp>(operation)) {
+                auto * invocation = &operation;
                 // Preserve suppression and both continuations verbatim. The
                 // complete DOM admission still proves their host effects.
-                const auto checked = invocation.walk([&](mlir::Operation * nested) {
+                const auto checked = invocation->walk([&](mlir::Operation * nested) {
                     // Charge verification and cloning before either traverses
                     // this opaque region without a work callback.
                     const uint64_t cost =
@@ -895,7 +896,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             }
                         }
                     }
-                    if (llvm::isa<mlir::ub::PoisonOp>(nested)) {
+                    if (llvm::isa<mlir::ub::PoisonOp>(nested) &&
+                        !llvm::isa<ctjs::TryOp>(invocation)) {
                         refuse("DOM helper invocation contains inactive source state");
                         return mlir::WalkResult::interrupt();
                     }

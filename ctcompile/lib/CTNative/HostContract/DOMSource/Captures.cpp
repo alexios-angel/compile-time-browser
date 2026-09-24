@@ -37,7 +37,9 @@ bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Ope
         auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(use->getParentOp());
         const bool protectedCall = invocation && use->getParentRegion() == &invocation.getBody() &&
                                    llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(use);
-        if (!protectedCall &&
+        auto attempt = llvm::dyn_cast_or_null<ctjs::TryOp>(use->getParentOp());
+        const bool protectedBody = attempt && use->getParentRegion() == &attempt.getBody();
+        if (!protectedCall && !protectedBody &&
             !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(use->getParentOp())) {
             return false;
         }
@@ -439,7 +441,7 @@ bool DOMSource::resolveCell(ctjs::CreateCellOp cell) {
             // initialization must precede the entire enclosing branch;
             // writes and callable scheduling still stay in the source block.
             while (position->getBlock() != cell->getBlock() &&
-                   llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(
+                   llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
                        position->getParentOp())) {
                 if (!step()) { return false; }
                 position = position->getParentOp();
