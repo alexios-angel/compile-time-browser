@@ -110,6 +110,31 @@ void InductionCases::validation() {
          .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
          .exit = "a -> {a}"},
         "x");
+    const std::string transported =
+        replace(replace(loaded, "  %length = ctjs.get_property %loaded[%key]",
+                        "  cf.br ^preheader(%loaded : !ctjs.value)\n"
+                        "^preheader(%transported: !ctjs.value):\n"
+                        "  %length = ctjs.get_property %transported[%key]"),
+                "^header(%loaded, %zero", "^header(%transported, %zero");
+    run({.what = "a preheader argument preserves its loaded array identity and cached length",
+         .body = transported,
+         .arrays = "a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("a transported cached guard still needs a single predecessor",
+           replace(transported, "  cf.br ^preheader(%loaded : !ctjs.value)",
+                   "  %choice = ctjs.truthy %p\n"
+                   "  cf.cond_br %choice, ^left, ^right\n"
+                   "^left:\n  cf.br ^preheader(%loaded : !ctjs.value)\n"
+                   "^right:\n  cf.br ^preheader(%loaded : !ctjs.value)"));
+    reject("a transported cached guard cannot change the saved bound",
+           replace(transported, "%added, %savedBound :", "%added, %zero :"));
+    reject("a transported cached guard cannot clear a different receiver",
+           replace(replace(transported, "  cf.br ^header",
+                           "  %other = ctjs.create_array [%zero, %zero, %zero]\n"
+                           "  cf.br ^header"),
+                   "^header(%transported, %zero", "^header(%other, %zero"));
     reject("a joined loaded guard needs more than single-predecessor provenance",
            replace(loaded, "  %loaded =",
                    "  %choice = ctjs.truthy %p\n"

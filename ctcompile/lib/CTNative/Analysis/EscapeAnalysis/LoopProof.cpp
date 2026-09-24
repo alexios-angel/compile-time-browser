@@ -54,17 +54,22 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     bool savedArray = directArray || (loadedArray && allocation &&
                                       loadedArray->getBlock() == allocation->getBlock() &&
                                       length->getBlock() == loadedArray->getBlock());
-    if (!savedArray && loadedArray && allocation) {
+    auto * savedArrayBlock = loadedArray ? loadedArray->getBlock()
+                             : savedLength && carriedArray && carriedArray.getOwner() != header
+                                 ? carriedArray.getOwner()
+                                 : nullptr;
+    if (!savedArray && savedArrayBlock && allocation) {
         // Every block on a single-predecessor chain executes at most once per
         // allocation execution. The complete census forbids repeated allocation;
-        // immutable path states then preserve both reads across an early guard.
+        // Immutable path states preserve both reads and actual/formal array
+        // identity transport across an early guard.
         // ponytail: CFG chains only; joins and structured origins need their own proof.
         mlir::Block * allocated = allocation->getBlock();
         if (allocated->getParent() != &function.getBody() || allocated == header ||
             allocated == body) {
             return unsupported;
         }
-        for (mlir::Block * read : {loadedArray->getBlock(), length->getBlock()}) {
+        for (mlir::Block * read : {savedArrayBlock, length->getBlock()}) {
             unsigned depth = 0;
             for (mlir::Block * block = read; block != allocated;
                  block = block->getSinglePredecessor()) {
@@ -206,7 +211,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     auto dynamic = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step);
     auto numeric = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step);
     if ((!dynamic && !numeric) || step->getBlock() != body ||
-        (carriedArray && fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
+        (carriedArray && carriedArray.getOwner() == header &&
+         fromHeader(backedge[carriedArray.getArgNumber()]) != array)) {
         return unsupported;
     }
     const bool subtract = dynamic && dynamic.getKind() == ctjs::BinaryKind::Sub;
