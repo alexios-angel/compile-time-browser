@@ -23,10 +23,169 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         rethrow.getValue() != call->getResult(0)) {
         rethrow = {};
     }
-    if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp())) {
+    if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp());
+        invocation && call->getParentRegion() == &invocation.getBody()) {
         if (invocation.getNumResults()) {
             auto returned = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             auto calls = target.getBody().front().getOps<ctjs::CallOp>();
+            // A helper's catch covers every call, but its local results are not
+            // caller registers. Nest the successful continuations and give each
+            // failure the original caller snapshot and unwind continuation.
+            // ponytail: straight attribute chains and fresh own data records;
+            // other preparation needs an independent effect proof.
+            unsigned callCount = 0;
+            bool chain = static_cast<bool>(returned);
+            for (auto & operation : target.getBody().front()) {
+                const uint64_t cost =
+                    2 * (uint64_t(1) + operation.getNumOperands() + operation.getNumResults());
+                if (cost > remaining) { return refuse("DOM helper chain work budget exhausted"); }
+                remaining -= static_cast<unsigned>(cost);
+                if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+                    ++callCount;
+                    auto method = leaf.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    chain &= method && leaf.getReceiver() == method.getObject() &&
+                             (ctjs::constantKey(method.getKey()) == "hasAttribute" ||
+                              ctjs::constantKey(method.getKey()) == "setAttribute");
+                } else if (auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                    chain &= ctjs::constantKey(method.getKey()) == "hasAttribute" ||
+                             ctjs::constantKey(method.getKey()) == "setAttribute";
+                } else if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
+                    chain &= dataObject(object);
+                } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                    chain &= static_cast<bool>(
+                                 store.getObject().getDefiningOp<ctjs::CreateObjectOp>()) &&
+                             ctjs::ordinaryKey(ctjs::constantKey(store.getKey()));
+                } else {
+                    chain &=
+                        llvm::isa<ctjs::ConstantOp, ctjs::LoadUpvalueOp, ctjs::RootOp,
+                                  ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(operation);
+                }
+            }
+            if (chain && callCount > 1 && callCount < 64 - depth) {
+                uint64_t copyCost = 0;
+                unsigned copyOperations = 0;
+                bool deferredCall = false;
+                const auto counted = invocation.walk([&](mlir::Operation * operation) {
+                    ++copyOperations;
+                    // The caller has already queued local calls for expansion.
+                    // Duplicating an unwind call would invalidate that census.
+                    deferredCall |=
+                        invocation.getUnwindBody().isAncestor(operation->getParentRegion()) &&
+                        llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::CreateClosureOp>(
+                            operation);
+                    uint64_t cost =
+                        uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
+                    for (auto & region : operation->getRegions()) {
+                        for (auto & block : region) { cost += 1 + block.getNumArguments(); }
+                    }
+                    if (cost > remaining) { return mlir::WalkResult::interrupt(); }
+                    remaining -= static_cast<unsigned>(cost);
+                    copyCost += cost;
+                    return mlir::WalkResult::advance();
+                });
+                // Reserve verification and every copy of the complete unwind,
+                // including nested operations and saved-register operands.
+                if (counted.wasInterrupted() || copyCost > remaining / (callCount + 1) ||
+                    deferredCall || mlir::failed(mlir::verify(invocation))) {
+                    return refuse("DOM helper chain lost its invocation correspondence or budget");
+                }
+                remaining -= static_cast<unsigned>(copyCost * (callCount + 1));
+                operationCount += copyOperations * (callCount + 1);
+                mlir::OpBuilder at(invocation);
+                mlir::IRMapping mapping;
+                auto & body = target.getBody().front();
+                mapping.map(body.getArgument(ctjs::arg_callee), callee);
+                mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
+                for (auto [index, formal] :
+                     llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
+                    if (!step()) { return false; }
+                    mlir::Value actual;
+                    if (index < arguments.size()) {
+                        actual = arguments[index];
+                    } else {
+                        actual = ctjs::ConstantOp::create(
+                            at, call->getLoc(), ctjs::UndefinedAttr::get(call->getContext()));
+                        ++operationCount;
+                    }
+                    mapping.map(formal, actual);
+                }
+                auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+                const auto emit =
+                    [&](auto && self, mlir::Block::iterator cursor,
+                        mlir::OpBuilder & into) -> mlir::FailureOr<llvm::SmallVector<mlir::Value>> {
+                    for (; cursor != body.end(); ++cursor) {
+                        auto & operation = *cursor;
+                        if (!step()) { return mlir::failure(); }
+                        if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(
+                                operation)) {
+                            continue;
+                        }
+                        if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+                            auto & capture = captures[static_cast<unsigned>(load.getIndex())];
+                            mlir::Value value;
+                            if (capture.enclosingIndex >= 0) {
+                                value = ctjs::LoadUpvalueOp::create(
+                                    into, load.getLoc(), load.getType(),
+                                    function.getBody().front().getArgument(ctjs::arg_callee),
+                                    capture.enclosingIndex);
+                                ++operationCount;
+                            } else {
+                                value = capture.value();
+                            }
+                            mapping.map(load.getResult(), value);
+                        } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                            auto & normal = invocation.getNormalBody().front();
+                            normal.getArgument(0).replaceAllUsesWith(
+                                mapping.lookup(result.getValue()));
+                            // Move the single success continuation, retaining
+                            // any local calls already queued by the caller.
+                            for (auto & next :
+                                 llvm::make_early_inc_range(normal.without_terminator())) {
+                                next.moveBefore(into.getBlock(), into.getInsertionPoint());
+                            }
+                            return llvm::SmallVector<mlir::Value>(
+                                llvm::cast<ctjs::InvokeYieldOp>(normal.back()).getValues());
+                        } else if (llvm::isa<ctjs::CallOp>(operation)) {
+                            mlir::OperationState state(operation.getLoc(),
+                                                       ctjs::InvokeOp::getOperationName());
+                            state.addTypes(invocation.getResultTypes());
+                            for (unsigned index = 0; index != 3; ++index) { state.addRegion(); }
+                            auto nested = llvm::cast<ctjs::InvokeOp>(into.create(state));
+                            auto & called = nested.getBody().emplaceBlock();
+                            auto & normal = nested.getNormalBody().emplaceBlock();
+                            auto payload = normal.addArgument(
+                                ctjs::ValueType::get(call->getContext()), operation.getLoc());
+                            mlir::OpBuilder callAt = mlir::OpBuilder::atBlockEnd(&called);
+                            auto * cloned = callAt.clone(operation, mapping);
+                            ctjs::InvokeExitOp::create(callAt, operation.getLoc(),
+                                                       cloned->getResult(0), exit.getState());
+                            mapping.map(operation.getResult(0), payload);
+                            mlir::IRMapping unwindMapping;
+                            invocation.getUnwindBody().cloneInto(&nested.getUnwindBody(),
+                                                                 unwindMapping);
+                            mlir::OpBuilder normalAt = mlir::OpBuilder::atBlockEnd(&normal);
+                            auto values = self(self, std::next(cursor), normalAt);
+                            if (mlir::failed(values)) { return mlir::failure(); }
+                            ctjs::InvokeYieldOp::create(normalAt, operation.getLoc(), *values);
+                            operationCount += 4;
+                            return llvm::SmallVector<mlir::Value>(nested.getResults());
+                        } else {
+                            into.clone(operation, mapping);
+                            ++operationCount;
+                        }
+                    }
+                    return mlir::failure();
+                };
+                auto values = emit(emit, body.begin(), at);
+                if (mlir::failed(values)) {
+                    return refuse("DOM helper chain lost its normal result");
+                }
+                invocation.replaceAllUsesWith(*values);
+                // The caller erases its now-unused helper call after inlineCall.
+                call->moveBefore(invocation);
+                invocation.erase();
+                return true;
+            }
             auto leaf = llvm::hasSingleElement(calls) ? *calls.begin() : ctjs::CallOp{};
             auto method = leaf ? leaf.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                : ctjs::GetPropertyOp{};
@@ -85,7 +244,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         }
     }
     if (auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(call->getParentOp());
-        invocation && !protectedInvocation) {
+        invocation && call->getParentRegion() == &invocation.getBody() && !protectedInvocation) {
         if (!step()) { return false; }
         auto & called = invocation.getBody();
         auto & normal = invocation.getNormalBody();

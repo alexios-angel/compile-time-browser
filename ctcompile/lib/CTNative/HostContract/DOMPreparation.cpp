@@ -1,6 +1,7 @@
 #include "../Lowering/ClosureLifting/ClosureLifter.h"
 #include "../Lowering/Exceptions/Recovery.h"
 #include "Analysis.h"
+#include "DOMSource/Proof.hpp"
 #include "Preparation.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 
@@ -446,6 +447,12 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             composed->lookupSymbol<ctjs::FuncOp>(transformed.entry), maxSteps,
             transformed.elementParameters)) {
         return refuse("native DOM attribute completion: " + llvm::toString(std::move(error)));
+    }
+    // Successful helper results are now ordinary local records. Reuse the
+    // complete own-field/use census after invocation transport disappears.
+    dom_source_detail::DOMSource fields(maxSteps);
+    if (!fields.forwardFields(composed->lookupSymbol<ctjs::FuncOp>(transformed.entry))) {
+        return refuse("native DOM result fields: " + fields.reason);
     }
     transformed.moduleSha256 = hostContractFingerprint(*composed);
     if (auto error = normalizeDOMIteration(*composed, transformed, maxSteps)) {

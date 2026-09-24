@@ -67,6 +67,136 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
     });
     check(stores == 3 && calls == 0 && !input->lookupSymbol<ctjs::FuncOp>("identity$1"),
           "observed inert helper expands once without retaining an invocation runtime");
+    auto chainSource = replace(source, "    ctjs.return %value\n  }\n}", R"MLIR(
+    %readKey = ctjs.constant #ctjs.string<"hasAttribute">
+    %writeKey = ctjs.constant #ctjs.string<"setAttribute">
+    %yielded = ctjs.constant #ctjs.string<"data-yielded">
+    %next = ctjs.constant #ctjs.string<"data-next">
+    %yes = ctjs.constant #ctjs.string<"yes">
+    %read = ctjs.get_property %value[%readKey]
+    %done = ctjs.call %read(%value, %yielded)
+    %write = ctjs.get_property %value[%writeKey]
+    %first = ctjs.call %write(%value, %next, %done)
+    %second = ctjs.call %write(%value, %yielded, %yes)
+    %record = ctjs.create_object
+    %doneKey = ctjs.constant #ctjs.string<"done">
+    %valueKey = ctjs.constant #ctjs.string<"value">
+    ctjs.set_property %record[%doneKey], %done
+    ctjs.set_property %record[%valueKey], %value
+    ctjs.return %record
+  }
+})MLIR");
+    chainSource = replace(
+        chainSource,
+        "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):",
+        "    ^unwind(%error: !ctjs.value, %oldSaved: !ctjs.value, %oldValue: !ctjs.value):\n"
+        "      ctjs.store_global \"caught\", %error");
+    auto chain = mlir::parseSourceString<mlir::ModuleOp>(chainSource, &context);
+    auto chainError = ctcompile::ctnative::expandDOMHelpers(*chain, "entry$0", 100000);
+    if (check(!chainError, "observed next helper retains its complete call chain")) {
+        auto entry = chain->lookupSymbol<ctjs::FuncOp>("entry$0");
+        auto saved = entry.getBody().front().getArgument(4);
+        auto value = entry.getBody().front().getArgument(3);
+        unsigned invocations = 0;
+        entry.walk([&](ctjs::InvokeOp invocation) {
+            ++invocations;
+            auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+            auto & unwind = invocation.getUnwindBody().front();
+            auto effect = llvm::dyn_cast<ctjs::StoreGlobalOp>(unwind.front());
+            auto yield = llvm::cast<ctjs::InvokeYieldOp>(unwind.back());
+            check(exit.getState().size() == 2 && exit.getState()[0] == saved &&
+                      exit.getState()[1] == value && effect &&
+                      effect.getValue() == unwind.getArgument(0) &&
+                      llvm::equal(yield.getValues(), unwind.getArguments()),
+                  "every leaf retains caller saved state and exact failure payload/effects");
+        });
+        check(invocations == 3 && mlir::succeeded(mlir::verify(*chain)),
+              "read and both writes remain separately protected before effect proof");
+        chainError = ctcompile::ctnative::lowering_detail::normalizeDOMAttributeInvocations(
+            entry, 100000, {0});
+        if (check(!chainError, "independent attribute proof consumes the complete helper chain")) {
+            llvm::SmallVector<ctjs::CallOp> leaves;
+            entry.walk([&](ctjs::CallOp call) { leaves.push_back(call); });
+            unsigned remainingInvocations = 0, observers = 0;
+            entry.walk([&](ctjs::InvokeOp) { ++remainingInvocations; });
+            entry.walk([&](ctjs::StoreGlobalOp store) {
+                ++observers;
+                check(
+                    store.getName() == "payload"
+                        ? static_cast<bool>(store.getValue().getDefiningOp<ctjs::CreateObjectOp>())
+                        : store.getValue() == (store.getName() == "saved" ? saved : value),
+                    "successful helper result and caller registers retain separate identities");
+            });
+            check(!remainingInvocations && observers == 3 && leaves.size() == 3 &&
+                      leaves[1].getArgs().back() == leaves[0].getResult() &&
+                      ctjs::constantKey(leaves[2].getArgs().back()) == "yes" &&
+                      mlir::succeeded(mlir::verify(*chain)),
+                  "next helper keeps original read snapshot, write order and result construction");
+        }
+    }
+    if (chainError) { llvm::errs() << llvm::toString(std::move(chainError)) << '\n'; }
+    auto queuedSource = replace(chainSource, "    ^normal(%result: !ctjs.value):",
+                                "    ^normal(%result: !ctjs.value):\n"
+                                "      %later = ctjs.call_direct @identity$1(%u, %u, %u, %value)");
+    auto queued = mlir::parseSourceString<mlir::ModuleOp>(queuedSource, &context);
+    auto queuedError = ctcompile::ctnative::expandDOMHelpers(*queued, "entry$0", 100000);
+    if (check(!queuedError, "queued normal helper calls survive chain expansion")) {
+        unsigned calls = 0, invocations = 0, direct = 0;
+        queued->walk([&](ctjs::CallOp) { ++calls; });
+        queued->walk([&](ctjs::CallDirectOp) { ++direct; });
+        queued->walk([&](ctjs::InvokeOp) { ++invocations; });
+        check(calls == 6 && invocations == 3 && !direct && mlir::succeeded(mlir::verify(*queued)),
+              "later normal calls remain outside the preceding call's protection");
+    }
+    if (queuedError) { llvm::errs() << llvm::toString(std::move(queuedError)) << '\n'; }
+    for (const std::string line : {"    ctjs.store_global \"payload\", %tuple#0\n",
+                                   "    ctjs.store_global \"value\", %tuple#1\n",
+                                   "    ctjs.store_global \"saved\", %tuple#2\n"}) {
+        chainSource = replace(chainSource, line, "");
+    }
+    chainSource = replace(chainSource, "    ctjs.return %tuple#0",
+                          "    %key = ctjs.constant #ctjs.string<\"done\">\n"
+                          "    %done = ctjs.get_property %tuple#0[%key]\n"
+                          "    ctjs.return %done");
+    for (unsigned control = 0; control != 6; ++control) {
+        auto text = chainSource;
+        if (control == 1) {
+            text =
+                replace(text, "%first = ctjs.call %write(%value", "%first = ctjs.call %write(%new");
+        }
+        if (control == 2) {
+            text = replace(text, "#ctjs.string<\"data-yielded\">", "#ctjs.string<\"bad name\">");
+        }
+        if (control == 3) {
+            text = replace(
+                text, "    %record = ctjs.create_object",
+                "    ctjs.store_global \"leaked\", %value\n    %record = ctjs.create_object");
+        }
+        if (control == 5) {
+            text = replace(text, "      ctjs.store_global \"caught\", %error",
+                           "      %later = ctjs.call_direct @identity$1(%u, %u, %u, %value)\n"
+                           "      ctjs.store_global \"caught\", %error");
+        }
+        auto candidate = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        const auto before = printed(*candidate);
+        ctcompile::ctnative::HostContract contract;
+        contract.provider = ctcompile::ctnative::HostContract::Provider::ctbrowserDOM;
+        contract.entry = "entry$0";
+        contract.elementParameters = {0, 1};
+        contract.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
+        const auto fingerprint = contract.moduleSha256;
+        auto error =
+            ctcompile::ctnative::prepareDOMEntry(*candidate, contract, control == 4 ? 0 : 100000);
+        if (control) {
+            check(static_cast<bool>(error) && printed(*candidate) == before &&
+                      contract.moduleSha256 == fingerprint,
+                  "unproved chain effects, invalid names and budget exhaustion preserve source");
+        } else {
+            check(!error && mlir::succeeded(mlir::verify(*candidate)),
+                  "observed next result passes complete DOM preparation");
+        }
+        if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
+    }
     for (const std::string method : {"hasAttribute", "setAttribute"}) {
         auto leafSource = replace(
             source, "    ctjs.return %value\n  }\n}",
@@ -344,6 +474,7 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
             check(static_cast<bool>(exhausted), "independent result charges its complete rewrite");
             if (exhausted) { llvm::consumeError(std::move(exhausted)); }
         }
+        unsigned control = 0;
         for (const auto & invalid :
              {replace(leafSource, "    ctjs.return %leaf", "    ctjs.return %method"),
               replace(leafSource, "    ctjs.return %leaf",
@@ -356,7 +487,14 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
             auto hostile = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
             if (!check(static_cast<bool>(hostile), "hostile leaf forwarding parses")) { continue; }
             auto error = ctcompile::ctnative::expandDOMHelpers(*hostile, "entry$0", 100000);
-            check(static_cast<bool>(error), "extra effects, calls and method results refuse");
+            if (control++ == 1) {
+                unsigned invocations = 0;
+                hostile->walk([&](ctjs::InvokeOp) { ++invocations; });
+                check(!error && invocations == 2 && mlir::succeeded(mlir::verify(*hostile)),
+                      "the original two-call control now retains both exceptional completions");
+            } else {
+                check(static_cast<bool>(error), "extra effects and method results refuse");
+            }
             if (error) { llvm::consumeError(std::move(error)); }
         }
     }
