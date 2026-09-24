@@ -255,6 +255,11 @@
 // CHECK: escape {{[0-9a-f]+}} 178 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 179 {{[0-9]+}} obj escapes:stored
 
+// Computed negative-unit powers keep exact integer parity and retained aliases.
+// CHECK: escape {{[0-9a-f]+}} 180 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 181 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 182 {{[0-9]+}} obj escapes:stored
+
 // RECORD-LABEL: fn 49 entries 1 params 0 frame {{[0-9]+}} name decimalConvertedTableKey
 // RECORD: site 4 kind obj made 1 confined 1 escaped 0 unresolved 0 unchecked 0 routes -
 // RECORD-LABEL: fn 50 entries 1 params 0 frame {{[0-9]+}} name signedDecimalTableKey
@@ -598,6 +603,7 @@ afterReadNumberZeroPower(); savedAfterReadZeroPower();
 afterReadNumberUnitBase(); savedAfterReadUnitBase(); mutatedAfterReadUnitBase();
 pairedTableIndex(); savedPairedTableIndex(); mutatedPairedTableIndex();
 arithmeticUnaryTableIndex(); savedArithmeticUnaryTableIndex(); mutatedArithmeticUnaryTableIndex();
+negativeUnitPowerTableIndex(); savedNegativeUnitPowerTableIndex(); mutatedNegativeUnitPowerTableIndex();
 afterReadNumberSubHalf();
 afterReadNumberSubZero();
 afterReadNumberPlus();
@@ -1671,6 +1677,28 @@ function mutatedArithmeticUnaryTableIndex() {
     for (var i = 0; i < a.length; i++) {
         keys[1] = 0.9;
         a[(-(keys[i % 2] - 0.25) + 3) | 0] = 0;
+    }
+    return a;
+}
+
+function negativeUnitPowerTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [1.25, 2.25];
+    for (var i = 0; i < a.length; i++) a[(((-1) ** (keys[i % 2] - 0.25)) + 1) | 0] = 0;
+    return a;
+}
+
+function savedNegativeUnitPowerTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [1.25, 2.25];
+    var saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(((-1) ** (keys[i % 2] - 0.25)) + 1) | 0] = 0;
+    return saved;
+}
+
+function mutatedNegativeUnitPowerTableIndex() {
+    var child = {}, a = [child, 0, child], keys = [1.25, 2.25];
+    for (var i = 0; i < a.length; i++) {
+        keys[1] = 1.25;
+        a[(((-1) ** (keys[i % 2] - 0.25)) + 1) | 0] = 0;
     }
     return a;
 }

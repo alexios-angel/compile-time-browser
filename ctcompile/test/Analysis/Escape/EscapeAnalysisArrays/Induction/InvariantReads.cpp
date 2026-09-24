@@ -1262,6 +1262,50 @@ void InductionCases::invariantReads() {
         "x");
     reject("unit base cannot use String bits as independent Number exponent evidence",
            replace(unitBaseRead, "#ctjs.number<4606281698874543309>", "#ctjs.string<\"0.9\">"));
+    const auto negativeUnitBase = replace(
+        replace(replace(numberFractionalTable, "4606281698874543309", "4608308318706860032"),
+                "4613712638259704627", "4612248968380809216"),
+        "  %converted = ctjs.binary_static bitor %slot, %zero",
+        "  %quarter = ctjs.constant #ctjs.number<4598175219545276416>\n"
+        "  %negativeUnit = ctjs.unary neg %one\n"
+        "  %exponent = ctjs.binary sub %slot, %quarter\n"
+        "  %power = ctjs.binary pow %negativeUnit, %exponent\n"
+        "  %powerIndex = ctjs.binary add %power, %one\n"
+        "  %converted = ctjs.binary_static bitor %powerIndex, %zero");
+    run({.what = "negative unit powers retain computed Number exponent parity and result identity",
+         .body = negativeUnitBase,
+         .arrays = "keys:[textZero,textTwo]; a:[zero,zero,zero]",
+         .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+         .exit = "a -> {a}"},
+        "x");
+    for (const std::string bits :
+         {"0", "9223372036854775808", "13837309855095848960", "4613937818241073152",
+          "4845873199050653695", "4845873199050653696", "9218868437227405311"}) {
+        const bool odd = bits == "13837309855095848960" || bits == "4613937818241073152" ||
+                         bits == "4845873199050653695";
+        run({.what =
+                 "negative unit parity respects signed zero negative and wide integer exponents",
+             .body = replace(replace(replace(negativeUnitBase, "4608308318706860032", bits),
+                                     "4612248968380809216", "4611686018427387904"),
+                             "binary sub %slot, %quarter", "binary add %slot, %zero"),
+             .arrays = odd ? "keys:[textZero,textTwo]; a:[zero,zero,zero]"
+                           : "keys:[textZero,textTwo]; a:[x,zero,zero]",
+             .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
+             .exit = odd ? "a -> {a}" : "a -> {a,x}"},
+            odd ? "x" : "");
+    }
+    for (const std::string value :
+         {"#ctjs.number<4602678819172646912>", "#ctjs.number<9218868437227405312>",
+          "#ctjs.number<18442240474082181120>", "#ctjs.number<9221120237041090560>",
+          "#ctjs.string<\"1.25\">"}) {
+        reject("negative unit parity requires independent finite integral Number evidence",
+               replace(negativeUnitBase, "#ctjs.number<4608308318706860032>", value));
+    }
+    reject("negative unit snapshots keep their property-key boundary",
+           replace(negativeUnitBase, "%base[%converted]", "%base[%powerIndex]"));
+    reject("negative unit snapshots retain table mutation checks",
+           replace(negativeUnitBase,
+                   "  %pick =", "  ctjs.set_property %keys[%one], %textZero\n  %pick ="));
     const auto negatedAdd =
         replace(replace(replace(numberFractionalTable, "4606281698874543309", "0"),
                         "4613712638259704627", "4611686018427387904"),

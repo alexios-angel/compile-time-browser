@@ -339,14 +339,21 @@ void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & r
     const auto a = arithmeticNumber(left);
     const auto b = arithmeticNumber(right);
     const auto depth = std::max(left.arithmeticDepth, right.arithmeticDepth);
+    const bool negativeUnit = kind == ctjs::BinaryKind::Pow && a && b && *a == -1 &&
+                              std::isfinite(*b) && std::trunc(*b) == *b;
     if (a && b && depth < 64 &&
-        (kind != ctjs::BinaryKind::Pow || *b == 0 || *b == 1 || (*a == 1 && std::isfinite(*b)))) {
+        (kind != ctjs::BinaryKind::Pow || *b == 0 || *b == 1 || negativeUnit ||
+         (*a == 1 && std::isfinite(*b)))) {
         // ponytail: at most 64 Number operations; Pow only preserves the exact
-        // zero/unit-exponent and finite-exponent unit-base identities. Other powers
+        // zero/unit-exponent and finite-exponent +/-unit-base identities. Other powers
         // need their own binary64 proof. Number x ** +/-0 is one, including NaN x;
         // x ** 1 preserves x, but 1 ** a nonfinite exponent is NaN.
         llvm::APFloat computed(kind == ctjs::BinaryKind::Pow && *b == 0 ? 1.0 : *a);
-        if (kind == ctjs::BinaryKind::Mul) {
+        if (kind == ctjs::BinaryKind::Pow && negativeUnit) {
+            // Finite integral binary64 exponents have exact parity, including
+            // negative exponents and represented even integers beyond 2^53.
+            computed = llvm::APFloat(std::fmod(*b, 2.0) == 0 ? 1.0 : -1.0);
+        } else if (kind == ctjs::BinaryKind::Mul) {
             computed.multiply(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
         } else if (kind == ctjs::BinaryKind::Div) {
             computed.divide(llvm::APFloat(*b), llvm::APFloat::rmNearestTiesToEven);
