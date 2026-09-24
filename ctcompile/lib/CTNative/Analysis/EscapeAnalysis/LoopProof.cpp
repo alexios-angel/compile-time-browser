@@ -33,14 +33,22 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const bool reversed = compare.getKind() == reversedKind;
     auto index =
         llvm::dyn_cast<mlir::BlockArgument>(reversed ? compare.getRhs() : compare.getLhs());
-    auto length =
-        (reversed ? compare.getLhs() : compare.getRhs()).getDefiningOp<ctjs::GetPropertyOp>();
+    const mlir::Value bound = reversed ? compare.getLhs() : compare.getRhs();
+    auto length = bound.getDefiningOp<ctjs::GetPropertyOp>();
+    const bool savedLength = !length || length->getBlock() != header;
+    const ContentsValue savedBound = savedLength ? held(bound) : ContentsValue{};
+    if (savedLength) {
+        const mlir::Value original = savedBound.origin();
+        length = original ? original.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+    }
     const mlir::Value array = length ? length.getObject() : mlir::Value{};
     auto carriedArray = llvm::dyn_cast_if_present<mlir::BlockArgument>(array);
     auto directArray = array ? array.getDefiningOp<ctjs::CreateArrayOp>() : ctjs::CreateArrayOp{};
     if (!index || index.getOwner() != header ||
         (!(carriedArray && carriedArray.getOwner() == header) && !directArray) ||
-        length->getBlock() != header ||
+        (savedLength ? (!directArray || !savedBound.integerNumber || length->getBlock() == header ||
+                        length->getBlock() == body)
+                     : length->getBlock() != header) ||
         ownObjectKey(length->getOperand(1)) !=
             mlir::StringAttr::get(function.getContext(), "length")) {
         return unsupported;
@@ -57,6 +65,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         const mlir::Value next = backedge[argument.getArgNumber()];
         return next == value || fromHeader(next) == value;
     };
+    // A cached guard keeps the read-time Number, not a fresh length lookup.
+    // Require its exact own-read origin and unchanged successor transport;
+    // the current extent below must still match, and the census forbids resizing.
+    if (savedLength && !unchanged(bound)) { return unsupported; }
     const mlir::Value base = origin(array);
     const auto * guardSite = base ? base.getDefiningOp() : nullptr;
     auto invariantFailure = unsupported;
@@ -196,6 +208,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     auto found = state.arrays.find(base ? base.getDefiningOp() : nullptr);
     if (found == state.arrays.end() || found->second.size() > 4294967295ULL) { return unsupported; }
     const std::size_t size = found->second.size();
+    if (savedLength && savedBound.integerNumber != size) { return unsupported; }
     const std::size_t last = *start < size ? size - 1 - (size - 1 - *start) % *stride : *start;
     // ponytail: one header/body pair, with writes only to its current,
     // invariant or bounded own element. Other mutations need a

@@ -3,6 +3,59 @@
 namespace ctcompile::test::escape::arrays::induction_detail {
 
 void InductionCases::validation() {
+    const std::string lengthRead = "  %key = ctjs.constant #ctjs.string<\"length\">\n"
+                                   "  %length = ctjs.get_property %array[%key]\n";
+    const std::string cachedPrefix = prefix + replace(lengthRead, "%array", "%a");
+    std::string cachedLoop = replace(loop, lengthRead, "");
+    cachedLoop =
+        replace(cachedLoop,
+                "^header(%a, %zero, %zero :", "^header(%a, %zero, %zero, %length : !ctjs.value,");
+    cachedLoop =
+        replace(cachedLoop, "%sum: !ctjs.value):", "%sum: !ctjs.value, %bound: !ctjs.value):");
+    cachedLoop = replace(cachedLoop, "compare lt %index, %length", "compare lt %index, %bound");
+    cachedLoop = replace(cachedLoop, "^body(%array, %index, %sum :",
+                         "^body(%array, %index, %sum, %bound : !ctjs.value,");
+    cachedLoop =
+        replace(cachedLoop, "%s: !ctjs.value):", "%s: !ctjs.value, %savedBound: !ctjs.value):");
+    cachedLoop = replace(cachedLoop, "^header(%base, %step, %added :",
+                         "^header(%base, %step, %added, %savedBound : !ctjs.value,");
+    const std::string cached = cachedPrefix + cachedLoop;
+    run({.what = "a cached own length retains its immutable Number through CFG transport",
+         .body = cached,
+         .arrays = "a:[one,two,three]",
+         .reads = "a[0]=one; a[1]=two; a[2]=three",
+         .exit = "added -> {}"});
+    std::string cachedChild = replace(cached, "  %a =",
+                                      "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+                                      "  %a =");
+    cachedChild = replace(cachedChild, "[%one, %two, %three]", "[%x, %zero, %x]");
+    cachedChild =
+        replace(cachedChild, "  %read =", "  ctjs.set_property %base[%i], %zero\n  %read =");
+    cachedChild = replace(cachedChild, "ctjs.return %result", "ctjs.return %a");
+    run({.what = "cached own lengths discharge children overwritten on every visit",
+         .body = cachedChild,
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "cached length clearing cannot discharge a separately retained child",
+         .body = replace(cachedChild, "ctjs.return %a", "ctjs.return %x"),
+         .arrays = "a:[zero,zero,zero]",
+         .reads = "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"});
+    reject("a changed cached bound cannot reuse its initial snapshot",
+           replace(cached, "%added, %savedBound :", "%added, %zero :"));
+    reject("a shrink after a saved length invalidates the current extent correspondence",
+           cachedPrefix + "  ctjs.set_property %a[%key], %two\n" + cachedLoop);
+    reject("an append after a saved length invalidates the current extent correspondence",
+           cachedPrefix + "  ctjs.append %zero to %a\n" + cachedLoop);
+    reject("cached length guards retain the complete no-resize census",
+           replace(cached, "  %read =", "  ctjs.set_property %base[%key], %zero\n  %read ="));
+    reject("cached length guards cannot authorize stores to a different allocation",
+           replace(replace(cachedChild, "  %a =",
+                           "  %other = ctjs.create_array [%one, %two, %three]\n"
+                           "  %a ="),
+                   "get_property %a[%key]", "get_property %other[%key]"));
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",

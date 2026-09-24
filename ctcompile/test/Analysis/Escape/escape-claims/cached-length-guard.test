@@ -1,0 +1,41 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name cached-length-guard
+// RUN: FileCheck %s < %t/escape-claims-cached-length-guard.claims
+
+// A cached own-length read keeps its immutable Number through the loop. A saved
+// child, a changing guard or resizing after the snapshot keeps its escape.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function cachedLengthCleared() {
+    var child = {}, array = [child, 0, child];
+    var length = array.length;
+    for (var i = 0; i < length; i++) array[i] = 0;
+    return array;
+}
+function cachedLengthRetained() {
+    var child = {}, array = [child, 0, child];
+    var length = array.length, saved = array[0];
+    for (var i = 0; i < length; i++) array[i] = 0;
+    return saved;
+}
+function cachedLengthChanged() {
+    var child = {}, array = [child, 0, child];
+    var length = array.length;
+    for (var i = 0; i < length; i++) {
+        array[i] = 0;
+        length = 1;
+    }
+    return array;
+}
+function cachedLengthResized() {
+    var child = {}, array = [child, 0, child];
+    var length = array.length;
+    array.length = 2;
+    for (var i = 0; i < length; i++) array[i] = 0;
+    return array;
+}
+cachedLengthCleared(); cachedLengthRetained(); cachedLengthChanged(); cachedLengthResized();
