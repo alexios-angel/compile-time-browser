@@ -374,7 +374,8 @@ struct DOMURI {
 
 } // namespace
 
-llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps) {
+llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned maxSteps,
+                                             llvm::ArrayRef<unsigned> elementParameters) {
     const auto refuse = [](llvm::StringRef reason) -> llvm::Expected<bool> {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
     };
@@ -436,6 +437,20 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
         return refuse("DOM caught throw lost its local completion correspondence");
     }
     const bool unconditional = alwaysThrows(alwaysThrows, exit.getIsThrow(), 0);
+    const auto attributeMethod = [&](ctjs::GetPropertyOp method) {
+        if (!method || ctjs::constantKey(method.getKey()) != "hasAttribute") { return false; }
+        auto receiver = llvm::dyn_cast<mlir::BlockArgument>(method.getObject());
+        if (!receiver || receiver.getOwner() != &function.getBody().front() ||
+            receiver.getArgNumber() < ctjs::implicit_arguments) {
+            return false;
+        }
+        for (unsigned index : elementParameters) {
+            if (!remaining) { return false; }
+            --remaining;
+            if (index == receiver.getArgNumber() - ctjs::implicit_arguments) { return true; }
+        }
+        return false;
+    };
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : block.without_terminator()) {
@@ -459,6 +474,26 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
                 unary && unary.getKind() == ctjs::UnaryKind::Not) {
                 continue;
+            }
+            // The original entry contract fixes this Element and its initial
+            // method identity. A literal String needs no coercion; hasAttribute
+            // cannot throw a source exception or reenter. Keep both operations
+            // in order and reprove the complete resulting DOM body below.
+            // ponytail: direct entry parameters only; aliases need their own
+            // source identity proof before a removed status edge can trust them.
+            if (auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
+                attributeMethod(method)) {
+                continue;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+                auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                auto key = call.getArgs().size() == 1
+                               ? call.getArgs().front().getDefiningOp<ctjs::ConstantOp>()
+                               : ctjs::ConstantOp{};
+                if (attributeMethod(method) && call.getReceiver() == method.getObject() && key &&
+                    llvm::isa<ctjs::StringAttr>(key.getValue())) {
+                    continue;
+                }
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                 for (auto & region : branch->getRegions()) {

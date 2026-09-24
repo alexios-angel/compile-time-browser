@@ -24,6 +24,10 @@ SOURCES = {
     "mixed-node-nested-state": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); let saved = false; try { if (flag) { saved = true; if (inner) { throw anchor; } } else { saved = true; } } catch (error) { return error === anchor && saved; } return !saved; }\n",
     "mixed-node-nested-identity": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); try { if (flag) { if (inner) { throw anchor; } } } catch (error) { return error === anchor; } return false; }\n",
     "mixed-node-nested-read": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); try { if (flag) { if (inner) { throw anchor; } } } catch (error) { return error.hasAttribute('data-closed'); } return false; }\n",
+    "protected-read": "function customElements(anchor) { try { anchor.hasAttribute('x'); throw anchor; } catch (error) { return error === anchor; } }\n",
+    "mixed-protected-normal-read": "function customElements(anchor) { const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { anchor.hasAttribute('x'); } } catch (error) { return error === anchor; } return false; }\n",
+    "nested-protected-normal-read": "function customElements(anchor) {  const flag = anchor.hasAttribute('data-closed'); const inner = anchor.hasAttribute('data-inner'); let saved = false; try { if (flag) { saved = true; if (inner) { throw anchor; } } else { anchor.hasAttribute('x'); saved = true; } } catch (error) { return error === anchor && saved; } return !saved;  }\n",
+    "protected-conditional-node-state": "function customElements(anchor) { let saved = false; try { if (anchor.hasAttribute('data-closed')) { saved = true; throw anchor; } else { throw anchor; } } catch (error) { return error === anchor && saved; } }\n",
 }
 
 
@@ -47,7 +51,7 @@ def main():
             + "return '' + customElements(anchor) + reads; }\n"
             + "var result0 = observe(false), result1 = observe(true);\n"
         )
-        nested = name.startswith("mixed-node-nested-")
+        nested = name.startswith("mixed-node-nested-") or name == "nested-protected-normal-read"
         if nested:
             script = (
                 script.replace("observe(closed)", "observe(closed, inner)")
@@ -86,14 +90,22 @@ def main():
                 "conditional-node-read": 'result0="false2"\nresult1="true2"\n',
                 "conditional-node-state": 'result0="false1"\nresult1="true1"\n',
             }[name]
+        if name == "protected-read":
+            expected = 'result0="true1"\nresult1="true1"\n'
+        if name == "mixed-protected-normal-read":
+            expected = 'result0="false2"\nresult1="true1"\n'
         if name == "mixed-node-read":
             expected = 'result0="false1"\nresult1="true2"\n'
         if name == "mixed-node-reversed-state":
             expected = 'result0="true1"\nresult1="false1"\n'
         if nested:
             expected = 'result0="false2"\nresult1="false2"\nresult2="false2"\n' + (
-                'result3="true3"\n' if name.endswith("-read") else 'result3="true2"\n'
+                'result3="true3"\n' if name == "mixed-node-nested-read" else 'result3="true2"\n'
             )
+            if name == "nested-protected-normal-read":
+                expected = expected.replace('result0="false2"', 'result0="false3"').replace(
+                    'result1="false2"', 'result1="false3"'
+                )
         for command in ([args.node, str(node)], [args.reference, str(oracle)]):
             result = run(command)
             if result.stdout != expected:
@@ -101,7 +113,7 @@ def main():
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
         checks = (
             "assert(@ENTRY@(element)); assert(@ENTRY@(alias)); assert(@ENTRY@(foreign));"
-            if name in ("identity", "conditional-node-identity", "conditional")
+            if name in ("identity", "conditional-node-identity", "conditional", "protected-read")
             else "assert(!@ENTRY@(element)); "
             'assert(doc.set_attribute(button, atoms.intern("data-closed"), "yes")); '
             "assert(@ENTRY@(alias)); assert(!@ENTRY@(foreign));"
@@ -142,28 +154,30 @@ def main():
                     raise RuntimeError("confined node escaped into a native exception")
                 dom.standalone(args, native, label, checks, compilers, includes, libraries)
     refusals = {
+        "protected-forged-method": "try { ({hasAttribute() { throw false; }}).hasAttribute('x'); throw anchor; } catch (error) { return error === anchor; }",
         "rethrow": "try { throw anchor; } catch (error) { throw error; }",
         "return-borrow": "try { throw anchor; } catch (error) { return error; }",
-        "protected-read": "try { anchor.hasAttribute('x'); throw anchor; } catch (error) { return error === anchor; }",
         "protected-call": "try { decodeURIComponent('%'); throw anchor; } catch (error) { return error === anchor; }",
     }
     refusals.update(
         {
-            "mixed-protected-normal-read": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } else { anchor.hasAttribute('x'); } } catch (error) { return error === anchor; } return false;",
             "mixed-protected-throw-call": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { decodeURIComponent('%'); throw anchor; } } catch (error) { return error === anchor; } return false;",
             "mixed-rethrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { throw error; } return false;",
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
         }
     )
     nested_body = SOURCES["mixed-node-nested-state"].split("{", 1)[1].rsplit("}", 1)[0]
-    refusals["nested-protected-normal-read"] = nested_body.replace(
-        "else { saved = true; }", "else { anchor.hasAttribute('x'); saved = true; }"
-    )
     refusals["nested-protected-throw-call"] = nested_body.replace(
         "throw anchor;", "decodeURIComponent('%'); throw anchor;"
     )
     for name, body in refusals.items():
-        ir, contract = dom.prepare(args, name, f"function customElements(anchor) {{ {body} }}\n", 1)
+        ir, contract = dom.prepare(
+            args,
+            name,
+            f"function customElements(anchor) {{ {body} }}\n",
+            1,
+            entry_name="customElements",
+        )
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
                 manifest = dict(
@@ -178,7 +192,7 @@ def main():
                     success=False,
                 )
     check_outer_catches(args)
-    print("confined node catch: 224 native executions, 48 refusals, 38 Node/VM observations")
+    print("confined node catch: 288 native executions, 40 refusals, 48 Node/VM observations")
 
 
 OUTER_SOURCES = {

@@ -409,7 +409,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             }
         }
         auto caught = lowering_detail::normalizeDOMCaughtThrow(
-            composed->lookupSymbol<ctjs::FuncOp>(handler), maxSteps);
+            composed->lookupSymbol<ctjs::FuncOp>(handler), maxSteps,
+            handler == contract.entry ? llvm::ArrayRef<unsigned>(contract.elementParameters)
+                                      : llvm::ArrayRef<unsigned>{});
         if (!caught) {
             sourceError = caught.takeError();
             break;
