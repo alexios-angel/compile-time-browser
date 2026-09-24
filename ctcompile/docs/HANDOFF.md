@@ -22,6 +22,41 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected invocation projection and computed Number remainder, 2026-09-24 UTC
+
+Resumed clean **30a722ad** and the latest handoff's iterator/remainder boundaries.
+**d5e5e122** consumes recovered nonthrowing `Element.hasAttribute` completions in
+local handlers without explicit throws. The original Element contract, receiver
+and literal String argument prove the call's effects; the complete normal tuple
+and successful saved state remain separate from failure payload/state. Unsupported
+handlers retain the existing URI/JSON path. No borrowed C++ exception is introduced.
+
+**f1409c98** retains independent binary64 remainder results using LLVM APFloat
+`mod`. Unchanged source/program **38de654c / f037892d3c412d79** changes its child
+from Stored to **Confined** and its key table from Passed to **Confined**: **two of
+four total sites**, zero soundness violations. Converted bits remain separate
+from Number and property-key evidence. All 162 historical escape source functions
+and eighteen local/two outer native sources remain unchanged.
+
+Focused checks pass: **368 native executions, 60 refusals, 58 Node/VM observations**,
+the selected caught-node lit case, exact recovery/arrays CTests, and one selected
+escape lit case. Formatting passes **1126 C++, 158 Python, 114 web files**. Ten
+final files match the devbox and completed clean independent review; all 184
+emitted C++ files contain no Script/AOT symbols. Full suites and full Bootstrap
+were skipped.
+
+**Next native boundary:** original observing outer getter **1a7fb166** and method
+**7acf503b** still need the coordinated consumer for recovered open/next/close
+completions, original call payload/state, cleanup, exhaustion and saved returns.
+Every discarded non-call status edge needs an independent effect proof; escaping
+nodes still need an exception-lifetime owner. **Next escape boundary:** source
+**1e336918**, program **a30ea12594e7fddf**, applies `** 1` after the computed
+remainder. Its child remains Stored and key table Passed, although Node returns
+`[0,0,0]` and the VM observes the child confined once. Broader iterators, unguarded
+Bootstrap defaults, the application driver and full native Bootstrap remain.
+
+[Exact checks and next boundaries](handoff/2026-09-24-protected-invocation-number-remainder.md).
+
 ## Original iterator recovery and computed Number division, 2026-09-24 UTC
 
 Resumed **8e971bbf**, the latest handoff and the unchanged iterator/division
