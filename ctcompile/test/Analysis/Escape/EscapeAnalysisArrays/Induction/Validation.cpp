@@ -98,8 +98,32 @@ void InductionCases::validation() {
                            "  %other = ctjs.create_array [%zero, %zero, %zero]\n"
                            "  cf.br ^header"),
                    "^header(%loaded, %zero", "^header(%other, %zero"));
-    reject("cross-block loaded guard origins need separate execution provenance",
-           replace(loaded, "  %loaded =", "  cf.br ^preheader\n^preheader:\n  %loaded ="));
+    run({.what = "a single-predecessor chain retains the loaded guard execution",
+         .body = replace(loaded, "  %loaded =", "  cf.br ^preheader\n^preheader:\n  %loaded ="),
+         .arrays = "a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "the receiver and cached length may execute in successive blocks",
+         .body = replace(loaded, "  %length =", "  cf.br ^preheader\n^preheader:\n  %length ="),
+         .arrays = "a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    reject("a joined loaded guard needs more than single-predecessor provenance",
+           replace(loaded, "  %loaded =",
+                   "  %choice = ctjs.truthy %p\n"
+                   "  cf.cond_br %choice, ^left, ^right\n"
+                   "^left:\n  cf.br ^preheader\n"
+                   "^right:\n  cf.br ^preheader\n"
+                   "^preheader:\n  %loaded ="));
+    std::string longPreheader;
+    for (unsigned i = 0; i < 65; ++i) {
+        const auto name = "preheader" + std::to_string(i);
+        longPreheader += "  cf.br ^" + name + "\n^" + name + ":\n";
+    }
+    reject("loaded guard provenance retains its bounded predecessor walk",
+           replace(loaded, "  %loaded =", longPreheader + "  %loaded ="));
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",

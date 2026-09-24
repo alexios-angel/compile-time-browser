@@ -51,10 +51,32 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     // A same-block allocation cannot repeat in this proof. Its own loaded
     // identity and length are therefore snapshots of one preheader execution,
     // even if the holder changes later.
-    // ponytail: cross-block origins need separate execution provenance.
-    const bool savedArray = directArray || (loadedArray && allocation &&
-                                            loadedArray->getBlock() == allocation->getBlock() &&
-                                            length->getBlock() == loadedArray->getBlock());
+    bool savedArray = directArray || (loadedArray && allocation &&
+                                      loadedArray->getBlock() == allocation->getBlock() &&
+                                      length->getBlock() == loadedArray->getBlock());
+    if (!savedArray && loadedArray && allocation) {
+        // Every block on a single-predecessor chain executes at most once per
+        // allocation execution. The complete census forbids repeated allocation;
+        // immutable path states then preserve both reads across an early guard.
+        // ponytail: CFG chains only; joins and structured origins need their own proof.
+        mlir::Block * allocated = allocation->getBlock();
+        if (allocated->getParent() != &function.getBody() || allocated == header ||
+            allocated == body) {
+            return unsupported;
+        }
+        for (mlir::Block * read : {loadedArray->getBlock(), length->getBlock()}) {
+            unsigned depth = 0;
+            for (mlir::Block * block = read; block != allocated;
+                 block = block->getSinglePredecessor()) {
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                if (!block || block->getParent() != &function.getBody() || block == header ||
+                    block == body || depth++ == 64) {
+                    return unsupported;
+                }
+            }
+        }
+        savedArray = true;
+    }
     if (!index || index.getOwner() != header ||
         (!(carriedArray && carriedArray.getOwner() == header) && !savedArray) ||
         (savedLength ? (!savedArray || !savedBound.integerNumber || length->getBlock() == header ||
