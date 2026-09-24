@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Observed helper chains and result records, 2026-09-24 UTC
+
+Resumed clean **faffbb7f** and the original observing iterator thread.
+**d661ef8d** expands observed helpers containing ordered attribute calls into
+nested invocations. Each failure retains the caller's original saved registers,
+payload and unwind effects; success retains the helper's own result. The actual
+next-body shape—one read, two writes and a fresh result record—passes raw complete
+DOM preparation. Existing field forwarding removes confined result transport
+after the independent attribute proof. **No new JavaScript source admission is
+claimed**; original outer getter **1a7fb166** and method **7acf503b** remain refused.
+
+Normal continuation operations move intact, preserving queued helper-call
+identities. Only the invocation's call body supplies protection; calls in its
+normal continuation use ordinary inlining. Unwind calls/closures that would
+invalidate the expansion census remain refused. Two historical raw two-call
+controls now pass structural expansion with their source bodies unchanged.
+
+Final recovery CTest passes **1/1, 5.40 s**; the earlier host-contract check passes
+**1/1, 2.98 s**. Selected native checks pass **32 executions, 92 refusals and eight
+Node/VM observations**. Formatting passes **1126 C++, 158 Python, 114 web files**.
+Three final hashes match the devbox and completed independent review; sixteen
+emitted C++ files contain no Script/AOT/ctjs namespace. Full suites were skipped.
+Parallel source tracing and independent review completed; escape agents were
+rate-limited before a candidate or baseline, so no escape progress is claimed.
+
+**Next:** connect original recovered open/next/close tuples to entry normalization
+and protocol discovery. The observing entry still refuses before recovery;
+discovery still requires a root-local open and state-free suppressed close.
+Keep every non-call status edge until its independent effect proof, then retain
+exhaustion, cleanup, saved returns and caught-node identity through protocol
+state. Chained helper expansion is now available after that correspondence.
+Escaping-node exception owners, broader iterators, unguarded Bootstrap defaults
+and the application driver remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-observed-helper-chains.md).
+
 ## Ordered continuations and unary loop indices, 2026-09-24 UTC
 
 Resumed clean **c26df86e** and the original observing iterator thread.
