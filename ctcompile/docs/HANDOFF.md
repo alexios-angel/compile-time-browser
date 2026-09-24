@@ -22,6 +22,36 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Observed DOM leaf forwarding and unary Number snapshots, 2026-09-24 UTC
+
+Resumed clean **355a3033** and the original observing iterator boundary.
+**546281ef** expands a helper that directly returns one `hasAttribute` or
+`setAttribute` call inside its original invocation. Both continuations, their
+effects, payloads and saved registers remain intact. This is structural support;
+**original outer getter 1a7fb166 and method 7acf503b remain refused**, and final DOM
+proof still rejects general observed attribute tuples.
+
+**bd98d9a0** retains independent binary64 Number snapshots through unary Plus/Neg
+and later arithmetic. Unchanged source **4a2f0ab5**, program **77c88ee532829818**,
+changes its child and lookup table to **Confined**: **two of four total sites**,
+zero violations, Node `[0,0,0]`. All 176 historical escape source bodies remain.
+
+Focused checks pass: recovery and host-contract CTests; **32 native executions,
+92 refusals, eight Node/VM observations** from two selected sources and original
+outer controls; arrays CTest and one escape lit case. Formatting passes
+**1126 C++, 158 Python, 114 web files**. Nine final hashes match the devbox and
+completed independent review; sixteen generated C++ files contain no Script/AOT.
+No whole native fixture or full-suite pass is claimed.
+
+**Next:** connect recovered open/next/close tuples to protocol discovery and helper
+expansion, preserving independent effects, exhaustion, cleanup, saved returns and
+caught-node identity. The actual next method has two writes and a result record;
+close mutates then throws. Escaping nodes still need exception-lifetime owners.
+The unary escape witness is complete; no next source was measured. General powers,
+broader iterators, unguarded Bootstrap defaults and the application driver remain.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-forwarded-leaf-unary-number.md).
+
 ## Inert helper completions and paired arithmetic tables, 2026-09-24 UTC
 
 Resumed clean **2b854bf8** and the original observing iterator boundary.
