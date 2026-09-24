@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Observed iterator recovery and cached length guards, 2026-09-24 UTC
+
+Resumed clean **78ff4513** and the original observing iterator thread.
+**41c9f87d** preserves the iterator holder's complete handler register vectors
+through CFG lifting and routes observing catches to checked recovery. Original
+getter **1a7fb166** and method **7acf503b** now reach custom protocol proof from
+both raw and lifted imports: **33 original checks, four calls, 15 saved registers
+per call**. They remain refused at the protocol handler-proof boundary; **no new
+JavaScript source admission is claimed**. Both original close flags remain false.
+Zero-budget and late refusals preserve the entire module and contract.
+
+**cd23eb9d** proves counted loops guarded by a cached own `array.length` read when
+its immutable Number and current array extent agree and the bound survives every
+backedge unchanged. Existing mutation checks and exact replay remain. Frozen
+source **f1dd292d**, program **ddbc8c68988f64f6**, changes its child from Stored to
+**Confined: one of three total sites**, all three observed, zero VM violations.
+Node returns `[0,0,0]`; saved-child and changing-bound controls retain their escapes.
+
+Focused recovery, host-contract and arrays CTests pass; one selected escape lit
+case passes. Selected native checks pass **48 executions, 108 refusals and ten
+Node/VM runs**. Formatting passes **1126 C++, 158 Python, 114 web files**.
+Independent nine-file review is clean; final hashes match the devbox. Twenty-four
+generated C++ files contain no Script/AOT/ctjs namespace. All earlier source
+bodies remain unchanged. Full suites and full Bootstrap were skipped.
+
+**Next:** extend custom protocol discovery and rewriting to retained Try and
+result-bearing Invoke regions. Follow successful open-record aliases through
+completion tuples, then preserve next/exhaustion state, both close(false) failure
+paths, saved returns and caught-node identity. Entry recovery now reaches this
+consumer; it still requires root-local open/direct users and suppression-only
+invocations. The cached-length witness is complete; wider cached guard origins
+remain separate. Escaping-node owners, broader iterators, unguarded Bootstrap
+defaults and the application driver remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-iterator-recovery-cached-length.md).
+
 ## Caught helper source admission, 2026-09-24 UTC
 
 Resumed clean **0fbcf02a** and the frozen next-helper source from iteration 155.
