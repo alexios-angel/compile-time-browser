@@ -1401,11 +1401,49 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
 
+    // A completion tuple may carry the same successful open value in every
+    // arm. Forward only that exact, dominating identity; keep the selection
+    // and every source operation. Mixed padding/failure origins need their
+    // own selected-continuation proof, even when another slot is identical.
+    mlir::DominanceInfo recordDominance(entry);
+    const auto aliases = entry.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
+        if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (!llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(operation)) {
+            return mlir::WalkResult::advance();
+        }
+        for (auto result : operation->getResults()) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            bool same = recordDominance.properlyDominates(open.getResult(), operation);
+            for (auto & region : operation->getRegions()) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                auto yield = region.hasOneBlock()
+                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back())
+                                 : mlir::scf::YieldOp{};
+                same &= yield && yield.getOperandTypes() == operation->getResultTypes() &&
+                        yield.getOperand(result.getResultNumber()) == open.getResult();
+            }
+            if (same) {
+                for (auto & use : llvm::make_early_inc_range(result.getUses())) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    use.set(open.getResult());
+                }
+            }
+        }
+        return mlir::WalkResult::advance();
+    });
+    if (aliases.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
+
     ctjs::CallOp next;
     llvm::SmallVector<ctjs::CallOp> closes;
     for (mlir::Operation * user : open->getUsers()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (llvm::isa<ctjs::RootOp, mlir::scf::YieldOp>(user)) { continue; }
+        if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user);
+            exit && exit.getNormalResult() != open.getResult()) {
+            // The verified protocol invocation saves this already evaluated
+            // identity. Its unwind users still need complete state proof.
+            continue;
+        }
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(user);
             compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
             ((compare.getLhs() == open.getResult() && undefined(compare.getRhs())) ||
@@ -1417,8 +1455,36 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             ctjs::constantKey(get.getKey()) == "done") {
             // The runtime coerces result.done to Boolean. Only truth tests may
             // observe our projected field without materializing that Boolean.
-            for (mlir::Operation * observer : get->getUsers()) {
-                if (!spend() || !llvm::isa<ctjs::RootOp, ctjs::TruthyOp>(observer)) {
+            llvm::SmallVector<mlir::Value> pending{get.getResult()};
+            llvm::DenseSet<mlir::Value> visited;
+            while (!pending.empty()) {
+                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                auto value = pending.pop_back_val();
+                if (!visited.insert(value).second) { continue; }
+                for (mlir::OpOperand & use : value.getUses()) {
+                    if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+                    auto * observer = use.getOwner();
+                    if (llvm::isa<ctjs::TruthyOp>(observer) ||
+                        (llvm::isa<ctjs::RootOp>(observer) && use.getOperandNumber() == 1)) {
+                        continue;
+                    }
+                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(observer);
+                        yield && llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(
+                                     yield->getParentOp())) {
+                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
+                        continue;
+                    }
+                    if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(observer);
+                        exit && use.getOperandNumber() > 0) {
+                        auto call = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
+                        pending.push_back(
+                            call.getUnwindBody().front().getArgument(use.getOperandNumber()));
+                        continue;
+                    }
+                    if (auto yield = llvm::dyn_cast<ctjs::InvokeYieldOp>(observer)) {
+                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
+                        continue;
+                    }
                     return error("DOM iterator done field requires truth-only observations");
                 }
             }
@@ -1444,9 +1510,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator protocol requires one next and normal close sites");
         }
     }
-    if (!next || closes.empty()) {
-        return error("DOM iterator close must follow its complete traversal");
+    if (next && closes.empty()) {
+        return error("DOM iterator close requires completion-selected record identity");
     }
+    if (!next) { return error("DOM iterator close must follow its complete traversal"); }
     for (auto & [invocation, call] : protectedCloses) {
         (void)invocation;
         if (!spend() || !llvm::is_contained(closes, call)) {

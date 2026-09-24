@@ -638,9 +638,10 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   contract.moduleSha256 == ctcompile::ctnative::hostContractFingerprint(*module),
               "original observing iterator defers suppression without changing any source state");
         if (!close) { llvm::consumeError(close.takeError()); }
-        const auto boundary = structured ? "DOM iterator close must follow its complete traversal"
-                              : method   ? "DOM Symbol.iterator must be a closed identity method"
-                                         : "DOM iterator getter requires a terminal throw";
+        const auto boundary =
+            structured ? "DOM iterator close requires completion-selected record identity"
+            : method   ? "DOM Symbol.iterator must be a closed identity method"
+                       : "DOM iterator getter requires a terminal throw";
         for (unsigned budget : {0u, 100000u}) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto proof = contract;
@@ -676,7 +677,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   countChecks(*recovered.original) == checks &&
                   mlir::succeeded(mlir::verify(*module)),
               "iterator recovery retains the complete original snapshot and verifies");
-        for (unsigned control = 0; control < (structured ? 12u : 7u); ++control) {
+        for (unsigned control = 0; control < (structured ? 17u : 7u); ++control) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
             ctjs::InvokeOp invocation, opening;
@@ -697,7 +698,21 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
             auto holder = openCall.getArgs()[0];
             auto attempt = llvm::cast<ctjs::TryOp>(opening->getParentOp());
+            mlir::OpResult recordAlias;
+            entry.walk([&](mlir::scf::IfOp branch) {
+                auto left = llvm::cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
+                auto right = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
+                for (auto [result, a, b] :
+                     llvm::zip(branch.getResults(), left.getOperands(), right.getOperands())) {
+                    if (a == opening.getResult(1) && b == a) { recordAlias = result; }
+                }
+            });
+            if (!check(static_cast<bool>(recordAlias),
+                       "original successful record has a common alias")) {
+                continue;
+            }
             mlir::OpBuilder at(invocation);
+            ctjs::StoreGlobalOp selectionEffect;
             if (control == 1) {
                 call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>().setName("unknown");
             } else if (control == 2) {
@@ -744,6 +759,39 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             } else if (control == 11) {
                 at.setInsertionPointAfter(opening);
                 ctjs::StoreGlobalOp::create(at, call.getLoc(), "holder", holder);
+            } else if (control == 12 || control == 13) {
+                auto branch = llvm::cast<mlir::scf::IfOp>(recordAlias.getOwner());
+                auto yield = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
+                at.setInsertionPoint(yield);
+                mlir::Value other = holder;
+                if (control == 13) {
+                    other = mlir::ub::PoisonOp::create(at, call.getLoc(), holder.getType());
+                }
+                yield->setOperand(recordAlias.getResultNumber(), other);
+            } else if (control == 14 || control == 15) {
+                auto branch = llvm::cast<mlir::scf::IfOp>(recordAlias.getOwner());
+                if (control == 14) {
+                    at.setInsertionPointAfter(branch);
+                } else {
+                    at.setInsertionPoint(branch.getThenRegion().front().getTerminator());
+                }
+                selectionEffect =
+                    ctjs::StoreGlobalOp::create(at, call.getLoc(), "selection",
+                                                control == 14 ? mlir::Value(recordAlias) : holder);
+            } else if (control == 16) {
+                // The exhausted close saves done at slot 9. Observe its exact
+                // unwind projection only after the original invocation.
+                auto & unwind = invocation.getUnwindBody().front();
+                auto yield = llvm::cast<ctjs::InvokeYieldOp>(unwind.back());
+                unsigned observed = 0;
+                at.setInsertionPointAfter(invocation);
+                for (auto [result, value] : llvm::zip(invocation.getResults(), yield.getValues())) {
+                    if (value == unwind.getArgument(10)) {
+                        ctjs::StoreGlobalOp::create(at, call.getLoc(), "saved-done", result);
+                        ++observed;
+                    }
+                }
+                check(observed == 1, "saved done has one exact unwind result");
             }
             auto proof = contract;
             proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
@@ -768,6 +816,9 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 if (value == opening.getNormalBody().front().getArgument(0)) {
                     value = openCall.getResult();
                 }
+                if (value == recordAlias && control != 12 && control != 13) {
+                    value = openCall.getResult();
+                }
                 normalUses.push_back(
                     {&use, value, literalValue(value),
                      static_cast<bool>(value.getDefiningOp<mlir::ub::PoisonOp>())});
@@ -775,6 +826,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             for (auto [result, value] : llvm::zip(opening.getResults(), normal.getValues())) {
                 for (auto & use : result.getUses()) { remember(use, value); }
             }
+            for (auto & use : recordAlias.getUses()) { remember(use, recordAlias); }
             entry.walk([&](ctjs::InvokeOp kept) {
                 if (kept == opening) { return; }
                 kept.walk([&](mlir::Operation * operation) {
@@ -808,18 +860,23 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             auto failure = ctcompile::ctnative::normalizeDOMCustomIteration(
                 *candidate, proof, control == 6 ? 0 : 100000);
             const auto reason = failure ? llvm::toString(std::move(failure)) : std::string{};
-            const auto expected = control == 0 || control == 11  ? boundary
-                                  : control == 4                 ? "requires a well-formed entry"
-                                  : control == 6                 ? "budget"
-                                  : control == 7 || control == 8 ? "holder has an earlier observer"
-                                  : control == 9  ? "state aliases its iterator method"
-                                  : control == 10 ? "identity method has additional effects"
-                                                  : "abrupt completion needs a handler proof";
+            const auto expected =
+                control == 0 || control == 11 || control == 15 ? boundary
+                : control == 12 || control == 13
+                    ? "DOM iterator close must follow its complete traversal"
+                : control == 14 ? "DOM iterator record has an unsupported observer"
+                : control == 16 ? "DOM iterator done field requires truth-only observations"
+                : control == 4  ? "requires a well-formed entry"
+                : control == 6  ? "budget"
+                : control == 7 || control == 8 ? "holder has an earlier observer"
+                : control == 9                 ? "state aliases its iterator method"
+                : control == 10                ? "identity method has additional effects"
+                                               : "abrupt completion needs a handler proof";
             check(reason.find(expected) != std::string::npos &&
                       (!(control > 0 && control < 7) || printed(*candidate) == snapshot),
                   "protocol proof retains calls and refuses unknown identity, effects and state");
             if (reason.find(expected) == std::string::npos) { llvm::errs() << reason << '\n'; }
-            if ((control == 0 || control == 11) && structured) {
+            if ((control == 0 || control >= 11) && structured) {
                 check(openCall->getBlock() == openBlock &&
                           llvm::equal(openCall->getOperands(), openOperands) &&
                           mlir::succeeded(mlir::verify(*candidate)),
@@ -841,6 +898,15 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                           "next and both closes retain their full pre-call state");
                 });
                 check(kept == 3, "only the independently proved open loses its failure edge");
+                check((control == 12 || control == 13) ? !recordAlias.use_empty()
+                                                       : recordAlias.use_empty(),
+                      "only identical arms forward the record; unknown and poison arms retain "
+                      "transport");
+                if (selectionEffect) {
+                    check(selectionEffect.getValue() ==
+                              (control == 14 ? openCall.getResult() : holder),
+                          "forwarding retains branch effects and exposes escaped alias observers");
+                }
             } else if (control >= 7) {
                 check(openCall->getParentOp() == opening,
                       "unproved open effects keep the original exceptional completion");
