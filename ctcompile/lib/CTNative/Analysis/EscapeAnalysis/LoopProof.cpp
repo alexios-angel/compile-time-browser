@@ -59,11 +59,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                  ? carriedArray.getOwner()
                                  : nullptr;
     if (!savedArray && savedArrayBlock && allocation) {
-        // Every block on a single-predecessor chain executes at most once per
-        // allocation execution. The complete census forbids repeated allocation;
-        // Immutable path states preserve both reads and actual/formal array
-        // identity transport across an early guard.
-        // ponytail: CFG chains only; joins and structured origins need their own proof.
+        // Immutable states retain the blocks actually visited on each structural
+        // path. The actual predecessor must be among them; a unique visited
+        // predecessor therefore preserves execution provenance through a join.
+        // Every path is replayed separately, and repeated CFG blocks are refused.
+        // ponytail: ambiguous visited predecessors and structured origins need a richer trace.
         mlir::Block * allocated = allocation->getBlock();
         if (allocated->getParent() != &function.getBody() || allocated == header ||
             allocated == body) {
@@ -71,13 +71,20 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         for (mlir::Block * read : {savedArrayBlock, length->getBlock()}) {
             unsigned depth = 0;
-            for (mlir::Block * block = read; block != allocated;
-                 block = block->getSinglePredecessor()) {
+            for (mlir::Block * block = read; block != allocated;) {
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 if (!block || block->getParent() != &function.getBody() || block == header ||
-                    block == body || depth++ == 64) {
+                    block == body || !state.visited.contains(block) || depth++ == 64) {
                     return unsupported;
                 }
+                mlir::Block * previous = nullptr;
+                for (mlir::Block * predecessor : block->getPredecessors()) {
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    if (!state.visited.contains(predecessor)) { continue; }
+                    if (previous) { return unsupported; }
+                    previous = predecessor;
+                }
+                block = previous;
             }
         }
         savedArray = true;

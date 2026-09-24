@@ -122,12 +122,27 @@ void InductionCases::validation() {
          .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
          .exit = "a -> {a}"},
         "x");
-    reject("a transported cached guard still needs a single predecessor",
-           replace(transported, "  cf.br ^preheader(%loaded : !ctjs.value)",
-                   "  %choice = ctjs.truthy %p\n"
-                   "  cf.cond_br %choice, ^left, ^right\n"
-                   "^left:\n  cf.br ^preheader(%loaded : !ctjs.value)\n"
-                   "^right:\n  cf.br ^preheader(%loaded : !ctjs.value)"));
+    const std::string joined = replace(transported, "  cf.br ^preheader(%loaded : !ctjs.value)",
+                                       "  %choice = ctjs.truthy %p\n"
+                                       "  cf.cond_br %choice, ^left, ^right\n"
+                                       "^left:\n  cf.br ^preheader(%loaded : !ctjs.value)\n"
+                                       "^right:\n  cf.br ^preheader(%loaded : !ctjs.value)");
+    run({.what = "joined cached receivers retain separate exact predecessor states",
+         .body = joined,
+         .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero; "
+                  "a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}; a -> {a}"},
+        "x");
+    reject("an opaque joined receiver cannot borrow the other path's provenance",
+           replace(joined, "^right:\n  cf.br ^preheader(%loaded", "^right:\n  cf.br ^preheader(%p"),
+           ArrayContentsFailure::UnknownArray);
+    reject("a joined cached receiver retains the current extent check",
+           replace(joined, "  cf.br ^header",
+                   "  ctjs.set_property %transported[%key], %two\n  cf.br ^header"));
+    reject("visited shortcut predecessors cannot supply an unambiguous execution path",
+           replace(joined, "  cf.cond_br %choice, ^left, ^right",
+                   "  cf.cond_br %choice, ^preheader(%loaded : !ctjs.value), ^right"));
     reject("a transported cached guard cannot change the saved bound",
            replace(transported, "%added, %savedBound :", "%added, %zero :"));
     reject("a transported cached guard cannot clear a different receiver",
@@ -135,13 +150,18 @@ void InductionCases::validation() {
                            "  %other = ctjs.create_array [%zero, %zero, %zero]\n"
                            "  cf.br ^header"),
                    "^header(%transported, %zero", "^header(%other, %zero"));
-    reject("a joined loaded guard needs more than single-predecessor provenance",
-           replace(loaded, "  %loaded =",
-                   "  %choice = ctjs.truthy %p\n"
-                   "  cf.cond_br %choice, ^left, ^right\n"
-                   "^left:\n  cf.br ^preheader\n"
-                   "^right:\n  cf.br ^preheader\n"
-                   "^preheader:\n  %loaded ="));
+    run({.what = "a joined loaded guard follows each independently recorded predecessor",
+         .body = replace(loaded, "  %loaded =",
+                         "  %choice = ctjs.truthy %p\n"
+                         "  cf.cond_br %choice, ^left, ^right\n"
+                         "^left:\n  cf.br ^preheader\n"
+                         "^right:\n  cf.br ^preheader\n"
+                         "^preheader:\n  %loaded ="),
+         .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero; "
+                  "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}; a -> {a}"},
+        "x");
     std::string longPreheader;
     for (unsigned i = 0; i < 65; ++i) {
         const auto name = "preheader" + std::to_string(i);
