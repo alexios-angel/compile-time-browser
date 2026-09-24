@@ -44,9 +44,20 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const mlir::Value array = length ? length.getObject() : mlir::Value{};
     auto carriedArray = llvm::dyn_cast_if_present<mlir::BlockArgument>(array);
     auto directArray = array ? array.getDefiningOp<ctjs::CreateArrayOp>() : ctjs::CreateArrayOp{};
+    const mlir::Value base = array ? origin(array) : mlir::Value{};
+    auto loadedArray =
+        savedLength && array ? array.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+    auto allocation = base ? base.getDefiningOp<ctjs::CreateArrayOp>() : ctjs::CreateArrayOp{};
+    // A same-block allocation cannot repeat in this proof. Its own loaded
+    // identity and length are therefore snapshots of one preheader execution,
+    // even if the holder changes later.
+    // ponytail: cross-block origins need separate execution provenance.
+    const bool savedArray = directArray || (loadedArray && allocation &&
+                                            loadedArray->getBlock() == allocation->getBlock() &&
+                                            length->getBlock() == loadedArray->getBlock());
     if (!index || index.getOwner() != header ||
-        (!(carriedArray && carriedArray.getOwner() == header) && !directArray) ||
-        (savedLength ? (!directArray || !savedBound.integerNumber || length->getBlock() == header ||
+        (!(carriedArray && carriedArray.getOwner() == header) && !savedArray) ||
+        (savedLength ? (!savedArray || !savedBound.integerNumber || length->getBlock() == header ||
                         length->getBlock() == body)
                      : length->getBlock() != header) ||
         ownObjectKey(length->getOperand(1)) !=
@@ -69,7 +80,6 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     // Require its exact own-read origin and unchanged successor transport;
     // the current extent below must still match, and the census forbids resizing.
     if (savedLength && !unchanged(bound)) { return unsupported; }
-    const mlir::Value base = origin(array);
     const auto * guardSite = base ? base.getDefiningOp() : nullptr;
     auto invariantFailure = unsupported;
     llvm::SmallDenseSet<std::size_t, 4> guardReloads;

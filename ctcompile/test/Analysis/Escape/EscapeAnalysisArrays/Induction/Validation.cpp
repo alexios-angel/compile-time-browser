@@ -56,6 +56,50 @@ void InductionCases::validation() {
                            "  %other = ctjs.create_array [%one, %two, %three]\n"
                            "  %a ="),
                    "get_property %a[%key]", "get_property %other[%key]"));
+    const std::string loaded =
+        replace(replace(cachedChild, "  %length = ctjs.get_property %a[%key]",
+                        "  %box = ctjs.create_array [%a] {storage_test_id = \"box\"}\n"
+                        "  %loaded = ctjs.get_property %box[%zero]\n"
+                        "  %length = ctjs.get_property %loaded[%key]"),
+                "^header(%a, %zero", "^header(%loaded, %zero");
+    run({.what = "cached lengths retain an own-loaded preheader array identity",
+         .body = loaded,
+         .arrays = "a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x");
+    run({.what = "replacing the holder preserves the previously loaded array snapshot",
+         .body = replace(loaded, "  cf.br ^header",
+                         "  %other = ctjs.create_array [%zero] {storage_test_id = \"other\"}\n"
+                         "  ctjs.set_property %box[%zero], %other\n"
+                         "  cf.br ^header"),
+         .arrays = "a:[zero,zero,zero]; box:[other]; other:[zero]",
+         .reads = "box[0]=a; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "a -> {a}"},
+        "x,other");
+    run({.what = "a saved child survives clearing through a loaded array identity",
+         .body = replace(replace(loaded, "  cf.br ^header",
+                                 "  %saved = ctjs.get_property %loaded[%zero]\n"
+                                 "  cf.br ^header"),
+                         "ctjs.return %a", "ctjs.return %saved"),
+         .arrays = "a:[zero,zero,zero]; box:[a]",
+         .reads = "box[0]=a; a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
+         .exit = "x -> {x}"},
+        "a");
+    reject("loaded cached guards cannot change the saved bound",
+           replace(loaded, "%added, %savedBound :", "%added, %zero :"));
+    reject("loaded cached guards retain the current extent check",
+           replace(loaded, "  cf.br ^header",
+                   "  ctjs.set_property %loaded[%key], %two\n  cf.br ^header"));
+    reject("loaded cached guards retain the full mutation census",
+           replace(loaded, "  %read =", "  ctjs.set_property %box[%zero], %a\n  %read ="));
+    reject("loaded cached guards cannot clear a different receiver",
+           replace(replace(loaded, "  cf.br ^header",
+                           "  %other = ctjs.create_array [%zero, %zero, %zero]\n"
+                           "  cf.br ^header"),
+                   "^header(%loaded, %zero", "^header(%other, %zero"));
+    reject("cross-block loaded guard origins need separate execution provenance",
+           replace(loaded, "  %loaded =", "  cf.br ^preheader\n^preheader:\n  %loaded ="));
     reject("a different guard bound is not the array's own length",
            replace(original, "compare lt %index, %length", "compare lt %index, %three"));
     reject("a replaced array alias invalidates the guard certificate",
