@@ -81,7 +81,7 @@ libpng and JPEG through libjpeg-turbo, all of it SDL-free so tests can assert on
 a decode), SVG through plutosvg, audio, and `fetch` over HTTP with **libcurl** —
 which brings TLS with it, so the Windows cross-build has `https://` with no
 OpenSSL. There was a hand-written Boost.Asio client here once; it is gone, and
-`docs/build.md` says why.
+[the build notes](ctbrowser/docs/build.md) say why.
 
 It runs real libraries, which is the claim worth checking: **p5.js 2.3.1**,
 **Phaser 4.2.1** and **Babylon.js 9.18.2** all load and draw. They live in
@@ -91,31 +91,49 @@ gets.
 ## Building
 
 The repository is a monorepo: [`ctbrowser/`](ctbrowser) is the engine and the
-CMake configure root, [`ctcompile/`](ctcompile) is the ahead-of-time compiler
-that consumes it. `CMakePresets.json` lives in `ctbrowser/`, so every command
-below runs from there.
+CMake configure root. [`ctcompile/`](ctcompile) is a **0.1.0 developer preview**
+with an application bytecode packager and native C++ subset tools; its
+[release notes](ctcompile/docs/release-0.1.0.md) describe the current limits.
+
+Direct configuration needs CMake 3.23+, Ninja and a C++23 compiler. ctcompile
+also requires **LLVM 23** (tested with 23.1.0), even with MLIR disabled.
+Install the [documented dependencies](ctcompile/README.md#build-and-install)
+and set their prefixes below. Run from the repository root; this uses the
+system compiler, or the compiler selected by `CXX`.
 
 ```bash
 git submodule update --init --recursive   # ctjs (+ ctc for tests) + benchmark-only ctcss
-cd ctbrowser                              # the configure root
-cmake --preset default && cmake --build --preset default && ctest --preset default
+ctcompile_deps_prefix=/path/to/dependencies
+ctcompile_llvm_prefix=/path/to/llvm-23.1.0
+cmake -S ctbrowser -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$ctcompile_deps_prefix" \
+  -DLLVM_DIR="$ctcompile_llvm_prefix/lib/cmake/llvm" \
+  -DCTBROWSER_ENABLE_PROJECTS=ctcompile
+cmake --build build
 ```
 
-Needs CMake 3.20 and a clang or gcc with C++23 — the system default will do.
 SDL3 is found if installed; without it the engine still builds and still
-renders — `run_app` runs headless.
+renders — `run_app` runs headless. Use `-DCTBROWSER_ENABLE_PROJECTS=` for the
+engine alone, which needs no LLVM. Native compiler tools additionally need
+`-DCTCOMPILE_ENABLE_MLIR=ON` and matching MLIR; see the
+[compiler build and install instructions](ctcompile/README.md#build-and-install).
 
-The `default` preset builds **both** projects, so it also needs
-Boost.program_options for `ctcompile`'s command line. `browser` is the engine
-alone, and `browser-no-llvm` is that plus `CMAKE_DISABLE_FIND_PACKAGE_{LLVM,MLIR,LLD}`
-— the runtime-only build, enforced rather than assumed.
+The presets in `ctbrowser/CMakePresets.json` require CMake 3.25+. `default`
+builds both projects; `browser` and `browser-no-llvm` build the engine alone.
+The Linux presets select a development compiler in the ignored
+`tools/clang-std-embed/` directory. On a fresh checkout, override it with
+`-DCMAKE_CXX_COMPILER="$(command -v c++)"` when configuring a preset.
+Contributors using the shared devbox follow [CLAUDE.md](CLAUDE.md).
 
 ```bash
 # TSan needs mimalloc OFF: the engine's operator delete overrides collide with
 # TSan's own in libclang_rt.tsan_cxx.a, and the link fails without this.
 # all of these run from ctbrowser/
-cmake --preset tsan -DCTBROWSER_USE_MIMALLOC=OFF && ctest --preset tsan
-cmake --preset asan && ctest --preset asan
+cmake --preset tsan -DCMAKE_CXX_COMPILER="$(command -v c++)" -DCTBROWSER_USE_MIMALLOC=OFF
+cmake --build --preset tsan
+cmake --preset asan -DCMAKE_CXX_COMPILER="$(command -v c++)"
+cmake --build --preset asan
 cmake --preset windows && cmake --build --preset windows    # llvm-mingw cross-build
 cmake --build --preset windows --target windows-dist        # -> examples-windows/
 ```
@@ -125,12 +143,13 @@ beside them.
 
 ## Testing
 
-`ctest` runs the suite headless: 83 tests, of which 48 are executables under
-`ctbrowser/unittests/` and `ctbrowser/test/` and the rest are the examples, run bounded to a fixed frame count.
-Fourteen of the example pages additionally byte-compare their render against a
-golden in `ctbrowser/test/golden/` — plus `svg` and `imageformats`, which are gated on an
-optional dependency and would otherwise fail for a reason that is not a
-regression. `CTBROWSER_FONTS=font8x8` pins layout so the comparison does not
+CTest registers headless tests from `ctbrowser/unittests/`, `ctbrowser/test/`
+and enabled sibling projects, plus bounded example runs. The inventory depends
+on the configuration; list it with `ctest --test-dir build -N` and select
+relevant checks using the [focused test policy](CLAUDE.md#build--test).
+Enabled render checks byte-compare against `ctbrowser/test/golden/`, with
+optional dependencies controlling which checks are registered.
+`CTBROWSER_FONTS=font8x8` pins layout so the comparison does not
 move with FreeType. `REGOLDEN=1` regenerates a golden — then **open the image
 and look at it**; one accepted unseen is how the empty-button render shipped.
 
