@@ -22,6 +22,45 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded iterator records and joined length guards, 2026-09-24 UTC
+
+Resumed clean **800dcb05** and the original observing iterator thread.
+**b157875d** proves each guarded close record together with its completion tag
+through the same tuple producers. Every matching leaf must hold the exact open
+identity; known other tags are excluded. Only the guarded call operand changes.
+Mixed tuples, all producers, both close(false) flags and 15 saved registers remain.
+Selected poison, foreign records, unknown tags and wrong guards refuse forwarding.
+
+Original getter **1a7fb166** and method **7acf503b**, with lifted helper bodies,
+now reach **traversal proof through retained invocation regions** from direct
+recovery and full preparation. Raw helper CFGs retain their earlier body-proof
+refusals. **No new native JavaScript source admission is claimed.** Complete
+preparation still rolls back, including after successful record forwarding.
+
+**4f1c9f12** proves cached loaded-array lengths across CFG joins when exactly
+one predecessor was visited in the existing independent path state. Every path
+retains its own array identity, extent, mutation and replay checks. Ambiguous
+visited predecessors remain conservative. Frozen source **7c4d9365**, program
+**bf9fa089c74d0965**, changes child and holder to **Confined: two of four total
+sites**, all four observed, zero VM violations. Node returns
+`[[0,0,0],[0,0,0]]`; saved-child, bound and receiver controls retain escapes.
+
+Focused recovery, host-contract and arrays CTests, one new escape lit case and
+the selected three-source native check pass. Formatting passes **1126 C++,
+158 Python, 114 web files**. Independent six-file review is clean; final hashes
+match the devbox. Twenty-four generated C++ files pass the Script/AOT/ctjs check.
+Historical source bodies remain unchanged. Full suites were skipped.
+
+**Next:** prove traversal and close coverage through retained result-bearing
+Invoke regions, then thread next/exhaustion and both unsuppressed close failures
+through Try state. Preserve saved returns, caught-node identity and every effect.
+The close call now has its exact record; saved tuple aliases still need state
+rewriting. Raw helper CFG normalization, ambiguous cached origins, escaping-node
+exception owners, broader iterators, unguarded Bootstrap defaults, the application
+driver and full native Bootstrap remain unfinished.
+
+[Exact focused checks and next boundary](handoff/2026-09-24-guarded-records-joined-length.md).
+
 ## Record aliases and transported length guards, 2026-09-24 UTC
 
 Resumed clean **2ab9ba43** and the original observing iterator thread.
