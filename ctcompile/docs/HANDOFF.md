@@ -22,6 +22,22 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## README refresh, 2026-09-24 UTC
+
+**e254b996** rewrites the root README around both projects, with current build
+requirements, preview limits and the parser publication blocker. It replaces
+the nonexistent `ctbrowse --headless` option with the supported offscreen
+environment and screenshot flags, and removes the deleted GPU-backend and
+unconditional no-DLL claims. The C++ example and license text are unchanged.
+
+Documentation checks pass: three Bash blocks, 21 local links, six retained
+attribution URLs, formatting and `git diff --check`. No build or CTest was run
+for this prose-only change. Source and manual prose review are recorded in
+`../test-results/2026-09-24-readme-refresh` relative to the monorepo root.
+Next remains publication of parser pin **83275ba** and a fresh recursive
+checkout before merge; the retained Invoke/Try traversal and close boundary
+is unchanged. No push or merge was performed.
+
 ## Main merge preparation, 2026-09-24 UTC
 
 Resumed clean **3ee1f76a** for the request to prepare `ctcompile-v1` for `main`.
