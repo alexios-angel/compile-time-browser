@@ -449,7 +449,7 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     optimize=optimize,
                     success=False,
                 )
-                if "DOM custom iterator abrupt completion needs a handler proof" not in result:
+                if "DOM custom iterator requires one root-local open" not in result:
                     raise RuntimeError(f"{name}: lost recovered protocol diagnostic: {result}")
 
 

@@ -643,7 +643,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
             auto proof = contract;
             auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, budget);
             const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
-            check(reason.find(budget ? "DOM custom iterator abrupt completion needs a handler proof"
+            check(reason.find(budget ? "DOM custom iterator requires one root-local open"
                                      : "budget") != std::string::npos &&
                       printed(*candidate) == originalModule &&
                       proof.moduleSha256 == contract.moduleSha256,
@@ -671,6 +671,53 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   countChecks(*recovered.original) == checks &&
                   mlir::succeeded(mlir::verify(*module)),
               "iterator recovery retains the complete original snapshot and verifies");
+        for (unsigned control = 0; control < 7; ++control) {
+            mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
+            auto entry = candidate->lookupSymbol<ctjs::FuncOp>(contract.entry);
+            ctjs::InvokeOp invocation;
+            entry.walk([&](ctjs::InvokeOp found) {
+                auto call = llvm::cast<ctjs::CallOp>(found.getBody().front().front());
+                auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (!invocation && load && load.getName() == "__ctbrowser_iter_close") {
+                    invocation = found;
+                }
+            });
+            if (!check(static_cast<bool>(invocation), "recovered close retains its helper")) {
+                continue;
+            }
+            auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
+            auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
+            mlir::OpBuilder at(invocation);
+            if (control == 1) {
+                call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>().setName("unknown");
+            } else if (control == 2) {
+                call.getArgsMutable().slice(1, 1).assign(call.getArgs()[0]);
+            } else if (control == 3) {
+                auto & normal = invocation.getNormalBody().front();
+                at.setInsertionPoint(normal.getTerminator());
+                ctjs::StoreGlobalOp::create(at, call.getLoc(), "observed", normal.getArgument(0));
+            } else if (control == 4) {
+                exit.getStateMutable().slice(0, 1).assign(call.getResult());
+            } else if (control == 5) {
+                call.getArgsMutable().append(entry.getBody().front().getArgument(3));
+            }
+            auto proof = contract;
+            proof.moduleSha256 = ctcompile::ctnative::hostContractFingerprint(*candidate);
+            const auto snapshot = printed(*candidate);
+            mlir::ScopedDiagnosticHandler quiet(&context,
+                                                [](mlir::Diagnostic &) { return mlir::success(); });
+            auto failure = ctcompile::ctnative::normalizeDOMCustomIteration(
+                *candidate, proof, control == 6 ? 0 : 100000);
+            const auto reason = failure ? llvm::toString(std::move(failure)) : std::string{};
+            const auto expected = control == 0   ? "requires one root-local open"
+                                  : control == 4 ? "requires a well-formed entry"
+                                  : control == 6 ? "budget"
+                                                 : "abrupt completion needs a handler proof";
+            check(reason.find(expected) != std::string::npos && printed(*candidate) == snapshot,
+                  "protocol discovery retains every call and tuple and rejects unproved "
+                  "identity, flags, effects, state and arity without mutation");
+            if (reason.find(expected) == std::string::npos) { llvm::errs() << reason << '\n'; }
+        }
         unsigned calls = 0;
         function.walk([&](ctjs::InvokeOp invocation) {
             ++calls;

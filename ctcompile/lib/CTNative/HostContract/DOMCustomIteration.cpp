@@ -78,8 +78,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
-            if (invocation.getNumResults() || invocation->getNumOperands() ||
-                !invocation.getBody().hasOneBlock() || !invocation.getNormalBody().hasOneBlock() ||
+            if (invocation->getNumOperands() || !invocation.getBody().hasOneBlock() ||
+                !invocation.getNormalBody().hasOneBlock() ||
                 !invocation.getUnwindBody().hasOneBlock()) {
                 return mlir::WalkResult::interrupt();
             }
@@ -87,10 +87,38 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto call = body.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(body.front());
             auto exit = body.empty() ? ctjs::InvokeExitOp{}
                                      : llvm::dyn_cast<ctjs::InvokeExitOp>(body.back());
-            if (body.getNumArguments() || !call || !exit || call->getNextNode() != exit ||
-                helper(call) != "__ctbrowser_iter_close" || !undefined(call.getReceiver()) ||
-                call.getArgs().size() != 2 || exit.getNormalResult() != call.getResult() ||
-                !exit.getState().empty() || !call.getResult().hasOneUse()) {
+            const auto arity = call ? host_detail::iteratorIntrinsicArity(helper(call)) : 0;
+            if (body.getNumArguments() || !call || !exit || call->getNextNode() != exit || !arity ||
+                !undefined(call.getReceiver()) || call.getArgs().size() != arity ||
+                exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse()) {
+                return mlir::WalkResult::interrupt();
+            }
+            if (invocation.getNumResults()) {
+                // Recovery keeps success and failure in separate tuples inside
+                // Try. Verification above proves payload/state correspondence;
+                // this census grants no nonthrowing or record-alias authority.
+                if (!invocation->getParentOfType<ctjs::TryOp>()) {
+                    return mlir::WalkResult::interrupt();
+                }
+                if (helper(call) == "__ctbrowser_iter_close") {
+                    auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
+                    if (!flag || !llvm::isa<ctjs::BooleanAttr>(flag.getValue())) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                }
+                for (auto * region : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
+                    for (mlir::Operation & projection : region->front().without_terminator()) {
+                        if (!spend() || !llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp,
+                                                   mlir::ub::PoisonOp>(projection)) {
+                            return mlir::WalkResult::interrupt();
+                        }
+                    }
+                }
+                // In particular, an observed close(false) is never entered in
+                // protectedCloses: that map authorizes suppressed cleanup only.
+                return mlir::WalkResult::advance();
+            }
+            if (helper(call) != "__ctbrowser_iter_close" || !exit.getState().empty()) {
                 return mlir::WalkResult::interrupt();
             }
             auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
