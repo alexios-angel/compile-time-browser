@@ -22,6 +22,42 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected DOM reads and computed Number multiplication, 2026-09-24 UTC
+
+Resumed clean **ebda7b23** and the latest handoff's native/escape boundaries.
+**8a4dd9b8** proves protected `hasAttribute` reads on an original contract-bound
+Element parameter with one literal String argument. Reads keep their branch order
+and saved state through the existing local catch projection. Full DOM reproof
+still guards publication; helpers, lookalike methods and coercing arguments gain
+no authority. Three unchanged refusal sources now execute. The original outer
+iterator catches still require complete call/check correspondence.
+
+**5717a629** extends independent binary64 snapshots through multiplication.
+Unchanged source/program **1d605bea / ccf117847c4cd802** changes its child from
+Stored to **Confined**; the key table also becomes confined, giving **two of four
+total sites** with zero soundness violations. Bitwise results remain separate
+from property keys and general arithmetic. All 156 previous escape source bodies
+remain unchanged; three new sources cover normal, saved-child and mutation paths.
+
+Focused checks complete **288 native executions, 40 refusals, 48 Node/VM
+observations**, exact recovery/arrays CTests and one selected escape lit case.
+The interrupted native run completed its executions, then a new nested-function
+refusal needed explicit harness entry selection. Only the remaining refusal
+checks were resumed; **no whole native-lit pass is claimed**. Formatting passes
+**1126 C++, 158 Python and 114 web files**. All twelve final code/test hashes match
+the devbox and the clean independent review; 144 generated C++ files contain no
+Script/AOT symbols.
+
+**Next:** original outer getter **1a7fb166** and method **7acf503b** still need
+original call/check payload, state and effect correspondence. Escaping nodes still
+need an exception-lifetime owner. Escape source **57db40f7**, program
+**73139a70dad89e41**, divides the Add/Sub result by one and remains Stored;
+Node returns `[0,0,0]`, and the VM observes the child confined once. Broader
+protected observers, nested iterators, unguarded Bootstrap defaults, the application
+driver and full native Bootstrap remain. Full suites and full Bootstrap were skipped.
+
+[Exact checks and next boundaries](handoff/2026-09-24-protected-reads-number-multiplication.md).
+
 ## Nested catch dispatch and computed Number addition, 2026-09-24 UTC
 
 Resumed clean **8a9b5b4c**, the latest handoff
