@@ -175,6 +175,40 @@ struct gap_shape {
     if (property == "transform") {
         if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
     }
+    // `vertical-align` IS THREE VALUES IN ONE (CSS Inline 3 §4.4), written
+    // with its defaults left out: when the keywords agree the baseline shift
+    // interpolates as the length it is, an omitted one being zero -
+    // `baseline` to `100px` is 0px to 100px (vertical-align-interpolation).
+    if (property == "vertical-align") {
+        const auto parts = [](std::string_view v) {
+            std::string words;
+            std::string shift = "0px";
+            for (const std::string_view part : split_top_level(v, html_whitespace)) {
+                const char c = part.empty() ? ' ' : part.front();
+                const bool length = (c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' ||
+                                    ascii_istarts_with(part, "calc(");
+                if (length) {
+                    shift = std::string{part};
+                } else if (!ascii_iequals(part, "baseline")) {
+                    words += (words.empty() ? "" : " ") + ascii_lower_copy(part);
+                }
+            }
+            return std::pair{words, shift};
+        };
+        const auto [words_a, shift_a] = parts(from);
+        const auto [words_b, shift_b] = parts(to);
+        if (words_a == words_b) {
+            bool ok = true;
+            const std::string shift = interpolate_pair("margin-left", shift_a, shift_b, p, ctx, ok);
+            if (ok) {
+                std::string out = words_a;
+                if (shift != "0px") { out += (out.empty() ? "" : " ") + shift; }
+                return out.empty() ? std::string{"baseline"} : out;
+            }
+        }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    }
     // Two basic shapes of one function blend (CSS Shapes 1 §3.3); anything
     // else in clip-path or shape-outside - a url(), `none`, two functions -
     // is discrete.
