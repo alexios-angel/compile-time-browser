@@ -475,6 +475,14 @@ void context::store_property(value target, const std::string & name, value v) {
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
+        // A constructor's `prototype` IS OWN from the moment the function
+        // exists (10.2.5 MakeConstructor) - it is only MADE lazily here. The
+        // chain walk below is for names the function does not own, and
+        // letting `prototype` reach it asked the parent instead: `F.prototype
+        // = x` for a function whose [[Prototype]] is a class or a native
+        // constructor found that one's read-only `prototype` and was refused -
+        // Babel's `_inherits`, every `class A extends Array`.
+        if (name == "prototype") { (void)ensure_prototype(target); }
         if (accessor_entry * entry = closure->find_accessor(name)) {
             // An own accessor with no setter refuses the write; it is never
             // shadowed by a data property of the same name.
