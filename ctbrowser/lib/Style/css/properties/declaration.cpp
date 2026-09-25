@@ -285,10 +285,12 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
-    // THE GAP RULE LISTS (gaps.cpp): `10px, repeat(auto, thin)`.
+    // THE GAP RULE LISTS (gaps.cpp): `10px, repeat(auto, thin)`, and the
+    // BASIC SHAPES of clip-path and shape-outside (shapes.cpp).
     {
         std::string serialized;
-        if (match_gap_list(property, text, serialized)) {
+        if (match_gap_list(property, text, serialized) ||
+            match_basic_shape(property, simplified, serialized)) {
             if (serialized.empty()) { return {}; }
             return yes(std::move(serialized));
         }

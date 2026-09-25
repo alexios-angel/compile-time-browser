@@ -172,6 +172,16 @@ struct gap_shape {
     if (property == "transform") {
         if (const std::optional<std::string> t = interpolate_transform(from, to, p)) { return *t; }
     }
+    // Two basic shapes of one function blend (CSS Shapes 1 §3.3); anything
+    // else in clip-path or shape-outside - a url(), `none`, two functions -
+    // is discrete.
+    if (property == "clip-path" || property == "shape-outside") {
+        if (std::optional<std::string> s = css::blend_basic_shapes(property, from, to, 1 - p, p)) {
+            return *s;
+        }
+        interpolable = false;
+        return std::string{p < 0.5 ? from : to};
+    }
     if (property == "aspect-ratio") {
         // `auto <ratio>` on both sides keeps `auto` and interpolates the
         // ratio; `auto` on one side only is discrete.
@@ -275,6 +285,10 @@ struct gap_shape {
     underlying = trim(underlying, html_whitespace);
     value = trim(value, html_whitespace);
     if (underlying.empty()) { return std::string{value}; }
+    if (property == "clip-path" || property == "shape-outside") {
+        return css::blend_basic_shapes(property, underlying, value, 1, 1)
+            .value_or(std::string{value});
+    }
     if (const auto a = css::resolve_color(underlying, {}), b = css::resolve_color(value, {});
         a && b) {
         return add_color(*a, *b);

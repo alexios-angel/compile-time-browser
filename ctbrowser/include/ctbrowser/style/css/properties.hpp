@@ -217,6 +217,18 @@ struct color_context {
 // gradient's colours computed, its lengths in pixels and its angles in
 // degrees, a `url()` as written. Empty for text with no image this models.
 [[nodiscard]] std::string computed_image(std::string_view specified, const color_context & ctx);
+// THE COMPUTED VALUE OF A <basic-shape> in clip-path or shape-outside (CSS
+// Shapes 1 §3.2): lengths absolute, the position from the top left in
+// percentages and calc()s, xywh() and rect() as their inset(). Empty for a
+// value that is not one.
+[[nodiscard]] std::string computed_basic_shape(std::string_view property, std::string_view text,
+                                               const length_context & ctx);
+// Two COMPUTED basic shapes of one function, blended component by
+// component: `wa * a + wb * b` - an interpolation at `p` is (1 - p, p), an
+// addition (1, 1). Nullopt when the two do not blend (CSS Shapes 1 §3.3).
+[[nodiscard]] std::optional<std::string> blend_basic_shapes(std::string_view property,
+                                                            std::string_view a, std::string_view b,
+                                                            double wa, double wb);
 // THE COMPUTED VALUE OF A GAP RULE LIST (CSS Gap Decorations 1): a width
 // list's lengths in pixels, a colour list's colours computed, a repeat
 // count as its integer. Empty for another property or text that is not one.

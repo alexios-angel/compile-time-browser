@@ -604,6 +604,37 @@ void test_gap_rule_lists_and_their_neighbours() {
     CHECK(supports_declaration("transform", "skewX(10deg)"));
 }
 
+// CSS Shapes 1's <basic-shape>, specified: defaults left out, positions and
+// sides canonical, the default box dropped; and computed and blended.
+void test_basic_shapes() {
+    ok("clip-path", "circle(closest-side)", "circle()");
+    ok("clip-path", "circle(4% at top right)", "circle(4% at right top)");
+    ok("clip-path", "ellipse(closest-side closest-side at 10% 20%)", "ellipse(at 10% 20%)");
+    ok("clip-path", "inset(0 1px)", "inset(0px 1px)");
+    ok("clip-path", "inset(1px 2px 1px 2px round 0)", "inset(1px 2px)");
+    ok("clip-path", "polygon(nonzero, 1px 2px, 3em 4em)", "polygon(1px 2px, 3em 4em)");
+    ok("clip-path", "xywh(0 1% 2px 3em round 0)", "xywh(0px 1% 2px 3em)");
+    ok("clip-path", "border-box circle(7% at 8% 9%)", "circle(7% at 8% 9%)");
+    ok("shape-outside", "circle() border-box", "circle() border-box");
+    bad("clip-path", "circle(1px 2px)");
+    bad("clip-path", "inset(1px round)");
+    bad("clip-path", "polygon(evenodd)");
+    using ctbrowser::style::css::blend_basic_shapes;
+    using ctbrowser::style::css::computed_basic_shape;
+    const ctbrowser::style::css::length_context ctx;
+    CHECK_EQ(computed_basic_shape("clip-path", "rect(auto auto auto auto)", ctx),
+             std::string{"inset(0%)"});
+    CHECK_EQ(computed_basic_shape("clip-path", "xywh(0px 1% 2px 20px)", ctx),
+             std::string{"inset(1% calc(100% - 2px) calc(99% - 20px) 0px)"});
+    CHECK_EQ(computed_basic_shape("clip-path", "circle(at right 5% bottom 15px)", ctx),
+             std::string{"circle(at 95% calc(100% - 15px))"});
+    CHECK_EQ(blend_basic_shapes("clip-path", "circle(60% at 10% 30%)", "circle(40% at 20% 20%)",
+                                0.7, 0.3)
+                 .value_or(""),
+             std::string{"circle(54% at 13% 27%)"});
+    CHECK(!blend_basic_shapes("clip-path", "circle(10px)", "inset(10px)", 0.5, 0.5));
+}
+
 } // namespace
 
 int main() {
@@ -634,5 +665,6 @@ int main() {
     test_interpolate_size_is_a_property();
     test_the_position_grammar();
     test_gap_rule_lists_and_their_neighbours();
+    test_basic_shapes();
     REPORT("css_values");
 }

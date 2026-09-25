@@ -15,6 +15,7 @@ target_sources(ctbrowser-style PRIVATE
   internal.hpp
   keywords.cpp
   shadows.cpp
+  shapes.cpp
   shorthands.cpp
   table.cpp
   table_modules.cpp

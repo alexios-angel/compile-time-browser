@@ -175,6 +175,12 @@ struct scan {
                                   std::string & out);
 [[nodiscard]] bool split_gap_rule(std::string_view value, std::vector<std::string> & out);
 [[nodiscard]] std::string fold_gap_rule(std::span<const std::string> v);
+// A <basic-shape> and its box, for clip-path and shape-outside (CSS Shapes
+// 1 §3): false for another property or a value that is not a basic shape
+// (a url(), an image, a shape()), an empty `out` for an invalid one.
+// Defined in shapes.cpp.
+[[nodiscard]] bool match_basic_shape(std::string_view property, std::string_view text,
+                                     std::string & out);
 // The rows of the property table beyond table.cpp's core set, grouped by
 // module. Defined in table_modules.cpp.
 [[nodiscard]] std::span<const property_syntax> module_properties() noexcept;

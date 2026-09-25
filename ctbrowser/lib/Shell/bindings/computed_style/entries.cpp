@@ -658,6 +658,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return number_text(std::min(1.0f, std::max(0.0f, number)));
             }
         }
+        // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
+        if (property == "clip-path" || property == "shape-outside") {
+            style::css::length_context bases;
+            bases.font_size = at.font_size;
+            bases.root_font_size = at.root_font_size;
+            bases.viewport_width = static_cast<float>(viewport_width_);
+            bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
+            std::string computed = style::css::computed_basic_shape(property, text, bases);
+            if (!computed.empty()) { return computed; }
+        }
         // 4c. AN OVERFLOW AXIS BESIDE A SCROLLING ONE: CSS Overflow 3 §3.1 -
         //     when either axis is neither `visible` nor `clip`, `visible`
         //     computes to `auto` and `clip` to `hidden`.

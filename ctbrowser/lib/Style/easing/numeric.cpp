@@ -270,6 +270,10 @@ namespace ctbrowser::style::easing_detail {
         return std::string{parts[0]} + ' ' + std::string{parts[1]} + ' ' + std::string{parts[2]} +
                ' ' + std::string{parts[3]} + (fill ? " fill" : "");
     }
+    if (property == "clip-path" || property == "shape-outside") {
+        std::string computed = css::computed_basic_shape(property, text, ctx);
+        return computed.empty() ? std::string{text} : computed;
+    }
     if (repeatable(property)) {
         // Keywords as percentages, a size's second `auto` written, so
         // `left 20px top 20px` and `20px 20px` are one shape.
