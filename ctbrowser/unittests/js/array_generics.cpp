@@ -696,6 +696,13 @@ int main() {
               "Array.prototype.splice.call(o, 0, 3); return r.length + ':' + r.join() + ':' + "
               "o.length; })()",
               "3:0,1,2:1");
+    // 23.1.3.36: toString is join when there is one, the object's tag if not.
+    js_expect("Array.prototype.toString.call({join() { return 'j'; }}) + '|' + "
+              "Array.prototype.toString.call(true) + '|' + [1, [2, 3], null].toString()",
+              "j|[object Boolean]|1,2,3,");
+    js_expect("(function(){ delete Object.prototype.toString; "
+              "return Array.prototype.toString.call({join: 1}); })()",
+              "[object Object]");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

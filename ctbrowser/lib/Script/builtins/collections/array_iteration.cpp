@@ -575,15 +575,26 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // that; the prototype did not, so once conversion started going through an
     // object's own toString an array fell back to Object.prototype's and
     // stringified as "[object Array]".
+    //
+    // 23.1.3.36 as written: ToObject(this), then its own `join` if callable,
+    // else %Object.prototype.toString% - so it is GENERIC (`toString.call(
+    // {join() {...}})`) and a non-array receiver answers its tag, where this
+    // answered "" for anything but an Array.
     method(cx, array_proto, "toString", 0, [](context & c, std::span<value>) {
-        auto * self = detail::this_array(c);
-        if (self == nullptr) { return c.string(""); }
-        std::string out;
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            if (i != 0) { out += ','; }
-            if (!self->items[i].is_nullish()) { out += c.to_string(self->items[i]); }
+        const value self = detail::array_this(c);
+        if (!detail::coercible_this(c, self, "toString")) { return value::undefined(); }
+        const context::rooted keep{c, self};
+        const detail::unwind_watch watch{c};
+        value fn = c.lookup_property(self, "join");
+        if (watch.threw()) { return value::undefined(); }
+        if (!fn.is_callable()) {
+            object_object * table = c.prototype(context::proto_kind::object);
+            const value * intrinsic =
+                table == nullptr ? nullptr : table->find("@#IntrinsicObjectToString");
+            if (intrinsic == nullptr) { return c.string("[object Object]"); }
+            fn = *intrinsic;
         }
-        return c.string(out);
+        return c.call(fn, {}, self);
     });
     // 23.1.3.5 entries, 23.1.3.19 keys, 23.1.3.38 values: ToObject(this),
     // then CreateArrayIterator - LIVE over any array-like, not a copy of an

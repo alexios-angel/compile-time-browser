@@ -411,6 +411,10 @@ void install_object(context & cx) {
         if (custom.is_string()) { return c.string("[object " + c.to_string(custom) + "]"); }
         return c.string("[object " + std::string{tag} + "]");
     });
+    // %Object.prototype.toString% by a name no page can reach or delete: what
+    // Array.prototype.toString falls back to (23.1.3.36 step 3) even after
+    // `delete Object.prototype.toString`.
+    object_proto->define("@#IntrinsicObjectToString", *object_proto->find("toString"), attr_none);
     method(cx, object_proto, "valueOf", 0, [](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!object_coercible(c, self, "Object.prototype.valueOf")) { return value::undefined(); }
