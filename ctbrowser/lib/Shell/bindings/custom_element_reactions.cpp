@@ -12,7 +12,27 @@
 namespace ctbrowser::shell {
 namespace {
 constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
+
+// The definition's lifecycle callback for a reaction kind - undefined for the
+// upgrade, which is not a callback.
+[[nodiscard]] value callback_for(const binding_detail::custom_element_definition & def,
+                                 binding_detail::custom_element_reaction::kind what) {
+    using kind = binding_detail::custom_element_reaction::kind;
+    switch (what) {
+    case kind::upgrade: return value::undefined();
+    case kind::connected: return def.connected;
+    case kind::disconnected: return def.disconnected;
+    case kind::adopted: return def.adopted;
+    case kind::connected_move: return def.connected_move;
+    case kind::attribute_changed: return def.attribute_changed;
+    case kind::form_associated: return def.form_associated_callback;
+    case kind::form_disabled: return def.form_disabled;
+    case kind::form_reset: return def.form_reset;
+    }
+    return value::undefined();
 }
+} // namespace
+
 // --- the scan ----------------------------------------------------------------------
 
 void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, bool connected,
@@ -40,9 +60,14 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
     const auto same = [](const attribute & a, const attribute & b) {
         return a.name == b.name && a.ns == b.ns;
     };
+    // QUIET brings the snapshot up to date and enqueues nothing: an element
+    // that is not yet custom has no reactions (HTML 4.13.6, "if element is
+    // custom"), and neither does a definition with no attributeChangedCallback
+    // (step 4 of "enqueue a custom element callback reaction").
     const auto diff_attributes = [&](const custom_element_definition & def,
-                                     custom_element_state & state, node_id at) {
+                                     custom_element_state & state, node_id at, bool quiet) {
         if (def.observed_attributes.empty()) { return; }
+        quiet = quiet || !def.attribute_changed.is_callable();
         std::vector<attribute> now;
         for (const attribute & held : txn.attributes(at)) {
             const std::string local = local_name(held);
@@ -52,7 +77,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             for (const attribute & old : state.attributes) {
                 if (same(old, held)) { before = &old.value; }
             }
-            if (before != nullptr && *before == held.value) { continue; }
+            if (quiet || (before != nullptr && *before == held.value)) { continue; }
             custom_element_reaction reaction;
             reaction.target = at;
             reaction.definition = state.definition;
@@ -68,7 +93,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         for (const attribute & old : state.attributes) {
             bool still = false;
             for (const attribute & held : now) { still = still || same(held, old); }
-            if (still) { continue; }
+            if (still || quiet) { continue; }
             custom_element_reaction reaction;
             reaction.target = at;
             reaction.definition = state.definition;
@@ -81,42 +106,48 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         }
         state.attributes = std::move(now);
     };
-    const auto enqueue = [this](node_id at, std::size_t definition,
-                                custom_element_reaction::kind what) {
+    const auto enqueue = [this, &defs](node_id at, std::size_t definition,
+                                       custom_element_reaction::kind what) {
+        // No callback, no reaction - and the element is not put on the
+        // element queue, so what it already has pending waits where it is.
+        if (what != custom_element_reaction::kind::upgrade &&
+            !callback_for(defs[definition], what).is_callable()) {
+            return;
+        }
         custom_element_reaction reaction;
         reaction.target = at;
         reaction.definition = definition;
         reaction.what = what;
         custom_reactions_.push_back(std::move(reaction));
     };
-    using kind = custom_element_reaction::kind;
+    using kind = binding_detail::custom_element_reaction::kind;
     // HTML 4.13.7.2: a form-associated element's form owner and disabledness,
     // diffed - formAssociatedCallback(form) when the owner changes (the
     // "reset the form owner" steps), formDisabledCallback(disabled) when
     // the `disabled` attribute or a <fieldset> ancestor changes it.
     const auto diff_form = [&](const custom_element_definition & def, custom_element_state & state,
-                               node_id at) {
+                               node_id at, bool quiet) {
         if (!def.form_associated) { return; }
         const node_id form = form_owner_of(txn, at);
-        if (form != state.form) {
+        if (form != state.form && !quiet && def.form_associated_callback.is_callable()) {
             custom_element_reaction reaction;
             reaction.target = at;
             reaction.definition = state.definition;
             reaction.what = kind::form_associated;
             reaction.form = form;
             custom_reactions_.push_back(std::move(reaction));
-            state.form = form;
         }
+        state.form = form;
         const bool disabled = form_control_disabled(txn, at);
-        if (disabled != state.disabled) {
+        if (disabled != state.disabled && !quiet && def.form_disabled.is_callable()) {
             custom_element_reaction reaction;
             reaction.target = at;
             reaction.definition = state.definition;
             reaction.what = kind::form_disabled;
             reaction.flag = disabled;
             custom_reactions_.push_back(std::move(reaction));
-            state.disabled = disabled;
         }
+        state.disabled = disabled;
     };
 
     std::vector<frame> pending{frame{start, false}};
@@ -133,9 +164,10 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             if (found == custom_elements_.end() && upgrade) {
                 const std::size_t index = custom_definition_for(txn, here.at);
                 if (index != npos) {
-                    // "Upgrade an element", HTML 4.13.5: the constructor,
-                    // then attributeChangedCallback for each observed
-                    // attribute present, then connectedCallback if connected.
+                    // "Upgrade an element", HTML 4.13.5, queued: its
+                    // attributeChangedCallbacks and connectedCallback are
+                    // enqueued when it RUNS (run_upgrade), from the element
+                    // as it is then; until that the snapshot just follows.
                     const custom_element_definition & def = defs[index];
                     custom_element_state state;
                     state.definition = index;
@@ -144,9 +176,8 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                     state.seen = scan_generation_;
                     state.parent = txn.parent(here.at);
                     enqueue(here.at, index, kind::upgrade);
-                    diff_attributes(def, state, here.at);
-                    if (connected) { enqueue(here.at, index, kind::connected); }
-                    diff_form(def, state, here.at);
+                    diff_attributes(def, state, here.at, true);
+                    diff_form(def, state, here.at, true);
                     watch_loose(key, state);
                     custom_elements_.emplace(key, std::move(state));
                 }
@@ -154,10 +185,28 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                 custom_element_state & state = found->second;
                 state.seen = scan_generation_;
                 if (state.state != custom_element_state::status::failed) {
+                    // ONLY A CUSTOM ELEMENT REACTS. One whose upgrade is
+                    // queued or whose constructor is running is not custom
+                    // yet: what is done to it - `this.remove()` in its own
+                    // constructor, another element's constructor setting
+                    // its attributes - enqueues nothing, and its upgrade
+                    // reads it as it is (custom-element-reaction-queue.html).
+                    const bool quiet = state.state != custom_element_state::status::custom;
                     const custom_element_definition & def = defs[state.definition];
                     const node_id parent = txn.parent(here.at);
                     moved = moved || (connected && state.connected && parent != state.parent);
-                    if (state.connected && !connected) {
+                    if (quiet) {
+                        // ...but one that becomes CONNECTED is tried again -
+                        // the insertion steps' "try to upgrade", a second
+                        // upgrade reaction - which puts it on this element
+                        // queue: its pending upgrade runs now, inside the
+                        // native that connected it (upgrading.html's
+                        // "infinite constructor recursion with appendChild").
+                        if (!state.connected && connected &&
+                            state.state == custom_element_state::status::precustomized) {
+                            enqueue(here.at, state.definition, kind::upgrade);
+                        }
+                    } else if (state.connected && !connected) {
                         enqueue(here.at, state.definition, kind::disconnected);
                     } else if (!state.connected && connected) {
                         enqueue(here.at, state.definition, kind::connected);
@@ -171,8 +220,8 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                             enqueue(here.at, state.definition, kind::connected);
                         }
                     }
-                    diff_attributes(def, state, here.at);
-                    diff_form(def, state, here.at);
+                    diff_attributes(def, state, here.at, quiet);
+                    diff_form(def, state, here.at, quiet);
                     state.connected = connected;
                     state.parent = parent;
                     watch_loose(key, state);
@@ -246,8 +295,18 @@ void dom_bindings::scan_custom_elements() {
             loose.push_back(unpack(key));
         }
     }
+    // IN TREE ORDER where it matters: one whose ancestor is loose too is left
+    // to that ancestor's walk, so a removed parent's disconnectedCallback is
+    // queued ahead of its child's - the map's own order is a hash's.
+    flat_map<std::uint64_t, bool> loose_set;
+    for (const node_id at : loose) { loose_set.emplace(at.key(), true); }
     for (const node_id at : loose) {
-        if (txn.contains(at)) { walk_custom_elements(txn, at, false, false, roots_seen); }
+        if (!txn.contains(at)) { continue; }
+        bool covered = false;
+        for (node_id up = txn.parent(at); up && !covered; up = txn.parent(up)) {
+            covered = loose_set.contains(up.key());
+        }
+        if (!covered) { walk_custom_elements(txn, at, false, false, roots_seen); }
     }
     // A node whose WRAPPER LEFT WITH IT - `node_from` adopted it into another
     // document and rebound the page's object to the copy - is that
@@ -265,16 +324,37 @@ void dom_bindings::scan_custom_elements() {
             state.parent = node_id{};
             state.seen = 0;
             if (fresh && state.state == custom_element_state::status::custom) {
-                custom_element_reaction reaction;
-                reaction.target = fresh;
-                reaction.definition = state.definition;
-                reaction.what = custom_element_reaction::kind::adopted;
-                reaction.old_document = document_;
-                reaction.new_document = now->document_;
                 bool noted = false;
                 for (const auto & [other, from] : adoptees_) { noted = noted || other == now; }
                 if (!noted) { adoptees_.emplace_back(now, now->custom_reactions_.size()); }
-                now->custom_reactions_.push_back(std::move(reaction));
+                // THE ELEMENT'S REACTION QUEUE GOES WITH IT: what it still has
+                // pending here - a connectedCallback its adopter's own callback
+                // interrupted - is ahead of adoptedCallback in the one queue
+                // an element has, and runs first when the adoption drains it.
+                const node_id old = unpack(key);
+                for (std::size_t i = 0; i < custom_reactions_.size();) {
+                    if (custom_reactions_[i].target != old) {
+                        ++i;
+                        continue;
+                    }
+                    custom_element_reaction moved = std::move(custom_reactions_[i]);
+                    custom_reactions_.erase(custom_reactions_.begin() +
+                                            static_cast<std::ptrdiff_t>(i));
+                    for (std::size_t & floor : reaction_floors_) {
+                        if (floor > i) { --floor; }
+                    }
+                    moved.target = fresh;
+                    now->custom_reactions_.push_back(std::move(moved));
+                }
+                if (primary().custom_definitions_[state.definition].adopted.is_callable()) {
+                    custom_element_reaction reaction;
+                    reaction.target = fresh;
+                    reaction.definition = state.definition;
+                    reaction.what = custom_element_reaction::kind::adopted;
+                    reaction.old_document = document_;
+                    reaction.new_document = now->document_;
+                    now->custom_reactions_.push_back(std::move(reaction));
+                }
                 now->watch_loose(fresh.key(), state);
                 now->custom_elements_.insert_or_assign(fresh.key(), std::move(state));
             }
@@ -316,7 +396,55 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
     dom_bindings & reg = primary();
     const auto found = custom_elements_.find(target.key());
     if (found == custom_elements_.end()) { return; }
-    found->second.state = custom_element_state::status::precustomized;
+    // Step 1: only an element that is not yet custom upgrades - and one whose
+    // constructor is RUNNING (it is on the construction stack; the
+    // specification marks it "failed" for the duration) is not upgraded
+    // again by a reaction its own constructor caused.
+    if (found->second.state != custom_element_state::status::precustomized) { return; }
+    for (const auto & entry : reg.custom_definitions_[index].construction_stack) {
+        if (entry.element == target) { return; }
+    }
+    // Steps 5 and 6, from the element AS IT IS NOW rather than as it was
+    // when the upgrade was queued: attributeChangedCallback for each observed
+    // attribute in the attribute list, in order, then connectedCallback if it
+    // is connected. The reactions follow the upgrade in the element's queue,
+    // and so run after the constructor.
+    {
+        const custom_element_definition & def = reg.custom_definitions_[index];
+        custom_element_state & state = found->second;
+        const auto txn = doc_->read();
+        const auto push = [&](custom_element_reaction reaction) {
+            reaction.target = target;
+            reaction.definition = index;
+            custom_reactions_.push_back(std::move(reaction));
+        };
+        state.attributes.clear();
+        for (const attribute & held : txn.attributes(target)) {
+            const std::string local{attribute_local_name(*atoms_, held)};
+            if (std::ranges::find(def.observed_attributes, local) ==
+                def.observed_attributes.end()) {
+                continue;
+            }
+            state.attributes.push_back(held);
+            if (!def.attribute_changed.is_callable()) { continue; }
+            custom_element_reaction reaction;
+            reaction.what = custom_element_reaction::kind::attribute_changed;
+            reaction.name = local;
+            reaction.ns = std::string{atoms_->text(held.ns)};
+            reaction.has_new = true;
+            reaction.new_value = held.value;
+            push(std::move(reaction));
+        }
+        const node_id top = root_of_tree(txn, target, true);
+        state.connected =
+            top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
+        state.parent = txn.parent(target);
+        if (state.connected && def.connected.is_callable()) {
+            custom_element_reaction reaction;
+            reaction.what = custom_element_reaction::kind::connected;
+            push(std::move(reaction));
+        }
+    }
     bool threw = false;
     value thrown = value::undefined();
     // 8.1: a definition that disabled shadow roots refuses an element that
@@ -368,6 +496,32 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
         return;
     }
     again->second.state = custom_element_state::status::custom;
+    // Step 11: a form-associated element resets its form owner - and says so,
+    // formAssociatedCallback with the form it has, formDisabledCallback when
+    // it is disabled.
+    const custom_element_definition & def = reg.custom_definitions_[index];
+    if (def.form_associated) {
+        custom_element_state & state = again->second;
+        const auto txn = doc_->read();
+        state.form = form_owner_of(txn, target);
+        state.disabled = form_control_disabled(txn, target);
+        if (state.form && def.form_associated_callback.is_callable()) {
+            custom_element_reaction reaction;
+            reaction.target = target;
+            reaction.definition = index;
+            reaction.what = custom_element_reaction::kind::form_associated;
+            reaction.form = state.form;
+            custom_reactions_.push_back(std::move(reaction));
+        }
+        if (state.disabled && def.form_disabled.is_callable()) {
+            custom_element_reaction reaction;
+            reaction.target = target;
+            reaction.definition = index;
+            reaction.what = custom_element_reaction::kind::form_disabled;
+            reaction.flag = true;
+            custom_reactions_.push_back(std::move(reaction));
+        }
+    }
 }
 
 void dom_bindings::flush_custom_element_reactions(std::size_t from) {
@@ -384,12 +538,20 @@ void dom_bindings::flush_custom_element_reactions(std::size_t from) {
     // THE FLOORS ARE A STACK: a nested pop that takes a pending reaction from
     // below an outer floor shifts the outer's region down, and the floor
     // moves with it, so nothing an outer native enqueued is skipped.
+    //
+    // ONE ELEMENT'S WHOLE QUEUE BEFORE THE NEXT ELEMENT'S, the reactions its
+    // own upgrade adds included (4.13.6: "repeat until reactions is empty").
     reaction_floors_.push_back(from);
     const std::size_t level = reaction_floors_.size() - 1;
+    node_id element;
     while (custom_reactions_.size() > reaction_floors_[level]) {
-        const node_id element = custom_reactions_[reaction_floors_[level]].target;
         auto next = std::ranges::find_if(custom_reactions_,
                                          [element](const auto & r) { return r.target == element; });
+        if (!element || next == custom_reactions_.end()) {
+            element = custom_reactions_[reaction_floors_[level]].target;
+            next = std::ranges::find_if(custom_reactions_,
+                                        [element](const auto & r) { return r.target == element; });
+        }
         const std::size_t at = static_cast<std::size_t>(next - custom_reactions_.begin());
         const custom_element_reaction reaction = std::move(*next);
         custom_reactions_.erase(next);
