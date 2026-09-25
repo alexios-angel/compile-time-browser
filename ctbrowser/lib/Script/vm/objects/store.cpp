@@ -390,12 +390,59 @@ void context::store_property(value target, const std::string & name, value v) {
         if (!array_set_length(*arr, n)) { store_rejected_ = true; }
         return;
     }
+    // A FUNCTION'S WRITE TO A NAME IT DOES NOT OWN: OrdinarySet asks the
+    // CHAIN from `up` (10.1.9.2 step 2.a) - an inherited setter takes the
+    // write, an inherited read-only data property refuses it. TRUE when the
+    // chain decided; false means create an own property. Function.prototype's
+    // `caller` and `arguments` are %ThrowTypeError% accessors, which is how
+    // assigning either on a strict or bound function throws, and
+    // `class D extends B` inherits B's static setters.
+    const auto inherited_set = [&](value up) {
+        for (int depth = 0; depth < 64; ++depth) {
+            if (up.is_null()) { // the implicit Object.prototype ends a chain
+                object_object * table = prototype(proto_kind::object);
+                up = table != nullptr ? value::object(table) : value::undefined();
+                depth = 63;
+            }
+            if (!up.is_object_like()) { return false; }
+            property_descriptor found;
+            if (own_property(up, name, found)) {
+                if (found.is_accessor()) {
+                    if (found.setter.is_callable()) {
+                        const value args[1] = {v};
+                        (void)call(found.setter, args, target);
+                    } else {
+                        store_rejected_ = true;
+                    }
+                    return true;
+                }
+                if (!found.writable) {
+                    store_rejected_ = true;
+                    return true;
+                }
+                return false;
+            }
+            if (up.is_kind(heap_kind::native)) {
+                // A native's null link is Function.prototype, not the end.
+                const value link = static_cast<native_object *>(up.as_heap())->proto_link;
+                object_object * fn_table = prototype(proto_kind::function);
+                up = !link.is_null()       ? link
+                     : fn_table != nullptr ? value::object(fn_table)
+                                           : value::undefined();
+            } else {
+                up = get_prototype(up);
+            }
+        }
+        return false;
+    };
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
         if (accessor_entry * entry = fn->find_accessor(name)) {
             if (entry->setter.is_callable()) {
                 const value args[1] = {v};
                 (void)call(entry->setter, args, target);
+            } else {
+                store_rejected_ = true; // an accessor with no setter refuses
             }
             return;
         }
@@ -406,8 +453,20 @@ void context::store_property(value target, const std::string & name, value v) {
                 store_rejected_ = true;
                 return;
             }
-        } else if (!fn->extensible || (name == "name" && !fn->name_erased)) {
+            fn->set(name, v);
+            return;
+        }
+        if (name == "name" && !fn->name_erased) {
             // ...and a native's synthesised `name` is non-writable too.
+            store_rejected_ = true;
+            return;
+        }
+        object_object * fn_table = prototype(proto_kind::function);
+        const value up = !fn->proto_link.is_null() ? fn->proto_link
+                         : fn_table != nullptr     ? value::object(fn_table)
+                                                   : value::undefined();
+        if (inherited_set(up)) { return; }
+        if (!fn->extensible) {
             store_rejected_ = true;
             return;
         }
@@ -450,38 +509,7 @@ void context::store_property(value target, const std::string & name, value v) {
             store_rejected_ = true;
             return;
         }
-        // NOT OWN: OrdinarySet asks the CHAIN (10.1.9.2 step 2.a) - an
-        // inherited setter takes the write, an inherited read-only data
-        // property refuses it. Function.prototype's `caller` and `arguments`
-        // are %ThrowTypeError% accessors, which is how assigning either on a
-        // strict function throws; `class D extends B` inherits B's statics.
-        value up = get_prototype(target);
-        for (int depth = 0; depth < 64; ++depth) {
-            if (up.is_null()) { // the implicit Object.prototype ends a chain
-                object_object * table = prototype(proto_kind::object);
-                up = table != nullptr ? value::object(table) : value::undefined();
-                depth = 63;
-            }
-            if (!up.is_object_like()) { break; }
-            property_descriptor found;
-            if (own_property(up, name, found)) {
-                if (found.is_accessor()) {
-                    if (found.setter.is_callable()) {
-                        const value args[1] = {v};
-                        (void)call(found.setter, args, target);
-                    } else {
-                        store_rejected_ = true;
-                    }
-                    return;
-                }
-                if (!found.writable) {
-                    store_rejected_ = true;
-                    return;
-                }
-                break;
-            }
-            up = get_prototype(up);
-        }
+        if (inherited_set(get_prototype(target))) { return; } // see inherited_set
         if (!closure->extensible) {
             store_rejected_ = true;
             return;

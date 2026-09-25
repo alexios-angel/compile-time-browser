@@ -222,6 +222,9 @@ int main() {
     js_expect("(function(){function g(){}g.caller=1;g.arguments=2;"
               "return String(g.caller)+String(g.arguments);})()",
               "nullnull");
+    js_expect("(function(){var b=function(){}.bind(null);try{b.caller=1;return 'no';}"
+              "catch(e){return e.name+','+b.hasOwnProperty('caller');}})()",
+              "TypeError,false");
     js_expect("(function(){class B{static set x(v){B.got=v;}}class D extends B{}D.x=5;"
               "return B.got+','+D.hasOwnProperty('x');})()",
               "5,false");
