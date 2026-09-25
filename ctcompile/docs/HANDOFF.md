@@ -22,6 +22,41 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Observed iterator state transport and captured storage, 2026-09-25 UTC
+
+Resumed clean **b0e40459** and its recorded Try/Invoke state boundary.
+**d1605217** carries next success/failure and both unsuppressed closes through
+verified exception regions. Next reads its result fields only in normal;
+failure uses its saved block arguments and marks done. Exhausted closes skip
+lookup and call. A normalized throwing close projects the original unwind tuple
+with its returned payload and pre-call saved values. All three Invokes retain
+**15 saved slots each**; Try keeps one result and the caught anchor cell.
+The explicit completion-normalization refusal remains: **no new native
+JavaScript source admission** is claimed.
+
+**f0e10301** discharges overwritten children first stored inside a conditional.
+Only an exact nested Stored operand qualifies; complete region inputs, contents,
+all-write acyclicity and return reachability still decide retention. Ten controls
+keep returned/yielded children, publication, other captures, cycles and nested
+origins refused or retained. The public legacy census is unchanged. The earlier
+raw **2/4 confined** measurement was not replayed in this iteration.
+
+Focused recovery **1/1, 5.28 s**, host contract **1/1, 2.75 s**, arrays
+**1/1, 5.27 s**, and the selected three-source differential check pass.
+All 24 generated C++ files retain the namespace invariant; seven final source
+hashes match the devbox. Formatting passes **1126 C++, 159 Python, 114 web files**.
+Final independent static review is clean. Full suites were skipped.
+
+**Next:** prove inactive completion transport inside the retained Try/Invoke
+regions, then extend the final next/done census to this protected shape. The
+open marker still reaches saved tuples; do not exempt it from poison checks
+without exact continuation proof. Preserve saved return values, caught anchor
+identity and source effects. Mutable exceptional state, nested allocation
+origins, raw helper CFGs, escaping node owners, unguarded Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-25-observed-state-transport.md).
+
 ## Iterator state lifetime and structured retention, 2026-09-25 UTC
 
 Resumed clean **82b3c7c4**, following the recorded Try/Invoke state boundary.
