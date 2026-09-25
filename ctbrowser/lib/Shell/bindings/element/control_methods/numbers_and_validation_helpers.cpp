@@ -31,7 +31,10 @@ double control_helpers::step_base_of(const read_txn & txn, dom_bindings * b, nod
             return *held;
         }
     }
-    return 0;
+    // The type's DEFAULT STEP BASE (4.10.5.4): only the week state has one,
+    // -259,200,000 - the Monday that starts 1970-W01, so a week value is a
+    // whole number of steps from it and `1970-W01` is not a mismatch.
+    return helpers.input_type(txn, b, id) == "week" ? -259'200'000.0 : 0;
 }
 
 std::optional<double> control_helpers::bound_of(const read_txn & txn, dom_bindings * b, node_id id,
@@ -62,6 +65,10 @@ bool control_helpers::will_validate(const read_txn & txn, dom_bindings * b, node
     return true;
 }
 
+// HTML 4.10.5.3.6's "compiled pattern regular expression": the attribute
+// ALONE must compile with the v flag - no u fallback, and a pattern such as
+// `a)(b` that only parses once wrapped is as invalid as `[(]` - and then the
+// anchored `^(?:` pattern `)$`, with v again. Null means no constraint.
 value control_helpers::compile_pattern(context & c, const std::string & pattern) const {
     const auto helpers = *this;
     auto * on = helpers.proto("ValidityState");
@@ -71,8 +78,8 @@ value control_helpers::compile_pattern(context & c, const std::string & pattern)
     if (!compiler.is_callable()) {
         script::program compiled = script::compiler::compile(
             "return (function (p) {\n"
+            "    try { new RegExp(p, 'v'); } catch (e) { return null; }\n"
             "    try { return new RegExp('^(?:' + p + ')$', 'v'); } catch (e) {}\n"
-            "    try { return new RegExp('^(?:' + p + ')$', 'u'); } catch (e) {}\n"
             "    return null;\n"
             "});\n");
         if (!compiled.ok) { return value::null(); }
@@ -102,12 +109,19 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
     if (!txn.contains(id)) { return flags; }
     const value custom = helpers.slot_of(c, b, id, custom_slot);
     if (custom.is_string() && !c.to_string(custom).empty()) { flags |= custom_error; }
-    // BARRED FROM CONSTRAINT VALIDATION - disabled, readonly, hidden -
-    // leaves every flag but customError false: the browsers agree and
-    // form-validation-validity-*.html assert it for each state.
-    if (!helpers.will_validate(txn, b, id)) { return flags; }
+    // BARRED FROM CONSTRAINT VALIDATION - disabled, readonly - is not a
+    // reason to clear the flags: validity reports what the control suffers
+    // from, and only willValidate, validationMessage and checkValidity ask
+    // whether it is a candidate (validator.js clones every control disabled
+    // and readonly and expects the same flags). What mutability DOES change
+    // is "suffering from being missing" for a text-ish input and a textarea,
+    // whose constraint says "and the element is mutable" (4.10.5.3.4,
+    // 4.10.11) - a checkbox, a radio group, a file or a select has no such
+    // clause.
     const std::string_view local = txn.local_name(id);
     const bool required = helpers.has_attribute(txn, b, id, "required");
+    const bool is_mutable =
+        !helpers.is_disabled(txn, b, id) && !helpers.has_attribute(txn, b, id, "readonly");
     if (local == "select") {
         if (required) {
             std::vector<node_id> options;
@@ -141,7 +155,9 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
         return flags;
     }
     if (local == "textarea") {
-        if (required && helpers.value_of(txn, b, id).empty()) { flags |= value_missing; }
+        if (required && is_mutable && helpers.value_of(txn, b, id).empty()) {
+            flags |= value_missing;
+        }
         return flags;
     }
     if (local != "input") { return flags; }
@@ -184,7 +200,7 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
         if (required) { flags |= value_missing; }
         return flags;
     }
-    if (required && text.empty()) { flags |= value_missing; }
+    if (required && is_mutable && text.empty()) { flags |= value_missing; }
     if (type == "email" && !text.empty()) {
         bool ok = true;
         if (helpers.has_attribute(txn, b, id, "multiple")) {
