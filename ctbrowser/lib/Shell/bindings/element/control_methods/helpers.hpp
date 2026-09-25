@@ -61,6 +61,7 @@ struct control_helpers {
     bool is_listed(const read_txn & txn, dom_bindings * b, node_id id) const;
     bool is_submittable(const read_txn & txn, node_id id) const;
     bool is_labelable(const read_txn & txn, dom_bindings * b, node_id id) const;
+    node_id labeled_control(const read_txn & txn, dom_bindings * b, node_id label) const;
     std::vector<node_id> elements_of_form(dom_bindings * b, node_id form) const;
     bool is_disabled(const read_txn & txn, dom_bindings * b, node_id id) const;
     bool in_radio_group(const read_txn & txn, dom_bindings * b, node_id a, node_id other) const;

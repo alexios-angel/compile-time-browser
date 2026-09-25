@@ -263,6 +263,37 @@ void control_helpers::children_replaced(dom_bindings * b, node_id id) const {
     held.selection = 0;
 }
 
+node_id control_helpers::labeled_control(const read_txn & txn, dom_bindings * b,
+                                         node_id label) const {
+    // A label's labeled control (4.10.4): the element its `for` names when
+    // that is labelable, else its first labelable descendant.
+    const auto helpers = *this;
+    const atom for_attr = b->atoms_->intern("for");
+    if (txn.has_attribute(label, for_attr)) {
+        const std::string_view want = txn.attribute_value(label, for_attr);
+        if (want.empty()) { return node_id{}; }
+        node_id found;
+        const atom id_attr = b->atoms_->intern("id");
+        helpers.walk_tree(txn, helpers.tree_top(txn, b, label), [&](node_id at2) {
+            if (!found && txn.attribute_value(at2, id_attr) == want) { found = at2; }
+        });
+        return helpers.is_labelable(txn, b, found) ? found : node_id{};
+    }
+    node_id found;
+    const auto walk = [&](auto && self, node_id at2) -> void {
+        for (const node_id child : txn.children(at2)) {
+            if (found) { return; }
+            if (helpers.is_labelable(txn, b, child)) {
+                found = child;
+                return;
+            }
+            self(self, child);
+        }
+    };
+    walk(walk, label);
+    return found;
+}
+
 void control_helpers::plain(script::object_object &) {}
 
 } // namespace ctbrowser::shell::detail

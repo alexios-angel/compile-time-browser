@@ -155,6 +155,11 @@ inline constexpr std::string_view internals_flag_prefix = "@#ctbrowser:internals
 inline constexpr std::string_view shadow_hidden_from_internals_key =
     "@#ctbrowser:shadow-hidden-from-internals";
 
+// Is this element - or an ancestor - `display: none`, i.e. not being
+// rendered? The innerText collector's answer (rendered_text.cpp).
+[[nodiscard]] bool element_unrendered(const read_txn & txn, atom_table & atoms,
+                                      const style::style_map * styles, node_id id);
+
 // The object behind an interface prototype, or null before the interfaces are
 // built - which is what every installer in this directory checks first.
 [[nodiscard]] inline script::object_object * prototype_object(const value & proto) {

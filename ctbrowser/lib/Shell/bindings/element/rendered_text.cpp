@@ -475,6 +475,13 @@ private:
 
 } // namespace
 
+namespace detail {
+bool element_unrendered(const read_txn & txn, atom_table & atoms, const style::style_map * styles,
+                        node_id id) {
+    return inner_text_collector{txn, atoms, styles}.unrendered(id);
+}
+} // namespace detail
+
 void dom_bindings::install_rendered_text(context & cx) {
     // --- innerText AND outerText, THE SETTER HALF -----------------------------
     //

@@ -91,32 +91,8 @@ void dom_bindings::install_control_collections_labels(context & cx) {
     // A label's labeled control: the element its `for` names when that is
     // labelable, else its first labelable descendant. `labels` on a control
     // is every label in its tree whose control it is.
-    const auto labeled_control = [helpers](const read_txn & txn, dom_bindings * b,
-                                           node_id label) -> node_id {
-        const atom for_attr = b->atoms_->intern("for");
-        if (txn.has_attribute(label, for_attr)) {
-            const std::string_view want = txn.attribute_value(label, for_attr);
-            if (want.empty()) { return node_id{}; }
-            node_id found;
-            const atom id_attr = b->atoms_->intern("id");
-            helpers.walk_tree(txn, helpers.tree_top(txn, b, label), [&](node_id at2) {
-                if (!found && txn.attribute_value(at2, id_attr) == want) { found = at2; }
-            });
-            return helpers.is_labelable(txn, b, found) ? found : node_id{};
-        }
-        node_id found;
-        const auto walk = [&](auto && self, node_id at2) -> void {
-            for (const node_id child : txn.children(at2)) {
-                if (found) { return; }
-                if (helpers.is_labelable(txn, b, child)) {
-                    found = child;
-                    return;
-                }
-                self(self, child);
-            }
-        };
-        walk(walk, label);
-        return found;
+    const auto labeled_control = [helpers](const read_txn & txn, dom_bindings * b, node_id label) {
+        return helpers.labeled_control(txn, b, label);
     };
     helpers.accessor(cx, "HTMLLabelElement", "control",
                      [helpers, labeled_control](context & c, std::span<value>) {
