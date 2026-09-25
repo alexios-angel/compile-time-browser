@@ -672,6 +672,10 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                              measure_ ? zero_advance_of(get("font-family"), get("font-weight"),
                                                         get("font-style"), font_size)
                                       : 0.0f);
+            // ...its place among its siblings for sibling-index() and
+            // sibling-count() (sibling-function-container-query)...
+            box.lengths.sibling_index = levels_[d][path_[d]].facts.sibling_index;
+            box.lengths.sibling_count = levels_[d][path_[d]].facts.sibling_count;
             // ...and its `cq*` units measure the containers of the
             // container, as they would on the container itself
             // (container-units-in-at-container).

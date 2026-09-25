@@ -64,12 +64,20 @@ void browser::load_author_styles() {
     styles_->set_container_size(
         [this](node_id id) -> std::optional<ctbrowser::style::engine::container_size> {
             const ctbrowser::layout::fragment * f = fragments_.find(id);
-            // Size containment does not apply to an inline box, so it has no
-            // size to answer with (CSS Containment 2 §3.2).
+            // Size containment does not apply to an inline box, a table or
+            // an internal table box, and `display: contents` has no box at
+            // all - so none of them has a size to answer with (CSS
+            // Containment 2 §3.2, ineligible-containment,
+            // size-container-no-principal-box).
             if (f == nullptr || f->box == nullptr ||
                 f->box->kind == ctbrowser::layout::box_kind::inline_ ||
-                f->box->kind == ctbrowser::layout::box_kind::text) {
+                f->box->kind == ctbrowser::layout::box_kind::text ||
+                f->box->kind == ctbrowser::layout::box_kind::table) {
                 return std::nullopt;
+            }
+            if (f->box->style) {
+                const std::string_view display = f->box->style->get(atoms_.intern_lower("display"));
+                if (display == "contents" || display.starts_with("table")) { return std::nullopt; }
             }
             const ctbrowser::layout::resolved_edges e = ctbrowser::layout::edges_of(*f);
             ctbrowser::style::engine::container_size size{

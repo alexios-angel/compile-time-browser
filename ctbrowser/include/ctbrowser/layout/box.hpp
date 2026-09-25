@@ -557,9 +557,11 @@ private:
             b.clips_overflow = b.scroll_container ||
                                ascii_iequals(trimmed(prop(style, overflow_x_)), "clip") ||
                                ascii_iequals(trimmed(prop(style, overflow_y_)), "clip");
-            // Containment does not apply to an inline box (§3.2): only a box
-            // of its own - block-level, or an atomic inline - is contained.
-            if (b.kind != box_kind::inline_ && b.kind != box_kind::text) {
+            // Containment does not apply to an inline box or a table (§3.2):
+            // only a box of its own - block-level, or an atomic inline - and
+            // no table part is contained.
+            if (b.kind != box_kind::inline_ && b.kind != box_kind::text &&
+                b.kind != box_kind::table && !trimmed(prop(style, display_)).starts_with("table")) {
                 for (const atom name : {contain_, container_type_}) {
                     for (const std::string_view word :
                          split_top_level(prop(style, name), " \t\n")) {
