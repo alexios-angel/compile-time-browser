@@ -83,6 +83,19 @@ std::string fold_value(std::string text, std::string_view name,
         const css::value_check checked = css::check_declaration(name, result, false);
         return checked.valid ? checked.serialized : result;
     }
+    // A comma LIST computes item by item: `transition-delay: -500ms, 6s` is
+    // `-0.5s, 6s`, as its lone form is.
+    if (const auto items = split_top_level(text, ","); items.size() > 1) {
+        std::string result;
+        bool changed = false;
+        for (const std::string_view raw : items) {
+            const std::string_view item = trim(raw, html_whitespace);
+            const std::string one = component(item);
+            changed = changed || one != item;
+            result += (result.empty() ? "" : ", ") + one;
+        }
+        return changed ? result : text;
+    }
     // Shorthands have no range of their own. Clamp after expansion,
     // including components whose math was already folded above.
     return component(text);
