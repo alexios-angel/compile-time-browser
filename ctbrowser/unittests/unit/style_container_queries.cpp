@@ -36,6 +36,14 @@ void test_prelude() {
     CHECK_EQ(conditions_of("NAMe   (inline-sizE  < 1300px )"),
              std::string{"NAMe (inline-size < 1300px)"});
     CHECK_EQ(conditions_of("STYLE(--foo: bar)"), std::string{"style(--foo: bar)"});
+    CHECK_EQ(conditions_of("style(        --foo:bar   baz )"),
+             std::string{"style(--foo: bar   baz)"});
+    CHECK_EQ(conditions_of("style(( (  (( (--foo )) )  )))"),
+             std::string{"style((((((--foo))))))"});
+    CHECK_EQ(conditions_of("style(  ( --FOO: BAR) OR ( prop: val  ) )"),
+             std::string{"style((--FOO: BAR) or ( prop: val  ))"});
+    CHECK_EQ(conditions_of("style(100px  > --\\{foo >10px)"),
+             std::string{"style(100px > --\\{foo > 10px)"});
     CHECK_EQ(conditions_of("scroll-state(        scrollable:left)"),
              std::string{"scroll-state(scrollable: left)"});
     CHECK_EQ(conditions_of("scroll-STate(scrollable:    )"),
