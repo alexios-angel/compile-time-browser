@@ -637,6 +637,8 @@ int main() {
     module_refused("class F {} export default function F() {}");
     module_refused("var G; export default function* G() {}");
     module_accepted("export default class C {} export { C as D };");
+    // ...but a default EXPRESSION binds nothing, so its name is no duplicate.
+    module_accepted("const y = 42; export default y; export { y as z };");
     module_accepted("export default function F() {} export { F as G };");
     // A string ModuleExportName must be well-formed Unicode (16.2.2.1).
     module_refused("var x; export { x as '\\uD83D' };");
