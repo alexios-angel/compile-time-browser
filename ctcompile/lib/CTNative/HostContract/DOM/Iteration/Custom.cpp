@@ -208,6 +208,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                     projectBranches |= exactBoolean(branch.getCondition()).has_value();
                 }
+                if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
+                    projectBranches |= unary.getKind() == ctjs::UnaryKind::Not;
+                }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
                 for (auto & region : operation->getRegions()) {
@@ -233,6 +236,21 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             work.remaining -= static_cast<unsigned>(size * size);
             if (mlir::failed(mlir::verify(found))) { return ctjs::FuncOp{}; }
             mlir::PatternRewriter rewriter(candidate.getContext());
+            const auto folded = found.walk([&](ctjs::UnaryOp unary) {
+                if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (unary.getKind() != ctjs::UnaryKind::Not) { return mlir::WalkResult::advance(); }
+                auto input = unary.getOperand().getDefiningOp<ctjs::ConstantOp>();
+                if (!input) { return mlir::WalkResult::advance(); }
+                const auto value = PrimitiveAlternatives::literal(input.getValue());
+                if (!value.known) { return mlir::WalkResult::advance(); }
+                // Exact primitive truthiness proves both the result and the
+                // absence of hooks. Keep the input and all its other uses.
+                rewriter.setInsertionPoint(unary);
+                rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
+                    unary, ctjs::BooleanAttr::get(candidate.getContext(), !value.truthy));
+                return mlir::WalkResult::advance();
+            });
+            if (folded.wasInterrupted()) { return ctjs::FuncOp{}; }
             (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
             auto & root = found.getBody().front();
             while (true) {

@@ -6,6 +6,7 @@
 #include "DOMObservedState.hpp"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "check.hpp"
 
@@ -898,7 +899,18 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::NullAttr::get(context), false},
         {ctjs::UndefinedAttr::get(context), false},
     }};
-    for (unsigned control = 0; control != 116; ++control) {
+    const std::array<std::pair<mlir::Attribute, bool>, 9> negatedPredicates{{
+        predicates[0],
+        predicates[2],
+        predicates[6],
+        predicates[9],
+        predicates[10],
+        predicates[12],
+        predicates[13],
+        {ctjs::BooleanAttr::get(context, false), false},
+        {ctjs::BooleanAttr::get(context, true), true},
+    }};
+    for (unsigned control = 0; control != 156; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -967,12 +979,54 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto payload = terminal->getOperand(0);
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
-            const unsigned index = (control - 76) / 2;
-            const unsigned mutation = primitive ? 6 : (control - 104) / 2;
-            const bool selected = primitive ? predicates[index].second : true;
+            const bool computed = control >= 116;
+            const unsigned index = computed ? (control - 116) / 2 : (control - 76) / 2;
+            const unsigned mutation = computed    ? index == 12   ? 0
+                                                    : index == 13 ? 1
+                                                                  : 6
+                                      : primitive ? 6
+                                                  : (control - 104) / 2;
+            bool selected = primitive ? predicates[index].second : true;
             at.setInsertionPoint(moved);
             mlir::Value input;
-            if (mutation == 2) {
+            llvm::SmallVector<std::pair<ctjs::UnaryOp, bool>> evaluatedNots;
+            if (computed) {
+                const bool literal = index < negatedPredicates.size();
+                bool truth = literal ? negatedPredicates[index].second : index != 9;
+                if (index == 14) {
+                    input = other;
+                } else if (index == 15) {
+                    input = ctjs::CreateObjectOp::create(at, where, payload.getType());
+                } else if (index == 16) {
+                    input = ctjs::LoadGlobalOp::create(at, where, "condition-effect");
+                } else if (index == 18) {
+                    input = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Plus), other);
+                } else {
+                    const mlir::Attribute value =
+                        literal       ? negatedPredicates[index].first
+                        : index == 17 ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
+                                      : predicates[truth ? 6 : 0].first;
+                    input = ctjs::ConstantOp::create(at, where, value);
+                }
+                if (index == 19) {
+                    ctjs::StoreGlobalOp::create(at, where, "predicate-prefix-effect", other);
+                }
+                const unsigned depth = index == 9 ? 2 : index == 10 ? 3 : 1;
+                for (unsigned i = 0; i != depth; ++i) {
+                    auto operation = ctjs::UnaryOp::create(
+                        at, where, payload.getType(),
+                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), input);
+                    truth = !truth;
+                    evaluatedNots.emplace_back(operation, truth);
+                    input = operation;
+                }
+                selected = truth;
+                if (index == 11) {
+                    llvm::cast<ctjs::CallOp>(moved).getArgsMutable().slice(1, 1).assign(input);
+                }
+            } else if (mutation == 2) {
                 input = ctjs::CreateObjectOp::create(at, where, payload.getType());
             } else if (mutation == 3) {
                 input = ctjs::UnaryOp::create(
@@ -987,16 +1041,26 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                                     : predicates[6].first;
                 input = ctjs::ConstantOp::create(at, where, value);
             }
-            if (primitive) {
+            if (primitive || (computed && index < 12)) {
                 // The input still evaluates after projection. Compare against
-                // the same literal evaluation without the conditional edges.
-                mlir::OwningOpRef<mlir::ModuleOp> evaluated(candidate->clone());
+                // the same operands and known pure results without the edges.
+                mlir::IRMapping mapping;
+                mlir::OwningOpRef<mlir::ModuleOp> evaluated(
+                    llvm::cast<mlir::ModuleOp>((*candidate)->clone(mapping)));
+                for (auto [operation, value] : evaluatedNots) {
+                    auto copy = mapping.lookup(operation.getResult()).getDefiningOp();
+                    mlir::OpBuilder replace(copy);
+                    auto result = ctjs::ConstantOp::create(replace, copy->getLoc(),
+                                                           ctjs::BooleanAttr::get(context, value));
+                    copy->getResult(0).replaceAllUsesWith(result.getResult());
+                    copy->erase();
+                }
                 auto evaluatedProof = contract;
                 evaluatedProof.moduleSha256 =
                     ctcompile::ctnative::hostContractFingerprint(*evaluated);
                 auto error =
                     ctcompile::ctnative::prepareDOMEntry(*evaluated, evaluatedProof, 100000);
-                if (!check(!error, "primitive helper input establishes its branchless reference")) {
+                if (!check(!error, "proved helper input establishes its branchless reference")) {
                     llvm::consumeError(std::move(error));
                     continue;
                 }
@@ -1332,7 +1396,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                               (control >= 23 && control <= 29) ||
                               (control >= 36 && control <= 46) || control == 51 || control == 52 ||
                               (control >= 54 && control <= 57) || control == 62 || control == 63 ||
-                              (control >= 65 && control <= 69) || (control >= 74 && control < 104);
+                              (control >= 65 && control <= 69) ||
+                              (control >= 74 && control < 104) || (control >= 116 && control < 140);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1341,7 +1406,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                       limitedProof.moduleSha256 == fingerprint,
                   "reachable helper budget refusal preserves the entire module and contract");
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
-            if (control == 46 || control == 67 || control == 79) {
+            if (control == 46 || control == 67 || control == 79 || control == 137) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;
