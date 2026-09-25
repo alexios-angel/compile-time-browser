@@ -744,9 +744,7 @@ bool context::define_own_property(value target, const std::string & name,
                            ? wanted.held
                            : (exists && !current.is_accessor() ? current.held : value::undefined());
     if (target.is_object()) {
-        auto * obj = static_cast<object_object *>(target.as_heap());
-        obj->erase_accessor(name);
-        obj->define(name, held, attrs);
+        static_cast<object_object *>(target.as_heap())->define_over_accessor(name, held, attrs);
         return true;
     }
     if (target.is_kind(heap_kind::native)) {

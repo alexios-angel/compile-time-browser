@@ -167,6 +167,19 @@ int main() {
     js_expect("Object.prototype.isPrototypeOf.call(null, 1)", "false");
     js_expect("Object.prototype.isPrototypeOf.call(null, {})", "THREW");
 
+    // 10.1.11.1: a key keeps its creation position when redefined between
+    // data and accessor, and an accessor keeps its place across a delete.
+    js_expect("(function(){var o={};Object.defineProperty(o,'a',{get(){},enumerable:true,"
+              "configurable:true});o.b=2;Object.defineProperty(o,'a',{value:1});"
+              "return Object.keys(o).join();})()",
+              "a,b");
+    js_expect("(function(){var o={a:1,b:2};Object.defineProperty(o,'a',{get(){return 3;}});"
+              "return Object.keys(o).join()+o.a;})()",
+              "a,b3");
+    js_expect("(function(){var o={a:1,get b(){return 2;},c:3};delete o.a;"
+              "return Object.keys(o).join();})()",
+              "b,c");
+
     // 10.5 proxy invariants: a trap is held to what its target can be.
     js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
               "var p=new Proxy(t,{getOwnPropertyDescriptor(){return undefined;}});"
