@@ -415,7 +415,8 @@ std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at
     // browsing context, so their path ends at the Document - the page's
     // window is not an ancestor of another document's nodes.
     // Event-dispatch-bubbles-{true,false}.html count exactly that.
-    if (!secondary_) { path.push_back(path_step{node_id{}, listen_on::window}); }
+    // A FRAME's document has one: its own window (frames.cpp).
+    if (window_.is_object()) { path.push_back(path_step{node_id{}, listen_on::window}); }
     return path;
 }
 
@@ -426,7 +427,9 @@ value dom_bindings::object_of_step(context & cx, path_step step) {
     switch (step.on) {
     case listen_on::node: return wrap(cx, step.node);
     case listen_on::document: return document_;
-    case listen_on::window: return cx.has_global("window") ? cx.global("window") : window_;
+    case listen_on::window:
+        if (window_view_.is_heap()) { return window_view_; }
+        return cx.has_global("window") ? cx.global("window") : window_;
     case listen_on::object: return step.host;
     }
     return value::undefined();
@@ -442,7 +445,9 @@ dom_bindings::path_step dom_bindings::step_of(value self) {
     const auto same = [&](value other) {
         return self.is_heap() && other.is_heap() && self.bits() == other.bits();
     };
-    if (cx_ != nullptr && cx_->has_global("window") && same(cx_->global("window"))) {
+    if (same(window_view_)) { return path_step{node_id{}, listen_on::window}; }
+    if (!window_view_.is_heap() && cx_ != nullptr && cx_->has_global("window") &&
+        same(cx_->global("window"))) {
         return path_step{node_id{}, listen_on::window};
     }
     if (same(window_)) { return path_step{node_id{}, listen_on::window}; }

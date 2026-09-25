@@ -116,6 +116,9 @@ void initialise_event(context & cx, script::object_object & event, std::string_v
 bool dom_bindings::dispatch_to(value event, path_step at) {
     if (cx_ == nullptr || !event.is_object()) { return false; }
     context & cx = *cx_;
+    // In this document's realm: `window.event` and a window's `on<type>` are
+    // its realm's globals (frames.cpp).
+    const auto in_realm = enter_realm(cx);
     auto * object = static_cast<script::object_object *>(event.as_heap());
     // THE TWO REFUSALS, BEFORE ANYTHING ELSE HAPPENS - concept-event-dispatch
     // is not reached at all when either flag is wrong, and a nested dispatch of

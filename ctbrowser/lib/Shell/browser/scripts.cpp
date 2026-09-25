@@ -153,6 +153,10 @@ void browser::run_scripts() {
     bindings_->set_viewport_scroll_hooks([this] { return scroll_position(); },
                                          [this](point p) { scroll_to(p.x, p.y); });
     install_embedder_natives();
+    // WHAT A FRAME'S REALM STARTS AS: every global the page has before its
+    // first script - the builtins, the platform's interfaces, the embedder's
+    // natives - and none of the page's own `var`s (bindings/frames.cpp).
+    script_->set_realm_template(script_->globals());
     script_error_.clear();
 
     // THE PAGE IS PARSED FROM HERE, WITH ITS SCRIPTS RUN AS THE PARSER REACHES

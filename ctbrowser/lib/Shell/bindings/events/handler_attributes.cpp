@@ -293,6 +293,9 @@ value dom_bindings::compile_handler_attribute(context & cx, value self, const st
         return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
                ch == '_' || ch == '$';
     });
+    // COMPILED IN THE ELEMENT'S DOCUMENT'S REALM, so a frame's `onload="run()"`
+    // calls the frame's `run` whoever reads the handler first.
+    const auto in_realm = enter_realm(cx);
     script::program compiled = script::compiler::compile(
         std::string{"return (function (document, form) { with (document) { "} +
         (with_form ? "with (form) { " : "") + "with (this) { return function " +
@@ -343,6 +346,7 @@ void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
                                              const std::string & name) {
     auto * window = window_object();
     if (window == nullptr || !element) { return; }
+    const auto in_realm = enter_realm(cx);
     const value self = wrap(cx, element);
     if (!self.is_object()) { return; }
     auto * object = static_cast<script::object_object *>(self.as_heap());
@@ -373,6 +377,7 @@ void dom_bindings::refresh_forwarded_handler(context & cx, node_id element,
 // rather than a null in it - see assigned_slot.
 value dom_bindings::event_handler_get(context & cx, value self, const std::string & name) {
     if (!self.is_object()) { return value::null(); }
+    const auto in_realm = enter_realm(cx);
     auto * object = static_cast<script::object_object *>(self.as_heap());
     if (forwards_to_window(name) && window_object() != nullptr) {
         if (object == window_object()) {
@@ -435,6 +440,7 @@ value dom_bindings::event_handler_get(context & cx, value self, const std::strin
 void dom_bindings::event_handler_set(context & cx, value self, const std::string & name,
                                      value given) {
     if (!self.is_object()) { return; }
+    const auto in_realm = enter_realm(cx);
     auto * object = static_cast<script::object_object *>(self.as_heap());
     // `body.onload = f` IS `window.onload = f` - see forwards_to_window.
     if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {

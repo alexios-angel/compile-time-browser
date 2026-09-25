@@ -587,6 +587,24 @@ private:
     [[nodiscard]] script::object_object * window_object();
 
     void install_window(context & cx);
+    // The proxy a realm's scripts name this document's window by, over
+    // `target`, its misses read from `realm` - window.cpp.
+    [[nodiscard]] value make_window_view(context & cx, value target, script::realm_record & realm);
+    // `addEventListener` / `removeEventListener` on `window` and as bare
+    // globals of the current realm, for this document's window.
+    void install_window_listeners(context & cx, script::object_object & window);
+    // A frame document's own browsing context (frames.cpp): its window, its
+    // realm, the scripts its parse left, and the two events a load ends in.
+    void install_frame_realm(context & cx, dom_bindings & owner, node_id element);
+    void run_frame_scripts(context & cx);
+    void finish_frame_load(context & cx);
+    bool frame_load_finished_ = false;
+    // THIS DOCUMENT'S REALM, current until the result goes out of scope -
+    // nothing for a document without one of its own. Taken wherever the
+    // bindings run script, or read a window handler, on the document's behalf.
+    [[nodiscard]] std::optional<context::realm_scope> enter_realm(context & cx);
+    // A subresource URL as the asset registry names it - frames.cpp.
+    [[nodiscard]] std::string subresource_name(std::string_view src) const;
 
     // --- images and fetch --------------------------------------------------
 
@@ -737,6 +755,14 @@ private:
     value document_;
     value document_target_;
     value window_;
+    // The PROXY this document's scripts call `window` - what `currentTarget`
+    // is at the window step. The page's is its global object; a frame's is
+    // its own realm's.
+    value window_view_;
+    // THE REALM THIS DOCUMENT'S SCRIPTS RUN IN: null for the page's, which is
+    // the context's main realm, and for a document without a browsing
+    // context; a frame that runs its own scripts has one of its own.
+    script::realm_record * realm_ = nullptr;
     std::vector<std::unique_ptr<document>> owned_documents_;
     std::vector<std::unique_ptr<dom_bindings>> secondary_documents_;
     bool secondary_ = false;

@@ -3,6 +3,8 @@
 
 #include "internal.hpp"
 
+#include <optional>
+
 namespace ctbrowser::shell {
 
 using namespace detail;
@@ -150,6 +152,7 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     // otherwise sweep the object the proxy is about to point at.
     mark(document_target_);
     mark(window_);
+    mark(window_view_);
     // AND EVERY DOCUMENT THIS ONE MADE, recursively - a document made by a
     // document made by the page is still reachable only from here.
     for (const auto & made : secondary_documents_) { made->mark_roots(mark); }
@@ -338,7 +341,12 @@ void dom_bindings::mutated() {
 // ponytail: creation order, not tree order - the corpus inserts in the order
 // it creates. Sort by tree position if a page ever depends on it.
 void dom_bindings::run_inserted_scripts() {
-    if (unstarted_scripts_.empty() || cx_ == nullptr || secondary_ || moving_) { return; }
+    // A frame's document runs what its scripts insert, in the frame's realm; a
+    // document with no browsing context (createHTMLDocument's) runs nothing.
+    if (unstarted_scripts_.empty() || cx_ == nullptr || (secondary_ && realm_ == nullptr) ||
+        moving_) {
+        return;
+    }
     context & cx = *cx_;
     const atom src_name = atoms_->intern("src");
     const atom type_name = atoms_->intern("type");
@@ -414,7 +422,8 @@ void dom_bindings::run_inserted_scripts() {
                 native(cx, "external script",
                        [this, id, src](context & c, std::span<value>) {
                            const std::vector<std::byte> bytes =
-                               assets_ == nullptr ? std::vector<std::byte>{} : assets_->load(src);
+                               assets_ == nullptr ? std::vector<std::byte>{}
+                                                  : assets_->load(subresource_name(src));
                            if (!bytes.empty()) {
                                std::string text(reinterpret_cast<const char *>(bytes.data()),
                                                 bytes.size());
@@ -436,6 +445,9 @@ void dom_bindings::run_inserted_scripts() {
 // afterwards; an uncaught throw is reported, and the caller carries on.
 void dom_bindings::execute_script_element(context & cx, node_id id, const std::string & source) {
     if (doc_ == nullptr) { return; }
+    // IN THIS DOCUMENT'S REALM - a frame's script declares into the frame's
+    // globals and reads the frame's `document` (frames.cpp).
+    const auto in_realm = enter_realm(cx);
     const atom src_name = atoms_->intern("src");
     {
         // `document.currentScript` is this element while it runs - and while
@@ -501,8 +513,14 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
             return;
         }
         const script::program & kept = cx.own_program(std::move(compiled));
+        // Its `var`s exist before it starts, as a parser-run script's do
+        // (browser/scripts.cpp; GlobalDeclarationInstantiation).
+        for (const std::string & name : kept.hoisted_vars) {
+            if (!cx.has_global(name)) { cx.define_global(name, value::undefined()); }
+        }
         auto * entry = cx.allocate<script::closure_object>(&kept.functions[0]);
         entry->owner = &kept;
+        entry->realm = &cx.current_realm();
         bool threw = false;
         value thrown = value::undefined();
         (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);

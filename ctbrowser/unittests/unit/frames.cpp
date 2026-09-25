@@ -2,15 +2,15 @@
 //
 // Its own file because what it pins down is a MODEL rather than a method, the
 // same way unit/second_document.cpp does: a frame is a second `dom_bindings`
-// over its own tree, sharing the realm, and the file that builds it is
-// lib/Shell/bindings/frames.cpp. These cases are the parts of that decision
-// that would otherwise drift.
+// over its own tree, with a REALM of its own for its scripts, and the file that
+// builds it is lib/Shell/bindings/frames.cpp. These cases are the parts of that
+// decision that would otherwise drift.
 //
-// THREE OF THEM ASSERT THAT SOMETHING DOES NOT WORK, and those are the
-// important ones. A frame's document runs no script, a frame's window is not a
-// second realm, and a `src` that resolves to nothing still leaves a Document
-// behind and reports `error` rather than `load`. A test that only checked the
-// happy path would let each of those turn into a silent wrong answer.
+// TWO OF THEM ASSERT A LIMIT, and those are the important ones: the frame's
+// realm shares the page's intrinsics (one `Array`, one `Node`), and a `src`
+// that resolves to nothing still leaves a Document behind and reports `error`
+// rather than `load`. A test that only checked the happy path would let each
+// of those turn into a silent wrong answer.
 //
 // THE ORDERING IS THE POINT of the last two: a page's own `load` handler is
 // where a test reads `frame.contentDocument`, so the frame's document has to
@@ -184,21 +184,41 @@ void test_a_data_url_frame_carries_its_own_type() {
        "document.getElementById('f').contentDocument.contentType", "text/html");
 }
 
-void test_a_frame_runs_no_script() {
-    // DELIBERATE, and asserted so it stays deliberate: one realm and one event
-    // loop mean a frame's script would be the page's script wearing the
-    // frame's name.
+void test_a_frame_runs_its_scripts_in_its_own_realm() {
+    // The frame's `var`s are the frame's and not the page's; its function,
+    // called BY THE PAGE, reads the frame's `document` and the frame's
+    // globals (dom/ranges' Range-test-iframe.html is exactly this: the page
+    // calls the frame's `run()`); an inline handler in the frame compiles in
+    // the frame's realm; and the frame's window hears its own `load` before
+    // the <iframe>'s reaches the page. The intrinsics are still shared.
     browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
     page.assets().add("scripted.html",
-                      bytes_of("<html><body><script>window.__ranInFrame = 1;</script>"
-                               "</body></html>"));
-    page.load_html("<!DOCTYPE html><html><body><iframe src=scripted.html></iframe>"
-                   "<script>window.addEventListener('load', function () {"
-                   " console.log(String(window.__ranInFrame)); });</script></body></html>");
+                      bytes_of("<html><head><title>framed</title></head>"
+                               "<body onload=\"log.push('body:' + where)\"><script>"
+                               "var log = []; var where = 'frame'; window.__ranInFrame = 1;"
+                               "function run() { return document.title + ':' + where; }"
+                               "addEventListener('load', function () { log.push('listener'); });"
+                               "</script></body></html>"));
+    page.load_html(
+        "<!DOCTYPE html><html><head><title>page</title></head><body>"
+        "<iframe id=f src=scripted.html></iframe><script>"
+        "var where = 'page'; var order = [];"
+        "document.getElementById('f').addEventListener('load', function () {"
+        "  order.push(this.contentWindow.log.slice().sort().join('+')); });"
+        "window.addEventListener('load', function () {"
+        "  var f = document.getElementById('f'), w = f.contentWindow;"
+        "  console.log([String(window.__ranInFrame), w.__ranInFrame, w.run(), w.where, where,"
+        "    typeof run, w.document === f.contentDocument, w.parent === window,"
+        "    w.Array === Array, order.join('|')].join());"
+        "});</script></body></html>");
     for (int i = 0; i < 3; ++i) { (void)page.tick(16.0); }
     const std::vector<std::string> & logged = page.bindings().console_output();
     CHECK(!logged.empty());
-    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"undefined"}); }
+    if (!logged.empty()) {
+        CHECK_EQ(logged.back(), std::string{"undefined,1,framed:frame,frame,page,undefined,true,"
+                                            "true,true,body:frame+listener"});
+    }
 }
 
 void test_a_named_frame_is_its_window_on_the_window() {
@@ -362,7 +382,7 @@ int main() {
     test_the_load_event_arrives_at_the_frame();
     test_a_frame_appended_by_script_loads_too();
     test_a_data_url_frame_carries_its_own_type();
-    test_a_frame_runs_no_script();
+    test_a_frame_runs_its_scripts_in_its_own_realm();
     test_a_form_submits_into_a_named_frame();
     REPORT("frames");
 }
