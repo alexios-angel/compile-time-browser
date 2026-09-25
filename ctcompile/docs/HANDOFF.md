@@ -40,20 +40,36 @@ The devbox built `ctcompile-test-exception-recovery`,
 `ctcompile_host_contract` **1/1, 2.67 s**. Formatting passed **1126 C++, 159
 Python, 114 web files**; diff checks passed. Full suites were skipped.
 
-**Source follow-up at this checkpoint:** both original iterator witnesses
-completed their raw/structured native checks. The new getter conditional
-witness executed from raw import, then its structured `scf.if` form refused
-with `DOM Symbol.iterator identity method has additional effects`. The Python
-follow-up preserves both derived source witnesses and explicitly checks that
-structured refusal. Its focused two-source gate is queued in
-`/tmp/ctcompile-iteration20/source-gate.sh`; do not count it as passed yet.
-No C++ or escape replay is needed for this test-only follow-up.
+**063e9149** adds the source-test follow-up. Both derived conditional helper
+witnesses pass:
+Node/VM observations agree, **four generated C++ files and eight GCC/Clang
+binaries** pass in both printer modes, with real DOM identity, write ordering,
+two documents and 16 lifetimes checked. Eight structured refusals cover both
+providers and optimization modes; two raw zero-budget refusals pass. Generated
+C++ and linked binaries contain no Script/AOT dependency. All six final source
+hashes match the devbox. All 10 existing C++ raw literals and 71 Python multiline
+literal occurrences remain unchanged.
 
-**Next:** structured conditional helper normalization before the existing
-getter/identity/capture proofs; dynamic branches with differing payloads or
-effects remain unproved. Repeated allocation instances/lifetimes, mutable
-exceptional state, escaping owners, unguarded Bootstrap defaults, the native
-application driver and full native Bootstrap remain unfinished.
+The earlier source run completed both unchanged original witnesses through raw
+and structured execution, then exposed the new structured witness's existing
+`scf.if` refusal. The final two-source selector tests that boundary explicitly:
+`DOM Symbol.iterator identity method has additional effects`. Passing C++ and
+escape checks were not repeated for the Python-only expectation correction.
+Logs, selector and generated C++ are in `/tmp/ctcompile-iteration20/`.
+
+**Next:** `prepareTarget` in `HostContract/DOM/Iteration/Custom.cpp` skips helpers
+that already have one block. Project exact Boolean, zero-result `scf.if` arms
+there under the existing private-candidate budget, using the projection idiom
+in `HostContract/DOM/Preparation.cpp`, then retain the getter/identity/capture
+proofs. Preserve condition input evaluation, selected effects and rollback on
+exhaustion; result-carrying arms need separate payload correspondence. Dynamic
+branches with differing payloads/effects, repeated allocation instances/lifetimes,
+mutable exceptional state, escaping owners, unguarded Bootstrap defaults, the
+native application driver and full native Bootstrap remain unfinished.
+
+Full CTest/compiler lit, the whole browser fixture, broad matrices/corpora,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance runs were skipped. No browser/runtime implementation changed.
 
 ## Single-iteration allocation confinement, 2026-09-25 UTC
 
