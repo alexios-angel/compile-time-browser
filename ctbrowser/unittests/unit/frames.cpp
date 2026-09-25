@@ -254,6 +254,26 @@ void test_windows_post_messages_to_each_other() {
     }
 }
 
+void test_a_frame_window_scrolls_its_own_viewport() {
+    // scrollIntoView-iframes.html: a frame's message handler answers with its
+    // `scrollY`, which a frame window did not have.
+    is("<iframe id=f src=inner.html></iframe>",
+       "[typeof document.getElementById('f').contentWindow.scrollY,"
+       " typeof document.getElementById('f').contentWindow.scrollTo].join()",
+       "number,function");
+}
+
+void test_a_frames_function_and_eval_are_the_frames() {
+    // CreateDynamicFunction and PerformEval take the callee's realm: code made
+    // by a frame's Function, or run by its eval, resolves its free names in
+    // the frame - here the frame's named element, which the page lacks.
+    is("<iframe id=f src=inner.html></iframe>",
+       "[new (document.getElementById('f').contentWindow.Function)('return typeof greeting')(),"
+       " document.getElementById('f').contentWindow.eval('typeof greeting'),"
+       " typeof greeting].join()",
+       "object,object,undefined");
+}
+
 void test_report_error_fires_at_its_this_window() {
     // reporterror-cross-realm-method.html: the page's `reportError` called on
     // a frame's window reports in the FRAME - `this`'s global, not the realm
@@ -437,6 +457,8 @@ int main() {
     test_a_frame_runs_its_scripts_in_its_own_realm();
     test_windows_post_messages_to_each_other();
     test_report_error_fires_at_its_this_window();
+    test_a_frame_window_scrolls_its_own_viewport();
+    test_a_frames_function_and_eval_are_the_frames();
     test_a_form_submits_into_a_named_frame();
     REPORT("frames");
 }

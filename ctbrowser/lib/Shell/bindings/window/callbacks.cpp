@@ -7,6 +7,20 @@
 
 namespace ctbrowser::shell {
 
+namespace {
+
+// The global a callback reports its exceptions at: its function's realm's
+// ("report the exception", HTML 8.1.4.4), else the running realm's.
+[[nodiscard]] value callback_global(context & cx, value callback) {
+    const auto * closure = callback.is_kind(script::heap_kind::function)
+                               ? static_cast<const script::closure_object *>(callback.as_heap())
+                               : nullptr;
+    return closure != nullptr && closure->realm != nullptr ? closure->realm->global_this
+                                                           : cx.global_this();
+}
+
+} // namespace
+
 void dom_bindings::set_alert_hook(std::function<void(const std::string &)> hook) {
     on_alert_ = std::move(hook);
 }
@@ -163,7 +177,11 @@ std::size_t dom_bindings::run_due_callbacks() {
             const std::string fault = cx_->failed()
                                           ? cx_->take_error()
                                           : "uncaught " + detail::describe_thrown(*cx_, thrown);
-            const bool handled = dispatch_error_value(fault, thrown);
+            // At the CALLBACK's global ("report the exception" in the timer
+            // task): a frame's function handed to the page's setTimeout
+            // reports in the frame (settimeout-cross-realm-callback-...).
+            const bool handled =
+                bindings_of(callback_global(*cx_, t.callback)).dispatch_error_value(fault, thrown);
             if (!handled && callback_error_.empty()) {
                 callback_error_ = "setTimeout callback: " + fault;
             }
@@ -343,12 +361,7 @@ void dom_bindings::install_timers(context & cx) {
             c.throw_error("TypeError", "queueMicrotask: the callback is not a function");
             return value::undefined();
         }
-        const auto * closure = callback.is_kind(script::heap_kind::function)
-                                   ? static_cast<const script::closure_object *>(callback.as_heap())
-                                   : nullptr;
-        const value window = closure != nullptr && closure->realm != nullptr
-                                 ? closure->realm->global_this
-                                 : c.global_this();
+        const value window = callback_global(c, callback);
         auto * job = c.allocate<script::native_object>(
             "queueMicrotask job", [this, callback, window](context & j, std::span<value>) {
                 bool threw = false;

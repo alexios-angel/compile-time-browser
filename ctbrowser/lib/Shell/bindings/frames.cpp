@@ -552,6 +552,11 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     install_window_listeners(cx, *frame_window);
     install_post_message(cx, *frame_window);
     install_window_handlers(cx, *frame_window);
+    // scrollX/scrollY and scroll()/scrollTo()/scrollBy() over THIS document's
+    // viewport: a frame script reading `scrollY` threw a ReferenceError, and a
+    // test waiting on the frame's reply to a message timed out on it
+    // (cssom-view/scrollIntoView-iframes.html).
+    install_window_scrolling(cx, *frame_window);
     const value frame_dispatch =
         native(cx, "dispatchEvent", [this](context & c, std::span<value> a) {
             const value event = arg(a, 0);
@@ -566,6 +571,33 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
         });
     frame_window->set("dispatchEvent", frame_dispatch);
     cx.define_global("dispatchEvent", frame_dispatch);
+    // `Function` AND `eval` OF THIS REALM. CreateDynamicFunction and
+    // PerformEval take the CALLEE's realm (20.2.1.1.1, 19.2.1.1), so
+    // `new frames[0].Function(src)` is a function of frame 0 - its free names
+    // are the frame's globals and its throws are reported at the frame's
+    // window - and `contentWindow.eval(src)` runs in the frame. Each wraps the
+    // one intrinsic inside a realm_scope; `prototype` stays %Function.prototype%
+    // (the shared-intrinsics ceiling noted above).
+    for (const char * name : {"Function", "eval"}) {
+        const value intrinsic = cx.global(name);
+        if (!intrinsic.is_callable()) { continue; }
+        script::realm_record * const frame_realm = &realm;
+        auto * wrapper = cx.allocate<script::native_object>(
+            name, [intrinsic, frame_realm](context & c, std::span<value> args) {
+                const context::realm_scope in_frame{c, *frame_realm};
+                return c.call(intrinsic, args);
+            });
+        wrapper->retained.push_back(intrinsic);
+        if (std::string_view{name} == "Function") {
+            wrapper->define("prototype", cx.lookup_property(intrinsic, "prototype"),
+                            script::attr_none);
+        } else {
+            wrapper->is_constructor = false;
+        }
+        wrapper->define("length", value::number(1), script::attr_configurable);
+        wrapper->define("name", cx.string(name), script::attr_configurable);
+        cx.define_global(name, value::object(wrapper));
+    }
 }
 
 dom_bindings & dom_bindings::bindings_of(value window) {
