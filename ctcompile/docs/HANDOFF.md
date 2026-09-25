@@ -22,6 +22,66 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator helper payloads and conditional stores, 2026-09-25 UTC
+
+Resumed **d63eac23** and its result-bearing helper boundary. The checkout was
+clean; the old `codex-wip-20260907` tip is already an ancestor. Two editing agents
+hit service limits after saving candidates; the parent finished their review,
+formatting, validation and commits.
+
+**d111a0a4** substitutes the selected `scf.yield` payload of an exact Boolean
+helper branch after verification, using the existing projection idiom. Selected
+producers and effects keep their order; receiver, capture, record and complete
+DOM proofs still run. Twenty new controls (76 total) cover tuple positions,
+selected record/capture producers, wrong payloads, unknown conditions, effects
+and private-candidate rollback, including late nonzero budget exhaustion.
+Former refusal control 51 now passes. Independent native review found no defects.
+
+**c9e17c54** admits guard-array stores inside already-proved single-visit
+conditional arms. The existing index/receiver footprint, exact path replay,
+every exit and all-write acyclicity checks remain mandatory. Sixteen new rows
+and one former refusal cover saved/returned aliases, overwritten graphs, cycles,
+unknown values/keys/receivers and zero/repeated visits. Existing stale-solver,
+forged-marker and every-budget checks also pass. This proves frame confinement,
+not region lifetime or native ownership.
+
+The devbox built `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_exception_recovery` **1/1, 5.60 s**,
+`ctcompile_host_contract` **1/1, 2.74 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 4.74 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.01 s**.
+
+Two derived source witnesses each contain three result-bearing helper branches:
+iterator identity, next record and thrown DOM-node payload. Raw and structured
+preparation pass; Node/VM observations agree. **20 generated C++ files and
+40 GCC/Clang binaries** pass across both printers, both structured providers and
+optimization modes, ordered DOM writes, two documents and 16 lifetimes. Ten
+zero-budget refusals pass. Generated source and linked symbols have no Script/AOT
+dependency; inspected output calls existing public DOM helpers with typed values.
+All five final code/test hashes match the devbox. The original 10 C++ raw
+literals and 71 Python multiline literals remain unchanged. Formatting passes
+**1126 C++, 159 Python, 114 web files**; diff checks pass. Logs, selectors,
+review and emitted files are in `/tmp/ctcompile-iteration22/`.
+
+**Next:** helper predicates derived from non-Boolean constants still refuse
+(control 52 uses Number zero); prove their exact primitive truthiness before
+widening `exactBoolean`. Dynamic branches with differing payloads/effects remain
+a separate proof boundary. Escape analysis still refuses branch-local computed
+store keys and receivers without an invariant snapshot; prove those inputs
+before widening the counted-store footprint. Repeated allocation identities and
+lifetimes, mutable exceptional state, escaping owners, unguarded Bootstrap
+defaults, the native application driver and full native Bootstrap remain.
+
+Full CTest/compiler lit, the whole browser fixture, broad corpora/matrices,
+raw escape oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and
+performance runs were skipped. No full-Bootstrap admission or raw-oracle gain is
+claimed. Linux process inspection found the live Claude loop; Windows
+Get-CimInstance returned no matching identities. Concurrent-agent rules applied,
+and no browser/runtime/shared implementation changed.
+
 ## Structured iterator helper branches, 2026-09-25 UTC
 
 Resumed **84fdf55f** and the interrupted iteration21 candidates.
