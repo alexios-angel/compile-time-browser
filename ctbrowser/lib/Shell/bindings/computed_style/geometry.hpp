@@ -275,6 +275,32 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         return std::string{};
     }
+    // ...AND A DECLARED DISPLAY, BLOCKIFIED where CSS Display 3 §2.7 says the
+    //     box is: the root, a flex or grid item, and an absolutely positioned
+    //     or floated box. The inner display survives and the outer becomes
+    //     block - `inline-table` is `table`, `ruby` is `block ruby`, and an
+    //     internal table or ruby display, `inline` and `run-in` are `block`.
+    if (property == "display") {
+        const std::string shown = collapse_keyword(text);
+        const std::string position = collapse_keyword(declared("position"));
+        const std::string floating = collapse_keyword(declared("float"));
+        const bool blockify = at.is_root || at.flex_item || at.grid_item ||
+                              position == "absolute" || position == "fixed" ||
+                              (!floating.empty() && floating != "none");
+        if (!blockify || ascii_iequals_any(shown, {"none", "contents"})) { return shown; }
+        if (shown.starts_with("inline-") && shown != "inline-block") { return shown.substr(7); }
+        if (shown == "ruby") { return "block ruby"; }
+        for (const std::string_view outer : {"inline ", "run-in "}) {
+            if (!shown.starts_with(outer)) { continue; }
+            const std::string inner = shown.substr(outer.size());
+            return inner == "ruby" ? "block ruby" : inner;
+        }
+        if (shown.starts_with("table-") || shown.starts_with("ruby-") ||
+            ascii_iequals_any(shown, {"inline", "inline-block", "run-in"})) {
+            return "block";
+        }
+        return shown;
+    }
     // 2c. THE AUTOMATIC MINIMUM SIZE, reported the way Chrome reports it. The
     //     initial value of `min-width`/`min-height` is `auto`, and Chrome
     //     answers that verbatim for a FLEX ITEM - where `auto` means the

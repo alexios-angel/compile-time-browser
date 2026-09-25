@@ -33,7 +33,8 @@ constexpr property_syntax table[] = {
      "block inline inline-block flex inline-flex grid inline-grid none table inline-table "
      "table-row table-row-group table-header-group table-footer-group table-column "
      "table-column-group table-cell table-caption list-item flow-root contents ruby run-in "
-     "ruby-base ruby-text ruby-base-container ruby-text-container flow",
+     "ruby-base ruby-text ruby-base-container ruby-text-container flow grid-lanes "
+     "inline-grid-lanes",
      "inline", false, false},
     {"position", k::keyword_only, "static relative absolute fixed sticky", "static", false, false},
     {"float", k::keyword_only, "none left right inline-start inline-end", "none", false, false},
