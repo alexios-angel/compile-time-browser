@@ -804,14 +804,18 @@ void install_object(context & cx) {
     // drained the source first and lost every one of those orderings.
     method(cx, object_ctor, "fromEntries", 1, [](context & c, std::span<value> a) {
         if (!object_coercible(c, arg_at(a, 0), "Object.fromEntries")) { return value::undefined(); }
+        // A getter on an entry or a key's toString that throws has LANDED on
+        // the page's handler by the time it returns (context::unwinds), and
+        // IteratorClose (7.4.11) is still owed after it.
+        const detail::unwind_watch watch{c};
         object_object * out = new_table(c);
         const value made = value::object(out);
         const context::rooted keep{c, made};
         const value iterator = c.get_iterator(a[0]);
-        if (c.throw_pending() || !iterator.is_object()) { return value::undefined(); }
+        if (watch.threw() || !iterator.is_object()) { return value::undefined(); }
         const context::rooted keep_iterator{c, iterator};
         const value next = c.lookup_property(iterator, "next");
-        if (c.throw_pending()) { return value::undefined(); }
+        if (watch.threw()) { return value::undefined(); }
         const auto close = [&] {
             const value ret = c.lookup_property(iterator, "return");
             if (ret.is_callable()) { (void)c.call(ret, std::span<const value>{}, iterator); }
@@ -819,7 +823,7 @@ void install_object(context & cx) {
         for (;;) {
             bool done = false;
             const value entry = c.iterator_step(iterator, next, done);
-            if (c.throw_pending()) { return value::undefined(); }
+            if (watch.threw()) { return value::undefined(); }
             if (done) { break; }
             if (!entry.is_object_like()) {
                 close();
@@ -828,19 +832,19 @@ void install_object(context & cx) {
             }
             const context::rooted keep_entry{c, entry};
             const value key = c.lookup_index(entry, value::number(0));
-            if (c.throw_pending()) {
+            if (watch.threw()) {
                 close();
                 return value::undefined();
             }
             const context::rooted keep_key{c, key};
             const value held = c.lookup_index(entry, value::number(1));
-            if (c.throw_pending()) {
+            if (watch.threw()) {
                 close();
                 return value::undefined();
             }
             const context::rooted keep_held{c, held};
             const std::string name = c.to_string(key);
-            if (c.throw_pending()) {
+            if (watch.threw()) {
                 close();
                 return value::undefined();
             }
