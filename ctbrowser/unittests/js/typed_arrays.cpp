@@ -406,5 +406,39 @@ int main() {
               "1,2,3|0.0999755859375");
     js_expect("new Float16Array(new Uint8Array([1, 2])).join()", "1,2");
 
+    // --- 10.4.5: a canonical numeric key never leaves the typed array --------
+    js_expect(
+        "(() => { Object.defineProperty(Uint8Array.prototype, '1.5', {get() { throw 1; },"
+        "configurable: true}); const a = new Uint8Array([7, 8]); const r = [a['1.5'], "
+        "a[1.5], a['-0'], a[-1], '1.5' in a, Reflect.has(a, '-0'), delete a['1.5'], "
+        "delete a[5], delete a[0]].join(); delete Uint8Array.prototype['1.5']; return r; })()",
+        ",,,,false,false,true,true,false");
+    js_expect("(() => { const a = new Uint8Array(1); let n = 0; a['-0'] = {valueOf() { ++n; "
+              "return 1; }}; a[1.5] = 3; return n + ',' + a[0] + ',' + Object.keys(a).join(); })()",
+              "1,0,0");
+    js_expect("(() => { const a = new Uint8Array(1); a['1.0'] = 5; a['+1'] = 6; "
+              "return a['1.0'] + a['+1'] + ',' + Object.keys(a).join(); })()",
+              "11,0,1.0,+1");
+    // ...and a typed array up the chain answers [[Set]] for another receiver
+    js_expect("(() => { const ta = new Uint8Array(1); const o = Object.create(ta); o[5] = 1; "
+              "o['1.5'] = 2; o[0] = 3; return [o.hasOwnProperty(5), o.hasOwnProperty('1.5'), "
+              "o.hasOwnProperty(0), ta[0]].join(); })()",
+              "false,false,true,0");
+    js_expect("(() => { let n = 0; const r = {}; const v = {valueOf() { ++n; return 1; }}; "
+              "Reflect.set(new Int8Array(2), 9, v, r); Reflect.set(new Int8Array(2), 0, v, r); "
+              "return n + ',' + (r[0] === v) + ',' + Object.keys(r).join(); })()",
+              "0,true,0");
+    // OwnPropertyKeys: indices, then strings, then symbols - arrays alike
+    js_expect("(() => { const s = Symbol('s'); const a = new Uint8Array(2); a[s] = 1; a.x = 2; "
+              "const b = [7]; b[s] = 1; b.y = 2; return Reflect.ownKeys(a).map(String).join() + "
+              "'|' + Reflect.ownKeys(b).map(String).join() + '|' + "
+              "Object.getOwnPropertySymbols(b).length; })()",
+              "0,1,x,Symbol(s)|0,length,y,Symbol(s)|1");
+    // an ordinary array's non-index Number key is the property its ToString names
+    js_expect("(() => { const a = [1, 2, 3]; a[-1] = 'm'; a[1.5] = 'h'; "
+              "return [a[1.5], a['-1'], a.length, Object.keys(a).join('|')].join(); })()",
+              "h,m,3,0|1|2|-1|1.5");
+    js_expect("'abc'[1.5] + ',' + 'abc'[1]", "undefined,b");
+
     REPORT("typed_arrays");
 }

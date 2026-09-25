@@ -92,6 +92,31 @@ void test_algebra() {
 }
 
 void test_extras() {
+    // forEach walks the live list: a deleted-then-re-added member is visited
+    // again at the end, and deleting the current one skips nothing.
+    expect_result("const s = new Set([1, 2, 3]); const seen = []; s.forEach(v => { seen.push(v);"
+                  " if (v === 1) { s.delete(1); s.add(1); } }); return seen.join();",
+                  "1,2,3,1");
+    expect_result("const m = new Map([['a', 1], ['b', 2], ['c', 3]]); const seen = [];"
+                  " m.forEach((v, k) => { seen.push(k); if (k === 'a') m.delete('a'); });"
+                  " return seen.join();",
+                  "a,b,c");
+    // ...and so do the iterators (24.1.5.1): an entry added mid-walk is
+    // visited, one deleted before its turn is not, finished stays finished,
+    // and an `entries` pair is a fresh array.
+    expect_result("const m = new Map([[1, 11], [2, 22]]); const it = m[Symbol.iterator]();"
+                  " it.next(); m.set(3, 33); const r = [...it].map(p => p[0]).join();"
+                  " m.set(4, 44); return r + '|' + it.next().done;",
+                  "2,3|true");
+    expect_result("const m = new Map([['a', 1], ['b', 2], ['c', 3]]); const it = m.keys();"
+                  " it.next(); m.delete('a'); return [...it].join();",
+                  "b,c");
+    expect_result("const s = new Set([1, 2]); const it = s.values(); it.next(); s.clear();"
+                  " s.add(5); return [...it].join();",
+                  "5");
+    expect_result("const m = new Map([[1, 2]]); const p = m.entries().next().value; p[1] = 9;"
+                  " return m.get(1);",
+                  "2");
     expect_result("const m = Map.groupBy([1, 2, 3, 4], v => v % 2 ? 'odd' : 'even'); "
                   "return m.get('odd').join() + '|' + m.get('even').join();",
                   "1,3|2,4");

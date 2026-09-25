@@ -708,6 +708,11 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
         release_to(mark);
         return;
     }
+    if (target.kind == vp::nk::call) {
+        emit_call_target_error(n.a, dst);
+        release_to(mark);
+        return;
+    }
 
     const reference ref = prepare_reference(target);
 
@@ -783,9 +788,23 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     release_to(mark);
 }
 
+// `f() = v`, `f() += v`, `f()++` in non-strict code: the early-error pass
+// lets a call target through as ~web-compat~ ("Runtime Errors for Function
+// Call Assignment Targets"), and evaluating one is the call and then the
+// ReferenceError - before the right side, and before any read of the result.
+void compiler_impl::emit_call_target_error(std::int32_t call, std::uint16_t dst) {
+    compile_expr(call, dst);
+    emit_throw("ReferenceError", "Invalid left-hand side in assignment");
+}
+
 void compiler_impl::compile_update(const vp::node & n, std::uint16_t dst) {
     const vp::node & target = at(n.a);
     const std::uint32_t mark = reg_mark();
+    if (target.kind == vp::nk::call) {
+        emit_call_target_error(n.a, dst);
+        release_to(mark);
+        return;
+    }
     // Through the same reference machinery as compound assignment, so
     // `obj.n++` and `a[i]++` work and evaluate their target exactly once.
     const reference ref = prepare_reference(target);

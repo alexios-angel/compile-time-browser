@@ -7,9 +7,132 @@
 // 2026-08-09. Everything shared - the argument helpers, namespace detail, and
 // these functions' declarations - is in ../internal.hpp.
 
-#include "../internal.hpp"
+#include "typed_arrays/internal.hpp"
 
 namespace ctbrowser::script::detail {
+
+namespace {
+
+// ONE PROTOTYPE PER KIND - %ArrayIteratorPrototype% and its siblings
+// (23.1.5.2, 22.1.5.1, 24.1.5.1, 24.2.5.1): `next` and the tag live
+// there, its [[Prototype]] is %Iterator.prototype% (so `@@iterator`, the
+// helpers and `Object.getPrototypeOf(Object.getPrototypeOf([].values()))`
+// are what the standard says), and two iterators of a kind share it.
+// Made on first use, because Iterator installs after the collections do,
+// and kept under a PRIVATE key on Array.prototype (value.hpp: no source
+// text can spell one and OwnPropertyKeys never reports one) - as a
+// global it was an enumerable object on `window`, and the one global of
+// a kind ctcompile's native convention has no form for. Each iterator
+// used to carry its own two natives and a null prototype.
+} // namespace
+
+value iterator_kind_prototype(context & cx, const char * tag, native_fn next) {
+    const std::string key = std::string{"@#IteratorPrototype:"} + tag;
+    object_object * home = nullptr; // null only once a page has deleted `Array`
+    if (const value array = cx.global("Array"); array.is_object_like()) {
+        if (const value proto = cx.lookup_property(array, "prototype"); proto.is_object()) {
+            home = static_cast<object_object *>(proto.as_heap());
+        }
+    }
+    const value * kept = home == nullptr ? nullptr : home->find(key);
+    if (kept != nullptr && kept->is_object()) { return *kept; }
+    object_object * made = new_table(cx);
+    if (const value iterator = cx.global("Iterator"); iterator.is_object_like()) {
+        const value proto = cx.lookup_property(iterator, "prototype");
+        if (proto.is_object()) { made->prototype = proto; }
+    }
+    made->define("@@toStringTag", cx.string(std::string{tag}), attr_configurable);
+    detail::method(cx, made, "next", 0, std::move(next));
+    if (home != nullptr) { home->define(key, value::object(made), attr_none); }
+    return value::object(made);
+}
+
+namespace {
+
+[[nodiscard]] value kind_prototype(context & cx, const char * tag, native_fn next) {
+    return iterator_kind_prototype(cx, tag, std::move(next));
+}
+
+// CreateArrayIterator's state (23.1.5.1), as private slots on the iterator.
+// [[IteratedArrayLike]] undefined means the closure has RETURNED: exhausted,
+// or ended by a throw, and every later `next` is done.
+inline constexpr std::string_view iterated_key = "@#IteratedArrayLike";
+inline constexpr std::string_view next_index_key = "@#ArrayLikeNextIndex";
+inline constexpr std::string_view kind_key = "@#ArrayLikeIterationKind";
+
+// %ArrayIteratorPrototype%.next (23.1.5.2.1): one step of CreateArrayIterator's
+// closure, LIVE over the array-like. `length` is read on EVERY step (a
+// typed array's through the out-of-bounds TypeError), so a push during the
+// walk is seen and a truncation ends it, and each element is a [[Get]] as it
+// is reached - a snapshot answered neither.
+value array_iterator_next(context & c, std::span<value>) {
+    const value self = c.current_this();
+    auto * it = self.is_object() ? static_cast<object_object *>(self.as_heap()) : nullptr;
+    value * target = it == nullptr ? nullptr : it->find(iterated_key);
+    value * index = it == nullptr ? nullptr : it->find(next_index_key);
+    value * kind = it == nullptr ? nullptr : it->find(kind_key);
+    if (target == nullptr || index == nullptr || kind == nullptr) {
+        c.throw_error("TypeError", "Array Iterator next called on an incompatible receiver");
+        return value::undefined();
+    }
+    if (target->is_undefined()) { return c.iter_result(value::undefined(), true); }
+    // COPIED before anything can run script: a `length` getter may add
+    // properties to this very iterator, and the pointers into its table
+    // would not survive the rehash.
+    const value array = *target;
+    const double at = index->is_number() ? index->as_number() : 0;
+    const double which = kind->is_number() ? kind->as_number() : 0;
+    const context::rooted keep{c, array};
+    const std::size_t before = c.unwinds();
+    const auto finish = [&] {
+        if (value * slot = it->find(iterated_key)) { *slot = value::undefined(); }
+        return value::undefined();
+    };
+    double len = 0;
+    if (builtins_detail::is_typed_array(array)) {
+        auto * arr = static_cast<array_object *>(array.as_heap());
+        if (builtins_detail::typed_array_out_of_bounds(arr)) {
+            c.throw_error("TypeError", "Array Iterator next: the typed array is detached or out "
+                                       "of bounds");
+            return finish();
+        }
+        len = static_cast<double>(arr->length());
+    } else {
+        len = array_like_length(c, array);
+        if (c.throw_pending() || c.unwinds() != before) { return finish(); }
+    }
+    if (at >= len) {
+        (void)finish();
+        return c.iter_result(value::undefined(), true);
+    }
+    if (value * slot = it->find(next_index_key)) { *slot = value::number(at + 1); }
+    if (which == 0) { return c.iter_result(value::number(at), false); }
+    const value item = c.lookup_index(array, value::number(at));
+    if (c.throw_pending() || c.unwinds() != before) { return finish(); }
+    if (which == 1) { return c.iter_result(item, false); }
+    const context::rooted keep_item{c, item};
+    const value pair = c.make_array();
+    auto * entry = static_cast<array_object *>(pair.as_heap());
+    entry->items.push_back(value::number(at));
+    entry->items.push_back(item);
+    const context::rooted keep_pair{c, pair};
+    return c.iter_result(pair, false);
+}
+
+} // namespace
+
+value array_iterator(context & cx, value target, double kind) {
+    const context::rooted keep{cx, target};
+    const value proto = kind_prototype(cx, "Array Iterator", array_iterator_next);
+    const context::rooted keep_proto{cx, proto};
+    const value out = cx.make_object();
+    auto * it = static_cast<object_object *>(out.as_heap());
+    it->prototype = proto;
+    it->define(iterated_key, target, attr_none);
+    it->define(next_index_key, value::number(0), attr_none);
+    it->define(kind_key, value::number(kind), attr_none);
+    return out;
+}
 
 // A REAL ITERATOR over a list that already exists.
 //
@@ -28,76 +151,44 @@ namespace ctbrowser::script::detail {
 // disagree and is written down here rather than discovered - nothing drives an
 // iterator halfway and then spreads it.
 [[nodiscard]] value list_iterator(context & cx, value items, const char * tag) {
-    // ONE PROTOTYPE PER KIND - %ArrayIteratorPrototype% and its siblings
-    // (23.1.5.2, 22.1.5.1, 24.1.5.1, 24.2.5.1): `next` and the tag live
-    // there, its [[Prototype]] is %Iterator.prototype% (so `@@iterator`, the
-    // helpers and `Object.getPrototypeOf(Object.getPrototypeOf([].values()))`
-    // are what the standard says), and two iterators of a kind share it.
-    // Made on first use, because Iterator installs after the collections do,
-    // and kept under a PRIVATE key on Array.prototype (value.hpp: no source
-    // text can spell one and OwnPropertyKeys never reports one) - as a
-    // global it was an enumerable object on `window`, and the one global of
-    // a kind ctcompile's native convention has no form for. Each iterator
-    // used to carry its own two natives and a null prototype.
-    const std::string key = std::string{"@#IteratorPrototype:"} + tag;
-    object_object * home = nullptr; // null only once a page has deleted `Array`
-    if (const value array = cx.global("Array"); array.is_object_like()) {
-        if (const value proto = cx.lookup_property(array, "prototype"); proto.is_object()) {
-            home = static_cast<object_object *>(proto.as_heap());
-        }
-    }
-    const value * kept = home == nullptr ? nullptr : home->find(key);
-    value table = kept == nullptr ? value::undefined() : *kept;
-    if (!table.is_object()) {
-        object_object * made = new_table(cx);
-        if (const value iterator = cx.global("Iterator"); iterator.is_object_like()) {
-            const value proto = cx.lookup_property(iterator, "prototype");
-            if (proto.is_object()) { made->prototype = proto; }
-        }
-        made->define("@@toStringTag", cx.string(std::string{tag}), attr_configurable);
-        // Reads its state off the RECEIVER rather than out of the closure, so
-        // the collector sees one object holding everything and a native
-        // captures nothing it would have to root.
-        detail::method(
-            cx, made, "next", 0, [kind = std::string{tag}](context & c, std::span<value>) {
-                const value self = detail::array_this(c);
-                // RequireInternalSlot (23.1.5.2.1 step 2 and its
-                // siblings): the receiver is an iterator of THIS
-                // kind - `__items` is the slot, `__kind` which
-                // prototype made it - or it is a TypeError.
-                const value * of_kind =
-                    self.is_object() ? static_cast<object_object *>(self.as_heap())->find("__kind")
-                                     : nullptr;
-                if (of_kind == nullptr || !of_kind->is_string() || c.to_string(*of_kind) != kind) {
-                    c.throw_error("TypeError", kind + " next called on an incompatible receiver");
-                    return value::undefined();
+    // Reads its state off the RECEIVER rather than out of the closure, so
+    // the collector sees one object holding everything and a native
+    // captures nothing it would have to root.
+    const value table =
+        kind_prototype(cx, tag, [kind = std::string{tag}](context & c, std::span<value>) {
+            const value self = detail::array_this(c);
+            // RequireInternalSlot (22.1.5.1, 24.1.5.1, 24.2.5.1): the
+            // receiver is an iterator of THIS kind - `__items` is the
+            // slot, `__kind` which prototype made it - or it is a TypeError.
+            const value * of_kind =
+                self.is_object() ? static_cast<object_object *>(self.as_heap())->find("__kind")
+                                 : nullptr;
+            if (of_kind == nullptr || !of_kind->is_string() || c.to_string(*of_kind) != kind) {
+                c.throw_error("TypeError", kind + " next called on an incompatible receiver");
+                return value::undefined();
+            }
+            auto * out = static_cast<object_object *>(c.make_object().as_heap());
+            array_object * items = nullptr;
+            std::size_t at = 0;
+            if (self.is_object()) {
+                auto * holder = static_cast<object_object *>(self.as_heap());
+                if (value * list = holder->find("__items"); list != nullptr && list->is_array()) {
+                    items = static_cast<array_object *>(list->as_heap());
                 }
-                auto * out = static_cast<object_object *>(c.make_object().as_heap());
-                array_object * items = nullptr;
-                std::size_t at = 0;
-                if (self.is_object()) {
-                    auto * holder = static_cast<object_object *>(self.as_heap());
-                    if (value * list = holder->find("__items");
-                        list != nullptr && list->is_array()) {
-                        items = static_cast<array_object *>(list->as_heap());
-                    }
-                    if (value * cursor = holder->find("__at"); cursor != nullptr) {
-                        const double n = context::to_number(*cursor);
-                        at = n > 0 ? static_cast<std::size_t>(n) : 0;
-                    }
-                    if (items != nullptr && at < items->items.size()) {
-                        holder->define("__at", value::number(static_cast<double>(at + 1)),
-                                       attr_builtin);
-                    }
+                if (value * cursor = holder->find("__at"); cursor != nullptr) {
+                    const double n = context::to_number(*cursor);
+                    at = n > 0 ? static_cast<std::size_t>(n) : 0;
                 }
-                const bool done = items == nullptr || at >= items->items.size();
-                out->set("done", value::boolean(done));
-                out->set("value", done ? value::undefined() : items->items[at]);
-                return value::object(out);
-            });
-        table = value::object(made);
-        if (home != nullptr) { home->define(key, table, attr_none); }
-    }
+                if (items != nullptr && at < items->items.size()) {
+                    holder->define("__at", value::number(static_cast<double>(at + 1)),
+                                   attr_builtin);
+                }
+            }
+            const bool done = items == nullptr || at >= items->items.size();
+            out->set("done", value::boolean(done));
+            out->set("value", done ? value::undefined() : items->items[at]);
+            return value::object(out);
+        });
     auto * it = static_cast<object_object *>(cx.make_object().as_heap());
     it->prototype = table;
     // NON-ENUMERABLE, both: `__items` and `__at` are internal slots wearing
@@ -492,49 +583,40 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     // that; the prototype did not, so once conversion started going through an
     // object's own toString an array fell back to Object.prototype's and
     // stringified as "[object Array]".
+    //
+    // 23.1.3.36 as written: ToObject(this), then its own `join` if callable,
+    // else %Object.prototype.toString% - so it is GENERIC (`toString.call(
+    // {join() {...}})`) and a non-array receiver answers its tag, where this
+    // answered "" for anything but an Array.
     method(cx, array_proto, "toString", 0, [](context & c, std::span<value>) {
-        auto * self = detail::this_array(c);
-        if (self == nullptr) { return c.string(""); }
-        std::string out;
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            if (i != 0) { out += ','; }
-            if (!self->items[i].is_nullish()) { out += c.to_string(self->items[i]); }
+        const value self = detail::array_this(c);
+        if (!detail::coercible_this(c, self, "toString")) { return value::undefined(); }
+        const context::rooted keep{c, self};
+        const detail::unwind_watch watch{c};
+        value fn = c.lookup_property(self, "join");
+        if (watch.threw()) { return value::undefined(); }
+        if (!fn.is_callable()) {
+            object_object * table = c.prototype(context::proto_kind::object);
+            const value * intrinsic =
+                table == nullptr ? nullptr : table->find("@#IntrinsicObjectToString");
+            if (intrinsic == nullptr) { return c.string("[object Object]"); }
+            fn = *intrinsic;
         }
-        return c.string(out);
+        return c.call(fn, {}, self);
     });
-    // `entries`, `keys` and `values`, as real iterators - see list_iterator for
-    // why they answer both protocols and where the two disagree.
-    method(cx, array_proto, "entries", 0, [](context & c, std::span<value>) {
-        auto * self = detail::this_array(c);
-        value out = c.make_array();
-        if (self == nullptr) { return out; }
-        auto * pairs = static_cast<array_object *>(out.as_heap());
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            value pair = c.make_array();
-            auto * both = static_cast<array_object *>(pair.as_heap());
-            both->items.push_back(value::number(static_cast<double>(i)));
-            both->items.push_back(self->items[i]);
-            pairs->items.push_back(pair);
-        }
-        return list_iterator(c, out, "Array Iterator");
-    });
-    method(cx, array_proto, "keys", 0, [](context & c, std::span<value>) {
-        auto * self = detail::this_array(c);
-        value out = c.make_array();
-        if (self != nullptr) {
-            auto * items = static_cast<array_object *>(out.as_heap());
-            for (std::size_t i = 0; i < self->items.size(); ++i) {
-                items->items.push_back(value::number(static_cast<double>(i)));
-            }
-        }
-        return list_iterator(c, out, "Array Iterator");
-    });
-    method(cx, array_proto, "values", 0, [](context & c, std::span<value>) {
-        auto * self = detail::this_array(c);
-        value out = c.make_array();
-        if (self != nullptr) { static_cast<array_object *>(out.as_heap())->items = self->items; }
-        return list_iterator(c, out, "Array Iterator");
-    });
+    // 23.1.3.5 entries, 23.1.3.19 keys, 23.1.3.38 values: ToObject(this),
+    // then CreateArrayIterator - LIVE over any array-like, not a copy of an
+    // Array's items (see array_iterator).
+    const auto iterator_method = [&](const char * name, double kind) {
+        method(cx, array_proto, name, 0, [name, kind](context & c, std::span<value>) {
+            const value self = detail::array_this(c);
+            if (!detail::coercible_this(c, self, name)) { return value::undefined(); }
+            return detail::array_iterator(c, self, kind);
+        });
+    };
+    iterator_method("entries", 2);
+    iterator_method("keys", 0);
+    iterator_method("values", 1);
     // 23.1.3.40: Array.prototype[@@iterator] IS `values` - the same function
     // object. `for (x of a)` never asks (op::iterable reads the items), but
     // `for await`, spread of an array into a Map, and anything driving the

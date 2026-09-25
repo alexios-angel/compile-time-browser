@@ -10,6 +10,8 @@
 
 #include "checker.hpp"
 
+#include <ctbrowser/core/algorithms.hpp>
+
 namespace ctbrowser::script::detail::early {
 
 // --- scopes ---------------------------------------------------------------
@@ -48,6 +50,52 @@ void checker::bound_names(std::int32_t idx, binding_kind how, std::vector<bindin
     default: return;
     }
 }
+
+namespace {
+
+// IsStringWellFormedUnicode (6.1.4) of a string LITERAL's value, read from
+// its lexeme: every lead surrogate - escaped as \uD83D or \u{D83D}, or a
+// lone one in the WTF-8 source - must be followed by a trail, and no trail
+// may stand alone. Escapes other than \u cannot make a surrogate.
+[[nodiscard]] bool literal_well_formed(std::string_view lexeme) {
+    if (lexeme.size() < 2) { return true; }
+    const std::string_view body = lexeme.substr(1, lexeme.size() - 2);
+    bool want_trail = false;
+    const auto unit = [&](char32_t cp) {
+        const bool lead = cp >= 0xD800 && cp <= 0xDBFF;
+        const bool trail = cp >= 0xDC00 && cp <= 0xDFFF;
+        if (want_trail != trail) { return false; }
+        want_trail = lead;
+        return true;
+    };
+    for (std::size_t i = 0; i < body.size();) {
+        if (body[i] != '\\') {
+            if (!unit(ctbrowser::decode_utf8(body, i))) { return false; }
+            continue;
+        }
+        if (i + 1 >= body.size() || body[i + 1] != 'u') {
+            if (want_trail) { return false; }
+            i += 2;
+            continue;
+        }
+        char32_t cp = 0;
+        std::size_t k = i + 2;
+        const bool braced = k < body.size() && body[k] == '{';
+        if (braced) { ++k; }
+        std::size_t digits = 0;
+        for (; k < body.size() && ctbrowser::hex_value(body[k]) >= 0 && (braced || digits < 4);
+             ++k, ++digits) {
+            cp = cp * 16 + static_cast<char32_t>(ctbrowser::hex_value(body[k]));
+            if (cp > 0x10FFFF) { return true; } // not this rule's to refuse
+        }
+        if (braced) { ++k; }
+        i = k;
+        if (!unit(cp)) { return false; }
+    }
+    return !want_trail;
+}
+
+} // namespace
 
 // The lexical declarations a statement list makes DIRECTLY - not through a
 // nested block, which is a scope of its own. 8.2.5 LexicallyDeclaredNames.
@@ -180,23 +228,53 @@ void checker::check_module_items(std::int32_t root, const std::vector<binding> &
     const std::span<const std::int32_t> items = kids(at(root));
     std::vector<binding> declared = vars;
     lexical_names(items, list_kind::script, declared);
+    // 16.2.1.1: the ModuleItemList's LexicallyDeclaredNames - imports and a
+    // named default export among them - may not repeat, nor name a var. The
+    // names lexical_names already compared are in `declared`; these two kinds
+    // it cannot see are compared against them, and each other, as they join.
+    const auto declare = [&](std::string_view name, std::int32_t node) {
+        for (const binding & b : declared) {
+            if (b.name == name) {
+                report(quoted(name) + " has already been declared", node);
+                break;
+            }
+        }
+        declared.push_back(binding{name, binding_kind::const_, node});
+    };
     for (const std::int32_t s : items) {
         const vp::node & item = at(s);
+        // 16.2.2.1 / 16.2.3.1: a ModuleExportName written as a string must be
+        // well-formed Unicode - `export { x as "\uD83D" }` names nothing any
+        // importer could spell.
+        if (item.kind == nk::import_decl || item.kind == nk::export_decl) {
+            for (const std::int32_t spec : kids(item)) {
+                for (const std::int32_t named : {spec, at(spec).a}) {
+                    const std::string_view text = named >= 0 ? at(named).text : "";
+                    if (!text.empty() && (text.front() == '"' || text.front() == '\'') &&
+                        !literal_well_formed(text)) {
+                        report("a module export name must be well-formed Unicode", named);
+                    }
+                }
+            }
+        }
         // An imported binding is a binding of this module too, and `export
         // { a }` may name one (16.2.3: ExportedBindings are resolved against
-        // everything the module declares, imports included).
+        // everything the module declares, imports included). It is an
+        // ImportedBinding - a BindingIdentifier of strict code, so `eval`
+        // and `arguments` are refused as any strict binding of them is.
         if (item.kind == nk::import_decl) {
             for (const std::int32_t spec : kids(item)) {
-                declared.push_back(binding{at(spec).text, binding_kind::const_, spec});
+                check_strict_binding(at(spec).text, spec);
+                declare(at(spec).text, spec);
             }
         }
         // `export default function f() {}` BINDS f as well as exporting
         // `default` (16.2.3.7: the HoistableDeclaration's BoundNames). The
-        // parser reads the declaration in expression position, so the name
-        // is on a func_expr or a class node and lexical_names cannot see it.
+        // parser reads the function in expression position, so its name is
+        // on a func_expr that lexical_names cannot see (a class it can).
         if (item.kind == nk::export_decl && item.c == 1 && item.a >= 0 &&
-            !at(item.a).text.empty()) {
-            declared.push_back(binding{at(item.a).text, binding_kind::const_, item.a});
+            !at(item.a).text.empty() && at(item.a).kind == nk::func_expr) {
+            declare(at(item.a).text, item.a);
         }
     }
     const auto is_declared = [&](std::string_view name) {

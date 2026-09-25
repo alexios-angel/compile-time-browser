@@ -11,6 +11,28 @@ inline constexpr std::string_view slot_source = "@#RegExpSource";
 
 inline constexpr std::string_view slot_flags = "@#RegExpFlags";
 
+// [[LegacyFeaturesEnabled]] (the legacy RegExp features, Annex B): present on
+// an instance RegExpAlloc made with %RegExp% itself as new.target - a literal,
+// `RegExp(p)`, `new RegExp(p)` - and absent on a subclass's.
+inline constexpr std::string_view slot_legacy = "@#RegExpLegacyFeatures";
+// %RegExp%'s legacy static slots ([[RegExpInput]], [[RegExpLastMatch]], ...)
+// as ONE record on the INTRINSIC %RegExp.prototype% - which a page can neither
+// replace nor spell - beside %RegExp% itself, which their accessors compare
+// the receiver against. The record is an array laid out as legacy_field says;
+// undefined in its place is the "empty" an invalidation leaves.
+inline constexpr std::string_view slot_legacy_record = "@#RegExpLegacyStatics";
+inline constexpr std::string_view slot_intrinsic = "@#RegExpIntrinsic";
+enum legacy_field : std::size_t {
+    legacy_input,
+    legacy_last_match,
+    legacy_last_paren,
+    legacy_subject, // the input AS MATCHED: `RegExp.input = x` does not move the contexts
+    legacy_begin,
+    legacy_end,
+    legacy_paren1, // ... through $9
+    legacy_fields = legacy_paren1 + 9
+};
+
 [[nodiscard]] std::shared_ptr<rx::rx_prog> compiled(const std::shared_ptr<regex_cache> & cache,
                                                     const std::string & source,
                                                     const std::string & flags);
@@ -27,6 +49,9 @@ bool set_last_index(context & cx, value rx, double v);
 value regexp_exec(context & cx, value rx, value subject);
 [[nodiscard]] value builtin_exec(context & cx, const std::shared_ptr<regex_cache> & cache, value rx,
                                  const std::string & subject);
+// UpdateLegacyRegExpStaticProperties from an exec result, or - for undefined -
+// InvalidateLegacyRegExpStaticProperties, as RegExpBuiltinExec runs them.
+void set_legacy_statics(context & cx, value result);
 [[nodiscard]] value species_constructor(context & cx, value o, value fallback);
 [[nodiscard]] bool read_flags(context & cx, value rx, std::string & out);
 [[nodiscard]] bool object_this(context & cx, value self, const char * method);

@@ -855,6 +855,59 @@ void install_string(context & cx) {
         trim_bounds(s, false, true, from, to);
         return c.string(s.substr(from, to - from));
     });
+    // Annex B.2.2.15-16: trimLeft and trimRight are not copies, they ARE
+    // trimStart and trimEnd - the same function objects, so their `name` reads
+    // "trimStart" and `String.prototype.trimLeft === String.prototype.trimStart`.
+    string_proto->define("trimLeft", *string_proto->find("trimStart"), attr_builtin);
+    string_proto->define("trimRight", *string_proto->find("trimEnd"), attr_builtin);
+    // Annex B.2.2.2-14, the HTML methods, all one abstract operation:
+    // CreateHTML (B.2.2.2.1). ToString(this) is on_text's, and it comes FIRST;
+    // then ToString of the attribute's value, with every `"` in it written as
+    // &quot; - the one escape the operation performs. `'<'.anchor('<')` is
+    // `<a name="<"><</a>`, exactly.
+    struct html_method {
+        const char * name;
+        const char * tag;
+        const char * attribute;
+    };
+    static constexpr html_method html_methods[] = {
+        {"anchor", "a", "name"},      {"big", "big", ""},
+        {"blink", "blink", ""},       {"bold", "b", ""},
+        {"fixed", "tt", ""},          {"fontcolor", "font", "color"},
+        {"fontsize", "font", "size"}, {"italics", "i", ""},
+        {"link", "a", "href"},        {"small", "small", ""},
+        {"strike", "strike", ""},     {"sub", "sub", ""},
+        {"sup", "sup", ""},
+    };
+    for (const html_method m : html_methods) {
+        const std::string_view attribute = m.attribute;
+        text(m.name, attribute.empty() ? 0 : 1,
+             [m, attribute](context & c, const std::string & s, std::span<value> a) -> value {
+                 std::string out = std::string{"<"} + m.tag;
+                 if (!attribute.empty()) {
+                     const std::string before = c.current_stack();
+                     const std::string v = string_arg(c, arg_at(a, 0));
+                     if (detail::threw_since(c, before)) { return value::undefined(); }
+                     out += ' ';
+                     out += attribute;
+                     out += "=\"";
+                     for (const char ch : v) {
+                         if (ch == '"') {
+                             out += "&quot;";
+                         } else {
+                             out += ch;
+                         }
+                     }
+                     out += '"';
+                 }
+                 out += '>';
+                 out += s;
+                 out += "</";
+                 out += m.tag;
+                 out += '>';
+                 return c.string(out);
+             });
+    }
     // THE SAME ASCII FOLD as toUpperCase, deliberately. This was `std::toupper`,
     // which reads the GLOBAL C LOCALE: what it does to a byte above 0x7F is
     // implementation- and locale-defined, so `toLocaleUpperCase` and

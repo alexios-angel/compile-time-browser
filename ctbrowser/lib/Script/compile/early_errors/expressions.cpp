@@ -65,22 +65,28 @@ namespace {
            kind == nk::object_pattern;
 }
 
-// A CALL TARGET, AND THE ONE PLACE THIS PASS IS NOT THE BEST ANSWER.
-//
-// "Runtime Errors for Function Call Assignment Targets" is a normative
-// OPTIONAL clause: an implementation that is a web browser may answer
-// ~web-compat~ for `f() = 1` in non-strict code and evaluate it to a
-// runtime ReferenceError instead of refusing the source. Five annexB tests
-// assert exactly that, and a browser is what this engine is.
-//
-// It is refused here anyway, because the alternative is not available:
-// `compiler_impl::prepare_reference` already fails outright on a call
-// target, so the whole script is refused either way and the only thing
-// this pass changes is WHICH kind of failure it is - a SyntaxError rather
-// than "the compiler does not implement this", which is the truer of the
-// two. Emitting the ReferenceError instead is a compiler change (evaluate
-// the call, throw, and do not touch the right-hand side) and is the right
-// follow-up; until then those five tests fail as they already did.
+// A CALL TARGET: "Runtime Errors for Function Call Assignment Targets"
+// (a normative optional clause, which a web browser implements) makes the
+// AssignmentTargetType of `f()` - a CoverCallExpressionAndAsyncArrowHead or
+// CallExpression Arguments - ~web-compat~ in non-strict code rather than
+// ~invalid~: `f() = 1`, `f() += 1` and `f()++` compile, and evaluate the call
+// and then throw the ReferenceError (compiler_impl::compile_assign). Not a
+// `super()` call, not one inside an optional chain, not in strict code, and
+// never for the logical assignments, which want a SIMPLE target.
+[[nodiscard]] bool checker::web_compat_call(std::int32_t idx) const {
+    if (strict() || idx < 0 || at(idx).kind != nk::call) { return false; }
+    for (std::int32_t link = at(idx).a; link >= 0;) {
+        const nk kind = at(link).kind;
+        if (kind == nk::super_lit || kind == nk::opt_member || kind == nk::opt_index ||
+            kind == nk::opt_call) {
+            return false;
+        }
+        if (kind != nk::member && kind != nk::index && kind != nk::call) { break; }
+        link = at(link).a;
+    }
+    return true;
+}
+
 void checker::check_assignment(std::int32_t idx) {
     const vp::node & n = at(idx);
     const nk target = at(n.a).kind;
@@ -92,6 +98,7 @@ void checker::check_assignment(std::int32_t idx) {
         if (target == nk::ident) { check_strict_binding(at(n.a).text, n.a); }
         return;
     }
+    if (web_compat_call(n.a) && n.text != "||=" && n.text != "&&=" && n.text != "?\?=") { return; }
     report("the left side of `" + std::string{n.text} +
                "` is not something a value can be "
                "assigned to",
@@ -104,6 +111,7 @@ void checker::check_update(std::int32_t idx) {
         if (at(n.a).kind == nk::ident) { check_strict_binding(at(n.a).text, n.a); }
         return;
     }
+    if (web_compat_call(n.a)) { return; }
     report("the operand of `" + std::string{n.text} +
                "` is not something a value can be assigned to",
            n.a >= 0 ? n.a : idx);

@@ -30,6 +30,17 @@ void context::array_append(value target, value v) {
 void context::store_index(value target, value key, value v) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
+        // A Number that is not an index names the property its ToString
+        // spells (`a[-1] = v` is a["-1"]); a typed array coerces the value
+        // and writes nothing (10.4.5.5, TypedArraySetElement).
+        if (!array_index_number(key.as_number())) {
+            if (arr->elements != element_kind::none) {
+                (void)typed_element_set(*this, *arr, static_cast<std::size_t>(-1), v);
+                return;
+            }
+            store_property(target, to_string(key), v);
+            return;
+        }
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
         // A TYPED ARRAY COERCES ON WRITE AND DOES NOT GROW. Both are what makes
         // it typed: `pixels[i] = 300` is 255 in a clamped byte array, and a
@@ -240,7 +251,21 @@ void context::store_property(value target, const std::string & name, value v) {
             obj->props[it->second].second = v;
             return;
         }
-        for (value up = obj->prototype; up.is_object();) {
+        for (value up = obj->prototype; up.is_heap();) {
+            // A TYPED ARRAY up the chain answers a numeric key's [[Set]] for
+            // this receiver (10.4.5.5 step 1.b.ii): an index it does not have
+            // is a quiet success that creates nothing; one it has is a
+            // writable element, so the receiver gets its own property below.
+            if (up.is_array()) {
+                auto * arr = static_cast<array_object *>(up.as_heap());
+                std::uint32_t at = 0;
+                if (arr->elements != element_kind::none && canonical_numeric_key(name) &&
+                    !(object_object::array_index_key(name, at) && at < arr->length())) {
+                    return;
+                }
+                break;
+            }
+            if (!up.is_object()) { break; }
             auto * parent = static_cast<object_object *>(up.as_heap());
             if (parent->find(name) != nullptr) {
                 if ((parent->attrs_of(name) & attr_writable) == 0) {
@@ -282,6 +307,12 @@ void context::store_property(value target, const std::string & name, value v) {
         // `a["0"] = v` is the element, not a named property - see lookup_property.
         if (std::uint32_t at = 0; object_object::array_index_key(name, at)) {
             store_index(target, value::number(static_cast<double>(at)), v);
+            return;
+        }
+        // A typed array's other canonical numeric keys ("-0", "1.5") name no
+        // element: the value is coerced and nothing is written (10.4.5.5).
+        if (arr->elements != element_kind::none && canonical_numeric_key(name)) {
+            (void)typed_element_set(*this, *arr, static_cast<std::size_t>(-1), v);
             return;
         }
         // A TYPED ARRAY'S `length` is %TypedArray%.prototype's getter, so an
@@ -326,7 +357,9 @@ void context::store_property(value target, const std::string & name, value v) {
         // sized once, and resizing it here would leave the view and its buffer
         // disagreeing. The spec makes the write a no-op, not an error.
         if (arr->elements != element_kind::none) { return; }
-        // `Object.defineProperty(a, "length", {writable: false})`, or a freeze.
+        // `Object.defineProperty(a, "length", {writable: false})`, or a freeze
+        // - asked BEFORE the coercions (OrdinarySet step 2.a) and again after
+        // them (ArraySetLength step 12), since a valueOf may pin it between.
         if (!arr->length_writable) {
             store_rejected_ = true;
             return;
@@ -337,23 +370,79 @@ void context::store_property(value target, const std::string & name, value v) {
         // throw (S15.4.5.2_A3_T3) - and, for a length in range, of a resize
         // that asked for 34 GB. set_js_length records what it will not
         // materialise; see array_object::dense_limit.
-        // ToNumber runs a valueOf: `a.length = new Number(6)` is 6 (10.4.2.4).
+        // ToUint32 and then ToNumber (10.4.2.4 steps 3-4), each running a
+        // valueOf: `a.length = new Number(6)` is 6, and an object's hint is
+        // asked twice.
+        const std::size_t before = unwinds();
+        const double first = to_number_value(v);
+        if (throw_pending() || unwinds() != before) { return; }
         const double n = to_number_value(v);
-        if (throw_pending()) { return; }
-        if (!(n >= 0) || n > array_object::max_length || n != std::trunc(n)) {
+        if (throw_pending() || unwinds() != before) { return; }
+        if (static_cast<double>(number_to_uint32(first)) != n) {
             throw_error("RangeError", "Invalid array length");
+            return;
+        }
+        if (!arr->length_writable && n != static_cast<double>(arr->js_length())) {
+            store_rejected_ = true;
             return;
         }
         // A non-configurable element stops the shrink (descriptors.cpp).
         if (!array_set_length(*arr, n)) { store_rejected_ = true; }
         return;
     }
+    // A FUNCTION'S WRITE TO A NAME IT DOES NOT OWN: OrdinarySet asks the
+    // CHAIN from `up` (10.1.9.2 step 2.a) - an inherited setter takes the
+    // write, an inherited read-only data property refuses it. TRUE when the
+    // chain decided; false means create an own property. Function.prototype's
+    // `caller` and `arguments` are %ThrowTypeError% accessors, which is how
+    // assigning either on a strict or bound function throws, and
+    // `class D extends B` inherits B's static setters.
+    const auto inherited_set = [&](value up) {
+        for (int depth = 0; depth < 64; ++depth) {
+            if (up.is_null()) { // the implicit Object.prototype ends a chain
+                object_object * table = prototype(proto_kind::object);
+                up = table != nullptr ? value::object(table) : value::undefined();
+                depth = 63;
+            }
+            if (!up.is_object_like()) { return false; }
+            property_descriptor found;
+            if (own_property(up, name, found)) {
+                if (found.is_accessor()) {
+                    if (found.setter.is_callable()) {
+                        const value args[1] = {v};
+                        (void)call(found.setter, args, target);
+                    } else {
+                        store_rejected_ = true;
+                    }
+                    return true;
+                }
+                if (!found.writable) {
+                    store_rejected_ = true;
+                    return true;
+                }
+                return false;
+            }
+            if (up.is_kind(heap_kind::native)) {
+                // A native's null link is Function.prototype, not the end.
+                const value link = static_cast<native_object *>(up.as_heap())->proto_link;
+                object_object * fn_table = prototype(proto_kind::function);
+                up = !link.is_null()       ? link
+                     : fn_table != nullptr ? value::object(fn_table)
+                                           : value::undefined();
+            } else {
+                up = get_prototype(up);
+            }
+        }
+        return false;
+    };
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
         if (accessor_entry * entry = fn->find_accessor(name)) {
             if (entry->setter.is_callable()) {
                 const value args[1] = {v};
                 (void)call(entry->setter, args, target);
+            } else {
+                store_rejected_ = true; // an accessor with no setter refuses
             }
             return;
         }
@@ -364,8 +453,20 @@ void context::store_property(value target, const std::string & name, value v) {
                 store_rejected_ = true;
                 return;
             }
-        } else if (!fn->extensible || (name == "name" && !fn->name_erased)) {
+            fn->set(name, v);
+            return;
+        }
+        if (name == "name" && !fn->name_erased) {
             // ...and a native's synthesised `name` is non-writable too.
+            store_rejected_ = true;
+            return;
+        }
+        object_object * fn_table = prototype(proto_kind::function);
+        const value up = !fn->proto_link.is_null() ? fn->proto_link
+                         : fn_table != nullptr     ? value::object(fn_table)
+                                                   : value::undefined();
+        if (inherited_set(up)) { return; }
+        if (!fn->extensible) {
             store_rejected_ = true;
             return;
         }
@@ -374,31 +475,46 @@ void context::store_property(value target, const std::string & name, value v) {
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
-        if (accessor_entry * entry = closure->find_accessor(name);
-            entry != nullptr && entry->setter.is_callable()) {
-            const value args[1] = {v};
-            (void)call(entry->setter, args, target);
-        } else {
-            if (closure->find(name) != nullptr) {
-                if ((closure->attrs_of(name) & attr_writable) == 0) {
-                    store_rejected_ = true;
-                    return;
-                }
-            } else if (!closure->extensible) {
+        if (accessor_entry * entry = closure->find_accessor(name)) {
+            // An own accessor with no setter refuses the write; it is never
+            // shadowed by a data property of the same name.
+            if (entry->setter.is_callable()) {
+                const value args[1] = {v};
+                (void)call(entry->setter, args, target);
+            } else {
                 store_rejected_ = true;
-                return;
-            } else if (((name == "length" && !closure->length_erased) ||
-                        (name == "name" && !closure->name_erased)) &&
-                       closure->proto != nullptr) {
-                // The SYNTHESISED `length` and `name` (own_property answers
-                // them off the compiled function, { false, false, true }) are
-                // not writable: the write is refused, not shadowed by a new
-                // own entry. defineProperty still redefines them.
+            }
+            return;
+        }
+        if (closure->find(name) != nullptr) {
+            if ((closure->attrs_of(name) & attr_writable) == 0) {
                 store_rejected_ = true;
                 return;
             }
             closure->set(name, v);
+            return;
         }
+        if (closure->proto != nullptr &&
+            (((name == "length" && !closure->length_erased) ||
+              (name == "name" && !closure->name_erased)) ||
+             // A SLOPPY function's `caller` and `arguments` read null
+             // (lookup_property's closure arm), as every browser's own
+             // non-writable pair does - and refuse a write the same way.
+             (!closure->proto->is_strict && !closure->proto->is_arrow &&
+              !closure->proto->is_generator && (name == "caller" || name == "arguments")))) {
+            // The SYNTHESISED `length` and `name` (own_property answers them
+            // off the compiled function, { false, false, true }) are not
+            // writable: the write is refused, not shadowed by a new own
+            // entry. defineProperty still redefines them.
+            store_rejected_ = true;
+            return;
+        }
+        if (inherited_set(get_prototype(target))) { return; } // see inherited_set
+        if (!closure->extensible) {
+            store_rejected_ = true;
+            return;
+        }
+        closure->set(name, v);
         return;
     }
     // A write to a number, a string or undefined is silently dropped, which is

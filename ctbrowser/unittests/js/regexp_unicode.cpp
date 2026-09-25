@@ -154,9 +154,29 @@ void test_constructor_and_modifiers() {
                   "true,true,true,false,false,false");
 }
 
+// 22.2.1.1 GroupName: an ID_Start/ID_Continue name over DECODED code points
+// (test262 language/literals/regexp/named-groups/invalid-non-id-*).
+void test_group_names() {
+    for (const char * bad : {"/(?<$\u{275E}>a)/", "/(?<\u2764>a)/", "/(?<a\\uD801>.)/",
+                             "/(?<a\\uDCA4>.)/u", "/(?<a\\u{1F08B}>.)/", "/(?<\\>.)/",
+                             "/(?<a\\u{110000}>.)/u", "/(?<a\\uD83D\\uDF12>.)/"}) {
+        refused(bad);
+    }
+    // escapes decode to the name they spell, a surrogate pair to one point
+    expect_result("return 'ab'.match(/(?<\\u0061>a)/).groups.a;", "a");
+    expect_result("return 'x'.match(/(?<\\ud835\\udcd1>x)/).groups['\\u{1d4d1}'];", "x");
+    expect_result("return /(?<the\\u{1d7da}>t)\\k<the\\ud835\\udfda>/u.test('tt');", "true");
+    expect_result("try { new RegExp('(?<\\u{1d7da}the>t)'); return 'no'; } "
+                  "catch (e) { return e.name; }",
+                  "SyntaxError");
+    // `(?<a>)` and `(?<\u0061>)` bind one name twice
+    refused("/(?<a>x)(?<\\u0061>y)/");
+}
+
 } // namespace
 
 int main() {
+    test_group_names();
     test_property_escapes();
     test_canonicalize();
     test_unicode_sets();

@@ -281,21 +281,22 @@ void install_disposable(context & cx) {
             if (!detail::constructing_this(self)) { self = c.make_object(); }
             auto * made = static_cast<object_object *>(self.as_heap());
             if (!made->prototype.is_object()) { made->prototype = value::object(suppressed_proto); }
+            // ToString once - ToPrimitive, then a Symbol refuses - and the
+            // stack line below reuses it rather than converting again.
+            std::string text;
             if (!arg_at(a, 2).is_undefined()) {
-                // ToString: a symbol's refusal LANDS, an object's toString parks.
-                if (!stringable_arg(c, a[2])) { return value::undefined(); }
-                const std::string text = c.to_string(a[2]);
-                if (c.throw_pending()) { return value::undefined(); }
+                const detail::unwind_watch watch{c};
+                text = string_arg(c, a[2]);
+                if (watch.threw()) { return value::undefined(); }
                 made->define("message", c.string(text), attr_builtin);
             }
             made->define("error", arg_at(a, 0), attr_builtin);
             made->define("suppressed", arg_at(a, 1), attr_builtin);
-            made->define(
-                "@#ErrorData",
-                c.string("SuppressedError" +
-                         (arg_at(a, 2).is_undefined() ? std::string{} : ": " + c.to_string(a[2])) +
-                         c.current_stack()),
-                attr_none);
+            made->define("@#ErrorData",
+                         c.string("SuppressedError" +
+                                  (arg_at(a, 2).is_undefined() ? std::string{} : ": " + text) +
+                                  c.current_stack()),
+                         attr_none);
             return self;
         });
     link_constructor(cx, suppressed_proto, "SuppressedError", 3, value::object(suppressed_ctor));

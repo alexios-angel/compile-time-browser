@@ -301,7 +301,10 @@ private:
             if (peek() == '<') {
                 const std::size_t end = s_.find('>', i_);
                 if (end != std::string_view::npos) {
-                    name = std::string{s_.substr(i_ + 1, end - i_ - 1)};
+                    // Decoded as `(?<name>` is; a name that does not decode is
+                    // kept raw and so matches no group.
+                    const std::string_view raw = s_.substr(i_ + 1, end - i_ - 1);
+                    name = rx::rx_group_name(raw).value_or(std::string{raw});
                     i_ = end + 1;
                 }
             }
@@ -418,9 +421,11 @@ private:
         names_.push_back(name);
     }
 
-    // `(?<name>`: the name is an IdentifierName, read up to `>`. Only the
-    // ASCII half of ID_Start/ID_Continue is judged; a non-ASCII byte or a
-    // `\u` escape is taken as a letter rather than looked up.
+    // `(?<name>`: the name is a RegExpIdentifierName, read up to `>` and
+    // judged by rx_group_name - ID_Start then ID_Continue over the decoded
+    // code points, so `(?<❤>a)`, `(?<a\uD801>.)` and `(?<𝟚the>)` are refused.
+    // What is recorded is the DECODED name: `(?<a>)(?<\u0061>)` binds one
+    // name twice, and `\k<\u0061>` refers to `(?<a>)`.
     [[nodiscard]] bool group_name(std::string & out) {
         const std::size_t end = s_.find('>', i_);
         if (end == std::string_view::npos) {
@@ -432,34 +437,12 @@ private:
             fail("a group name may not be empty");
             return false;
         }
-        for (std::size_t k = 0; k < name.size(); ++k) {
-            const char c = name[k];
-            if (c == '\\') { // `\uXXXX` or `\u{...}` in a name
-                if (k + 1 >= name.size() || name[k + 1] != 'u') {
-                    fail("only a `\\u` escape may appear in a group name");
-                    return false;
-                }
-                k += 1;
-                if (k + 1 < name.size() && name[k + 1] == '{') {
-                    const std::size_t close = name.find('}', k);
-                    if (close == std::string_view::npos) {
-                        fail("the `\\u{` escape in the group name is never closed");
-                        return false;
-                    }
-                    k = close;
-                } else {
-                    k += 4;
-                }
-                continue;
-            }
-            const bool ok = ascii_letter(c) || c == '$' || c == '_' ||
-                            static_cast<unsigned char>(c) >= 0x80 || (k > 0 && digit(c));
-            if (!ok) {
-                fail("`" + std::string{name} + "` is not a group name");
-                return false;
-            }
+        std::optional<std::string> decoded = rx::rx_group_name(name);
+        if (!decoded) {
+            fail("`" + std::string{name} + "` is not a group name");
+            return false;
         }
-        out = std::string{name};
+        out = std::move(*decoded);
         i_ = end + 1;
         return true;
     }

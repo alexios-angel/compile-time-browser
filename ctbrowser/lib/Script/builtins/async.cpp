@@ -70,9 +70,9 @@ void install_aggregate_error(context & cx) {
             if (!made->prototype.is_object()) { made->prototype = value::object(proto); }
             std::string text;
             if (!arg_at(a, 1).is_undefined()) {
-                if (!stringable_arg(c, a[1])) { return value::undefined(); }
-                text = c.to_string(a[1]);
-                if (c.throw_pending()) { return value::undefined(); }
+                const detail::unwind_watch watch{c};
+                text = string_arg(c, a[1]); // ToPrimitive, then a Symbol refuses
+                if (watch.threw()) { return value::undefined(); }
                 made->define("message", c.string(text), attr_builtin);
             }
             if (const value options = arg_at(a, 2); options.is_object_like()) {

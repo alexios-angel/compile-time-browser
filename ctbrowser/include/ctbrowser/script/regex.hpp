@@ -63,6 +63,12 @@ std::size_t rx_unfold(char32_t folded, char32_t (&out)[8]);
 // lib/Script/compile/early_errors/regexp.cpp, which says what it judges.
 // The first thing wrong, or nothing.
 std::optional<std::string> rx_pattern_error(std::string_view body, std::string_view flags);
+// 22.2.1 GroupName: the RegExpIdentifierName between `<` and `>`, its `\u`
+// escapes and surrogate pairs decoded, as UTF-8 - or nullopt when it is not
+// one (22.2.1.1: ID_Start then ID_Continue, `$` `_` ZWNJ ZWJ). One decoder,
+// so `(?<a>)` and `\k<a>` name the same group everywhere.
+// Defined in lib/Script/regex_properties.cpp, beside the tables it reads.
+std::optional<std::string> rx_group_name(std::string_view raw);
 
 struct rx_class {
 	bool neg = false;
@@ -575,10 +581,13 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			i += 2;
 			const std::size_t start = i;
 			while (i < src.size() && src[i] != '>') { ++i; }
-			const std::string name{src.substr(start, i - start)};
+			// Stored DECODED (rx_group_name), so `(?<\u{1d4d1}>)` answers to
+			// `groups.𝓑`; rx_pattern_error has already refused a bad name.
+			const std::string_view raw = src.substr(start, i - start);
+			std::string name = rx_group_name(raw).value_or(std::string{raw});
 			if (i < src.size()) { ++i; } // past '>'
 			pc.cap = p.ngroups++;
-			p.names.emplace_back(name, pc.cap);
+			p.names.emplace_back(std::move(name), pc.cap);
 		} else if (i + 2 < src.size() && src[i] == '?' && src[i + 1] == '<') {
 			// `(?<=...)` and `(?<!...)`, the two lookbehinds.
 			pc.kind = src[i + 2] == '=' ? rx_piece::behind : rx_piece::nbehind;
@@ -730,7 +739,8 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 				return pc;
 			}
 			pc.kind = rx_piece::backref;
-			pc.ref_name = std::string{src.substr(start, close - start)};
+			const std::string_view raw = src.substr(start, close - start);
+			pc.ref_name = rx_group_name(raw).value_or(std::string{raw});
 			i = close + 1;
 			return pc;
 		}

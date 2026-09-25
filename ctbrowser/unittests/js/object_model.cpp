@@ -104,7 +104,10 @@ int main() {
               "{value:1,configurable:true}:undefined;}});"
               "return ['b' in p, p.hasOwnProperty('b'), p.hasOwnProperty('a')].join();})()",
               "true,false,true");
-    js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor:function(){return "
+    // (Over a target that HAS such a property: 10.5.5 step 16 refuses a
+    // non-configurable answer for one the target lacks - see below.)
+    js_expect("(function(){var t={};Object.defineProperty(t,'a',{value:1});"
+              "var p=new Proxy(t,{getOwnPropertyDescriptor:function(){return "
               "{value:1};}});var d=Object.getOwnPropertyDescriptor(p,'a');"
               "return d.writable+','+d.enumerable+','+d.configurable;})()",
               "false,false,false");
@@ -142,6 +145,14 @@ int main() {
     js_expect("Object.groupBy(null, function(){})", "THREW");
     js_expect("Object.groupBy.length", "2");
     js_expect("Object.groupBy({[Symbol.iterator]: undefined}, function(){})", "THREW");
+    js_expect("Object.getPrototypeOf(Object.groupBy([1],function(){return 'a';}))===null", "true");
+    js_expect("Object.keys(Object.groupBy([1],function(){return {toString(){return 'k';}};}))"
+              ".join()",
+              "k");
+    // Object.assign reads and writes key by key (20.1.2.1 step 4.c).
+    js_expect("(function(){var src={a:1,b:2};var t={set a(v){delete src.b;}};"
+              "Object.assign(t,src);return 'b' in t;})()",
+              "false");
 
     // Object.fromEntries (20.1.2.7) runs the iterator protocol: a Map, an
     // entry that is not an object closes the iterator with a TypeError, a
@@ -166,6 +177,100 @@ int main() {
     // isPrototypeOf checks its argument before its receiver (20.1.3.3 step 1).
     js_expect("Object.prototype.isPrototypeOf.call(null, 1)", "false");
     js_expect("Object.prototype.isPrototypeOf.call(null, {})", "THREW");
+
+    // 10.1.11.1: a key keeps its creation position when redefined between
+    // data and accessor, and an accessor keeps its place across a delete.
+    js_expect("(function(){var o={};Object.defineProperty(o,'a',{get(){},enumerable:true,"
+              "configurable:true});o.b=2;Object.defineProperty(o,'a',{value:1});"
+              "return Object.keys(o).join();})()",
+              "a,b");
+    js_expect("(function(){var o={a:1,b:2};Object.defineProperty(o,'a',{get(){return 3;}});"
+              "return Object.keys(o).join()+o.a;})()",
+              "a,b3");
+    js_expect("(function(){var o={a:1,get b(){return 2;},c:3};delete o.a;"
+              "return Object.keys(o).join();})()",
+              "b,c");
+
+    // An explicit `set: undefined` REPLACES the setter (10.1.6.3 step 6).
+    js_expect("(function(){var o={};Object.defineProperty(o,'x',{get(){return 1;},"
+              "set(v){},configurable:true});Object.defineProperty(o,'x',{set:undefined});"
+              "var d=Object.getOwnPropertyDescriptor(o,'x');return typeof d.get+','+d.set;})()",
+              "function,undefined");
+
+    // 13.10.2 InstanceofOperator: @@hasInstance first, then a callable check.
+    js_expect("(function(){var C={[Symbol.hasInstance](v){return v===1;}};"
+              "return (1 instanceof C)+','+(2 instanceof C);})()",
+              "true,false");
+    js_expect("(function(){try{({}) instanceof {};return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){try{({}) instanceof 1;return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){function F(){} F.prototype=1;"
+              "try{({}) instanceof F;return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){function F(){} var B=F.bind(null);"
+              "return (new F() instanceof B)+','+(1 instanceof B);})()",
+              "true,false");
+    js_expect("(function(){class A{static [Symbol.hasInstance](){return true;}}"
+              "return Function.prototype[Symbol.hasInstance].call(A,{})+','+({} instanceof A);})()",
+              "false,true");
+
+    // [[Set]] on a function asks its chain for a name it does not own.
+    js_expect("(function(){'use strict';function f(){}try{f.caller=1;return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){function g(){}g.caller=1;g.arguments=2;"
+              "return String(g.caller)+String(g.arguments);})()",
+              "nullnull");
+    js_expect("(function(){var b=function(){}.bind(null);try{b.caller=1;return 'no';}"
+              "catch(e){return e.name+','+b.hasOwnProperty('caller');}})()",
+              "TypeError,false");
+    js_expect("(function(){class B{static set x(v){B.got=v;}}class D extends B{}D.x=5;"
+              "return B.got+','+D.hasOwnProperty('x');})()",
+              "5,false");
+
+    // A frozen function pins its synthesised length, name and prototype too.
+    js_expect("(function(){function f(a){} Object.freeze(f);"
+              "var d=Object.getOwnPropertyDescriptor(f,'prototype');"
+              "return Object.isFrozen(f)+','+d.writable+','+"
+              "Object.getOwnPropertyDescriptor(f,'name').configurable;})()",
+              "true,false,false");
+
+    // 10.5 proxy invariants: a trap is held to what its target can be.
+    js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
+              "var p=new Proxy(t,{getOwnPropertyDescriptor(){return undefined;}});"
+              "try{Object.getOwnPropertyDescriptor(p,'x');return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor(){"
+              "return {value:1,configurable:false};}});"
+              "try{Object.getOwnPropertyDescriptor(p,'x');return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{defineProperty(){return true;}});"
+              "try{Object.defineProperty(p,'x',{value:1,configurable:false});return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
+              "var p=new Proxy(t,{deleteProperty(){return true;}});"
+              "try{Reflect.deleteProperty(p,'x');return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{isExtensible(){return false;}});"
+              "try{Object.isExtensible(p);return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{preventExtensions(){return true;}});"
+              "try{Object.preventExtensions(p);return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var log=[];var p=new Proxy({a:1},{"
+              "ownKeys(t){log.push('keys');return Reflect.ownKeys(t);},"
+              "defineProperty(t,k,d){log.push(k+':'+d.configurable+d.writable);"
+              "return Reflect.defineProperty(t,k,d);}});"
+              "Object.freeze(p);return log.join()+','+Object.isFrozen(p);})()",
+              "keys,a:falsefalse,true");
+    js_expect("(function(){var a=[1];a.foo=2;Object.freeze(a);"
+              "var d=Object.getOwnPropertyDescriptor(a,'foo');"
+              "return d.writable+','+d.configurable+','+Object.isFrozen(a);})()",
+              "false,false,true");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
