@@ -718,8 +718,11 @@ void install_json(context & cx) {
     // by stringify. [[IsRawJSON]] is the private key; the text must be a JSON
     // primitive - no object or array, no surrounding whitespace.
     method(cx, json, "rawJSON", 1, [](context & c, std::span<value> a) {
+        // ToString's TypeError for a Symbol has LANDED by the next line
+        // (context::unwinds), so it is watched for rather than asked about.
+        const detail::unwind_watch watch{c};
         const std::string text = string_arg(c, arg_at(a, 0));
-        if (c.throw_pending()) { return value::undefined(); }
+        if (watch.threw()) { return value::undefined(); }
         const auto edge = [](char ch) {
             return ch == '\t' || ch == '\n' || ch == '\r' || ch == ' ';
         };
