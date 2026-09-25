@@ -39,6 +39,25 @@ namespace ctbrowser::script {
 
 struct closure_object;
 
+// A REALM (ECMA-262 9.3): the global environment a script's free names resolve
+// in - the binding table, the global object and the embedder's answer for a
+// name that is in neither. A page is one; every frame that runs its own
+// scripts is another, so a function a frame declared still reads the FRAME's
+// `document` when the page calls it (10.2.1.1 PrepareForOrdinaryCall step 6:
+// the callee's realm becomes the current one). Owned by the context for its
+// whole life - a closure points at the realm it was made in.
+//
+// THE INTRINSICS ARE STILL SHARED: `frame.contentWindow.Array === Array` here,
+// where a browser has two. The binding table starts as a copy of the page's
+// template (see context::create_realm), so a frame sees the same constructors;
+// what it does not see is the page's own `var`s.
+struct realm_record {
+    string_flat_map<value> globals;
+    value global_this = value::undefined();
+    // See context::set_undeclared_name_hook.
+    std::function<value(std::string_view)> undeclared_name;
+};
+
 // type_record.hpp is included rather than forward-declared because each_root
 // hands its visitor the `root_label` vocabulary declared there.
 
@@ -269,6 +288,11 @@ struct closure_object final : heap_object {
     // was written, captured when the closure was made. An arrow has no receiver
     // of its own, so this is the only place its `this` can come from.
     value captured_this = value::undefined();
+    // [[Realm]] (10.2.3 OrdinaryFunctionCreate step 4): the realm current when
+    // this closure was made, which is the one its body resolves free names in.
+    // Null only for a closure the embedder built by hand; a frame for one runs
+    // in whatever realm is current.
+    realm_record * realm = nullptr;
     explicit closure_object(const function_proto * p)
         : heap_object(heap_kind::function), proto(p) {}
 };

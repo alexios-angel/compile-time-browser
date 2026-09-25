@@ -192,6 +192,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     call_frame entered{
         &target, 0,          new_base,        0, static_cast<std::uint16_t>(args.size()),
         fnobj,   this_value, handlers_.size()};
+    entered.realm = realm_for(fnobj);
     // THIS IS THE PATH super() TAKES - it compiles to `op::apply`, which lands
     // here - so the new.target a super() call passed along is consumed here or
     // nowhere.

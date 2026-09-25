@@ -145,6 +145,7 @@ void context::execute_call(instruction in, call_frame * vm_frame, const function
                 break;
             }
             call_frame entered{&target, 0, new_base, in.a, in.b, fnobj, receiver, handlers_.size()};
+            entered.realm = realm_for(fnobj);
             entered.new_target = pending_new_target_;
             pending_new_target_ = value::undefined();
             frames_.push_back(entered);

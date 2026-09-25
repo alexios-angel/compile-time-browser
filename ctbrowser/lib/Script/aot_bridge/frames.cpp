@@ -88,6 +88,8 @@ aot::ct_aot_frame * aot_bridge::enter(aot::ct_aot_ctx * c, const aot::ct_aot_sit
     entered.closure = cx.pending_closure_.is_kind(heap_kind::function)
                           ? static_cast<closure_object *>(cx.pending_closure_.as_heap())
                           : nullptr;
+    // And its realm, as the interpreter's frame would have it.
+    entered.realm = cx.realm_for(entered.closure);
     // PUSHED BEFORE THE CLEAR, not after. Between copying
     // pending_new_target_ into a C++ local and clearing the root, the
     // constructor a super() is handing on is reachable from nothing - which

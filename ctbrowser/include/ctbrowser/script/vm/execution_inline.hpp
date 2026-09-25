@@ -50,23 +50,24 @@ template <typename T, typename... Args>
 }
 
 inline auto context::define_global(std::string name, value v) -> void {
-    globals_[std::move(name)] = v;
+    current_realm().globals[std::move(name)] = v;
 }
 
 // `delete globalThis.x`: the binding is a table entry, and every global
 // is { configurable: true } (clause 17), so the delete succeeds.
 inline auto context::erase_global(std::string_view name) -> bool {
-    return globals_.erase(name) != 0;
+    return current_realm().globals.erase(name) != 0;
 }
 
 inline auto context::define_native(std::string name, native_fn fn) -> void {
     value v = value::object(allocate<native_object>(name, std::move(fn)));
-    globals_[std::move(name)] = v;
+    current_realm().globals[std::move(name)] = v;
 }
 
 [[nodiscard]] inline auto context::global(std::string_view name) const -> value {
-    const auto it = globals_.find(name);
-    return it == globals_.end() ? value::undefined() : it->second;
+    const auto & globals = current_realm().globals;
+    const auto it = globals.find(name);
+    return it == globals.end() ? value::undefined() : it->second;
 }
 
 // Whether the name is DEFINED, which is not whether it is truthy or even
@@ -74,12 +75,13 @@ inline auto context::define_native(std::string name, native_fn fn) -> void {
 // undefined must still report the global as present, or `'foo' in window`
 // and a window that proxies to the globals disagree with `typeof foo`.
 [[nodiscard]] inline auto context::has_global(std::string_view name) const -> bool {
-    return globals_.find(name) != globals_.end();
+    const auto & globals = current_realm().globals;
+    return globals.find(name) != globals.end();
 }
 
 // Every global, for a window that enumerates itself.
 [[nodiscard]] inline auto context::globals() const noexcept -> const string_flat_map<value> & {
-    return globals_;
+    return current_realm().globals;
 }
 
 // WHETHER SCRIPT IS RUNNING RIGHT NOW - a native called from the
@@ -97,7 +99,7 @@ inline auto context::define_native(std::string name, native_fn fn) -> void {
 // function that answers named elements; it is consulted ONLY when the
 // name is not a global, so the declared path is one map lookup.
 inline auto context::set_undeclared_name_hook(std::function<value(std::string_view)> hook) -> void {
-    undeclared_name_ = std::move(hook);
+    current_realm().undeclared_name = std::move(hook);
 }
 
 // GetValue OF AN IDENTIFIER REFERENCE (6.2.5.5, 9.1.1.4.6). The global
@@ -110,16 +112,19 @@ inline auto context::set_undeclared_name_hook(std::function<value(std::string_vi
 // `typeof` (13.5.3 step 2), which is the one silent one: `silent` is how
 // the run loop and the AOT bridge ask for it.
 [[nodiscard]] inline auto context::global_or_named(std::string_view name, bool silent) -> value {
-    const auto it = globals_.find(name);
-    if (it != globals_.end()) { return it->second; }
-    if (undeclared_name_) {
-        const value named = undeclared_name_(name);
+    realm_record & realm = current_realm();
+    const auto it = realm.globals.find(name);
+    if (it != realm.globals.end()) { return it->second; }
+    if (realm.undeclared_name) {
+        const value named = realm.undeclared_name(name);
         if (!named.is_undefined()) { return named; }
     }
     // The global object is a PROXY in both embeddings, and a proxy is not
-    // is_object() - it is a heap value of its own kind.
-    if (global_this_.is_heap() && has_property(global_this_, string(std::string{name}))) {
-        return lookup_property(global_this_, std::string{name});
+    // is_object() - it is a heap value of its own kind. Held in a local: the
+    // hook above may have run script, and `has_property` may run a trap.
+    const value global_object = realm.global_this;
+    if (global_object.is_heap() && has_property(global_object, string(std::string{name}))) {
+        return lookup_property(global_object, std::string{name});
     }
     if (!silent) { throw_error("ReferenceError", std::string{name} + " is not defined"); }
     return value::undefined();
@@ -129,12 +134,29 @@ inline auto context::set_undeclared_name_hook(std::function<value(std::string_vi
 // binding. An embedder selects its host object before running scripts;
 // assigning globalThis in JavaScript never changes this identity.
 [[nodiscard]] inline auto context::global_this() const noexcept -> value {
-    return global_this_;
+    return current_realm().global_this;
 }
 
 inline auto context::set_global_this(value receiver) -> void {
-    global_this_ = receiver;
+    current_realm().global_this = receiver;
     define_global("globalThis", receiver);
+}
+
+[[nodiscard]] inline auto context::current_realm() const noexcept -> realm_record & {
+    if (frames_.size() > scope_depth_) {
+        if (realm_record * running = frames_.back().realm; running != nullptr) { return *running; }
+    }
+    return *scope_realm_;
+}
+
+[[nodiscard]] inline auto context::main_realm() const noexcept -> realm_record & {
+    return *realms_.front();
+}
+
+// A closure made by the embedder without a realm runs in the caller's.
+[[nodiscard]] inline auto context::realm_for(const closure_object * callee) const noexcept
+    -> realm_record * {
+    return callee != nullptr && callee->realm != nullptr ? callee->realm : &current_realm();
 }
 
 // WHAT `import(specifier)` CALLS. The VM knows nothing about paths, URLs or
@@ -188,6 +210,7 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     }
     auto * entry = allocate<closure_object>(&prog.functions[0]);
     entry->owner = &prog;
+    entry->realm = &current_realm();
     return call(value::object(entry), std::span<const value>{});
 }
 
