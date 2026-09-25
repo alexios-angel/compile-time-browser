@@ -103,7 +103,29 @@ void test_iterator_moves_both_ways_through_text_and_comments() {
 
 } // namespace
 
+namespace {
+
+// THE PRE-REMOVING STEPS (NodeIterator-removal.html): removing an ancestor of
+// the reference with the pointer AFTER it moves the reference to the node
+// preceding the removed one; removing the reference itself with the pointer
+// BEFORE it moves on to the first node after the removed subtree.
+void test_iterator_follows_a_removal() {
+    is("(function () { var root = document.createElement('div');"
+       " root.innerHTML = '<a></a><b><i></i></b><c></c>'; document.body.appendChild(root);"
+       " var it = document.createNodeIterator(root);"
+       " it.nextNode(); it.nextNode(); it.nextNode(); it.nextNode();"
+       " root.querySelector('b').remove();"
+       " var out = [it.referenceNode.localName, it.pointerBeforeReferenceNode];"
+       " it.previousNode(); root.querySelector('a').remove();"
+       " out.push(it.referenceNode.localName, it.pointerBeforeReferenceNode);"
+       " root.remove(); return out.join(); })()",
+       "a,false,c,true");
+}
+
+} // namespace
+
 int main() {
+    test_iterator_follows_a_removal();
     test_walker_state_is_readonly_on_the_prototype();
     test_a_root_in_another_document();
     test_filter_callback_semantics();
