@@ -543,10 +543,11 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                         const value pair[2] = {work[left], work[right]};
                         order = context::to_number(c.call(comparator, pair));
                     }
-                    // `<= 0` TAKES THE LEFT, which is what makes this stable:
-                    // equal elements keep their order. A NaN comparator answer
-                    // is treated as 0 by the same test, which 23.1.3.30 says.
-                    spare[out++] = order <= 0 ? work[left++] : work[right++];
+                    // NOT `> 0` TAKES THE LEFT, which is what makes this
+                    // stable: equal elements keep their order. Spelled so that
+                    // a NaN answer is +0 as 23.1.3.30.2 says - `order <= 0`
+                    // was false for a NaN and swapped them.
+                    spare[out++] = !(order > 0) ? work[left++] : work[right++];
                 }
                 while (left < mid) { spare[out++] = work[left++]; }
                 while (right < hi) { spare[out++] = work[right++]; }

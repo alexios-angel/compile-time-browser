@@ -230,6 +230,8 @@ int main() {
     js_expect("[1, undefined, 2].sort(function (a, b) { return a - b; }).join(',')", "1,2,");
     js_expect("[1, undefined, 2].sort(function (a, b) { return a - b; }).length", "3");
     js_expect("[3, 1, 2].sort(function (a, b) { return a - b; }).join(',')", "1,2,3");
+    // A NaN answer is +0: equal, so the order stays (23.1.3.30.2).
+    js_expect("['b', 'a', 'c'].sort(function (a, b) { return a - b; }).join(',')", "b,a,c");
 
     // ================================================================
     // 8. String.raw AND THE String STATICS
