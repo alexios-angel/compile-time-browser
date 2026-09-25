@@ -81,6 +81,7 @@ enum class box_side : std::uint8_t {
     }
     if (side == box_side::start) { return offset->text; }
     if (offset->is_percent) { return number_text(100.0 - offset->number) + "%"; }
+    if (offset->text.starts_with('-')) { return "calc(100% + " + offset->text.substr(1) + ")"; }
     return "calc(100% - " + offset->text + ")";
 }
 

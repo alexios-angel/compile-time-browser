@@ -21,6 +21,35 @@ using ctbrowser_test::logged;
 
 namespace {
 
+void test_computed_background_positions() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<div id="target" style="font-size: 20px"></div><script>
+        const target = document.getElementById('target');
+        for (const value of ['center right 7%', 'top 1em center',
+                             'center, left, bottom', 'top 17px right -18px']) {
+            target.style.backgroundPosition = value;
+            console.log(value + '=' + getComputedStyle(target).backgroundPosition);
+        }
+        target.style.background = 'right 1em center, left bottom 16%';
+        console.log('shorthand=' + getComputedStyle(target).backgroundPosition);
+        for (const property of ['object-position', 'mask-position']) {
+            target.style.setProperty(property, 'right -18px top 17px');
+            console.log(property + '=' + getComputedStyle(target).getPropertyValue(property));
+        }
+    </script>)");
+    CHECK_EQ(page.script_error(), std::string{});
+    CHECK_EQ(logged(page, "center right 7%="), std::string{"center right 7%=93% 50%"});
+    CHECK_EQ(logged(page, "top 1em center="), std::string{"top 1em center=50% 20px"});
+    CHECK_EQ(logged(page, "center, left, bottom="),
+             std::string{"center, left, bottom=50% 50%, 0% 50%, 50% 100%"});
+    CHECK_EQ(logged(page, "top 17px right -18px="),
+             std::string{"top 17px right -18px=calc(100% + 18px) 17px"});
+    CHECK_EQ(logged(page, "shorthand="), std::string{"shorthand=calc(100% - 20px) 50%, 0% 84%"});
+    CHECK_EQ(logged(page, "object-position="),
+             std::string{"object-position=calc(100% + 18px) 17px"});
+    CHECK_EQ(logged(page, "mask-position="), std::string{"mask-position=calc(100% + 18px) 17px"});
+}
+
 void test_background_cascade() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<style>
@@ -651,6 +680,7 @@ void test_descriptors_refuse_tree_counting() {
 } // namespace
 
 int main() {
+    test_computed_background_positions();
     test_background_cascade();
     test_background_substitution_failures();
     test_image_color_scheme();

@@ -437,8 +437,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         // 3a. A `<position>`, whose keywords compute to percentages: `10% center`
         //     is `10% 50%` and `right 20px` is `calc(100% - 20px)`, CSS Values 5
         //     §position. `background-position` is not modelled as one - its
-        //     grammar has a three-value form and a comma list - but a value that
-        //     IS a position reads the same way, and anything else keeps its text.
+        //     grammar has a three-value form and a comma list - so those forms
+        //     fall through to the background layer resolver below.
         if ((known != nullptr && known->kind == style::css::value_kind::position) ||
             property == "background-position") {
             std::string resolved = style::css::computed_position(text, declared("writing-mode"),
@@ -483,11 +483,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         const bool transform_property = property == "rotate" || property == "scale" ||
                                         property == "translate" || property == "transform-origin" ||
                                         property == "perspective-origin";
-        const bool layer_property = property == "background-repeat" || property == "mask-repeat" ||
-                                    property == "background-size" || property == "mask-size" ||
-                                    property == "background-position-x" ||
-                                    property == "background-position-y" ||
-                                    property == "mask-position";
+        const bool layer_property =
+            property == "background-repeat" || property == "mask-repeat" ||
+            property == "background-size" || property == "mask-size" ||
+            property == "background-position" || property == "background-position-x" ||
+            property == "background-position-y" || property == "mask-position";
         if (is_color_property(property) || image_property || filter_property || grid_property ||
             transform_property || layer_property) {
             style::css::length_context bases;
