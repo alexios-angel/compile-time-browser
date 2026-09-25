@@ -393,7 +393,70 @@ void test_value_sanitization_and_type_change() {
        "InvalidStateError,true,1e3,true,10,15,2014-01-01T11:11,true,foo bar,true");
 }
 
+// --- round nine: barred validity, groups, selection seeding, FACE ----------------------
+
+void test_barred_validity_groups_and_selection() {
+    // form-validation-validity-*.html: a barred control keeps its flags; only
+    // a text-ish valueMissing asks for mutability. input-stepup.html: the
+    // week state's default step base. cloning-steps.html, radio.html.
+    is("(function () { var i = document.createElement('input'); i.pattern = '[a-z]+';"
+       " i.value = 'ABC'; i.disabled = true;"
+       " var o = [i.validity.patternMismatch, i.validity.valid, i.willValidate, "
+       "i.checkValidity()];"
+       " var r = document.createElement('input'); r.required = true; r.readOnly = true;"
+       " o.push(r.validity.valueMissing);"
+       " var c = document.createElement('input'); c.type = 'checkbox'; c.required = true;"
+       " c.disabled = true; o.push(c.validity.valueMissing);"
+       " var w = document.createElement('input'); w.type = 'week'; w.value = '1970-W01';"
+       " o.push(w.validity.stepMismatch); w.stepUp(); o.push(w.value);"
+       " var b = document.createElement('button'); b.type = 'reset'; o.push(b.willValidate);"
+       " var k = document.createElement('input'); k.type = 'checkbox'; k.indeterminate = true;"
+       " o.push(k.cloneNode().indeterminate);"
+       " var d = document.createElement('div'); d.innerHTML = '<input type=radio name=g checked>"
+       "<input type=radio name=g><input type=radio name=h checked>';"
+       " var rs = d.querySelectorAll('input'); rs[1].checked = true;"
+       " o.push(rs[0].checked, rs[1].checked, rs[2].checked);"
+       " return o.join(); })()",
+       "true,false,false,true,false,true,false,1970-W02,false,true,false,true,true");
+    // defaultSelection.html, type-change-state.html, value-defaultValue-
+    // textContent.html, email.html.
+    is("(function () { var d = document.createElement('div');"
+       " d.innerHTML = '<input value=foo><textarea>foo</textarea>';"
+       " var i = d.firstChild, ta = d.lastChild; var o = [i.selectionStart, ta.selectionStart];"
+       " i.value = 'foo'; o.push(i.selectionStart); i.value = 'Foo'; o.push(i.selectionEnd);"
+       " i.type = 'email'; i.type = 'text'; o.push(i.selectionStart);"
+       " ta.textContent = 'a\\r\\nb'; o.push(JSON.stringify(ta.value), ta.defaultValue.length);"
+       " ta.appendChild(document.createElement('span')).textContent = 'zz';"
+       " o.push(JSON.stringify(ta.value));"
+       " var e = document.createElement('input'); e.type = 'email'; e.multiple = true;"
+       " e.value = ' a@b.c , d@e.f '; o.push(e.value); e.multiple = false; o.push(e.value);"
+       " var e2 = document.createElement('input'); e2.type = 'email';"
+       " e2.value = 'x@exämle.com'; o.push(e2.value);"
+       " var n = document.createElement('input'); n.type = 'number'; n.value = '.5';"
+       " o.push(n.value);"
+       " return o.join('|'); })()",
+       "0|0|0|3|0|\"a\\nb\"|4|\"a\\nb\"|a@b.c,d@e.f|a@b.c,d@e.f|x@xn--exmle-hra.com|.5");
+    // HTMLLegendElement.html, and a form-associated custom element as a
+    // form control: listed, submitted, validated, reset, disabled.
+    is("(function () { var f = document.createElement('form');"
+       " f.innerHTML = '<fieldset><legend id=lg></legend></fieldset><legend id=l2></legend>';"
+       " var o = [f.querySelector('#lg').form === f, f.querySelector('#l2').form === null];"
+       " customElements.define('x-face', class extends HTMLElement {"
+       " static get formAssociated() { return true; }"
+       " constructor() { super(); this.i = this.attachInternals(); this.resets = 0; }"
+       " formResetCallback() { this.resets++; } });"
+       " var g = document.body.appendChild(document.createElement('form'));"
+       " g.innerHTML = '<x-face name=q></x-face><input name=r>'; var x = g.firstChild;"
+       " o.push(g.elements.length); x.i.setFormValue('v'); o.push(new FormData(g).get('q'));"
+       " x.i.setValidity({valueMissing: true}, 'm'); o.push(g.checkValidity());"
+       " g.reset(); o.push(x.resets);"
+       " x.setAttribute('disabled', ''); o.push(new FormData(g).has('q'));"
+       " return o.join(); })()",
+       "true,true,2,v,false,1,false");
+}
+
 int main() {
+    test_barred_validity_groups_and_selection();
     test_select_options_and_selectedness();
     test_form_elements_and_named_access();
     test_labels_and_control();
