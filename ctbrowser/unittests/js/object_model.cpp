@@ -145,6 +145,14 @@ int main() {
     js_expect("Object.groupBy(null, function(){})", "THREW");
     js_expect("Object.groupBy.length", "2");
     js_expect("Object.groupBy({[Symbol.iterator]: undefined}, function(){})", "THREW");
+    js_expect("Object.getPrototypeOf(Object.groupBy([1],function(){return 'a';}))===null", "true");
+    js_expect("Object.keys(Object.groupBy([1],function(){return {toString(){return 'k';}};}))"
+              ".join()",
+              "k");
+    // Object.assign reads and writes key by key (20.1.2.1 step 4.c).
+    js_expect("(function(){var src={a:1,b:2};var t={set a(v){delete src.b;}};"
+              "Object.assign(t,src);return 'b' in t;})()",
+              "false");
 
     // Object.fromEntries (20.1.2.7) runs the iterator protocol: a Map, an
     // entry that is not an object closes the iterator with a TypeError, a

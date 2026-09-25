@@ -934,36 +934,34 @@ void install_object(context & cx) {
             // Step 4.a: a null or undefined source is SKIPPED rather than an
             // error, which is what makes `Object.assign({}, maybe)` idiomatic.
             if (a[i].is_nullish()) { continue; }
-            // A SNAPSHOT, because storing into the target can run a setter that
-            // mutates the source; ENUMERABLE own keys only (7.3.24 step 5);
-            // and through store_property rather than set(), because
-            // Object.assign is specified as [[Set]] and a frozen target must
-            // therefore reject the write.
-            std::vector<std::pair<std::string, value>> entries;
-            // SYMBOL KEYS INCLUDED: 7.3.24 walks OwnPropertyKeys, which reports
-            // them - the same exception object spread needs - and any SOURCE,
-            // so `Object.assign({}, 'ab')` copies the two characters.
-            for (const std::string & key : own_property_names(c, a[i], key_filter::all)) {
+            // 20.1.2.1 step 4.b-c: OwnPropertyKeys ONCE (symbols included -
+            // the exception spread makes - and any source, so
+            // `Object.assign({}, 'ab')` copies the two characters), then per
+            // key, INTERLEAVED: [[GetOwnProperty]], and for an enumerable one
+            // [[Get]] and Set(to, key, v, true). A setter on the target that
+            // deletes a later source key therefore stops it being copied, and
+            // a source getter sees every earlier write.
+            const value source = detail::box_primitive(c, a[i]);
+            const context::rooted keep_source{c, source};
+            const detail::unwind_watch watch{c};
+            const std::vector<std::string> keys = own_property_names(c, source, key_filter::all);
+            if (watch.threw()) { return value::undefined(); }
+            for (const std::string & key : keys) {
                 context::property_descriptor found;
-                if (!c.own_property(a[i], key, found) || !found.enumerable) { continue; }
-                entries.emplace_back(key, found.is_accessor() ? c.lookup_property(a[i], key)
-                                                              : found.held);
-            }
-            // THE SNAPSHOT IS A ROOT. A [[Set]] on the target can run a page's
-            // setter, which can allocate, which can collect - and until it is
-            // stored, a copied value's only reference is this vector, which no
-            // root of context::each_root reaches.
-            std::vector<value> held;
-            held.reserve(entries.size());
-            for (const auto & entry : entries) { held.push_back(entry.second); }
-            const context::rooted_values keep{c, held};
-            // Set(to, key, value, TRUE) - 20.1.2.1 step 4.c.iii: a write the
-            // target refuses is a TypeError, sloppy or not.
-            for (const auto & [key, item] : entries) {
+                const bool present = c.own_property(source, key, found);
+                if (watch.threw()) { return value::undefined(); }
+                if (!present || !found.enumerable) { continue; }
+                const value item = found.is_accessor() || source.is_kind(heap_kind::proxy)
+                                       ? c.lookup_property(source, key)
+                                       : found.held;
+                if (watch.threw()) { return value::undefined(); }
+                const context::rooted keep_item{c, item};
+                // Set(to, key, value, TRUE): a write the target refuses is a
+                // TypeError, sloppy or not.
                 c.clear_store_rejected();
                 c.store_property(target, key, item);
                 c.strict_store_check(key);
-                if (c.throw_pending()) { return target; }
+                if (watch.threw()) { return value::undefined(); }
             }
         }
         return target;
@@ -971,8 +969,8 @@ void install_object(context & cx) {
     // 20.1.2.9 Object.groupBy - GroupBy with property keys: every value of
     // the iterable goes to the callback with its index, and the answer is an
     // object of arrays keyed by ToPropertyKey of what it returned, in first-
-    // seen order. (The specification gives it a null prototype; this engine
-    // cannot make one - see prototype_of.)
+    // seen order, on a NULL prototype (step 2: OrdinaryObjectCreate(null)) so
+    // a group named "toString" is not shadowing anything.
     method(cx, object_ctor, "groupBy", 2, [](context & c, std::span<value> a) {
         if (!object_coercible(c, arg_at(a, 0), "Object.groupBy")) { return value::undefined(); }
         const value callback = arg_at(a, 1);
@@ -991,6 +989,7 @@ void install_object(context & cx) {
         if (c.throw_pending() || !items.is_array()) { return value::undefined(); }
         const context::rooted keep_items{c, items};
         object_object * out = new_table(c);
+        out->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
         const value made = value::object(out);
         const context::rooted keep{c, made};
         // A COPY, ROOTED: the callback may empty the very array `items` is.
@@ -998,8 +997,17 @@ void install_object(context & cx) {
         const context::rooted_values keep_snapshot{c, snapshot};
         for (std::size_t i = 0; i < snapshot.size(); ++i) {
             const value args[2] = {snapshot[i], value::number(static_cast<double>(i))};
-            const value key = c.call(callback, args);
+            value key = c.call(callback, args);
             if (c.throw_pending()) { return value::undefined(); }
+            // ToPropertyKey: ToPrimitive with the string hint, then a symbol
+            // stays itself and anything else is ToString'd.
+            if (key.is_object_like()) {
+                const context::rooted keep_key{c, key};
+                const detail::unwind_watch watch{c};
+                if (!c.to_primitive_hint(key, "string", key) || watch.threw()) {
+                    return value::undefined();
+                }
+            }
             const std::string name = c.to_string(key);
             value * group = out->find(name);
             if (group == nullptr) {
