@@ -242,8 +242,12 @@ constexpr double ms_per_day = 86400000.0;
 [[nodiscard]] static std::string two(long long n) {
     return (n < 10 ? "0" : "") + std::to_string(n);
 }
+// "" when `ms` is no date a valid date string can name: beyond ECMAScript's
+// time value range (8.64e15 ms either side of the epoch) or before year 1.
 [[nodiscard]] static std::string date_text(double ms) {
+    if (std::fabs(ms) > 8.64e15) { return {}; }
     const civil when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
+    if (when.year < 1) { return {}; }
     std::string year = std::to_string(when.year);
     while (year.size() < 4) { year.insert(0, "0"); }
     return year + "-" + two(when.month) + "-" + two(when.day);
@@ -310,7 +314,8 @@ constexpr double ms_per_day = 86400000.0;
     }
     if (type == "datetime-local") {
         const double day = std::floor(number / ms_per_day) * ms_per_day;
-        return date_text(number) + "T" + time_text(std::floor(number - day));
+        const std::string date = date_text(number);
+        return date.empty() ? date : date + "T" + time_text(std::floor(number - day));
     }
     return {};
 }

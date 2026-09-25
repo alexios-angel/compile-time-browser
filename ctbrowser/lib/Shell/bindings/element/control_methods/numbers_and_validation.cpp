@@ -221,7 +221,9 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         const std::optional<double> min = helpers.bound_of(txn, b, id, "min");
         const std::optional<double> max = helpers.bound_of(txn, b, id, "max");
         if (min && max && *min > *max) { return; }
-        double number = helpers.to_number(txn, b, id, helpers.value_of(txn, b, id)).value_or(0);
+        const std::optional<double> held =
+            helpers.to_number(txn, b, id, helpers.value_of(txn, b, id));
+        double number = held.value_or(0);
         const double before = number;
         double n = a.empty() ? 1 : context::to_number(a[0]);
         if (std::isnan(n)) { n = 0; }
@@ -233,7 +235,10 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         }
         if (min && number < *min) { number = base + std::ceil((*min - base) / *step) * *step; }
         if (max && number > *max) { number = base + std::floor((*max - base) / *step) * *step; }
-        if ((up && number < before) || (!up && number > before)) { return; }
+        // Moving AGAINST the direction asked is refused - but only from a value
+        // the control had: an empty one stepped down lands on its minimum
+        // (input-stepdown-02.html), the 0 it started from being no value.
+        if (held && ((up && number < before) || (!up && number > before))) { return; }
         if (min && number < *min) { return; }
         if (max && number > *max) { return; }
         store_value(txn, b, id, text_of_number(txn, b, id, number));
