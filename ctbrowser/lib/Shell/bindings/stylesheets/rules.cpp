@@ -726,7 +726,15 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                     made.prelude += end + ")";
                 }
             } else if (made.at_name == "container") {
-                made.prelude = collapse_whitespace(made.prelude, html_whitespace);
+                // The cascade's own reading of the prelude: a rule it would
+                // drop is not in the object model either (at-container-parsing).
+                const auto conditions = style::css::parse_container_conditions(made.prelude);
+                if (!conditions) {
+                    css_rule_store_.pop_back();
+                    error = "SyntaxError";
+                    return no_index;
+                }
+                made.prelude = style::css::serialize_container_conditions(*conditions);
             }
             parse_block_contents(at, body, false);
             // Reconstructible from here on, so the author's bytes are dropped

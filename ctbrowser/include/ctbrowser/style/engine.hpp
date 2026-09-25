@@ -253,9 +253,21 @@ public:
     struct container_size {
         float width = 0;
         float height = 0;
+        [[nodiscard]] friend bool operator==(const container_size &,
+                                             const container_size &) = default;
     };
     using container_size_query = std::function<std::optional<container_size>(node_id)>;
     void set_container_size(container_size_query query) { container_size_ = std::move(query); }
+    // DID A LAYOUT MOVE A CONTAINER a query was asked of? Every size the last
+    // cascade asked for is asked again - of the layout that has run since -
+    // and any answer that differs means the cascade read a stale box and has
+    // to run again. False at once for a page no size query asked about.
+    [[nodiscard]] bool container_sizes_changed() const {
+        for (const auto & [node, was] : container_answers_) {
+            if ((container_size_ ? container_size_(node) : std::nullopt) != was) { return true; }
+        }
+        return false;
+    }
 
     // SHORTHAND EXPANSION. `margin: 1px 2px` becomes four longhand
     // declarations, emitted in place of the shorthand.
@@ -389,6 +401,8 @@ public:
         ctx.root_zero_advance = root_zero_advance_;
         ctx.viewport_width = environment_.viewport_width;
         ctx.viewport_height = environment_.viewport_height;
+        ctx.container_width = cq_width_;
+        ctx.container_height = cq_height_;
         ctx.sibling_index = sibling_index_;
         ctx.sibling_count = sibling_count_;
         ctx.element_key = element_key_;
@@ -713,6 +727,9 @@ private:
     // with the condition true of its box and computed style; and the
     // enclosing `@container`s likewise.
     [[nodiscard]] bool container_holds(const read_txn & txn, std::uint16_t c, std::size_t depth);
+    // One condition of an `@container`'s list, for the element at `depth`.
+    [[nodiscard]] bool container_query_holds(const read_txn & txn, const css::container_query & q,
+                                             std::size_t depth, atom type_key, atom name_key);
 
     // Everything a compound can require, of the element at (depth, index).
     //
@@ -790,6 +807,15 @@ private:
     std::uint32_t sibling_count_ = 0;
     // ...and which element it is, for what `random()` is random per.
     std::uint64_t element_key_ = 0;
+    // THE QUERY CONTAINERS `cqw` AND ITS KIN MEASURE (CSS Conditional 5 §4):
+    // `cq_chain_[d]` is the nearest size container on the inline axis and on
+    // the block axis for the CHILDREN of the element at depth d, itself
+    // included - kept as resolve_subtree descends, as chain_styles_ is - and
+    // `cq_width_`/`cq_height_` their content boxes for the element being
+    // resolved, negative for none.
+    std::vector<std::pair<node_id, node_id>> cq_chain_;
+    float cq_width_ = -1.0f;
+    float cq_height_ = -1.0f;
     std::vector<compiled_selector> selectors_;
     std::vector<declaration> declarations_;
     rule_index index_;
@@ -830,6 +856,11 @@ private:
     // set_container_size.
     std::vector<css::container_condition> containers_{css::container_condition{}};
     container_size_query container_size_;
+    // What the hook answered for each container since the last resolve_all -
+    // asked once per container per cascade, and what container_sizes_changed
+    // holds the next layout to.
+    std::vector<std::pair<node_id, std::optional<container_size>>> container_answers_;
+    [[nodiscard]] std::optional<container_size> container_size_of(node_id node);
     // THE STYLES OF THE CHAIN: `chain_styles_[d]` is the resolved style of the
     // element at depth d of the current traversal, set as resolve_subtree
     // descends, which is what a container query reads `container-type` and a

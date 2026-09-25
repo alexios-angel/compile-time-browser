@@ -48,6 +48,12 @@ struct length_context {
     float root_zero_advance = 0.0f;
     float viewport_width = 0.0f;
     float viewport_height = 0.0f;
+    // THE QUERY CONTAINERS' CONTENT BOXES that `cqw` and `cqh` measure (CSS
+    // Conditional 5 §4): the nearest size container on each axis, as the
+    // cascade found it. Negative where there is none, and the unit is the
+    // small viewport's for that axis.
+    float container_width = -1.0f;
+    float container_height = -1.0f;
     // THE ELEMENT'S WRITING MODE IS VERTICAL, so the inline axis is the
     // viewport's height: `vi`/`vb` (and `cqi`/`cqb`) swap (CSS Values 4
     // §6.1.2, viewport-units-writing-mode). The cascade sets it from the

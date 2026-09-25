@@ -40,13 +40,55 @@ namespace ctbrowser::style::css {
 [[nodiscard]] std::optional<bool> evaluate_media_condition(std::string_view text,
                                                            const media_environment & env);
 
-// A `<container-condition>` (CSS Containment 3 §5): the size features
-// against `env`'s viewport, which the caller has set to the query container's
-// box, and each `style(...)`'s query text answered by `query` against the
-// container's computed style. nullopt for text that is not a condition.
+// The query container's CONTENT BOX, as the size features read it. An axis
+// the container does not contain has no size - an `inline-size` container
+// has no block size to ask - and every feature reading it is unknown rather
+// than false.
+struct container_box {
+    std::optional<float> width;
+    std::optional<float> height;
+};
+
+// A `<container-condition>` (CSS Conditional 5 §3): the size features
+// against `box`, each `style(...)`'s query text answered by `query` against
+// the container's computed style, and `env` the window the units in it -
+// `50vw` - are relative to. nullopt for text that is not a condition.
 using style_query = std::function<truth(std::string_view query)>;
 [[nodiscard]] std::optional<truth> evaluate_container_condition(std::string_view text,
                                                                 const media_environment & env,
+                                                                const container_box & box,
                                                                 const style_query & query);
+
+// WHAT A CONTAINER MUST BE to answer a `<container-condition>`, which is what
+// picks the query container (CSS Conditional 5 §2.2): `width` and
+// `inline-size` want a size container on the inline axis, `height` and
+// `block-size` one on the block axis, `aspect-ratio` and `orientation` both;
+// `scroll-state()` wants a scroll-state container. `style()` wants nothing -
+// every element is a style container.
+struct container_needs {
+    bool inline_axis = false;
+    bool block_axis = false;
+    bool scroll_state = false;
+};
+[[nodiscard]] container_needs container_requirements(std::string_view condition);
+
+// An `@container` PRELUDE, `<container-condition>#` (CSS Conditional 5 §3),
+// or nullopt when it is not one. Each condition is `[<container-name>]?
+// <container-query>?` and not neither: a leading identifier other than
+// `not`/`and`/`or` is the name - a <custom-ident>, so no CSS-wide keyword,
+// `default` or `none` - and the rest must be a query: `not` one in
+// parentheses, or several joined by all-`and` or all-`or`, each a size
+// feature, a nested query, a function (`style()`, `scroll-state()`) or a
+// `<general-enclosed>`. `screen`, `foo (width)` and `(width),` are not.
+[[nodiscard]] std::optional<std::vector<container_query>> parse_container_conditions(
+    std::string_view text);
+
+// ...and back, as CSSOM's `conditionText` reads it: the name as an
+// identifier, the query with its whitespace collapsed, a size feature's name
+// lowercased, `: ` after a feature and one space either side of a comparison,
+// and the conditions joined by `, `. A function - `style()`, `calc()` - is
+// copied as written, its whitespace collapsed.
+[[nodiscard]] std::string serialize_container_query(std::string_view condition);
+[[nodiscard]] std::string serialize_container_conditions(std::span<const container_query> list);
 
 } // namespace ctbrowser::style::css

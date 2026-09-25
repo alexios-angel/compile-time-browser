@@ -124,20 +124,14 @@ void parser::at_rule_block_of(std::string_view name, std::span<const component_v
     }
     case at_kind::scope: scope_block_of(prelude, block); return;
     case at_kind::container: {
-        // `[<container-name>]? <container-condition>`: a leading identifier
-        // that is not `not`/`and`/`or` is the name; the rest is the
-        // condition, kept as text for the engine. No condition is no rule.
-        auto run = sheet_.trimmed(prelude);
+        // `<container-condition>#`, kept as text for the engine; a prelude
+        // that is not one is no rule (css/media.hpp).
+        std::optional<std::vector<container_query>> queries =
+            parse_container_conditions(text_of_run(sheet_.trimmed(prelude)));
+        if (!queries) { return; }
         container_condition made;
         made.parent = container_;
-        const css_token * first = token_at(run);
-        if (first != nullptr && first->type == token_type::ident &&
-            !ascii_iequals_any(text(*first), {"not", "and", "or"})) {
-            made.name = std::string{text(*first)};
-            run = sheet_.trimmed(run.subspan(1));
-        }
-        if (run.empty()) { return; }
-        made.condition = text_of_run(run);
+        made.queries = std::move(*queries);
         sheet_.containers.push_back(std::move(made));
         const std::uint32_t saved =
             std::exchange(container_, static_cast<std::uint32_t>(sheet_.containers.size()));

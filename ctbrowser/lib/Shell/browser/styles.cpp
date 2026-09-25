@@ -58,6 +58,18 @@ std::string expand_imports(const asset_registry & assets, std::string css, std::
 
 void browser::load_author_styles() {
     if (author_sheet_loaded_) { return; }
+    // A QUERY CONTAINER'S SIZE is its content box as last laid out (CSS
+    // Conditional 5 §3.1) - asked by the cascade, answered from the fragments,
+    // and nothing before the first layout, when every size query is unknown.
+    styles_->set_container_size(
+        [this](node_id id) -> std::optional<ctbrowser::style::engine::container_size> {
+            const ctbrowser::layout::fragment * f = fragments_.find(id);
+            if (f == nullptr || f->box == nullptr) { return std::nullopt; }
+            const ctbrowser::layout::resolved_edges e = ctbrowser::layout::edges_of(*f);
+            return ctbrowser::style::engine::container_size{
+                std::max(0.0f, f->bounds.width - e.horizontal_inner()),
+                std::max(0.0f, f->bounds.height - e.vertical_inner())};
+        });
     author_css_ = collect_author_styles();
     if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }
     author_sheet_loaded_ = true;
@@ -103,6 +115,27 @@ void browser::refresh_author_styles() {
     author_css_ = std::move(css);
     styles_->clear_origin(ctbrowser::style::author_origin);
     if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }
+}
+
+// THE STYLE -> LAYOUT -> STYLE LOOP a container query closes (CSS
+// Conditional 5 §3): the cascade asked each container's size of the layout
+// before it, so a layout that sized a container differently has the cascade
+// and the layout run again - and again, until the sizes hold still. Bounded,
+// because a query that flips the size it asks about never settles; size
+// containment is what the spec relies on to rule that out, and this layout
+// does not apply it yet. Called at the end of every layout, and a no-op for
+// a page no size query has asked about.
+void browser::settle_container_queries() {
+    // ponytail: one guard for every browser on the thread, since the loop
+    // re-enters run_layout; a member when two pages ever lay out nested.
+    static bool settling = false;
+    if (settling) { return; }
+    settling = true;
+    for (int pass = 0; pass < 3 && styles_->container_sizes_changed(); ++pass) {
+        resolve_styles();
+        run_layout();
+    }
+    settling = false;
 }
 
 void browser::note_resource_load(node_id id, bool ok) {

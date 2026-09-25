@@ -28,6 +28,17 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     sibling_index_ = self.sibling_index;
     sibling_count_ = self.sibling_count;
     element_key_ = key_of(node);
+    // The containers this element's `cq*` units measure, as last laid out.
+    cq_width_ = cq_height_ = -1.0f;
+    if (depth > 0 && depth - 1 < cq_chain_.size()) {
+        const auto [inline_container, block_container] = cq_chain_[depth - 1];
+        if (inline_container) {
+            if (const auto box = container_size_of(inline_container)) { cq_width_ = box->width; }
+        }
+        if (block_container) {
+            if (const auto box = container_size_of(block_container)) { cq_height_ = box->height; }
+        }
+    }
     // Gather only the rules whose RIGHTMOST compound could possibly match.
     matches_.clear();
     collect(index_.by_id, self.id, txn, ancestors, depth);

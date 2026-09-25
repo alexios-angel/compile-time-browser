@@ -548,60 +548,137 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
     return found;
 }
 
-bool engine::container_holds(const read_txn & /*txn*/, std::uint16_t c, std::size_t depth) {
+std::optional<engine::container_size> engine::container_size_of(node_id node) {
+    for (const auto & [asked, answer] : container_answers_) {
+        if (asked == node) { return answer; }
+    }
+    std::optional<container_size> answer =
+        container_size_ ? container_size_(node) : std::optional<container_size>{};
+    container_answers_.emplace_back(node, answer);
+    return answer;
+}
+
+bool engine::container_holds(const read_txn & txn, std::uint16_t c, std::size_t depth) {
     const atom type_key = atoms_->intern_lower("container-type");
     const atom name_key = atoms_->intern_lower("container-name");
     for (; c != 0; c = static_cast<std::uint16_t>(containers_[c].parent)) {
-        const css::container_condition & e = containers_[c];
-        // A size query needs a size container; a `style()`-only query takes
-        // any ancestor (CSS Containment 3 §5.1).
-        const bool wants_size = e.condition.find('(') != std::string::npos &&
-                                e.condition.find("style(") == std::string::npos;
+        // A COMMA LIST HOLDS WHEN ANY OF ITS CONDITIONS DOES, each choosing
+        // its own container (CSS Conditional 5 §3).
         bool held = false;
-        for (std::size_t d = depth; d-- > 0;) {
-            if (d >= chain_styles_.size() || !chain_styles_[d]) { continue; }
-            const computed_style_ptr & style = chain_styles_[d];
-            if (!e.name.empty()) {
-                bool named = false;
-                for (const std::string_view n : split_top_level(style->get(name_key), " \t\n")) {
-                    if (n == e.name) { named = true; }
-                }
-                if (!named) { continue; }
+        for (const css::container_query & q : containers_[c].queries) {
+            if (container_query_holds(txn, q, depth, type_key, name_key)) {
+                held = true;
+                break;
             }
-            css::media_environment env = environment_;
-            if (wants_size) {
-                const std::string_view type = style->get(type_key);
-                const bool sized = type.find("size") != std::string_view::npos;
-                if (!sized) { continue; }
-                const std::optional<container_size> box =
-                    container_size_ ? container_size_(levels_[d][path_[d]].node) : std::nullopt;
-                if (!box) { return false; }
-                env.viewport_width = box->width;
-                env.viewport_height = box->height;
-            }
-            // `style(--x: y)`: the container's computed value of the property
-            // against the query's, as text (custom properties are token
-            // streams, CSS Containment 3 §5.3); `style(--x)` alone asks whether
-            // it has a value other than the guaranteed-invalid one.
-            const css::style_query query = [&](std::string_view text) {
-                const std::size_t colon = text.find(':');
-                const std::string_view name = trim(text.substr(0, colon), html_whitespace);
-                if (name.empty()) { return css::truth::unknown; }
-                const std::string_view have = style->get(atoms_->intern(name));
-                if (colon == std::string_view::npos) {
-                    return !have.empty() && have != guaranteed_invalid ? css::truth::yes
-                                                                       : css::truth::no;
-                }
-                const std::string_view want = trim(text.substr(colon + 1), html_whitespace);
-                return trim(have, html_whitespace) == want ? css::truth::yes : css::truth::no;
-            };
-            held = css::evaluate_container_condition(e.condition, env, query)
-                       .value_or(css::truth::unknown) == css::truth::yes;
-            break; // the nearest eligible container decides, §5.1
         }
         if (!held) { return false; }
     }
     return true;
+}
+
+bool engine::container_query_holds(const read_txn & txn, const css::container_query & e,
+                                   std::size_t depth, atom type_key, atom name_key) {
+    // WHICH ANCESTOR IS ASKED (CSS Conditional 5 §2.2): the nearest one
+    // carrying the name, if one was asked, whose `container-type` can answer
+    // every feature the query uses - a size container on each axis a size
+    // feature reads, a scroll-state container for `scroll-state()`. A
+    // `style()` query asks nothing of it: every element is a style container.
+    // ponytail: the requirements are re-read per element per rule; cache them
+    // on the condition if a page with many containers shows it.
+    const css::container_needs needs = css::container_requirements(e.condition);
+    bool held = false;
+    for (std::size_t d = depth; d-- > 0;) {
+        if (d >= chain_styles_.size() || !chain_styles_[d]) { continue; }
+        const computed_style_ptr & style = chain_styles_[d];
+        if (!e.name.empty()) {
+            bool named = false;
+            for (const std::string_view n : split_top_level(style->get(name_key), " \t\n")) {
+                if (n == e.name) { named = true; }
+            }
+            if (!named) { continue; }
+        }
+        bool size = false, inline_size = false, scroll_state = false;
+        for (const std::string_view word : split_top_level(style->get(type_key), " \t\n")) {
+            size = size || word == "size";
+            inline_size = inline_size || word == "inline-size";
+            scroll_state = scroll_state || word == "scroll-state";
+        }
+        if ((needs.block_axis && !size) || (needs.inline_axis && !size && !inline_size) ||
+            (needs.scroll_state && !scroll_state)) {
+            continue;
+        }
+        // THE CONTENT BOX as last laid out; an element with no box - not
+        // laid out yet, or `display: none` - is no size container, and
+        // the search goes on past it.
+        css::container_box box;
+        if (size || inline_size) {
+            const std::optional<container_size> laid = container_size_of(levels_[d][path_[d]].node);
+            if (!laid && (needs.inline_axis || needs.block_axis)) { continue; }
+            if (laid) {
+                box.width = laid->width;
+                if (size) { box.height = laid->height; }
+            }
+        }
+        const css::media_environment & env = environment_;
+        // `style(...)` IS THE if() CONDITION OF THE SAME NAME, asked of the
+        // container rather than of the element (CSS Conditional 5 §3.3): its
+        // custom properties, its attributes for an `attr()` in a range, its
+        // font for an `em`. So it goes through the substituter that answers
+        // `if(style(...): ...)` - plain, boolean and range features, nested
+        // `and`/`or`/`not` - and a third branch keeps unknown apart from
+        // false, since `not` of unknown is still unknown.
+        const node_id at = levels_[d][path_[d]].node;
+        const css::style_query query = [&](std::string_view text) {
+            const css::custom_lookup lookup = [&style](atom n) -> std::optional<std::string_view> {
+                const std::string_view v = style->get(n);
+                if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }
+                return v;
+            };
+            const css::attribute_lookup attributes =
+                [&txn, at, this](std::string_view name) -> std::optional<std::string> {
+                const atom key = atoms_->intern(name);
+                if (!txn.has_attribute(at, key)) { return std::nullopt; }
+                return std::string{txn.attribute_value(at, key)};
+            };
+            css::condition_environment conditions;
+            conditions.computed = [&style,
+                                   this](std::string_view name) -> std::optional<std::string> {
+                const std::string_view v = style->get(atoms_->intern(name));
+                if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }
+                return std::string{v};
+            };
+            conditions.media = [this](std::string_view t) {
+                return css::evaluate_media_condition(t, environment_);
+            };
+            conditions.registered = [this](std::string_view name) {
+                return registration_of(atoms_->intern(name));
+            };
+            conditions.functions = [this](std::string_view name) {
+                return function_of(atoms_->intern(name));
+            };
+            const float font_size =
+                css::length_text_to_px(style->get(atoms_->intern_lower("font-size")),
+                                       font_context(16.0f))
+                    .value_or(16.0f);
+            conditions.lengths = font_context(
+                font_size,
+                line_height_px(style->get(atoms_->intern_lower("line-height")), font_size));
+            const std::string asked{text};
+            const std::optional<std::string> answer = css::substitute_var(
+                "if(style(" + asked + "): y; not style(" + asked + "): n; else: u)", lookup,
+                *atoms_, attributes, &conditions);
+            const std::string_view word = trim(answer.value_or("u"), html_whitespace);
+            return word == "y"   ? css::truth::yes
+                   : word == "n" ? css::truth::no
+                                 : css::truth::unknown;
+        };
+        // A name alone asks only that there be such a container.
+        held =
+            e.condition.empty() || css::evaluate_container_condition(e.condition, env, box, query)
+                                           .value_or(css::truth::unknown) == css::truth::yes;
+        break; // the nearest eligible container decides, §2.2
+    }
+    return held;
 }
 
 } // namespace ctbrowser::style

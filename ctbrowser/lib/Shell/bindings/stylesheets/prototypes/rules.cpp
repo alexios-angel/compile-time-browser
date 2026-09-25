@@ -257,13 +257,13 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
     const auto container_part = [this](context & c, bool want_name) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return c.string(""); }
-        std::size_t at = 0;
-        const std::string_view first = next_component(rule->prelude, at);
-        const bool named = !first.empty() && first.front() != '(' && !ascii_iequals(first, "not") &&
-                           !ascii_iequals(first, "and") && !ascii_iequals(first, "or");
-        if (want_name) { return c.string(named ? std::string{first} : std::string{}); }
-        const std::string_view whole = rule->prelude;
-        std::string query = collapse_whitespace(named ? whole.substr(at) : whole, html_whitespace);
+        // The cascade's reading of the prelude, so `STYLE(--foo: bar)` is a
+        // query and not a name; the first condition of a list speaks.
+        const auto conditions = style::css::parse_container_conditions(rule->prelude);
+        if (!conditions || conditions->empty()) { return c.string(""); }
+        const style::css::container_query & first = conditions->front();
+        if (want_name) { return c.string(first.name); }
+        std::string query = collapse_whitespace(first.condition, html_whitespace);
         // The one function a container condition has is spelled lowercase,
         // as cq-testcommon.js's feature probe reads it back.
         for (std::size_t k = 0; k + 6 <= query.size(); ++k) {
@@ -281,6 +281,25 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         cx, *container_proto, "containerQuery",
         [container_part](context & c, std::span<value>) { return container_part(c, false); }, {},
         script::attr_configurable);
+    // `conditions`: every condition of the list, `{name, query}` each.
+    define_getter(
+        cx, *container_proto, "conditions",
+        [this](context & c, std::span<value>) {
+            const value list = c.make_array();
+            const css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return list; }
+            const auto conditions = style::css::parse_container_conditions(rule->prelude);
+            for (const style::css::container_query & one :
+                 conditions.value_or(std::vector<style::css::container_query>{})) {
+                auto * made = c.allocate<script::object_object>();
+                made->set("name", c.string(one.name));
+                made->set("query", c.string(one.condition));
+                static_cast<script::array_object *>(list.as_heap())
+                    ->items.push_back(value::object(made));
+            }
+            return list;
+        },
+        {}, script::attr_configurable);
     // --- CSSLayerBlockRule / CSSLayerStatementRule, CSS Cascade 5 §6.4.4:
     // the block's one name (empty for an anonymous layer) and the statement's
     // list, each name as written.
