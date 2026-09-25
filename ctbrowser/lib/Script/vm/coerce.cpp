@@ -383,7 +383,19 @@ value context::binary_op(op kind, value lhs, value rhs) {
     // all: coerce.cpp's switch has no case for it, so `${1n}` would fall to the
     // default arm and throw "BigInts have no unsigned right shift". It is
     // emitted only by template literals and is unconditionally two ToStrings.
-    if (kind == op::concat) { return string(to_string(lhs) + to_string(rhs)); }
+    // THE LEFT OPERAND'S THROW STOPS THE OPERATOR. A throw from a user
+    // valueOf/toString has LANDED on its handler by the time the conversion
+    // returns - throw_pending cannot see it - so converting the right operand
+    // anyway ran it a second time and threw over no handler at all:
+    // `try { o < o } catch {}` was uncaught (Temporal's valueOf/basic.js).
+    // unwinds() is the counter that sees it.
+    const std::size_t unwound = unwinds();
+    const auto threw = [this, unwound] { return throw_pending() || unwinds() != unwound; };
+    if (kind == op::concat) {
+        std::string left = to_string(lhs);
+        if (threw()) { return value::undefined(); }
+        return string(std::move(left) + to_string(rhs));
+    }
 
     if (kind == op::add_generic) {
         // JS `+`: string concatenation if EITHER side is a string, numeric
@@ -395,7 +407,9 @@ value context::binary_op(op kind, value lhs, value rhs) {
         // it, so `{valueOf: () => 42} + 1` is 43 while `{toString: () => 'x'} + 1`
         // is "x1".
         const value l = to_primitive(lhs);
+        if (threw()) { return value::undefined(); }
         const value r = to_primitive(rhs);
+        if (threw()) { return value::undefined(); }
         // BEFORE the string-or-number decision: `1n + 1n` is addition and
         // `1n + 1` is a TypeError, neither of which is either arm below. Note
         // `1n + "a"` IS concatenation, so the string test still gets first
@@ -413,9 +427,9 @@ value context::binary_op(op kind, value lhs, value rhs) {
     // was the mixing TypeError, because the object reached bigint_binary
     // unconverted.
     const value l = numeric_operand(lhs);
-    if (throw_pending()) { return value::undefined(); }
+    if (threw()) { return value::undefined(); }
     const value r = numeric_operand(rhs);
-    if (throw_pending()) { return value::undefined(); }
+    if (threw()) { return value::undefined(); }
     if (value made; bigint_binary(kind, l, r, made)) { return made; }
     // `to_number_value`, NOT `to_number`: ToNumber runs valueOf/toString on
     // an object - none is left here - and a Symbol is its TypeError.
@@ -499,8 +513,12 @@ std::partial_ordering context::compare_relational(value a, value b) {
     // observable because `valueOf` can have side effects, and it stays
     // source-order for `>` and `>=` because the caller passes the operands in
     // the order they were written.
+    // The left operand's throw stops the comparison - see binary_op.
+    const std::size_t unwound = unwinds();
     const value pa = to_primitive(a);
+    if (throw_pending() || unwinds() != unwound) { return std::partial_ordering::unordered; }
     const value pb = to_primitive(b);
+    if (throw_pending() || unwinds() != unwound) { return std::partial_ordering::unordered; }
     // A BIGINT COMPARES AGAINST A NUMBER even though it cannot be added to one:
     // `1n < 2` is true. The comparison is EXACT rather than going through a
     // double, because a bigint past 2^53 must not round into equality with the
