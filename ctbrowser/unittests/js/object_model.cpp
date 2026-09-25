@@ -215,6 +215,17 @@ int main() {
               "return Function.prototype[Symbol.hasInstance].call(A,{})+','+({} instanceof A);})()",
               "false,true");
 
+    // [[Set]] on a function asks its chain for a name it does not own.
+    js_expect("(function(){'use strict';function f(){}try{f.caller=1;return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){function g(){}g.caller=1;g.arguments=2;"
+              "return String(g.caller)+String(g.arguments);})()",
+              "nullnull");
+    js_expect("(function(){class B{static set x(v){B.got=v;}}class D extends B{}D.x=5;"
+              "return B.got+','+D.hasOwnProperty('x');})()",
+              "5,false");
+
     // A frozen function pins its synthesised length, name and prototype too.
     js_expect("(function(){function f(a){} Object.freeze(f);"
               "var d=Object.getOwnPropertyDescriptor(f,'prototype');"

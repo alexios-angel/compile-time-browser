@@ -416,31 +416,77 @@ void context::store_property(value target, const std::string & name, value v) {
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
-        if (accessor_entry * entry = closure->find_accessor(name);
-            entry != nullptr && entry->setter.is_callable()) {
-            const value args[1] = {v};
-            (void)call(entry->setter, args, target);
-        } else {
-            if (closure->find(name) != nullptr) {
-                if ((closure->attrs_of(name) & attr_writable) == 0) {
-                    store_rejected_ = true;
-                    return;
-                }
-            } else if (!closure->extensible) {
+        if (accessor_entry * entry = closure->find_accessor(name)) {
+            // An own accessor with no setter refuses the write; it is never
+            // shadowed by a data property of the same name.
+            if (entry->setter.is_callable()) {
+                const value args[1] = {v};
+                (void)call(entry->setter, args, target);
+            } else {
                 store_rejected_ = true;
-                return;
-            } else if (((name == "length" && !closure->length_erased) ||
-                        (name == "name" && !closure->name_erased)) &&
-                       closure->proto != nullptr) {
-                // The SYNTHESISED `length` and `name` (own_property answers
-                // them off the compiled function, { false, false, true }) are
-                // not writable: the write is refused, not shadowed by a new
-                // own entry. defineProperty still redefines them.
+            }
+            return;
+        }
+        if (closure->find(name) != nullptr) {
+            if ((closure->attrs_of(name) & attr_writable) == 0) {
                 store_rejected_ = true;
                 return;
             }
             closure->set(name, v);
+            return;
         }
+        if (closure->proto != nullptr &&
+            (((name == "length" && !closure->length_erased) ||
+              (name == "name" && !closure->name_erased)) ||
+             // A SLOPPY function's `caller` and `arguments` read null
+             // (lookup_property's closure arm), as every browser's own
+             // non-writable pair does - and refuse a write the same way.
+             (!closure->proto->is_strict && !closure->proto->is_arrow &&
+              (name == "caller" || name == "arguments")))) {
+            // The SYNTHESISED `length` and `name` (own_property answers them
+            // off the compiled function, { false, false, true }) are not
+            // writable: the write is refused, not shadowed by a new own
+            // entry. defineProperty still redefines them.
+            store_rejected_ = true;
+            return;
+        }
+        // NOT OWN: OrdinarySet asks the CHAIN (10.1.9.2 step 2.a) - an
+        // inherited setter takes the write, an inherited read-only data
+        // property refuses it. Function.prototype's `caller` and `arguments`
+        // are %ThrowTypeError% accessors, which is how assigning either on a
+        // strict function throws; `class D extends B` inherits B's statics.
+        value up = get_prototype(target);
+        for (int depth = 0; depth < 64; ++depth) {
+            if (up.is_null()) { // the implicit Object.prototype ends a chain
+                object_object * table = prototype(proto_kind::object);
+                up = table != nullptr ? value::object(table) : value::undefined();
+                depth = 63;
+            }
+            if (!up.is_object_like()) { break; }
+            property_descriptor found;
+            if (own_property(up, name, found)) {
+                if (found.is_accessor()) {
+                    if (found.setter.is_callable()) {
+                        const value args[1] = {v};
+                        (void)call(found.setter, args, target);
+                    } else {
+                        store_rejected_ = true;
+                    }
+                    return;
+                }
+                if (!found.writable) {
+                    store_rejected_ = true;
+                    return;
+                }
+                break;
+            }
+            up = get_prototype(up);
+        }
+        if (!closure->extensible) {
+            store_rejected_ = true;
+            return;
+        }
+        closure->set(name, v);
         return;
     }
     // A write to a number, a string or undefined is silently dropped, which is
