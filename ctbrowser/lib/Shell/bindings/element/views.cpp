@@ -378,55 +378,102 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                     "value",
                     [this, id](context & c, std::span<value>) {
                         const auto read = doc_->read();
+                        // A <select>'s value is its FIRST SELECTED OPTION's,
+                        // or "" when none is (HTML 4.10.7) - not what was last
+                        // assigned: `select.value = "no such option"`
+                        // deselects every option and reads back "".
+                        if (read.element_ns(id) == node_ns::html &&
+                            read.local_name(id) == "select") {
+                            const control_helpers helpers{this};
+                            std::vector<node_id> options;
+                            const std::vector<bool> flags =
+                                helpers.selected_flags(c, read, this, id, options);
+                            for (std::size_t i = 0; i < options.size(); ++i) {
+                                if (flags[i]) {
+                                    return c.string(helpers.option_value(read, this, options[i]));
+                                }
+                            }
+                            return c.string("");
+                        }
                         return c.string(forms_->state_of(read, *atoms_, id).value);
                     })),
-                value::object(cx.allocate<script::native_object>(
-                    "value", [this, id](context & c, std::span<value> a) {
-                        // `[LegacyNullToEmptyString]`: null is "", not the word.
-                        const value given = arg(a, 0);
-                        std::string text = given.is_null() ? std::string{} : c.to_string(given);
-                        std::string mode;
-                        {
-                            const auto read = doc_->read();
-                            mode = input_types::value_mode_of(
-                                forms_->state_of(read, *atoms_, id).type);
-                        }
-                        if (mode == "filename") {
-                            // HTML 4.10.5.3: only the empty string may be
-                            // assigned, and it empties the selected files.
-                            if (!text.empty()) {
-                                throw_dom_exception(c, "InvalidStateError",
-                                                    "the value of a file input can only "
-                                                    "be set to the empty string");
-                            }
-                            return value::undefined();
-                        }
-                        if (mode == "default" || mode == "default/on") {
-                            // The default modes WRITE THE CONTENT ATTRIBUTE.
-                            (void)doc_->set_attribute(id, atoms_->intern("value"), text);
-                            mutated();
-                            return value::undefined();
-                        }
-                        const auto read = doc_->read();
-                        // An assignment DIRTIES the control, so the `value`
-                        // attribute stops being the answer - otherwise setting
-                        // it to "" would be undone by the next read - and the
-                        // type's sanitization runs over what was assigned.
-                        if (forms_->assign_value(read, *atoms_, id, std::move(text))) {
-                            // A changed value resets the selection direction
-                            // with the caret (the slot control_methods keeps).
-                            const value self = c.current_this();
-                            if (self.is_object()) {
-                                (void)static_cast<script::object_object *>(self.as_heap())
-                                    ->erase("__selectionDirection");
+                value::object(cx.allocate<script::native_object>("value", [this,
+                                                                           id](context & c,
+                                                                               std::span<value> a) {
+                    // `[LegacyNullToEmptyString]`: null is "", not the word.
+                    const value given = arg(a, 0);
+                    std::string text = given.is_null() ? std::string{} : c.to_string(given);
+                    // A <select> SETS SELECTEDNESS (HTML 4.10.7): every
+                    // option off, then the first whose value is the new
+                    // one on and dirty - a multiple select too, which
+                    // the lazy reconcile of the store never reaches.
+                    // The model is read first, so a list that changed
+                    // before this assignment has had its reset.
+                    if (const auto read = doc_->read();
+                        read.element_ns(id) == node_ns::html && read.local_name(id) == "select") {
+                        const control_helpers helpers{this};
+                        // A plain DOMString: null is "null", no option's value.
+                        const std::string wanted = given.is_null() ? std::string{"null"} : text;
+                        std::vector<node_id> options;
+                        (void)helpers.selected_flags(c, read, this, id, options);
+                        bool found = false;
+                        for (const node_id option : options) {
+                            const bool hit =
+                                !found && helpers.option_value(read, this, option) == wanted;
+                            found = found || hit;
+                            helpers.set_slot(c, this, option, selected_slot, value::boolean(hit));
+                            if (hit) {
+                                helpers.set_slot(c, this, option, dirty_slot, value::boolean(true));
                             }
                         }
-                        // The browser has to learn a control changed, or the
-                        // paint is stale until something else marks it.
+                        const std::string chosen = found ? wanted : std::string{};
+                        forms_->state_of(read, *atoms_, id).value = chosen;
+                        helpers.set_slot(c, this, id, "__syncedValue", c.string(chosen));
                         wrote_to_control_ = true;
                         mutated();
                         return value::undefined();
-                    })));
+                    }
+                    std::string mode;
+                    {
+                        const auto read = doc_->read();
+                        mode = input_types::value_mode_of(forms_->state_of(read, *atoms_, id).type);
+                    }
+                    if (mode == "filename") {
+                        // HTML 4.10.5.3: only the empty string may be
+                        // assigned, and it empties the selected files.
+                        if (!text.empty()) {
+                            throw_dom_exception(c, "InvalidStateError",
+                                                "the value of a file input can only "
+                                                "be set to the empty string");
+                        }
+                        return value::undefined();
+                    }
+                    if (mode == "default" || mode == "default/on") {
+                        // The default modes WRITE THE CONTENT ATTRIBUTE.
+                        (void)doc_->set_attribute(id, atoms_->intern("value"), text);
+                        mutated();
+                        return value::undefined();
+                    }
+                    const auto read = doc_->read();
+                    // An assignment DIRTIES the control, so the `value`
+                    // attribute stops being the answer - otherwise setting
+                    // it to "" would be undone by the next read - and the
+                    // type's sanitization runs over what was assigned.
+                    if (forms_->assign_value(read, *atoms_, id, std::move(text))) {
+                        // A changed value resets the selection direction
+                        // with the caret (the slot control_methods keeps).
+                        const value self = c.current_this();
+                        if (self.is_object()) {
+                            (void)static_cast<script::object_object *>(self.as_heap())
+                                ->erase("__selectionDirection");
+                        }
+                    }
+                    // The browser has to learn a control changed, or the
+                    // paint is stale until something else marks it.
+                    wrote_to_control_ = true;
+                    mutated();
+                    return value::undefined();
+                })));
             obj.define_accessor(
                 "checked",
                 value::object(cx.allocate<script::native_object>(

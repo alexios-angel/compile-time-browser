@@ -496,12 +496,15 @@ void test_color_events_options_and_entries() {
        " try { new FormDataEvent('x'); o.push('no'); } catch (x) { o.push(x.name); }"
        " return o.join(); })()",
        "true,true,true,,TypeError,TypeError,true,TypeError");
-    // option-element-constructor.html;
+    // option-element-constructor.html; select.value with no matching option;
     // the HTMLOptionsCollection indexed setter; button.value is no
     // [LegacyNullToEmptyString]; accessKeyLabel.
     is("(function () { var a = new Option('t', 'v', true); var b = new Option('t', 'v', false, "
        "true);"
        " var o = [a.selected, a.defaultSelected, b.selected, b.defaultSelected];"
+       " var s = document.createElement('select');"
+       " s.innerHTML = '<option>one</option><option>two</option>'; o.push(s.value);"
+       " s.value = 'none'; o.push(s.value, s.selectedIndex);"
        " var t = document.createElement('select'); var n = new Option('a', 'a');"
        " t.options[2] = n; o.push(t.options.length, t.options[2] === n);"
        " t.options[0] = null; o.push(t.options.length);"
@@ -510,7 +513,24 @@ void test_color_events_options_and_entries() {
        " var k = document.createElement('b'); k.accessKey = 's 0'; o.push(k.accessKeyLabel === '');"
        " k.accessKey = 'k'; o.push(k.accessKeyLabel);"
        " return o.join(); })()",
-       "false,true,true,false,3,true,2,null,true,Alt+K");
+       "false,true,true,false,one,,-1,3,true,2,null,true,Alt+K");
+    // The select model sees its list change: a removal with nothing left
+    // selected resets to the first option, an option put back ahead is the
+    // first again (select-validity.html, optgroup-removal.window.js); and
+    // `value` sets the selectedness of a multiple select too.
+    is("(function () { var s = document.createElement('select'); s.required = true;"
+       " var p = s.appendChild(document.createElement('option'));"
+       " var n = s.appendChild(document.createElement('option')); n.textContent = 'x';"
+       " var o = [s.checkValidity()]; p.remove(); o.push(s.checkValidity());"
+       " s.prepend(p); o.push(s.checkValidity());"
+       " var g = document.createElement('select');"
+       " g.innerHTML = '<optgroup><option>1</optgroup><optgroup><option>2'; o.push(g.value);"
+       " g.querySelector('optgroup').remove(); o.push(g.value);"
+       " var m = document.createElement('select'); m.multiple = true;"
+       " m.innerHTML = '<option>a</option><option>b</option>'; m.value = 'b';"
+       " o.push(m.value, m.selectedOptions.length);"
+       " return o.join(); })()",
+       "false,true,false,1,2,b,1");
     // DataTransfer.files is [SameObject] and live; a FormData entry's name
     // and string value are scalar value strings; a submission's pairs are
     // CR LF-normalised only on the way out.
