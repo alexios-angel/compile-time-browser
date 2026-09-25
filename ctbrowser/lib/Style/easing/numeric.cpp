@@ -250,7 +250,8 @@ namespace ctbrowser::style::easing_detail {
 
 [[nodiscard]] bool image_sides(std::string_view property) {
     return property == "border-image-outset" || property == "border-image-width" ||
-           property == "border-image-slice";
+           property == "border-image-slice" || property == "mask-border-outset" ||
+           property == "mask-border-width" || property == "mask-border-slice";
 }
 
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,

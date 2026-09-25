@@ -326,6 +326,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         if (!match_border_image(p->name, simplified, serialized)) { return {}; }
         return yes(std::move(serialized));
     }
+    // A MASK BORDER IS A BORDER IMAGE whose image is a mask (CSS Masking 1
+    // §8): the same four grammars, under other names and other initials.
+    if (ascii_iequals_any(property, {"mask-border-source", "mask-border-slice", "mask-border-width",
+                                     "mask-border-outset"})) {
+        std::string serialized;
+        const std::string as_border = "border-image-" + std::string{p->name.substr(12)};
+        if (!match_border_image(as_border, simplified, serialized)) { return {}; }
+        return yes(std::move(serialized));
+    }
 
     // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
     // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default

@@ -497,6 +497,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //    with its lengths in pixels (CSS Images 4).
         const bool image_property = property == "background-image" || property == "mask-image" ||
                                     property == "border-image-source" ||
+                                    property == "mask-border-source" ||
                                     property == "list-style-image";
         const bool filter_property = property == "filter" || property == "backdrop-filter";
         const bool grid_property =

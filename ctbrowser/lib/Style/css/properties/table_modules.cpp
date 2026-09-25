@@ -62,6 +62,15 @@ constexpr property_syntax modules[] = {
     {"mask-size", k::freeform, "", "auto", false, true},
     {"mask-composite", k::freeform, "", "add", false, false},
     {"mask-type", k::keyword_only, "luminance alpha", "luminance", false, false},
+    // CSS Masking 1 §8: a border image used as a mask - border-image's
+    // grammars (declaration.cpp), a nothing-sliced initial, and a mode.
+    {"mask-border", k::freeform, "", "none", false, false, true},
+    {"mask-border-source", k::freeform, "", "none", false, false},
+    {"mask-border-slice", k::number_percentage, "", "0", false, true},
+    {"mask-border-width", k::number_length_percentage, "auto", "auto", false, true},
+    {"mask-border-outset", k::number_length, "", "0", false, true},
+    {"mask-border-repeat", k::freeform, "", "stretch", false, false},
+    {"mask-border-mode", k::keyword_only, "luminance alpha", "alpha", false, false},
     {"shape-outside", k::freeform, "", "none", false, false},
     {"shape-image-threshold", k::number_percentage, "", "0", false, false},
     {"offset", k::freeform, "", "normal", false, false, true},

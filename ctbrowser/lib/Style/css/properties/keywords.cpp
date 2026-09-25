@@ -518,6 +518,7 @@ struct pair_grammar {
 
 constexpr pair_grammar pair_grammars[] = {
     {"border-image-repeat", "stretch repeat round space"},
+    {"mask-border-repeat", "stretch repeat round space"},
 };
 
 [[nodiscard]] std::optional<std::string> keyword_pair(const pair_grammar & g,
