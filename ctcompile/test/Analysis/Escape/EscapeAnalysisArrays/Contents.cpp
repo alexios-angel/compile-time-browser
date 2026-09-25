@@ -564,14 +564,16 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string pairedKeys = selectedStore(pairedInput("%zero, %zero", "%one, %one"));
     const std::string pairedGap = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                                                 pairedInput("%read, %read", "%two, %two"));
-    const auto siblingInput =
-        [&](const std::string & left = "%zero", const std::string & right = "%one",
-            const std::string & condition = "%flag", const std::string & between = "") {
-            auto second = selectedInput(left, right, "", "", "%secondKey");
-            second.replace(second.find("%flag"), 5, condition);
-            return selectedInput(left, right, "", "", "%firstKey") + between + second +
-                   "    %key = ctjs.binary sub %firstKey, %secondKey\n";
-        };
+    const auto siblingInput = [&](const std::string & left = "%zero",
+                                  const std::string & right = "%one",
+                                  const std::string & condition = "%flag",
+                                  const std::string & between = "", bool reversed = false) {
+        auto second =
+            selectedInput(reversed ? right : left, reversed ? left : right, "", "", "%secondKey");
+        second.replace(second.find("%flag"), 5, condition);
+        return selectedInput(left, right, "", "", "%firstKey") + between + second +
+               "    %key = ctjs.binary sub %firstKey, %secondKey\n";
+    };
     const std::string siblingKeys = selectedStore(siblingInput());
     const std::string siblingGap = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                                                  siblingInput("%read", "%two"));
@@ -590,15 +592,37 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string recomputedGap =
         nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
                            siblingInput("%read", "%two", "%secondFlag", recomputedFlag));
-    const auto reloadedConditions = [&](const std::string & between) {
+    const auto reloadedConditions = [&](const std::string & between, bool reversed = false) {
         auto input = siblingInput("%zero", "%one", "%secondFlag",
                                   between + "    %secondRead = ctjs.get_property %guard[%zero]\n"
-                                            "    %secondFlag = ctjs.truthy %secondRead\n");
+                                            "    %secondFlag = ctjs.truthy %secondRead\n",
+                                  reversed);
         input.replace(input.find("%flag"), 5, "%firstFlag");
         return selectedStore("    %firstRead = ctjs.get_property %guard[%zero]\n"
                              "    %firstFlag = ctjs.truthy %firstRead\n" +
                              input);
     };
+    const std::string negatedFlag = "    %negated = ctjs.unary not %p\n"
+                                    "    %secondFlag = ctjs.truthy %negated\n";
+    const std::string oppositeKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", negatedFlag, true));
+    const std::string oppositeGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", negatedFlag, true));
+    const std::string firstNegatedFlag = "    %firstNegated = ctjs.unary not %p\n"
+                                         "    %firstFlag = ctjs.truthy %firstNegated\n";
+    auto negatedFirst = siblingInput("%zero", "%one", "%flag", "", true);
+    negatedFirst.replace(negatedFirst.find("%flag"), 5, "%firstFlag");
+    auto repeatedNot = siblingInput("%zero", "%one", "%secondFlag", negatedFlag);
+    repeatedNot.replace(repeatedNot.find("%flag"), 5, "%firstFlag");
+    auto reloadedNot = reloadedConditions("", true);
+    reloadedNot.replace(reloadedNot.find("    %secondFlag = ctjs.truthy %secondRead\n"),
+                        std::string{"    %secondFlag = ctjs.truthy %secondRead\n"}.size(),
+                        "    %negated = ctjs.unary not %secondRead\n"
+                        "    %secondFlag = ctjs.truthy %negated\n");
+    auto mutatedNot = reloadedNot;
+    mutatedNot.insert(mutatedNot.find("    %secondRead ="),
+                      "    ctjs.set_property %guard[%zero], %one\n");
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1966,6 +1990,113 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(recomputedKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "opposite predicates align opposite finite Number arms",
+         .body = loopValues + allocationLoop(oppositeKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "a negated first predicate records the input's correctly oriented choice",
+         .body = loopValues + allocationLoop(selectedStore(firstNegatedFlag + negatedFirst)) + done,
+         .confinedNested = "fresh"},
+        {.what = "separately recomputed logical Not results share one exact input choice",
+         .body = loopValues + allocationLoop(selectedStore(firstNegatedFlag + repeatedNot)) + done,
+         .confinedNested = "fresh"},
+        {.what = "a preheader negation shares its input snapshot with a later positive predicate",
+         .body = loopValues + firstNegatedFlag + allocationLoop(selectedStore(negatedFirst)) + done,
+         .confinedNested = "fresh"},
+        {.what = "opposite nested predicates retain an independent guard read gap",
+         .body =
+             loopValues + allocationLoop(oppositeGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "opposite predicates retain signed finite Number cancellation",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%negative", "%one", "%secondFlag", negatedFlag, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "opposite predicates with unswapped arms do not prove equal values",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%one", "%secondFlag", negatedFlag))) +
+                 done,
+         .complete = false},
+        {.what = "logical Not cannot correlate a distinct input SSA value",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag",
+                                                       "    %negated = ctjs.unary not %q\n"
+                                                       "    %secondFlag = ctjs.truthy %negated\n",
+                                                       true))) +
+             done,
+         .complete = false},
+        {.what = "a different unary expression cannot borrow logical Not's polarity proof",
+         .body =
+             loopValues +
+             allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag",
+                                                       "    %negated = ctjs.unary void %p\n"
+                                                       "    %secondFlag = ctjs.truthy %negated\n",
+                                                       true))) +
+             done,
+         .complete = false},
+        {.what = "a negated separate read retains its own input snapshot",
+         .body = loopValues + allocationLoop(reloadedNot) + done,
+         .complete = false},
+        {.what = "a mutation between reads cannot supply opposite-predicate correspondence",
+         .body = loopValues + allocationLoop(mutatedNot) + done,
+         .complete = false},
+        {.what = "opposite predicates cannot overwrite their guard dependency",
+         .body = loopValues +
+                 allocationLoop(nestedSiblingStore(
+                     "      %read = ctjs.get_property %guard[%zero]\n" +
+                     siblingInput("%read", "%one", "%secondFlag", negatedFlag, true))) +
+                 done,
+         .complete = false},
+        {.what = "opposite predicates still require both finite Number operand proofs",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%p", "%secondFlag", negatedFlag, true))) +
+                 done,
+         .complete = false},
+        {.what = "opposite predicates cannot cancel a nonfinite Number into an own key",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%nan", "%secondFlag", negatedFlag, true))) +
+                 done,
+         .complete = false},
+        {.what = "one retaining exit preserves a child stored through opposite predicates",
+         .body = loopValues + allocationLoop(oppositeKeys) +
+                 "  cf.cond_br %flag, ^plain, ^retain\n^plain:\n  ctjs.return %zero\n"
+                 "^retain:\n  ctjs.return %guard\n"},
+        {.what = "clearing an opposite-predicate zero key releases its child",
+         .body = loopValues + allocationLoop(oppositeKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved opposite-predicate alias survives clearing its holder",
+         .body = loopValues + allocationLoop(oppositeKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "opposite predicates cannot hide a no-result transient cycle",
+         .body = loopValues +
+                 allocationLoop(oppositeKeys +
+                                "    scf.if %secondFlag {\n"
+                                "      ctjs.set_property %fresh[%zero], %guard\n"
+                                "      ctjs.set_property %fresh[%zero], %zero\n    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "opposite predicates cannot hide an unsupported producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  negatedFlag + "    %called = ctjs.call %p(%q)\n", true))) +
+                 done,
+         .complete = false},
+        {.what = "opposite predicates cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(oppositeKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize opposite-predicate allocation identities",
+         .body = loopValues + allocationLoop(oppositeKeys, "%one") + done,
+         .complete = false},
+        {.what = "opposite predicates still require current initialized solver inputs",
+         .body = loopValues + allocationLoop(oppositeKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -2640,7 +2771,69 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = recomputedMutation.what, .body = recomputedMutation.body, .expected = ""},
              "the recomputed truthiness mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, fifty-two live states, %zu budget cutoffs\n",
+    retention_row oppositeMutation{
+        .what = "opposite correspondence reproves live unary kinds, inputs, yields and guard reads",
+        .body =
+            loopValues + allocationLoop(oppositeGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto oppositeModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + oppositeMutation.body + "}\n", &context);
+    if (oppositeModule) {
+        ctjs::FuncOp function = *oppositeModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto unary = second.getCondition()
+                         .getDefiningOp<ctjs::TruthyOp>()
+                         .getValue()
+                         .getDefiningOp<ctjs::UnaryOp>();
+        auto * firstYield = first.getThenRegion().front().getTerminator();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = firstYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = unary.getOperand();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load->getOperand(1);
+        mlir::Value zero;
+        for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
+                number && number.getBits() == 0) {
+                zero = literal;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*oppositeModule))) {
+            fail(row{.what = oppositeMutation.what, .body = oppositeMutation.body, .expected = ""},
+                 "the opposite predicate stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 6; ++state) {
+            unary->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                            : originalInput);
+            unary.setKindAttr(ctjs::UnaryKindAttr::get(
+                &context, state == 2 ? ctjs::UnaryKind::Void : ctjs::UnaryKind::Not));
+            secondYield->setOperand(0, state == 3 ? originalPosition : originalYield);
+            load->setOperand(1, state == 4 ? zero : originalPosition);
+            oppositeMutation.complete = state == 0 || state == 5;
+            oppositeMutation.confinedNested = oppositeMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*oppositeModule, oppositeMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                oppositeMutation.complete) {
+                fail(row{.what = oppositeMutation.what,
+                         .body = oppositeMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied opposite predicate correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = oppositeMutation.what, .body = oppositeMutation.body, .expected = ""},
+             "the opposite predicate mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, fifty-eight live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 

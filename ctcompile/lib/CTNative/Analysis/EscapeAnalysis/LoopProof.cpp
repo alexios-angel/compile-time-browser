@@ -156,18 +156,19 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         if (left == right) { return true; }
         auto branch = left.getDefiningOp<mlir::scf::IfOp>();
         auto other = right.getDefiningOp<mlir::scf::IfOp>();
-        // Replay shares a choice only for the same i1 or Truthy's exact input.
-        // Equal ranges and other recomputed predicates prove no correspondence.
-        if (!branch || !other ||
-            conditionChoiceKey(branch.getCondition()) != conditionChoiceKey(other.getCondition())) {
-            return false;
-        }
+        if (!branch || !other) { return false; }
+        const auto [firstCondition, firstNegated] = conditionChoiceKey(branch.getCondition());
+        const auto [secondCondition, secondNegated] = conditionChoiceKey(other.getCondition());
+        // Equal ranges and distinct input snapshots prove no correspondence.
+        if (firstCondition != secondCondition) { return false; }
         // yieldedInputs accepts only producers reached by the single-visit
-        // census, including nested arms. Replay retains their exact i1 choice.
+        // census, including nested arms. Replay retains the normalized choice.
         const auto first = yieldedInputs(left);
         const auto second = yieldedInputs(right);
-        return first.size() == 2 && second.size() == 2 && sameInput(first[0], second[0]) &&
-               sameInput(first[1], second[1]);
+        const bool reversed = firstNegated != secondNegated;
+        return first.size() == 2 && second.size() == 2 &&
+               sameInput(first[0], second[reversed ? 1 : 0]) &&
+               sameInput(first[1], second[reversed ? 0 : 1]);
     };
     const auto invariant = [&](auto && self, mlir::Value operand,
                                unsigned depth) -> std::optional<ContentsValue> {
@@ -608,7 +609,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             return std::nullopt;
         }
         if (subtract && correspondingInputs(binary.getLhs(), binary.getRhs())) {
-            // Same-If slots select corresponding values from the same arm.
+            // Corresponding slots select equal values on the same input choice.
             // Both original values must independently prove bounded Numbers.
             // Neither ranges nor conversions prove correspondence; recursive
             // Number proofs retain every guard read.

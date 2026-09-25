@@ -215,18 +215,19 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // The census admits every nested If only for one body visit.
                 // No-result branches retain full structural replay.
                 const bool correlated = state.loop && branch.getNumResults() != 0;
-                const mlir::Value choiceKey = conditionChoiceKey(branch.getCondition());
+                const auto [choiceKey, negated] = conditionChoiceKey(branch.getCondition());
                 const auto choice = held(choiceKey).conditionChoice;
                 if (correlated && choice) {
-                    auto & region = *choice ? branch.getThenRegion() : branch.getElseRegion();
+                    auto & region =
+                        *choice != negated ? branch.getThenRegion() : branch.getElseRegion();
                     if (!region.empty()) { state.current = &region.front().front(); }
                     continue;
                 }
                 auto copy = snapshot();
                 if (!copy) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                 if (correlated) {
-                    state.values[choiceKey].conditionChoice = true;
-                    copy->values[choiceKey].conditionChoice = false;
+                    state.values[choiceKey].conditionChoice = !negated;
+                    copy->values[choiceKey].conditionChoice = negated;
                 }
                 if (!branch.getElseRegion().empty()) {
                     copy->current = &branch.getElseRegion().front().front();

@@ -55,7 +55,7 @@ struct ContentsValue {
     std::optional<double> arithmeticNumber = std::nullopt;
     unsigned arithmeticDepth = 0;
     // A selected truthiness edge in a certified loop. The input's producer or
-    // transport replaces this snapshot; recomputing Truthy itself does not.
+    // transport replaces this snapshot; recomputing Truthy or Not does not.
     std::optional<bool> conditionChoice = std::nullopt;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
@@ -66,11 +66,15 @@ struct ContentsValue {
     bool string() const { return kind == ContentsKind::String; }
 };
 
-inline mlir::Value conditionChoiceKey(mlir::Value condition) {
-    // Truthy is total and pure. Only its exact SSA input shares a choice;
-    // distinct reads and other recomputed expressions keep separate identities.
+inline std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition) {
+    // Truthy and logical Not are total, without object conversion. The flag
+    // records whether the branch reverses the exact input's truthiness.
     auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
-    return truthy ? truthy.getValue() : condition;
+    if (!truthy) { return {condition, false}; }
+    // ponytail: unwrap one Not; longer expressions need a bounded proof.
+    auto unary = truthy.getValue().getDefiningOp<ctjs::UnaryOp>();
+    if (unary && unary.getKind() == ctjs::UnaryKind::Not) { return {unary.getOperand(), true}; }
+    return {truthy.getValue(), false};
 }
 
 using HeldProperties = llvm::MapVector<mlir::StringAttr, ContentsValue>;
