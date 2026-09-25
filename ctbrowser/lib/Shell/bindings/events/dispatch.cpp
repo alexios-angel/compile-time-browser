@@ -161,7 +161,7 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // the only adjusted step and nothing is retargeted - and pays nothing.
     const value related_value = cx.lookup_property(event, "relatedTarget");
     const node_id related = handle_of(related_value);
-    const bool shadows = at.on != listen_on::object && doc_ != nullptr && doc_->has_shadow_roots();
+    const bool shadows = doc_ != nullptr && doc_->has_shadow_roots();
     struct hop {
         bool adjusted = false; // has a shadow-adjusted target...
         node_id target;        // ...which is this node, or `at` itself when empty
