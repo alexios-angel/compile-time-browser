@@ -1504,7 +1504,29 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {67, 4, "", false}, // noncanonical paired surrogates in one operand
         {8, 68, "", false}, // invalid continuation
     }};
-    for (unsigned control = 0; control != 1358; ++control) {
+    const std::array<StringAdd, 18> concats{{
+        {4, 4, ""},
+        {8, 62, "ab"},
+        {12, 12, "11"}, // Concat converts both Numbers; Add would produce 2
+        {0, 1, "falsetrue"},
+        {2, 3, "nullundefined"},
+        {16, 11, "00"},
+        {13, 90, "NaNNaN"},
+        {18, 91, "Infinity-Infinity"},
+        {19, 92, "5e-3241e-7"},
+        {93, 95, "0.0000011e+21"},
+        {6, 8, llvm::StringRef("\0a", 2)},
+        {9, 10,
+         "\xc3\xa9"
+         "e\xcc\x81"},
+        {57, 58, "\xf0\x90\x80\x80"},
+        {58, 57, "\xed\xb0\x80\xed\xa0\x80"},
+        {29, 35, "garbage1junk"}, // String concatenation needs no numeric grammar
+        {63, 4, "", false},
+        {4, 64, "", false},
+        {67, 8, "", false},
+    }};
+    for (unsigned control = 0; control != 1426; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1664,7 +1686,11 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const auto other = first.getArgument(ctjs::arg_receiver);
             const bool primitive = control < 104;
             const bool stringAdd = control >= 1248;
-            const unsigned addIndex = stringAdd ? (control - 1248) / 2 : 0;
+            const bool concat = control >= 1358;
+            const unsigned addStart = concat ? 1358 : 1248;
+            const auto strings = concat ? llvm::ArrayRef(concats) : llvm::ArrayRef(stringAdds);
+            const auto stringCount = static_cast<unsigned>(strings.size());
+            const unsigned addIndex = stringAdd ? (control - addStart) / 2 : 0;
             const bool coercingBinary = control >= 1166 && control < 1248;
             const unsigned binaryIndex = coercingBinary ? (control - 1166) / 2 : 0;
             const bool coercingUnary = control >= 1096 && control < 1166;
@@ -1690,8 +1716,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             const bool compared = control >= 176 && control < 232;
             const bool computed = control >= 116 && control < 176;
             const unsigned index =
-                stringAdd ? addIndex < stringAdds.size() ? stringAdds[addIndex].accepts ? 0 : 18
-                                                         : addIndex - stringAdds.size() + 12
+                stringAdd          ? addIndex < stringCount ? strings[addIndex].accepts ? 0 : 18
+                                                            : addIndex - stringCount + 12
                 : coercingBinary   ? binaryIndex < 22    ? 0
                                      : binaryIndex < 27  ? 18
                                      : binaryIndex < 32  ? binaryIndex - 15
@@ -1758,11 +1784,11 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             mlir::Value input;
             llvm::SmallVector<std::pair<mlir::Operation *, mlir::Attribute>> evaluatedResults;
             if (stringAdd) {
-                const auto & row = stringAdds[addIndex < stringAdds.size() ? addIndex : 1];
+                const auto & row = strings[addIndex < stringCount ? addIndex : 1];
                 const auto oversized = ctjs::StringAttr::get(context, std::string(100002, 'a'));
                 mlir::Value lhs =
                     index == 17 ? mlir::Value(other)
-                    : index == 18 && addIndex >= stringAdds.size()
+                    : index == 18 && addIndex >= stringCount
                         ? ctjs::CreateObjectOp::create(at, where, payload.getType()).getResult()
                     : index == 20
                         ? ctjs::LoadGlobalOp::create(at, where, "string-add-input-effect")
@@ -1776,12 +1802,16 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     index == 19   ? mlir::Attribute(ctjs::BigIntAttr::get(context, "1"))
                     : index == 24 ? mlir::Attribute(oversized)
                                   : equalityValues[row.rhs]);
-                auto operation = ctjs::BinaryOp::create(
-                    at, where, payload.getType(),
-                    ctjs::BinaryKindAttr::get(context, index == 28 ? ctjs::BinaryKind::Concat
-                                                                   : ctjs::BinaryKind::Add),
-                    lhs, rhs);
-                const unsigned malformedIndex = control - (1248 + 2 * (stringAdds.size() + 13));
+                const auto kind = ctjs::BinaryKindAttr::get(context, concat || index == 28
+                                                                         ? ctjs::BinaryKind::Concat
+                                                                         : ctjs::BinaryKind::Add);
+                auto * operation =
+                    concat && index == 22
+                        ? ctjs::BinaryStaticOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation()
+                        : ctjs::BinaryOp::create(at, where, payload.getType(), kind, lhs, rhs)
+                              .getOperation();
+                const unsigned malformedIndex = control - (addStart + 2 * (stringCount + 13));
                 if (malformedIndex == 0) { operation->eraseOperand(1); }
                 if (malformedIndex == 1) { operation->removeAttr("kind"); }
                 if (malformedIndex == 2) { lhs.getDefiningOp()->removeAttr("value"); }
@@ -1791,14 +1821,15 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                     auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
                     operation->setOperand(malformedIndex - 4, flag);
                 }
-                selected = index == 22 ? row.value.empty() : !row.value.empty();
-                evaluatedResults.emplace_back(operation.getOperation(),
-                                              ctjs::StringAttr::get(context, row.value));
-                input = operation;
+                selected = !concat && index == 22 ? row.value.empty() : !row.value.empty();
+                evaluatedResults.emplace_back(operation, ctjs::StringAttr::get(context, row.value));
+                input = operation->getResult(0);
                 if (index >= 12 && index <= 14) {
                     auto sum = ctjs::BinaryOp::create(
                         at, where, payload.getType(),
-                        ctjs::BinaryKindAttr::get(context, ctjs::BinaryKind::Add), input, input);
+                        ctjs::BinaryKindAttr::get(context, concat ? ctjs::BinaryKind::Concat
+                                                                  : ctjs::BinaryKind::Add),
+                        input, input);
                     evaluatedResults.emplace_back(sum.getOperation(),
                                                   ctjs::StringAttr::get(context, "abab"));
                     auto comparison = ctjs::CompareOp::create(
@@ -2213,6 +2244,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             }
             if (primitive || (computed && (index < 12 || (transported && transport < 5))) ||
                 (compared && (index < 17 || index == 21)) || control == 268 || control == 269 ||
+                control == 1356 || control == 1357 ||
                 (calculated &&
                  (index < 15 ||
                   (!power && !staticCalculated && !coercingBinary && !stringAdd && index == 20) ||
@@ -2634,7 +2666,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             control == 552 || control == 553 || (control >= 638 && control < 644) ||
             (control >= 742 && control < 748) || (control >= 890 && control < 896) ||
             (control >= 1042 && control < 1048) || (control >= 1242 && control < 1248) ||
-            (control >= 1350 && control < 1356);
+            (control >= 1350 && control < 1356) || control == 1414 || control == 1415 ||
+            (control >= 1420 && control < 1426);
         if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformed,
                    "only intentionally malformed helper operations fail verification")) {
             continue;
@@ -2669,7 +2702,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             control == 362 || control == 363 || control == 632 || control == 633 ||
             (control >= 1166 && control < 1210) || (control >= 1220 && control < 1226) ||
             control == 268 || control == 269 || (control >= 1248 && control < 1312) ||
-            (control >= 1324 && control < 1330);
+            (control >= 1324 && control < 1330) || (control >= 1356 && control < 1388) ||
+            (control >= 1394 && control < 1400);
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -2682,7 +2716,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 control == 165 || control == 209 || control == 259 || control == 307 ||
                 control == 353 || control == 411 || control == 493 || control == 541 ||
                 control == 623 || control == 703 || control == 851 || control == 1019 ||
-                control == 1083 || control == 1151 || control == 1223 || control == 1327) {
+                control == 1083 || control == 1151 || control == 1223 || control == 1327 ||
+                control == 1397) {
                 const auto attempt = [&](unsigned budget) {
                     mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
                     auto limitedProof = proof;
@@ -2724,7 +2759,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                   "raw helper shape, effect and receiver refusals roll back the whole module");
             if (control == 8 || control == 9 || control == 53 || control == 72 ||
                 (control >= 1094 && control < 1096) || (control >= 1160 && control < 1162) ||
-                control == 1240 || control == 1241 || (control >= 1346 && control < 1350)) {
+                control == 1240 || control == 1241 || (control >= 1346 && control < 1350) ||
+                (control >= 1416 && control < 1420)) {
                 check(reason.find("budget") != std::string::npos,
                       "helper operations and successor edges consume the normalization budget");
             }

@@ -332,6 +332,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         case ctjs::BinaryKind::UShr:
             if (!isStatic) { return {}; }
             break;
+        case ctjs::BinaryKind::Concat:
         case ctjs::BinaryKind::Sub:
         case ctjs::BinaryKind::Mul:
         case ctjs::BinaryKind::Div:
@@ -344,11 +345,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto lhs = binary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
         auto rhs = binary->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
         if (!lhs || !rhs || !lhs.getValue() || !rhs.getValue()) { return {}; }
-        // Generic Add concatenates if either primitive is a String. Static
-        // Add is numeric; every other admitted kind also converts to Number.
-        if (!isStatic && kind.getValue() == ctjs::BinaryKind::Add &&
-            (llvm::isa<ctjs::StringAttr>(lhs.getValue()) ||
-             llvm::isa<ctjs::StringAttr>(rhs.getValue()))) {
+        // Concat always converts both primitives to String; generic Add does
+        // so only if either is a String. Static Add remains numeric.
+        if (!isStatic && (kind.getValue() == ctjs::BinaryKind::Concat ||
+                          (kind.getValue() == ctjs::BinaryKind::Add &&
+                           (llvm::isa<ctjs::StringAttr>(lhs.getValue()) ||
+                            llvm::isa<ctjs::StringAttr>(rhs.getValue()))))) {
             if (!ctjs::isPrimitiveAttr(lhs.getValue()) || !ctjs::isPrimitiveAttr(rhs.getValue())) {
                 return {};
             }
