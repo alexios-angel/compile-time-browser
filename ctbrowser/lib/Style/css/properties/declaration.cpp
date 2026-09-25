@@ -441,6 +441,29 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(ends[0] + " " + ends[1]);
     }
 
+    // `[ auto | <color> ]{1,2}`, CSS UI 4 §6.2.1: the caret's colour, and
+    // the second its colour while it animates.
+    if (ascii_iequals(property, "caret-color")) {
+        std::string out;
+        std::size_t count = 0;
+        for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+            const std::string_view part = trim(raw, html_whitespace);
+            if (part.empty()) { continue; }
+            if (++count > 2) { return {}; }
+            std::string one;
+            if (ascii_iequals(part, "auto")) {
+                one = "auto";
+            } else {
+                const value_check colour = check_declaration("text-decoration-color", part, false);
+                if (!colour.valid || is_wide_keyword(colour.serialized)) { return {}; }
+                one = colour.serialized;
+            }
+            out += (out.empty() ? "" : " ") + one;
+        }
+        if (count == 0) { return {}; }
+        return yes(std::move(out));
+    }
+
     if (ascii_iequals(property, "columns")) {
         std::vector<std::string> parts;
         return split_columns(simplified, parts) ? yes(simplified) : value_check{};

@@ -522,7 +522,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             ascii_iequals_any(property, {"column-rule-width", "row-rule-width", "column-rule-color",
                                          "row-rule-color"});
         if (is_color_property(property) || image_property || filter_property || grid_property ||
-            transform_property || layer_property || gap_property) {
+            transform_property || layer_property || gap_property || property == "caret-color") {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -558,6 +558,25 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                 : style::css::computed_color(text, {});
                 if (own_color.empty()) { own_color = "rgb(0, 0, 0)"; }
                 ctx.current_color = own_color;
+            }
+            if (property == "caret-color") {
+                // CSS UI 4 §6.2.1: `auto` computes to currentcolor, and a
+                // second colour that is `auto` is no second colour at all.
+                std::vector<std::string> parts;
+                bool second_auto = false;
+                for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+                    const std::string_view part = trim(raw, html_whitespace);
+                    if (part.empty()) { continue; }
+                    const bool automatic = ascii_iequals(part, "auto");
+                    second_auto = automatic && !parts.empty();
+                    std::string one = automatic || ascii_iequals(part, "currentcolor")
+                                          ? own_color
+                                          : style::css::computed_color(part, ctx);
+                    parts.push_back(one.empty() ? std::string{part} : std::move(one));
+                }
+                if (parts.empty()) { return own_color; }
+                if (parts.size() == 2 && second_auto) { parts.pop_back(); }
+                return parts.size() == 2 ? parts[0] + " " + parts[1] : parts[0];
             }
             if (gap_property) {
                 // A gap rule list, item by item (lib/Style/css/properties/gaps.cpp).

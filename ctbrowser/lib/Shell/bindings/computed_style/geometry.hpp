@@ -66,8 +66,16 @@ constexpr std::array<std::string_view, 12> length_properties{
 // sides where Chrome answers `0px`.
 [[nodiscard]] inline bool is_border_width_property(std::string_view property) {
     return property == "border-top-width" || property == "border-right-width" ||
-           property == "border-bottom-width" || property == "border-left-width" ||
-           property == "outline-width";
+           property == "border-bottom-width" || property == "border-left-width";
+}
+
+// CSS Values 4's "snap as a border width": a length of at least one pixel
+// rounds down to whole pixels, and a smaller non-zero one is one pixel - by
+// magnitude, so an outline offset of -2.5px is -2px.
+[[nodiscard]] inline float snapped_line_width(float px) {
+    const float magnitude = std::fabs(px);
+    const float snapped = magnitude >= 1 ? std::floor(magnitude) : (magnitude > 0 ? 1.0f : 0.0f);
+    return px < 0 ? -snapped : snapped;
 }
 
 // `border-top-width` -> `border-top-style`, `outline-width` -> `outline-style`.
@@ -433,6 +441,23 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             return "0px";
         }
         return px_text(border_width_px(text, at.font_size));
+    }
+    // AN OUTLINE'S WIDTH AND OFFSET ARE LINE WIDTHS, snapped as one, and
+    // unlike a border's the width does not become zero when the style is
+    // `none` (CSS UI 4 §5.2): an outline is drawn outside layout, so there is
+    // no used width for the style to take away.
+    if (property == "outline-width" || property == "outline-offset") {
+        const std::string_view given = trim(text, html_whitespace);
+        if (property == "outline-offset" && ascii_iequals(given, "inset")) { return "inset"; }
+        style::css::length_context lengths;
+        lengths.font_size = at.font_size;
+        const float px =
+            property == "outline-width"
+                ? border_width_px(given.empty() ? std::string_view{"medium"} : given, at.font_size)
+                : style::css::length_text_to_px(given.empty() ? std::string_view{"0px"} : given,
+                                                lengths)
+                      .value_or(0.0f);
+        return px_text(snapped_line_width(px));
     }
     // Column rules keep their computed width even for `none` and `hidden`.
     // Resolve line-width keywords before the shorthand fold can omit `medium`.
