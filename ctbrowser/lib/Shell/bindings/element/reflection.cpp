@@ -874,10 +874,11 @@ void dom_bindings::install_option_reflection(context & cx) {
                     const node_id id = receiver(c);
                     if (!id) { return c.string(""); }
                     {
+                        // The content attribute IN NO NAMESPACE: one a page
+                        // set with setAttributeNS is not the option's.
                         const auto txn = doc_->read();
-                        const atom attribute = atoms_->intern(name);
-                        if (txn.has_attribute(id, attribute)) {
-                            return c.string(std::string{txn.attribute_value(id, attribute)});
+                        if (const attribute * held = txn.find_attribute_ns(id, "", name)) {
+                            return c.string(held->value);
                         }
                     }
                     // "Strip and collapse ASCII whitespace" over the text.
