@@ -36,12 +36,12 @@ constexpr spot no_spot{};
 // interface says (TreeWalker-basic.html asserts each descriptor). The active
 // flag is one too, so a filter that calls back into its own walker is an
 // InvalidStateError rather than a recursion.
-constexpr std::string_view root_slot = "__root";
+constexpr std::string_view root_slot = iterator_root_slot;
 constexpr std::string_view show_slot = "__whatToShow";
 constexpr std::string_view filter_slot = "__filter";
 constexpr std::string_view current_slot = "__currentNode";
-constexpr std::string_view reference_slot = "__referenceNode";
-constexpr std::string_view before_slot = "__pointerBeforeReferenceNode";
+constexpr std::string_view reference_slot = iterator_reference_slot;
+constexpr std::string_view before_slot = iterator_before_slot;
 constexpr std::string_view active_slot = "__active";
 
 [[nodiscard]] script::object_object * self_object(context & c) {
@@ -374,10 +374,9 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
 
     // --- NodeIterator, DOM 6.1 -----------------------------------------------
     //
-    // ponytail: the pre-removing steps - an iterator whose reference node is
-    // removed moves to the node before it - need a hook where the tree is
-    // edited (document::remove_child), which this file cannot reach; see the
-    // report. NodeIterator-removal.html is what measures them.
+    // The pre-removing steps - an iterator whose reference node is removed
+    // moves off it - run where the tree edits are settled: every iterator is
+    // registered with the live ranges, and range/live.cpp moves it.
 
     const auto install_iterator = [=](context & c, script::object_object & proto) {
         readonly(c, proto, "root", root_slot);
@@ -479,6 +478,7 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
         if (iterator) {
             made->define(std::string{reference_slot}, root, script::attr_none);
             made->define(std::string{before_slot}, value::boolean(true), script::attr_none);
+            register_live_range(value::object(made));
         } else {
             made->define(std::string{current_slot}, root, script::attr_none);
         }

@@ -141,4 +141,12 @@ inline constexpr std::string_view doctype_name_breaks = "\t\n\f\r >";
     return true;
 }
 
+// A NodeIterator's hidden own properties, which traversal.cpp owns and the
+// live-range settle (range/live.cpp) moves when the tree is edited - DOM 6.1's
+// "NodeIterator pre-removing steps". A NodeIterator is registered with the
+// live ranges for exactly that.
+inline constexpr std::string_view iterator_root_slot = "__root";
+inline constexpr std::string_view iterator_reference_slot = "__referenceNode";
+inline constexpr std::string_view iterator_before_slot = "__pointerBeforeReferenceNode";
+
 } // namespace ctbrowser::shell::detail

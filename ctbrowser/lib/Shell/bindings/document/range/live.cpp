@@ -73,8 +73,58 @@ void dom_bindings::move_live_boundary(const live_boundary & at, node_id node, do
 void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & writes) {
     if (cx_ == nullptr || doc_ == nullptr || primary().live_ranges_.empty()) { return; }
     using edit = document::write_note::edit;
+    // DOM 6.1, THE NodeIterator PRE-REMOVING STEPS, run after the fact. The
+    // note says where the removed child was, which is everything the steps
+    // ask of the tree before it changed: what followed the child's subtree is
+    // now at its index - or after an ancestor - and what preceded it is the
+    // previous sibling's last inclusive descendant, or the parent.
+    const auto settle_iterators = [&](const document::write_note & note) {
+        const std::vector<value> held = primary().live_ranges_;
+        for (const value & one : held) {
+            auto * iterator = static_cast<script::object_object *>(one.as_heap());
+            if (iterator->find(iterator_reference_slot) == nullptr) { continue; }
+            const auto txn = doc_->read();
+            const auto node_of = [&](value v) {
+                return is_the_document(v) ? doc_->document_node() : handle_of(v);
+            };
+            const node_id root = node_of(slot(iterator, iterator_root_slot));
+            const node_id reference = node_of(slot(iterator, iterator_reference_slot));
+            const auto removed_holds = [&](node_id node) {
+                for (node_id up = node; up && txn.contains(up); up = dom_parent(txn, up)) {
+                    if (up == note.child) { return true; }
+                }
+                return false;
+            };
+            // Step 1 - and a root inside the removed subtree went with it.
+            if (!root || !reference || !removed_holds(reference) || removed_holds(root)) {
+                continue;
+            }
+            const std::span<const node_id> kids = txn.children(note.node);
+            bool before = context::truthy(slot(iterator, iterator_before_slot));
+            node_id to;
+            // Step 2: the first node after the removed subtree, within root.
+            if (before && note.index < kids.size()) { to = kids[note.index]; }
+            for (node_id at = note.node; before && !to && at && at != root;
+                 at = dom_parent(txn, at)) {
+                const std::span<const node_id> row = txn.children(dom_parent(txn, at));
+                const auto here = std::ranges::find(row, at);
+                if (here != row.end() && here + 1 != row.end()) { to = *(here + 1); }
+            }
+            before = before && to;
+            // Step 3: the node preceding it.
+            if (!to && note.index > 0 && note.index <= kids.size()) {
+                to = kids[note.index - 1];
+                while (!txn.children(to).empty()) { to = txn.children(to).back(); }
+            }
+            if (!to) { to = note.node; }
+            iterator->set(std::string{iterator_reference_slot},
+                          to == doc_->document_node() ? document_ : wrap(*cx_, to));
+            iterator->set(std::string{iterator_before_slot}, value::boolean(before));
+        }
+    };
     for (const document::write_note & note : writes) {
         if (note.kind == edit::attribute) { continue; }
+        if (note.kind == edit::removed) { settle_iterators(note); }
         const auto txn = doc_->read();
         each_live_boundary([&](const live_boundary & at) {
             switch (note.kind) {
