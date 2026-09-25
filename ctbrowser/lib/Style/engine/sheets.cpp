@@ -651,10 +651,12 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
         css::container_box box;
         if (size || inline_size || scroll_state) {
             const std::optional<container_size> laid = container_size_of(levels_[d][path_[d]].node);
-            if (laid && (size || inline_size)) {
-                box.width = laid->width;
-                if (size) { box.height = laid->height; }
-            }
+            // A vertical container's inline axis is its height.
+            box.vertical =
+                style->get(atoms_->intern_lower("writing-mode")).starts_with("vertical") ||
+                style->get(atoms_->intern_lower("writing-mode")).starts_with("sideways");
+            if (laid && (size || (inline_size && !box.vertical))) { box.width = laid->width; }
+            if (laid && (size || (inline_size && box.vertical))) { box.height = laid->height; }
             if (laid && scroll_state) { box.scrollable = laid->scrollable; }
         }
         const css::media_environment & env = environment_;

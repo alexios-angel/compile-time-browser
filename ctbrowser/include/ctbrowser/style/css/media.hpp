@@ -52,6 +52,9 @@ struct container_box {
     // scroll_* bits, all clear for a box that is no scroll container or is
     // scrolled as far as it goes every way.
     std::uint8_t scrollable = 0;
+    // A VERTICAL writing mode on the container: its inline size is its
+    // height, and `inline-size`/`block-size` read the other axis.
+    bool vertical = false;
     // The CONTAINER'S font, for the relative units in the query: `(width:
     // 10em)` is ten of the container's ems (CSS Conditional 5 §3.2). The
     // viewport in it is ignored - the window's is `env`'s.

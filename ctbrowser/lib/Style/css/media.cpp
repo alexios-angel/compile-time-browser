@@ -207,14 +207,21 @@ constexpr feature_entry container_features[] = {
     return ascii_iequals(f.keyword, have);
 }
 
+// The LOGICAL sizes of a vertical container read the other physical axis.
+[[nodiscard]] bool swapped(const feature_entry & e, const container_box * box) {
+    return box != nullptr && box->vertical &&
+           (e.name == std::string_view{"inline-size"} || e.name == std::string_view{"block-size"});
+}
+
 // `box` is the query container's, for a container condition: its sizes stand
 // where the window's would, and nothing else about the window changes.
 [[nodiscard]] bool feature_holds(const media_feature & f, const feature_entry & e,
                                  const media_environment & env, const container_box * box) {
     using n = media_feature::name;
     const auto number = [&](float have) { return compare_number(f.op, have, f.value); };
-    const float width = box != nullptr ? box->width.value_or(0) : env.viewport_width;
-    const float height = box != nullptr ? box->height.value_or(0) : env.viewport_height;
+    float width = box != nullptr ? box->width.value_or(0) : env.viewport_width;
+    float height = box != nullptr ? box->height.value_or(0) : env.viewport_height;
+    if (swapped(e, box)) { std::swap(width, height); }
     switch (f.which) {
     case n::width: return number(width);
     case n::height: return number(height);
@@ -408,8 +415,9 @@ constexpr feature_entry container_features[] = {
         // An axis the container does not contain answers nothing.
         if (box != nullptr) {
             using n = media_feature::name;
-            const bool wants_width = e->which != n::height;
-            const bool wants_height = e->which != n::width;
+            const bool swap = swapped(*e, box);
+            const bool wants_width = e->which != (swap ? n::width : n::height);
+            const bool wants_height = e->which != (swap ? n::height : n::width);
             if ((wants_width && !box->width) || (wants_height && !box->height)) {
                 return truth::unknown;
             }
