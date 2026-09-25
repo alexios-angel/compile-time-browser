@@ -218,7 +218,8 @@ constexpr property_syntax table[] = {
      true},
     {"font-style", k::freeform, "", "normal", true, false},
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
-    {"font-variant", k::freeform, "", "normal", true, false},
+    // A SHORTHAND of the seven font-variant-* longhands, CSS Fonts 4 §6.11.
+    {"font-variant", k::freeform, "", "normal", true, false, true},
     {"font-stretch", k::freeform, "", "100%", true, true},
     // The rest of CSS Fonts 4's longhands, as freeform text: nothing shapes
     // with them, but each is a real property whose value a page sets and reads

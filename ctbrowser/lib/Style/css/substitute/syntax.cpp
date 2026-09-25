@@ -97,7 +97,15 @@ namespace ctbrowser::style::css::substitute_detail {
 [[nodiscard]] std::string text_between(const token_stream & s, std::size_t first,
                                        std::size_t last) {
     std::string out;
-    for (std::size_t i = first; i < last; ++i) { out += s.text_of(s.tokens[i]); }
+    for (std::size_t i = first; i < last; ++i) {
+        // A <url-token>'s text is its BODY, `url(` and `)` consumed around it
+        // and not recorded: without them `url(a.png), attr(...)` substitutes
+        // to `a.png, ...` (attr-security).
+        const bool url = s.tokens[i].type == token_type::url;
+        if (url) { out += "url("; }
+        out += s.text_of(s.tokens[i]);
+        if (url) { out += ')'; }
+    }
     return out;
 }
 
@@ -210,10 +218,7 @@ namespace ctbrowser::style::css::substitute_detail {
 // The source text of one item, or empty when a token in it was rebuilt from
 // an escape and is no longer a slice of the source.
 [[nodiscard]] std::string slice_of(const token_stream & s, const item & it) {
-    const css_token & a = s.tokens[it.first];
-    const css_token & b = s.tokens[it.last];
-    if (a.text >= s.source_length || b.text >= s.source_length) { return {}; }
-    return std::string{std::string_view{s.pool}.substr(a.text, b.text + b.length - a.text)};
+    return std::string{source_run(s, it.first, it.last + 1)};
 }
 
 // One item against one type, serialised on a match: a dimension with its unit

@@ -447,6 +447,11 @@ private:
         if (first >= last) { return {}; }
         const css_token & a = s.tokens[first];
         const css_token & b = s.tokens[last - 1];
+        // A <url-token> at either end is widened over its `url(` and `)`:
+        // `if(...: url(x);)` otherwise substitutes to `url(x`.
+        if (a.type == token_type::url || b.type == token_type::url) {
+            return source_run(s, first, last);
+        }
         if (b.text + b.length < a.text) { return {}; }
         return std::string_view{s.pool}.substr(a.text, b.text + b.length - a.text);
     }

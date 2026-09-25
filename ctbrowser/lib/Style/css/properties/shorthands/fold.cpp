@@ -99,6 +99,12 @@ namespace ctbrowser::style::css::shorthand_detail {
         {"50%", "ultra-condensed"},  {"62.5%", "extra-condensed"}, {"75%", "condensed"},
         {"87.5%", "semi-condensed"}, {"112.5%", "semi-expanded"},  {"125%", "expanded"},
         {"150%", "extra-expanded"},  {"200%", "ultra-expanded"}};
+    // THE VARIANT IS CSS 2's: `small-caps` or nothing, and every variant
+    // longhand `font` only resets at its initial value (font-shorthand-variant).
+    if (!ascii_iequals_any(v[1], {"normal", "small-caps"})) { return {}; }
+    for (std::size_t i = 7; i < v.size(); ++i) {
+        if (!ascii_iequals(v[i], "normal")) { return {}; }
+    }
     std::vector<std::string> parts;
     for (std::size_t i = 0; i < 4; ++i) {
         if (ascii_iequals(v[i], "normal")) { continue; }
@@ -124,6 +130,20 @@ namespace ctbrowser::style::css::shorthand_detail {
     }
     if (v[6].empty()) { return {}; }
     parts.push_back(v[6]);
+    return join(parts);
+}
+
+// `font-variant`, folded: `normal` when every longhand is, `none` when only
+// the ligatures are `none`, else the longhands that are not `normal` in the
+// shorthand's order - and nothing when `none` sits beside another value,
+// which the grammar cannot say.
+[[nodiscard]] std::string fold_font_variant(std::span<const std::string> v) {
+    std::vector<std::string> parts;
+    for (const std::string & one : v) {
+        if (!ascii_iequals(one, "normal")) { parts.push_back(one); }
+    }
+    if (parts.empty()) { return "normal"; }
+    if (ascii_iequals(v[0], "none") && parts.size() > 1) { return {}; }
     return join(parts);
 }
 
@@ -235,6 +255,7 @@ namespace ctbrowser::style::css::shorthand_detail {
     }
     case shape::flex: return join(v);
     case shape::font: return fold_font(v);
+    case shape::font_variant: return fold_font_variant(v);
     case shape::white_space: return fold_white_space(v);
     case shape::animation: return fold_animation(v);
     case shape::border: {
