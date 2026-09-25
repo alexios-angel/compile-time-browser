@@ -167,6 +167,14 @@ struct scan {
                                          const scan & found, std::string & out);
 // `display`'s two-value grammar and its short forms. Defined in display.cpp.
 [[nodiscard]] bool match_display(const token_stream & ts, const scan & found, std::string & out);
+// CSS Gap Decorations 1: the six rule lists (false for another property, an
+// empty `out` for an invalid list), and the `column-rule` / `row-rule`
+// shorthand split into and folded from its width, style and colour lists.
+// Defined in gaps.cpp.
+[[nodiscard]] bool match_gap_list(std::string_view property, std::string_view text,
+                                  std::string & out);
+[[nodiscard]] bool split_gap_rule(std::string_view value, std::vector<std::string> & out);
+[[nodiscard]] std::string fold_gap_rule(std::span<const std::string> v);
 // The rows of the property table beyond table.cpp's core set, grouped by
 // module. Defined in table_modules.cpp.
 [[nodiscard]] std::span<const property_syntax> module_properties() noexcept;

@@ -46,6 +46,16 @@ enum class shape : std::uint8_t {
                   // first <time> is the duration and the second the delay, an
                   // easing, a count, and the keywords of direction, fill mode
                   // and play state before anything is a name
+    gap_rule,     // `column-rule`, CSS Gap Decorations 1: a list of `width || style ||
+                  // color` rules (and repeat()s of them), split item by item into the
+                  // three lists; gaps.cpp
+    same,         // one value set on every longhand: `column-rule-inset-start` is
+                  // the cap's start and the junction's
+    rule_inset,   // `column-rule-inset`: `<cap>{1,2} [ / <junction>{1,2} ]?`, the
+                  // junction the cap when omitted
+    axes,         // `rule-*`: the column shorthand (or longhand) of the same name,
+                  // applied to the columns and to the rows; the longhands are the
+                  // column half then the row half
     all,          // every longhand; CSS-wide keywords only
     whole,        // a grammar this table does not split: only a CSS-wide keyword
                   // reaches the longhands, and only one folds back
@@ -140,7 +150,62 @@ inline constexpr shorthand_syntax table[] = {
     {"overscroll-behavior", shape::pair, "overscroll-behavior-x overscroll-behavior-y", ""},
     {"grid-gap", shape::pair, "row-gap column-gap", ""},
     {"columns", shape::columns, "column-width column-count column-height column-wrap", "auto"},
-    {"column-rule", shape::bar, "column-rule-width column-rule-style column-rule-color", "medium"},
+    {"column-rule", shape::gap_rule, "column-rule-width column-rule-style column-rule-color",
+     "medium"},
+    {"row-rule", shape::gap_rule, "row-rule-width row-rule-style row-rule-color", "medium"},
+    {"rule", shape::axes,
+     "column-rule-width column-rule-style column-rule-color row-rule-width row-rule-style "
+     "row-rule-color",
+     "medium"},
+    {"rule-width", shape::axes, "column-rule-width row-rule-width", ""},
+    {"rule-style", shape::axes, "column-rule-style row-rule-style", ""},
+    {"rule-color", shape::axes, "column-rule-color row-rule-color", ""},
+    {"rule-break", shape::axes, "column-rule-break row-rule-break", ""},
+    {"rule-visibility-items", shape::axes, "column-rule-visibility-items row-rule-visibility-items",
+     ""},
+    {"column-rule-inset", shape::rule_inset,
+     "column-rule-inset-cap-start column-rule-inset-cap-end column-rule-inset-junction-start "
+     "column-rule-inset-junction-end",
+     ""},
+    {"row-rule-inset", shape::rule_inset,
+     "row-rule-inset-cap-start row-rule-inset-cap-end row-rule-inset-junction-start "
+     "row-rule-inset-junction-end",
+     ""},
+    {"rule-inset", shape::axes,
+     "column-rule-inset-cap-start column-rule-inset-cap-end column-rule-inset-junction-start "
+     "column-rule-inset-junction-end row-rule-inset-cap-start row-rule-inset-cap-end "
+     "row-rule-inset-junction-start row-rule-inset-junction-end",
+     ""},
+    {"column-rule-inset-cap", shape::pair, "column-rule-inset-cap-start column-rule-inset-cap-end",
+     ""},
+    {"row-rule-inset-cap", shape::pair, "row-rule-inset-cap-start row-rule-inset-cap-end", ""},
+    {"rule-inset-cap", shape::axes,
+     "column-rule-inset-cap-start column-rule-inset-cap-end row-rule-inset-cap-start "
+     "row-rule-inset-cap-end",
+     ""},
+    {"column-rule-inset-junction", shape::pair,
+     "column-rule-inset-junction-start column-rule-inset-junction-end", ""},
+    {"row-rule-inset-junction", shape::pair,
+     "row-rule-inset-junction-start row-rule-inset-junction-end", ""},
+    {"rule-inset-junction", shape::axes,
+     "column-rule-inset-junction-start column-rule-inset-junction-end "
+     "row-rule-inset-junction-start row-rule-inset-junction-end",
+     ""},
+    {"column-rule-inset-start", shape::same,
+     "column-rule-inset-cap-start column-rule-inset-junction-start", ""},
+    {"column-rule-inset-end", shape::same,
+     "column-rule-inset-cap-end column-rule-inset-junction-end", ""},
+    {"row-rule-inset-start", shape::same, "row-rule-inset-cap-start row-rule-inset-junction-start",
+     ""},
+    {"row-rule-inset-end", shape::same, "row-rule-inset-cap-end row-rule-inset-junction-end", ""},
+    {"rule-inset-start", shape::axes,
+     "column-rule-inset-cap-start column-rule-inset-junction-start row-rule-inset-cap-start "
+     "row-rule-inset-junction-start",
+     ""},
+    {"rule-inset-end", shape::axes,
+     "column-rule-inset-cap-end column-rule-inset-junction-end row-rule-inset-cap-end "
+     "row-rule-inset-junction-end",
+     ""},
     {"text-emphasis", shape::bar, "text-emphasis-style text-emphasis-color", "none"},
     {"text-wrap", shape::bar, "text-wrap-mode text-wrap-style", "wrap"},
     {"white-space", shape::white_space, "white-space-collapse text-wrap-mode white-space-trim",

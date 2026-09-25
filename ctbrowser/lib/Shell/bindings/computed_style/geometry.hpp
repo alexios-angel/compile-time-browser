@@ -424,7 +424,7 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
     }
     // Column rules keep their computed width even for `none` and `hidden`.
     // Resolve line-width keywords before the shorthand fold can omit `medium`.
-    if (property == "column-rule-width" &&
+    if ((property == "column-rule-width" || property == "row-rule-width") &&
         (text.empty() || ascii_iequals(text, "thin") || ascii_iequals(text, "medium") ||
          ascii_iequals(text, "thick"))) {
         return px_text(border_width_px(text, at.font_size));

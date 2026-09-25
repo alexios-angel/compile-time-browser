@@ -494,8 +494,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (property == "outline-color" && ascii_iequals(trim(text, html_whitespace), "auto")) {
             return collapse_keyword(declared("outline-style")) == "auto" ? "auto" : "currentcolor";
         }
+        const bool gap_property =
+            ascii_iequals_any(property, {"column-rule-width", "row-rule-width", "column-rule-color",
+                                         "row-rule-color"});
         if (is_color_property(property) || image_property || filter_property || grid_property ||
-            transform_property || layer_property) {
+            transform_property || layer_property || gap_property) {
             style::css::length_context bases;
             bases.font_size = at.font_size;
             bases.root_font_size = at.root_font_size;
@@ -531,6 +534,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                 : style::css::computed_color(text, {});
                 if (own_color.empty()) { own_color = "rgb(0, 0, 0)"; }
                 ctx.current_color = own_color;
+            }
+            if (gap_property) {
+                // A gap rule list, item by item (lib/Style/css/properties/gaps.cpp).
+                const std::string_view given = trim(text, html_whitespace);
+                const bool color = property.ends_with("-color");
+                std::string computed = style::css::computed_gap_list(
+                    property, given.empty() ? (color ? "currentcolor" : "medium") : given, ctx);
+                return computed.empty() ? collapse_keyword(text) : computed;
             }
             if (image_property) {
                 if (std::string computed = style::css::computed_image(text, ctx);

@@ -8,6 +8,7 @@ target_sources(ctbrowser-style PRIVATE
   expansion.hpp
   filter.cpp
   font_family.cpp
+  gaps.cpp
   grammar.cpp
   grid.cpp
   image.cpp

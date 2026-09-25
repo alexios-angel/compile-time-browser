@@ -285,6 +285,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // property answers yes to it and the two orders are the same answer.
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
+    // THE GAP RULE LISTS (gaps.cpp): `10px, repeat(auto, thin)`.
+    {
+        std::string serialized;
+        if (match_gap_list(property, text, serialized)) {
+            if (serialized.empty()) { return {}; }
+            return yes(std::move(serialized));
+        }
+    }
+
     // A `#` LIST IS THE PROPERTY'S OWN GRAMMAR, ONCE PER ITEM. Every longhand
     // of CSS Animations 1 and CSS Transitions 1 is a comma-separated list - one
     // value per animation, one per transitioned property - and this table has a

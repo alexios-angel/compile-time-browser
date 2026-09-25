@@ -540,6 +540,56 @@ split split_slash_pair(const expansion & e, std::string_view value,
     return split::ok;
 }
 
+// `same`: the whole value on every longhand, each through its own grammar.
+split split_same(const expansion & e, std::string_view value, std::vector<std::string> & out) {
+    out.clear();
+    for (const std::string_view longhand : e.longhands) {
+        bool valid = false;
+        out.push_back(canonical(longhand, value, valid));
+        if (!valid) { return split::invalid; }
+    }
+    return split::ok;
+}
+
+// `column-rule-inset`: one or two caps, then `/` and one or two junctions;
+// without the slash the junctions are the caps (CSS Gap Decorations 1).
+split split_rule_inset(const expansion & e, std::string_view value,
+                       std::vector<std::string> & out) {
+    const std::vector<std::string_view> halves = split_top_level(value, "/");
+    if (halves.empty() || halves.size() > 2) { return split::invalid; }
+    out.clear();
+    for (std::size_t half = 0; half < 2; ++half) {
+        const std::string_view text =
+            trim(halves[std::min(half, halves.size() - 1)], html_whitespace);
+        std::vector<std::string> ends;
+        for (const std::string_view part : split_top_level(text, html_whitespace)) {
+            if (trim(part, html_whitespace).empty()) { continue; }
+            bool valid = false;
+            ends.push_back(canonical(e.longhands[half * 2], part, valid));
+            if (!valid) { return split::invalid; }
+        }
+        if (ends.empty() || ends.size() > 2) { return split::invalid; }
+        out.push_back(ends.front());
+        out.push_back(ends.back());
+    }
+    return split::ok;
+}
+
+// `rule-*`: the value split by the column property of the same name, and
+// the same values given to the rows.
+split split_axes(const expansion & e, std::string_view value, std::vector<std::string> & out) {
+    const std::string column = "column-" + std::string{e.syntax->name};
+    if (const expansion * sub = expansion_of(column)) {
+        std::vector<std::string> half;
+        const split result = split_value(*sub, value, half);
+        if (result != split::ok) { return result; }
+        out = half;
+        out.insert(out.end(), half.begin(), half.end());
+        return split::ok;
+    }
+    return split_same(e, value, out);
+}
+
 split split_value(const expansion & e, std::string_view text, std::vector<std::string> & out) {
     const std::string_view value = trim(text, html_whitespace);
     if (is_wide_keyword(value)) {
@@ -565,6 +615,10 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
         return split_grid_lines(e.syntax->name, value, out) ? split::ok : split::invalid;
     case shape::slash_pair: return split_slash_pair(e, value, out);
     case shape::bar: return split_bar(e, parts, out);
+    case shape::gap_rule: return split_gap_rule(value, out) ? split::ok : split::invalid;
+    case shape::same: return split_same(e, value, out);
+    case shape::rule_inset: return split_rule_inset(e, value, out);
+    case shape::axes: return split_axes(e, value, out);
     case shape::columns: return split_columns(value, out) ? split::ok : split::invalid;
     case shape::flex: return split_flex(parts, out);
     case shape::border: return split_border(parts, out);

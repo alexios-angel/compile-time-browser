@@ -217,6 +217,11 @@ struct color_context {
 // gradient's colours computed, its lengths in pixels and its angles in
 // degrees, a `url()` as written. Empty for text with no image this models.
 [[nodiscard]] std::string computed_image(std::string_view specified, const color_context & ctx);
+// THE COMPUTED VALUE OF A GAP RULE LIST (CSS Gap Decorations 1): a width
+// list's lengths in pixels, a colour list's colours computed, a repeat
+// count as its integer. Empty for another property or text that is not one.
+[[nodiscard]] std::string computed_gap_list(std::string_view property, std::string_view text,
+                                            const color_context & ctx);
 // THE COMPUTED VALUE OF A `<filter-value-list>` (Filter Effects 1 §11): the
 // percentages as numbers, the lengths in pixels, a shadow's colour first.
 [[nodiscard]] std::string computed_filter(std::string_view specified, const color_context & ctx);

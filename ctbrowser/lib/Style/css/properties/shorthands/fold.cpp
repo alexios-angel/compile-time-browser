@@ -207,6 +207,24 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::slash_pair:
         return ascii_iequals(v[1], initial_of(e.longhands[1])) ? v[0] : v[0] + " / " + v[1];
     case shape::bar: return fold_bar(e, v);
+    case shape::gap_rule: return fold_gap_rule(v);
+    case shape::same:
+        for (const std::string & one : v) {
+            if (one != v.front()) { return {}; }
+        }
+        return v.front();
+    case shape::rule_inset:
+        if (v[0] == v[1] && v[0] == v[2] && v[0] == v[3]) { return v[0]; }
+        return v[0] + " " + v[1] + " / " + v[2] + " " + v[3];
+    case shape::axes: {
+        // Only when the rows say what the columns say.
+        const std::size_t half = v.size() / 2;
+        for (std::size_t i = 0; i < half; ++i) {
+            if (v[i] != v[half + i]) { return {}; }
+        }
+        const expansion * column = expansion_of("column-" + std::string{e.syntax->name});
+        return column != nullptr ? fold(*column, v.first(half)) : v.front();
+    }
     case shape::columns: {
         // column-wrap is reset-only, so its non-initial values cannot be spelled here.
         if (!ascii_iequals(v[3], "auto")) { return {}; }
