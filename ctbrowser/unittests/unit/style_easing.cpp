@@ -263,6 +263,8 @@ void test_composition() {
     CHECK(interpolate_text("transform", "none", "none", 0.5, context) == "none");
     CHECK(interpolate_text("transform", "translateY(70%)", "translateY(90%)", 1, context) ==
           "translateY(90%)");
+    CHECK(interpolate_text("transform", "translateY(70%)", "translateY(90%)", 0.5, context) ==
+          "translateY(80%)");
     CHECK(interpolate_text("transform", "translate(12px, 70%)", "translate(13px, 90%)", 0.25,
                            context) == "translate(12.25px, 75%)");
     CHECK(composite_text("transform", "rotate(30deg)", "scale(2)", composite_op::add, context) ==
