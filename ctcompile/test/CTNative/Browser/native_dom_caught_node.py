@@ -498,14 +498,6 @@ var outcome0 = observe(false), outcome1 = observe(true);
             for optimize in (False, True):
                 label = f"{name}-{provider}-{optimize}"
                 manifest = dict(contract, provider=provider, initial_intrinsics=INTRINSICS)
-                if name.endswith("-helper-branches"):
-                    # Raw helper CFG normalization does not yet rewrite structured scf.if.
-                    refusal = dom.lower(args, ir, manifest, label, optimize=optimize, success=False)
-                    if "DOM Symbol.iterator identity method has additional effects" not in refusal:
-                        raise RuntimeError(
-                            f"{label}: unexpected structured helper refusal\n{refusal}"
-                        )
-                    continue
                 native = dom.lower(
                     args,
                     ir,

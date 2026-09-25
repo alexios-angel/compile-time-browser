@@ -172,6 +172,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (object->getBlock() != openAnchor->getBlock() || !object->isBeforeInBlock(openAnchor)) {
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
+    const auto exactBoolean = [](mlir::Value condition) -> std::optional<bool> {
+        if (auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>()) {
+            if (auto value = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())) {
+                return !value.getValue().isZero();
+            }
+        } else if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+            auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
+            auto value = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
+                                  : ctjs::BooleanAttr{};
+            if (value) { return value.getValue(); }
+        }
+        return std::nullopt;
+    };
     const auto prepareTarget = [&](ctjs::CreateClosureOp closure) {
         ctjs::FuncOp found;
         for (auto function : candidate.getOps<ctjs::FuncOp>()) {
@@ -182,13 +195,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         if (found && found.getBody().empty()) { return ctjs::FuncOp{}; }
-        if (found && found != entry && !found.getBody().hasOneBlock()) {
+        if (found && found != entry) {
             // Normalize only exact continuations on this private candidate.
             // Every surviving condition producer, effect and payload still
             // needs the complete helper proof below.
+            // Merging CFG edges can expose a constant block argument too.
+            bool projectBranches = !found.getBody().hasOneBlock();
             uint64_t size = 0;
             const auto counted = found.walk([&](mlir::Operation * operation) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    projectBranches |=
+                        !branch.getNumResults() && exactBoolean(branch.getCondition()).has_value();
+                }
                 size += uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                         operation->getNumSuccessors();
                 for (auto & region : operation->getRegions()) {
@@ -200,9 +219,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return size > work.remaining ? mlir::WalkResult::interrupt()
                                              : mlir::WalkResult::advance();
             });
+            if (counted.wasInterrupted()) {
+                work.remaining = 0;
+                return ctjs::FuncOp{};
+            }
+            if (!projectBranches) { return found; }
             // ponytail: upstream has no step callback; reserve a quadratic
             // input ceiling until larger helper CFGs need a tighter bound.
-            if (counted.wasInterrupted() || size > work.remaining / size) {
+            if (size > work.remaining / size) {
                 work.remaining = 0;
                 return ctjs::FuncOp{};
             }
@@ -215,20 +239,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return ctjs::FuncOp{}; }
                 if (auto conditional =
                         llvm::dyn_cast<mlir::cf::CondBranchOp>(root.getTerminator())) {
-                    std::optional<bool> selected;
+                    auto selected = exactBoolean(conditional.getCondition());
                     auto * predicate = conditional.getCondition().getDefiningOp();
-                    if (auto constant =
-                            llvm::dyn_cast_if_present<mlir::arith::ConstantOp>(predicate)) {
-                        if (auto value = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())) {
-                            selected = !value.getValue().isZero();
-                        }
-                    } else if (auto truthy = llvm::dyn_cast_if_present<ctjs::TruthyOp>(predicate)) {
-                        auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
-                        auto value = constant
-                                         ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                         : ctjs::BooleanAttr{};
-                        if (value) { selected = value.getValue(); }
-                    }
                     if (!selected && conditional.getTrueDest() == conditional.getFalseDest() &&
                         conditional.getTrueDestOperands() == conditional.getFalseDestOperands()) {
                         selected = true;
@@ -254,6 +266,29 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     break;
                 }
             }
+            const auto projected =
+                found.walk<mlir::WalkOrder::PostOrder>([&](mlir::scf::IfOp branch) {
+                    if (!spend()) { return mlir::WalkResult::interrupt(); }
+                    auto selected = exactBoolean(branch.getCondition());
+                    if (branch.getNumResults() || !selected) { return mlir::WalkResult::advance(); }
+                    auto * predicate = branch.getCondition().getDefiningOp();
+                    auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
+                    if (!region.empty()) {
+                        auto & body = region.front();
+                        body.getTerminator()->erase();
+                        branch->getBlock()->getOperations().splice(branch->getIterator(),
+                                                                   body.getOperations());
+                    }
+                    branch.erase();
+                    // Only the unused pure predicate disappears; its input
+                    // and every selected operation retain their source order.
+                    if (predicate && predicate->use_empty() &&
+                        llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
+                        rewriter.eraseOp(predicate);
+                    }
+                    return mlir::WalkResult::advance();
+                });
+            if (projected.wasInterrupted()) { return ctjs::FuncOp{}; }
         }
         return found;
     };

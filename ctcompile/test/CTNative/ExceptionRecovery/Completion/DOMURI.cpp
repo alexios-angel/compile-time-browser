@@ -880,7 +880,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         return;
     }
     const auto expected = printed(*reference);
-    for (unsigned control = 0; control != 37; ++control) {
+    for (unsigned control = 0; control != 56; ++control) {
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
         auto next = candidate->lookupSymbol<ctjs::FuncOp>("fn$3");
@@ -937,6 +937,101 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             }
             mlir::cf::SwitchOp::create(at, identity.getLoc(), flag, continuation,
                                        mlir::ValueRange{}, cases, destinations, operands);
+        } else if (control >= 37) {
+            auto helper = (control >= 44 && control <= 46) || control == 48 ? close : identity;
+            // Exercise the already-one-block path, without an imported dead tail
+            // triggering CFG normalization on the helper's behalf.
+            helper.getBody().back().erase();
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            auto * moved =
+                helper == close ? (*first.getOps<ctjs::CallOp>().begin()).getOperation() : terminal;
+            if (helper == close &&
+                !check(moved->use_empty(), "structured close effect has no escaping result")) {
+                continue;
+            }
+            at.setInsertionPoint(moved);
+            auto receiver = first.getArgument(ctjs::arg_receiver);
+            const bool selected =
+                control != 38 && control != 40 && control != 41 && control != 45 && control != 52;
+            mlir::Value flag;
+            if (control == 39 || control == 40 || (control >= 49 && control <= 50) ||
+                control == 52) {
+                mlir::Value input = receiver;
+                if (control == 50) {
+                    input = ctjs::LoadGlobalOp::create(at, helper.getLoc(), "condition-effect");
+                } else if (control == 52) {
+                    input = ctjs::ConstantOp::create(
+                        at, helper.getLoc(), ctjs::NumberAttr::get(original.getContext(), 0));
+                } else if (control == 39 || control == 40) {
+                    input = ctjs::ConstantOp::create(
+                        at, helper.getLoc(),
+                        ctjs::BooleanAttr::get(original.getContext(), selected));
+                }
+                flag = ctjs::TruthyOp::create(at, helper.getLoc(), at.getI1Type(), input);
+            } else {
+                flag = mlir::arith::ConstantIntOp::create(at, helper.getLoc(), selected, 1);
+            }
+            if (control == 54) {
+                auto * continuation = first.splitBlock(terminal);
+                at.setInsertionPointToEnd(&first);
+                mlir::cf::BranchOp::create(at, helper.getLoc(), continuation,
+                                           mlir::ValueRange{flag});
+                flag = continuation->addArgument(at.getI1Type(), helper.getLoc());
+                at.setInsertionPoint(terminal);
+            }
+            if (control == 51) {
+                auto branch =
+                    mlir::scf::IfOp::create(at, helper.getLoc(), receiver.getType(), flag, true);
+                for (auto & region : branch->getRegions()) {
+                    at.setInsertionPointToEnd(&region.front());
+                    mlir::scf::YieldOp::create(at, helper.getLoc(), mlir::ValueRange{receiver});
+                }
+                terminal->setOperand(0, branch.getResult(0));
+            } else {
+                auto branch = mlir::scf::IfOp::create(at, helper.getLoc(), flag,
+                                                      control != 41 && control != 42);
+                auto & dead = selected ? branch.getElseRegion() : branch.getThenRegion();
+                if (!dead.empty()) {
+                    at.setInsertionPoint(dead.front().getTerminator());
+                    ctjs::StoreGlobalOp::create(at, helper.getLoc(), "dead-arm-effect", receiver);
+                    if (control == 53) {
+                        for (unsigned i = 0; i != 300; ++i) {
+                            ctjs::ConstantOp::create(
+                                at, helper.getLoc(),
+                                ctjs::UndefinedAttr::get(original.getContext()));
+                        }
+                    }
+                }
+                auto & live = selected ? branch.getThenRegion() : branch.getElseRegion();
+                if (!live.empty()) {
+                    auto * destination = &live.front();
+                    if (control == 43 || control == 46 || control == 55) {
+                        at.setInsertionPoint(destination->getTerminator());
+                        mlir::Value nestedFlag = flag;
+                        if (control != 55) {
+                            nestedFlag =
+                                mlir::arith::ConstantIntOp::create(at, helper.getLoc(), 0, 1);
+                        }
+                        auto nested =
+                            mlir::scf::IfOp::create(at, helper.getLoc(), nestedFlag, true);
+                        auto & discarded =
+                            control == 55 ? nested.getElseRegion() : nested.getThenRegion();
+                        at.setInsertionPoint(discarded.front().getTerminator());
+                        ctjs::StoreGlobalOp::create(at, helper.getLoc(), "nested-dead-effect",
+                                                    receiver);
+                        destination =
+                            &(control == 55 ? nested.getThenRegion() : nested.getElseRegion())
+                                 .front();
+                    }
+                    if (helper == close) { moved->moveBefore(destination->getTerminator()); }
+                    if (control == 47 || control == 48) {
+                        at.setInsertionPoint(destination->getTerminator());
+                        ctjs::StoreGlobalOp::create(at, helper.getLoc(), "live-arm-effect",
+                                                    receiver);
+                    }
+                }
+            }
         } else if (control >= 23) {
             auto helper = control == 28                                     ? close
                           : control == 27 || control == 33 || control >= 35 ? next
@@ -1054,7 +1149,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         const auto before = printed(*candidate);
         const bool succeeds = control == 0 || (control >= 2 && control <= 4) ||
                               (control >= 10 && control <= 12) || control == 18 || control == 19 ||
-                              (control >= 23 && control <= 29) || control == 36;
+                              (control >= 23 && control <= 29) ||
+                              (control >= 36 && control <= 46) || control >= 54;
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -1063,6 +1159,34 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                       limitedProof.moduleSha256 == fingerprint,
                   "reachable helper budget refusal preserves the entire module and contract");
             if (limitedError) { llvm::consumeError(std::move(limitedError)); }
+            if (control == 46) {
+                const auto attempt = [&](unsigned budget) {
+                    mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
+                    auto limitedProof = proof;
+                    auto error =
+                        ctcompile::ctnative::prepareDOMEntry(*limited, limitedProof, budget);
+                    if (!error) {
+                        check(printed(*limited) == expected,
+                              "complete structured helper budget retains exact effects");
+                        return true;
+                    }
+                    llvm::consumeError(std::move(error));
+                    check(printed(*limited) == before && limitedProof.moduleSha256 == fingerprint,
+                          "partial structured helper projection rolls back all IR and proof");
+                    return false;
+                };
+                unsigned lower = 1, upper = 100000;
+                while (lower < upper) {
+                    const unsigned middle = lower + (upper - lower) / 2;
+                    if (attempt(middle)) {
+                        upper = middle;
+                    } else {
+                        lower = middle + 1;
+                    }
+                }
+                check(attempt(lower) && !attempt(lower - 1),
+                      "structured helper needs its complete nonzero projection budget");
+            }
         }
         auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, 100000);
         const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
@@ -1075,7 +1199,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             check(!reason.empty() && printed(*candidate) == before &&
                       proof.moduleSha256 == fingerprint,
                   "raw helper shape, effect and receiver refusals roll back the whole module");
-            if (control == 8 || control == 9) {
+            if (control == 8 || control == 9 || control == 53) {
                 check(reason.find("budget") != std::string::npos,
                       "helper operations and successor edges consume the normalization budget");
             }
