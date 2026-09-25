@@ -152,7 +152,7 @@ namespace ctbrowser::style::css::substitute_detail {
             attr_cycle_ = false;
             break;
         }
-        if (ok) { value = match_syntax(substituted, syntax); }
+        if (ok) { value = match_syntax(substituted, syntax, true); }
         break;
     }
     }

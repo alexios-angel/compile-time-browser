@@ -102,11 +102,15 @@ struct item {
 
 [[nodiscard]] std::string slice_of(const token_stream & s, const item & it);
 
+// `from_attribute`: the text is an attribute's, read through `attr(x
+// type(...))`, and may make no URL - `<image>` takes no `url()` then.
 [[nodiscard]] std::optional<std::string> match_item(const token_stream & s, const item & it,
-                                                    std::string_view type);
+                                                    std::string_view type,
+                                                    bool from_attribute = false);
 
 [[nodiscard]] std::optional<std::string> match_syntax(
-    std::string_view value, const std::vector<syntax_alternative> & syntax);
+    std::string_view value, const std::vector<syntax_alternative> & syntax,
+    bool from_attribute = false);
 
 [[nodiscard]] std::string quoted(std::string_view text);
 

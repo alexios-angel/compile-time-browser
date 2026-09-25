@@ -225,7 +225,7 @@ namespace ctbrowser::style::css::substitute_detail {
 // lowercased, a number in its shortest form, and a function as written - the
 // cascade folds a `calc()` afterwards exactly as it folds one the author wrote.
 [[nodiscard]] std::optional<std::string> match_item(const token_stream & s, const item & it,
-                                                    std::string_view type) {
+                                                    std::string_view type, bool from_attribute) {
     const css_token & t = s.tokens[it.first];
     const bool single = it.first == it.last;
     const std::string text = slice_of(s, it);
@@ -309,15 +309,20 @@ namespace ctbrowser::style::css::substitute_detail {
         return std::nullopt;
     }
     if (type == "image") {
+        // A URL IS AN IMAGE, except where an attribute wrote it.
+        if (t.type == token_type::url) {
+            return single && !from_attribute ? std::optional{text} : std::nullopt;
+        }
         if (t.type != token_type::function) { return std::nullopt; }
         std::string_view name = s.text_of(t);
         name.remove_suffix(1);
+        if (!from_attribute && ascii_iequals_any(name, {"url", "src"})) { return text; }
         if (ascii_iequals_any(name, {"linear-gradient", "radial-gradient", "conic-gradient",
                                      "repeating-linear-gradient", "repeating-radial-gradient",
                                      "repeating-conic-gradient", "image-set", "image", "cross-fade",
                                      "element", "paint"})) {
-            // ...with no url() anywhere inside it.
-            for (std::size_t i = it.first; i <= it.last; ++i) {
+            // ...with no url() anywhere inside it, when an attribute wrote it.
+            for (std::size_t i = it.first; from_attribute && i <= it.last; ++i) {
                 const css_token & inner = s.tokens[i];
                 if (inner.type == token_type::url || (inner.type == token_type::function &&
                                                       ascii_iequals(s.text_of(inner), "url("))) {
@@ -347,7 +352,7 @@ namespace ctbrowser::style::css::substitute_detail {
 
 // The whole attribute text against a parsed `<syntax>`, serialised on a match.
 [[nodiscard]] std::optional<std::string> match_syntax(
-    std::string_view value, const std::vector<syntax_alternative> & syntax) {
+    std::string_view value, const std::vector<syntax_alternative> & syntax, bool from_attribute) {
     const token_stream s = tokenize(value);
     if (syntax.empty()) { return std::string{trim(value, html_whitespace)}; } // `*`
     for (const syntax_alternative & alt : syntax) {
@@ -366,7 +371,7 @@ namespace ctbrowser::style::css::substitute_detail {
         std::string out;
         bool all = true;
         for (const item & part : parts) {
-            const std::optional<std::string> one = match_item(s, part, alt.name);
+            const std::optional<std::string> one = match_item(s, part, alt.name, from_attribute);
             if (!one) {
                 all = false;
                 break;
