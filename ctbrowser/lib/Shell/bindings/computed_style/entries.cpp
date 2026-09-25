@@ -251,6 +251,30 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             at.font_size = declared_size.resolve(0.0f, 16.0f);
         }
     }
+    // ...AND OF AN ELEMENT WHOSE FONT SIZE IS ANIMATED. The box carries the
+    // cascade's size; a running animation's is the one getComputedStyle owes,
+    // and every `em` below resolves against it. A percentage or an `em` in
+    // `font-size` is the PARENT's, as it is in the cascade.
+    for (const auto & [name, text] : animated) {
+        if (name != "font-size" || at.pseudo) { continue; }
+        const layout::box_node * parent =
+            at.chain.size() >= 2 ? box_for(boxes_, at.chain[1]) : nullptr;
+        style::css::length_context sizes;
+        sizes.font_size = parent != nullptr ? parent->font_size : 16.0f;
+        sizes.viewport_width = static_cast<float>(viewport_width_);
+        const std::string_view given = trim(text, html_whitespace);
+        std::optional<float> px;
+        if (given.ends_with('%')) {
+            float percent = 0;
+            const char * end = given.data() + given.size() - 1;
+            if (std::from_chars(given.data(), end, percent).ptr == end) {
+                px = sizes.font_size * percent / 100.0f;
+            }
+        } else {
+            px = style::css::length_text_to_px(given, sizes);
+        }
+        if (px) { at.font_size = std::max(0.0f, *px); }
+    }
     // THE PRINCIPAL BOX, and the two ways there is not one.
     const std::string declared_display = collapse_keyword(declared("display"));
     at.has_box = at.box != nullptr && declared_display != "none" && declared_display != "contents";
