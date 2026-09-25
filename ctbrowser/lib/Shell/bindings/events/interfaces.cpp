@@ -323,8 +323,14 @@ void dom_bindings::install_event_interfaces(context & cx) {
         // Non-writable, non-configurable, non-enumerable, like every interface
         // object's `prototype` (WebIDL 3.6).
         ctor->define("prototype", prototype_value, script::attr_none);
-        static_cast<script::object_object *>(prototype_value.as_heap())
-            ->define("constructor", value::object(ctor), script::attr_builtin);
+        auto * proto = static_cast<script::object_object *>(prototype_value.as_heap());
+        proto->define("constructor", value::object(ctor), script::attr_builtin);
+        // `@@toStringTag` is the interface's name (WebIDL 3.7.3), which is
+        // what `assert_class_string(event, "Event")` reads through
+        // Object.prototype.toString.
+        if (proto->find("@@toStringTag") == nullptr) {
+            proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+        }
         cx.define_global(name, value::object(ctor));
         return ctor;
     };
@@ -749,6 +755,14 @@ void dom_bindings::install_event_interfaces(context & cx) {
                  [](context & c, script::object_object & e, value init) {
                      e.set("oldURL", c.string(dict_string(c, init, "oldURL")));
                      e.set("newURL", c.string(dict_string(c, init, "newURL")));
+                 });
+
+    // `PageTransitionEvent` (HTML 7.4.6.4): `pageshow` after the window's
+    // `load` (input.cpp's dispatch), and whether the page came from a cache,
+    // which here it never does.
+    interface_of("PageTransitionEvent", event_prototype_,
+                 [](context & c, script::object_object & e, value init) {
+                     e.set("persisted", value::boolean(dict_flag(c, init, "persisted")));
                  });
 
     // `ErrorEvent`, which is what an uncaught exception is reported as. It is

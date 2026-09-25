@@ -341,7 +341,12 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
         }
     }
 
-    const value target_object = object_of_step(cx, at);
+    // With the legacy target override flag the target is the Document, though
+    // the path is the window's alone (dispatch step 2).
+    const value target_object =
+        at.on == listen_on::window && object->find(legacy_target_override_property) != nullptr
+            ? document_
+            : object_of_step(cx, at);
     object->set("target", target_object);
     object->set("srcElement", target_object);
     // `offsetX`/`offsetY` ARE RELATIVE TO THE TARGET'S BOX - CSSOM View - and

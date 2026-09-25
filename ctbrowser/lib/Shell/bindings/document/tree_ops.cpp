@@ -207,6 +207,37 @@ node_id dom_bindings::node_from(context & cx, value v, bool whole_fragment) {
     // shadow root stays with its host the same way (adoption.window.js,
     // "appendChild() and DocumentFragment" / "...and ShadowRoot"). They arrive
     // in a fragment of this document so the caller's flattening still applies.
+    // THE OLD DOCUMENT'S LIVE RANGES MOVE FIRST, as "remove" (which adopt
+    // runs) moves them: a boundary inside what is leaving goes to (parent,
+    // index) now, while the wrappers still name the old document's nodes -
+    // once rebound below, that document no longer finds them
+    // (Range-adopt-test.html). The parent's own offsets follow the removal's
+    // note, as for any removal.
+    {
+        const auto txn = owner->doc_->read();
+        std::vector<node_id> leaving;
+        if (!whole_fragment &&
+            txn.kind(source).value_or(node_kind::element) == node_kind::document_fragment) {
+            const std::span<const node_id> kids = txn.children(source);
+            leaving.assign(kids.begin(), kids.end());
+        } else {
+            leaving.push_back(source);
+        }
+        for (const node_id gone : leaving) {
+            const node_id parent = dom_parent(txn, gone);
+            if (!parent) { continue; }
+            const std::span<const node_id> row = txn.children(parent);
+            const auto index = static_cast<double>(std::ranges::find(row, gone) - row.begin());
+            owner->each_live_boundary([&](const live_boundary & at) {
+                for (node_id up = at.node; up && txn.contains(up); up = dom_parent(txn, up)) {
+                    if (up == gone) {
+                        owner->move_live_boundary(at, parent, index);
+                        return;
+                    }
+                }
+            });
+        }
+    }
     node_id made;
     std::vector<node_id> moved;
     {
@@ -334,9 +365,22 @@ void dom_bindings::set_inner_html(node_id target, std::string_view markup) {
             doc_->set_template_content(target, into);
         }
     }
+    // A SHADOW ROOT'S CONTEXT IS ITS HOST (the ShadowRoot innerHTML setter):
+    // the host's element name, and in XML the namespace declarations in scope
+    // there (innerHTML-setter.xhtml's `<bar:span/>`).
+    node_id context = target;
+    if (const shadow_tree * tree = shadow_tree_of(target)) { context = tree->host; }
     document scratch{*atoms_};
-    const node_id body = parse_fragment_for(*doc_, scratch, target, markup, namespace_of(target));
-    if (!body) { return; }
+    const node_id body = parse_fragment_for(*doc_, scratch, context, markup, namespace_of(context));
+    if (!body) {
+        // The XML fragment parsing algorithm (HTML 13.4) on markup that is
+        // not well-formed: a SyntaxError, and the element is left as it was.
+        if (doc_->xml() && cx_ != nullptr) {
+            throw_dom_exception(*cx_, "SyntaxError",
+                                "Failed to set 'innerHTML': the markup is not well-formed XML");
+        }
+        return;
+    }
     {
         const auto txn = doc_->read();
         const std::span<const node_id> kids = txn.children(into);

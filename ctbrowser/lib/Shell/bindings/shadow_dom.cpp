@@ -36,6 +36,16 @@
 namespace ctbrowser::shell {
 namespace {
 
+// A MANUAL ASSIGNMENT IS BETWEEN OBJECTS, not handles: HTML's slot.assign()
+// records "manually assigned nodes" on the slot and a "manual slot
+// assignment" on each node, and both survive the nodes moving to another
+// document and back (imperative-slot-api.html) - where this engine's handles
+// do not, since adoption copies a node into the other document's slab. So the
+// two lists live on the WRAPPERS, which adoption rebinds but keeps, and
+// which the collector traces through these properties.
+constexpr std::string_view manual_nodes_key = "@@sym:ctbrowser:manuallyAssignedNodes";
+constexpr std::string_view manual_slot_key = "@@sym:ctbrowser:manualSlotAssignment";
+
 // The slot name an element asks for, and the one a slot offers. Text is always
 // the default slot's.
 [[nodiscard]] std::string slot_name_of(const read_txn & txn, atom_table & atoms, node_id id,
@@ -213,13 +223,26 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
     // MANUAL: the page said which nodes, and nothing else qualifies. A node
     // that has since left the host is dropped here rather than when it moved.
     if (tree->manual_slots) {
-        const auto held = manual_slots_.find(slot.key());
-        if (held == manual_slots_.end()) { return {}; }
+        const auto slot_wrapper = wrappers_.find(slot.key());
+        if (slot_wrapper == wrappers_.end()) { return {}; }
+        const value * held = slot_wrapper->second->find(manual_nodes_key);
+        if (held == nullptr || !held->is_array()) { return {}; }
         std::vector<node_id> out;
-        for (const node_id one : held->second) {
-            const node_kind kind = txn.kind(one).value_or(node_kind::comment);
+        for (const value & one : static_cast<script::array_object *>(held->as_heap())->items) {
+            if (!one.is_object()) { continue; }
+            // A node of THIS document now: its wrapper's handle is one of ours.
+            auto * obj = static_cast<script::object_object *>(one.as_heap());
+            const value * handle = obj->find(handle_property);
+            if (handle == nullptr) { continue; }
+            const auto packed = static_cast<std::uint64_t>(context::to_number(*handle));
+            if (const auto mine = wrappers_.find(packed);
+                mine == wrappers_.end() || mine->second != obj) {
+                continue;
+            }
+            const node_id id = unpack(packed);
+            const node_kind kind = txn.kind(id).value_or(node_kind::comment);
             if (kind != node_kind::element && kind != node_kind::text) { continue; }
-            if (txn.parent(one) == tree->host) { out.push_back(one); }
+            if (txn.parent(id) == tree->host) { out.push_back(id); }
         }
         return out;
     }
@@ -257,6 +280,11 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
     // the notes are read after the fact - so a slot that was itself inserted
     // by these writes, or inside something that was, got its children first.
     std::vector<node_id> fallback;
+    // DOM 4.2.3 "remove" step 13: A SLOT THAT LEFT ITS SHADOW TREE - itself or
+    // inside what was removed - is assigned nothing now, and one that had
+    // nodes has changed (imperative-slot-api-slotchange.html). The trees
+    // below are the ones it is still in; this is the one it left.
+    std::vector<node_id> departed;
     const auto note_root = [&](node_id root) {
         if (root && shadow_tree_of(root) != nullptr &&
             std::ranges::find(roots, root) == roots.end()) {
@@ -287,6 +315,13 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
             if (note.child && txn.contains(note.child)) {
                 note_root(root_of_tree(txn, note.child, false));
                 note_root(shadow_root_of(note.child));
+                if (note.kind == edit::removed) {
+                    const auto gather = [&](auto && self, node_id at) -> void {
+                        if (is_slot(txn, at)) { departed.push_back(at); }
+                        for (const node_id child : txn.children(at)) { self(self, child); }
+                    };
+                    gather(gather, note.child);
+                }
             }
         }
         for (const node_id root : slot_roots_dirty_) { note_root(root); }
@@ -310,6 +345,18 @@ void dom_bindings::signal_slot_changes(const std::vector<document::write_note> &
         }
         signal_slots_.push_back(slot);
         any = true;
+    }
+    for (const node_id slot : departed) {
+        const auto before = slot_assignments_.find(slot.key());
+        if (before == slot_assignments_.end() || before->second.empty() ||
+            before->second == assigned_nodes_of(slot)) {
+            continue;
+        }
+        slot_assignments_.insert_or_assign(slot.key(), assigned_nodes_of(slot));
+        if (std::ranges::find(signal_slots_, slot) == signal_slots_.end()) {
+            signal_slots_.push_back(slot);
+            any = true;
+        }
     }
     if (roots.empty()) {
         if (any) { queue_mutation_delivery(); }
@@ -581,48 +628,93 @@ void dom_bindings::install_shadow_dom(context & cx) {
         set_method(
             cx, *on, "assign",
             [this](context & c, std::span<value> args) {
-                const node_id slot = handle_of(c.current_this());
+                // THE SLOT MAY BE ANOTHER DOCUMENT'S - one a page moved away -
+                // and its own bindings answer for it.
+                const value self = c.current_this();
+                dom_bindings * home = owner_of(self);
+                const node_id slot = home == nullptr ? node_id{} : home->handle_of(self);
                 if (!slot) { return value::undefined(); }
-                std::vector<node_id> assigned;
+                std::vector<value> nodes;
                 for (const value & one : args) {
-                    const node_id id = handle_of(one);
-                    const node_kind kind = id ? doc_->read().kind(id).value_or(node_kind::comment)
-                                              : node_kind::comment;
-                    // ONLY A SLOTTABLE: the argument type is
+                    // ONLY A SLOTTABLE, of any document: the argument type is
                     // `(Element or Text)...`, so anything else is a WebIDL
                     // conversion failure before one node is assigned.
+                    dom_bindings * of = owner_of(one);
+                    const node_id id = of == nullptr ? node_id{} : of->handle_of(one);
+                    const node_kind kind =
+                        id ? of->doc_->read().kind(id).value_or(node_kind::comment)
+                           : node_kind::comment;
                     if (kind != node_kind::element && kind != node_kind::text) {
                         c.throw_error("TypeError",
                                       "Failed to execute 'assign' on 'HTMLSlotElement': the "
                                       "arguments must be Element or Text nodes.");
                         return value::undefined();
                     }
-                    if (std::ranges::find(assigned, id) == assigned.end()) {
-                        assigned.push_back(id);
+                    if (std::ranges::none_of(
+                            nodes, [&](const value & v) { return v.bits() == one.bits(); })) {
+                        nodes.push_back(one);
                     }
                 }
-                // A node may be assigned to ONE slot: taking it here takes it
-                // from wherever it was.
-                {
-                    const auto txn = doc_->read();
-                    for (auto & [key, held] : manual_slots_) {
-                        if (key == slot.key()) { continue; }
-                        const std::size_t before = held.size();
-                        std::erase_if(held, [&](node_id one) {
-                            return std::ranges::find(assigned, one) != assigned.end();
-                        });
-                        // A slot that lost a node - in this tree or another -
-                        // reports the loss as a slotchange too.
-                        if (held.size() != before && txn.contains(unpack(key))) {
-                            slot_roots_dirty_.push_back(root_of_tree(txn, unpack(key), false));
+                // Every document whose slots this changes recomputes them - and
+                // reports a slot that lost a node as a slotchange too.
+                std::vector<dom_bindings *> touched{home};
+                const auto dirty = [&](value slot_value) {
+                    dom_bindings * at = owner_of(slot_value);
+                    const node_id id = at == nullptr ? node_id{} : at->handle_of(slot_value);
+                    if (!id) { return; }
+                    const auto txn = at->doc_->read();
+                    at->slot_roots_dirty_.push_back(root_of_tree(txn, id, false));
+                    if (std::ranges::find(touched, at) == touched.end()) { touched.push_back(at); }
+                };
+                auto * slot_object = static_cast<script::object_object *>(self.as_heap());
+                const auto assignment_of = [](value node) -> value * {
+                    return static_cast<script::object_object *>(node.as_heap())
+                        ->find(manual_slot_key);
+                };
+                // Step 1: what this slot had loses its manual slot assignment.
+                if (const value * had = slot_object->find(manual_nodes_key);
+                    had != nullptr && had->is_array()) {
+                    for (const value & node :
+                         static_cast<script::array_object *>(had->as_heap())->items) {
+                        if (value * mark = assignment_of(node);
+                            mark != nullptr && mark->bits() == self.bits()) {
+                            *mark = value::null();
                         }
                     }
-                    // A manual assignment moves nothing the write log sees:
-                    // the slot's tree is recomputed on this mutation regardless.
-                    slot_roots_dirty_.push_back(root_of_tree(txn, slot, false));
                 }
-                manual_slots_.insert_or_assign(slot.key(), std::move(assigned));
-                mutated();
+                // Step 3: each node leaves the slot it was manually assigned
+                // to - in this tree, another, or another document - for this.
+                for (const value & node : nodes) {
+                    value * mark = assignment_of(node);
+                    if (mark != nullptr && mark->is_object() && mark->bits() != self.bits()) {
+                        auto * other = static_cast<script::object_object *>(mark->as_heap());
+                        if (value * list = other->find(manual_nodes_key);
+                            list != nullptr && list->is_array()) {
+                            auto & items =
+                                static_cast<script::array_object *>(list->as_heap())->items;
+                            std::erase_if(items,
+                                          [&](const value & v) { return v.bits() == node.bits(); });
+                        }
+                        dirty(*mark);
+                    }
+                    if (mark != nullptr) {
+                        *mark = self;
+                    } else {
+                        static_cast<script::object_object *>(node.as_heap())
+                            ->define(std::string{manual_slot_key}, self, script::attr_configurable);
+                    }
+                }
+                // Step 4: this slot's manually assigned nodes, as given.
+                const value list = c.make_array();
+                static_cast<script::array_object *>(list.as_heap())->items = nodes;
+                if (value * had = slot_object->find(manual_nodes_key)) {
+                    *had = list;
+                } else {
+                    slot_object->define(std::string{manual_nodes_key}, list,
+                                        script::attr_configurable);
+                }
+                dirty(self);
+                for (dom_bindings * at : touched) { at->mutated(); }
                 return value::undefined();
             },
             script::attr_builtin);
@@ -650,6 +742,30 @@ void dom_bindings::install_shadow_dom(context & cx) {
                           if (tree == nullptr || !tree->open) { return value::null(); }
                           const node_id answer = assigned_slot_of(id);
                           return answer ? wrap(c, answer) : value::null();
+                      });
+    }
+
+    // --- Element.shadowRoot, on the interface -----------------------------------
+    //
+    // The attribute is Element's, so `'shadowRoot' in Element.prototype` and
+    // not on Node's or Text's (Element-interface-shadowRoot-attribute.html).
+    // Each element wrapper carries the same answer as its own property
+    // (element/views.cpp); this is the one the interface declares, with
+    // WebIDL's brand check.
+    if (const value proto = interface_prototype("Element"); proto.is_object()) {
+        define_getter(cx, *static_cast<script::object_object *>(proto.as_heap()), "shadowRoot",
+                      [this](context & c, std::span<value>) {
+                          dom_bindings * owner = owner_of(c.current_this());
+                          const node_id id =
+                              owner == nullptr ? node_id{} : owner->handle_of(c.current_this());
+                          if (!id || !owner->doc_->read().tag(id)) {
+                              c.throw_error("TypeError", "Illegal invocation");
+                              return value::undefined();
+                          }
+                          const node_id root = owner->shadow_root_of(id);
+                          const document::shadow_tree * tree = owner->shadow_tree_of(root);
+                          if (tree == nullptr || !tree->open) { return value::null(); }
+                          return owner->wrap(c, root);
                       });
     }
 

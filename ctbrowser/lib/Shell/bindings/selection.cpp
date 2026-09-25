@@ -18,9 +18,13 @@
 // by the range being live.
 //
 // THE OBJECT IS PER WINDOW AND STABLE: `getSelection() === getSelection()` is
-// the first thing every test asserts. The one instance is retained by the
-// `getSelection` function object, which is a global and therefore a root -
-// the arrangement install_custom_elements uses for its registry.
+// the first thing every test asserts. The page's is made here and retained by
+// the `getSelection` function object, which is a global and therefore a root
+// - the arrangement install_custom_elements uses for its registry. A FRAME'S
+// is its own (getSelection.html), made the first time its window or document
+// asks and kept on its window object; the methods are the page's, and each
+// works in the bindings of the document the selection carries in its
+// `__document` slot.
 //
 // ponytail: no `selectstart` event, no selectionchange for a boundary a Range
 // method or a tree edit moves, no `modify()` and no user selection. Nothing here is driven by a
@@ -35,6 +39,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace ctbrowser::shell {
@@ -58,6 +63,10 @@ constexpr std::string_view focus_offset_slot = "__focusOffset";
 // ...and whether they are such a pair. Otherwise the range's own ends are the
 // answer, read live - a range the page added may since have been moved.
 constexpr std::string_view across_slot = "__across";
+// The document the selection is of - the page's, or a frame's.
+constexpr std::string_view document_slot = "__document";
+// Where a frame's window keeps its selection once one is asked for.
+constexpr std::string_view window_selection_key = "@@sym:ctbrowser:selection";
 
 [[nodiscard]] script::object_object * self_object(context & c) {
     const value self = c.current_this();
@@ -88,7 +97,10 @@ constexpr std::string_view across_slot = "__across";
     if (self == nullptr) { return value::undefined(); }
     const value range = held_slot(self, range_slot);
     if (!range.is_object()) { return value::undefined(); }
-    const value here = c.has_global("document") ? c.global("document") : value::undefined();
+    const value mine = held_slot(self, document_slot);
+    const value here = mine.is_object_like()      ? mine
+                       : c.has_global("document") ? c.global("document")
+                                                  : value::undefined();
     for (const char * end : {"startContainer", "endContainer"}) {
         const value node = c.lookup_property(range, end);
         if (node.is_heap() && node.bits() == here.bits()) { continue; }
@@ -185,8 +197,37 @@ void dom_bindings::install_selection(context & cx) {
         return c.string(is_backwards(c) ? "backward" : "forward");
     });
 
+    // Each operation's `length` is its count of required arguments, from the
+    // Selection API's IDL (WebIDL 3.7.6) - `deleteFromDocument.length` is 0,
+    // which deleteFromDocument.html asserts first.
     const auto method = [&](const char * name, script::native_fn fn) {
-        set_method(cx, *proto, name, std::move(fn), script::attr_builtin);
+        static constexpr std::pair<std::string_view, int> required[] = {
+            {"getRangeAt", 1},       {"addRange", 1},          {"removeRange", 1},
+            {"collapse", 1},         {"setPosition", 1},       {"extend", 1},
+            {"setBaseAndExtent", 4}, {"selectAllChildren", 1}, {"containsNode", 1}};
+        int length = 0;
+        for (const auto & [named, count] : required) {
+            if (named == name) { length = count; }
+        }
+        auto * made = cx.allocate<script::native_object>(name, std::move(fn));
+        made->define("length", value::number(length), script::attr_configurable);
+        proto->set(name, value::object(made));
+        proto->set_attrs(name, script::attr_builtin);
+    };
+
+    // THE BINDINGS OF THE SELECTION'S DOCUMENT - the page's, or the frame's
+    // whose selection `this` is - which every method below works in.
+    const auto home = [this](context & c) -> dom_bindings & {
+        dom_bindings & top = primary();
+        const value self = c.current_this();
+        if (!self.is_object()) { return top; }
+        const value doc =
+            held_slot(static_cast<script::object_object *>(self.as_heap()), document_slot);
+        if (!doc.is_object_like() || doc.bits() == top.document_.bits()) { return top; }
+        for (const auto & made : top.secondary_documents_) {
+            if (made->document_.bits() == doc.bits()) { return *made; }
+        }
+        return top;
     };
 
     // --- what a node has to be for the selection to point at it ---------------
@@ -194,13 +235,13 @@ void dom_bindings::install_selection(context & cx) {
     // "If node's root is not the document associated with this, abort these
     // steps" - ABORT, not throw, and it is why a selection cannot be moved
     // into a detached fragment or into another document's tree.
-    const auto rooted_here = [this](value v) {
-        if (is_the_document(v)) { return true; }
-        if (owner_of(v) != this) { return false; }
-        const node_id id = handle_of(v);
+    const auto rooted_here = [](dom_bindings & d, value v) {
+        if (d.is_the_document(v)) { return true; }
+        if (d.owner_of(v) != &d) { return false; }
+        const node_id id = d.handle_of(v);
         if (!id) { return false; }
-        const auto txn = doc_->read();
-        const node_id top = root_of_tree(txn, id, true);
+        const auto txn = d.doc_->read();
+        const node_id top = d.root_of_tree(txn, id, true);
         return top == txn.root() ||
                txn.kind(top).value_or(node_kind::element) == node_kind::document;
     };
@@ -211,31 +252,79 @@ void dom_bindings::install_selection(context & cx) {
     // the task CLEARS it before it fires, so a listener that moves the
     // selection again gets one more event, in a later task. The event bubbles
     // and cannot be cancelled, and it is fired at the document.
-    const auto store = [this](context & c, value range, bool backwards) {
+    // A SELECTION PUT INSIDE AN EDITING HOST FOCUSES THAT HOST, as every
+    // browser does (contenteditable/collapse.html moves it from host to host,
+    // and into one nested in another). The host is the outermost element of
+    // the run of editable ancestors the focus sits in - `contenteditable`
+    // true, empty or plaintext-only, inherited through an invalid value and
+    // stopped by `false`.
+    const auto focus_editing_host = [](context & c, dom_bindings & d, value range, bool backwards) {
+        const node_id focus =
+            d.handle_of(c.lookup_property(range, backwards ? "startContainer" : "endContainer"));
+        if (!focus) { return; }
+        node_id host;
+        {
+            const auto txn = d.doc_->read();
+            const atom attr = d.atoms_->intern("contenteditable");
+            const auto editable = [&](node_id element) {
+                for (node_id at = element; at; at = txn.parent(at)) {
+                    if (!txn.tag(at) || !txn.has_attribute(at, attr)) { continue; }
+                    const std::string state = ascii_lower_copy(txn.attribute_value(at, attr));
+                    if (state.empty() || state == "true" || state == "plaintext-only") {
+                        return true;
+                    }
+                    if (state == "false") { return false; }
+                }
+                return false;
+            };
+            for (node_id at = txn.tag(focus) ? focus : txn.parent(focus);
+                 at && txn.tag(at) && editable(at); at = txn.parent(at)) {
+                host = at;
+            }
+        }
+        if (!host) { return; }
+        const value element = d.wrap(c, host);
+        if (c.lookup_property(d.document_, "activeElement").bits() == element.bits()) { return; }
+        (void)call_on(c, element, "focus", {});
+    };
+
+    const auto store = [this, home, focus_editing_host](context & c, value range, bool backwards) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return; }
+        dom_bindings * at = &home(c);
         const value before = held_slot(self, range_slot);
         store_range(c, range, backwards);
+        if (range.is_object()) { focus_editing_host(c, *at, range, backwards); }
         if (!before.is_object() && !range.is_object()) { return; }
         if (context::truthy(held_slot(self, scheduled_slot))) { return; }
         self->set(std::string{scheduled_slot}, value::boolean(true));
-        (void)add_timer(native(c, "selectionchange",
-                               [this, self](context & inner, std::span<value>) {
-                                   self->set(std::string{scheduled_slot}, value::boolean(false));
-                                   const value event =
-                                       make_event(inner, "selectionchange", node_id{});
-                                   static_cast<script::object_object *>(event.as_heap())
-                                       ->set("cancelable", value::boolean(false));
-                                   (void)dispatch_event("selectionchange", node_id{}, event);
-                                   return value::undefined();
-                               }),
-                        0, false);
+        // ON THE PAGE'S QUEUE, which is the one the tick runs - a frame's
+        // own timers are not - and guarded, because a frame can be removed
+        // before the task comes round.
+        (void)primary().add_timer(
+            native(c, "selectionchange",
+                   [this, at, self](context & inner, std::span<value>) {
+                       self->set(std::string{scheduled_slot}, value::boolean(false));
+                       dom_bindings & top = primary();
+                       if (at != &top &&
+                           std::ranges::none_of(top.secondary_documents_, [at](const auto & held) {
+                               return held.get() == at;
+                           })) {
+                           return value::undefined();
+                       }
+                       const value event = at->make_event(inner, "selectionchange", node_id{});
+                       static_cast<script::object_object *>(event.as_heap())
+                           ->set("cancelable", value::boolean(false));
+                       (void)at->dispatch_event("selectionchange", node_id{}, event);
+                       return value::undefined();
+                   }),
+            0, false);
     };
 
     // A fresh Range of this document collapsed at (node, offset). `setStart`
     // is where a doctype and an offset past the end are refused.
-    const auto range_at = [this](context & c, value node, value offset) -> value {
-        const value made = create_range(c);
+    const auto range_at = [home](context & c, value node, value offset) -> value {
+        const value made = home(c).create_range(c);
         (void)call_on(c, made, "setStart", {node, offset});
         if (c.throw_pending()) { return value::undefined(); }
         (void)call_on(c, made, "setEnd", {node, offset});
@@ -260,18 +349,18 @@ void dom_bindings::install_selection(context & cx) {
     // stands at its host, BETWEEN (parent, index) and (parent, index + 1),
     // which the half offset says - and the two are then compared in one tree
     // as DOM 5.2 compares boundary points. -1, 0 or 1.
-    const auto node_of = [this](value v) {
-        return is_the_document(v) ? doc_->document_node() : handle_of(v);
+    const auto node_of = [](dom_bindings & d, value v) {
+        return d.is_the_document(v) ? d.doc_->document_node() : d.handle_of(v);
     };
-    const auto compare_composed = [this](node_id a, double a_offset, node_id b,
-                                         double b_offset) -> int {
-        const auto txn = doc_->read();
+    const auto compare_composed = [](dom_bindings & d, node_id a, double a_offset, node_id b,
+                                     double b_offset) -> int {
+        const auto txn = d.doc_->read();
         const auto roots = [&](node_id n) {
             std::vector<node_id> out;
             for (int guard = 0; n && guard < 64; ++guard) {
-                const node_id root = root_of_tree(txn, n, false);
+                const node_id root = d.root_of_tree(txn, n, false);
                 out.push_back(root);
-                const shadow_tree * tree = shadow_tree_of(root);
+                const shadow_tree * tree = d.shadow_tree_of(root);
                 if (tree == nullptr) { break; }
                 n = tree->host;
             }
@@ -293,8 +382,8 @@ void dom_bindings::install_selection(context & cx) {
         };
         const auto lift = [&](node_id & n, double & offset) {
             for (int guard = 0; n && guard < 64; ++guard) {
-                const node_id root = root_of_tree(txn, n, false);
-                const shadow_tree * tree = root == common ? nullptr : shadow_tree_of(root);
+                const node_id root = d.root_of_tree(txn, n, false);
+                const shadow_tree * tree = root == common ? nullptr : d.shadow_tree_of(root);
                 if (tree == nullptr) { return; }
                 offset = index_of(tree->host) + 0.5;
                 n = dom_parent(txn, tree->host);
@@ -321,9 +410,17 @@ void dom_bindings::install_selection(context & cx) {
         if (shared == 0) { return 0; }
         return index_of(a_up[shared]) < index_of(b_up[shared]) ? -1 : 1;
     };
-    const auto same_tree = [this](node_id a, node_id b) {
-        const auto txn = doc_->read();
-        return root_of_tree(txn, a, false) == root_of_tree(txn, b, false);
+    // THE DOCUMENT IS IN ITS OWN TREE: root_of_tree stops at the document
+    // element, which has no parent pointer, so a point at (document, n) and
+    // one inside the element are told apart unless the two roots are read as
+    // the one Document (extend-00.html's `[document, 0]` points).
+    const auto same_tree = [](dom_bindings & d, node_id a, node_id b) {
+        const auto txn = d.doc_->read();
+        const auto top = [&](node_id n) {
+            const node_id root = d.root_of_tree(txn, n, false);
+            return root == txn.root() ? txn.document_node() : root;
+        };
+        return top(a) == top(b);
     };
     // A selection whose anchor and focus are in DIFFERENT trees: the live
     // range collapses where DOM's "set the start" then "set the end" leave it
@@ -353,14 +450,16 @@ void dom_bindings::install_selection(context & cx) {
     });
     // THE CALLER'S OWN Range OBJECT, KEPT: `getRangeAt(0) === range`. A second
     // range is ignored - this engine, like every shipping one, holds one.
-    method("addRange", [rooted_here, store, is_live_range](context & c, std::span<value> a) {
+    method("addRange", [home, rooted_here, store, is_live_range](context & c, std::span<value> a) {
         const value range = arg(a, 0);
         if (!is_live_range(range)) {
             c.throw_error("TypeError", "Failed to execute 'addRange' on 'Selection': parameter 1 "
                                        "is not of type 'Range'.");
             return value::undefined();
         }
-        if (!rooted_here(c.lookup_property(range, "startContainer"))) { return value::undefined(); }
+        if (!rooted_here(home(c), c.lookup_property(range, "startContainer"))) {
+            return value::undefined();
+        }
         if (range_of(c).is_object()) { return value::undefined(); }
         store(c, range, false);
         return value::undefined();
@@ -389,7 +488,7 @@ void dom_bindings::install_selection(context & cx) {
     // `collapse(null)` is `removeAllRanges()` - the one place in this API
     // where null is a value an argument may have rather than a missing one.
     for (const char * name : {"collapse", "setPosition"}) {
-        method(name, [range_at, rooted_here, store](context & c, std::span<value> a) {
+        method(name, [home, range_at, rooted_here, store](context & c, std::span<value> a) {
             const value node = arg(a, 0);
             if (node.is_null() || node.is_undefined()) {
                 store(c, value::undefined(), false);
@@ -400,7 +499,7 @@ void dom_bindings::install_selection(context & cx) {
             // and NOT a silent no-op, because the specification checks the
             // node kind and the offset before it asks where the node is.
             const value made = range_at(c, node, value::number(arg_number(a, 1)));
-            if (c.throw_pending() || !rooted_here(node)) { return value::undefined(); }
+            if (c.throw_pending() || !rooted_here(home(c), node)) { return value::undefined(); }
             if (made.is_object()) { store(c, made, false); }
             return value::undefined();
         });
@@ -424,21 +523,36 @@ void dom_bindings::install_selection(context & cx) {
     // `extend(node, offset)`: the ANCHOR stays where it is and the focus moves
     // to the new point, so the range grows in whichever direction that point
     // lies - and the direction follows it.
-    method("extend", [this, rooted_here, store](context & c, std::span<value> a) {
+    method("extend", [this, home, rooted_here, store, range_at, node_of, same_tree,
+                      compare_composed, store_across](context & c, std::span<value> a) {
+        dom_bindings & d = home(c);
         const value range = range_of(c);
         if (!range.is_object()) {
             throw_dom_exception(c, "InvalidStateError", "extend: there is no range to extend");
             return value::undefined();
         }
         const value node = arg(a, 0);
-        if (!rooted_here(node)) { return value::undefined(); }
+        if (!rooted_here(d, node)) { return value::undefined(); }
         const value offset = value::number(arg_number(a, 1));
         const bool backwards = is_backwards(c);
         const value anchor_node =
             c.lookup_property(range, backwards ? "endContainer" : "startContainer");
         const value anchor_offset =
             c.lookup_property(range, backwards ? "endOffset" : "startOffset");
-        const value made = create_range(c);
+        // Step 6: A NEW FOCUS IN ANOTHER TREE than the range - inside a
+        // shadow root the anchor is outside of, or the other way round - and
+        // the range collapses at the new focus. The two points are kept beside
+        // it, as setBaseAndExtent keeps them, for getComposedRanges().
+        if (const node_id anchor_id = node_of(d, anchor_node), focus_id = node_of(d, node);
+            anchor_id && focus_id && !same_tree(d, anchor_id, focus_id)) {
+            const value focus_at = range_at(c, node, offset);
+            if (c.throw_pending()) { return value::undefined(); }
+            const bool before = compare_composed(d, focus_id, context::to_number(offset), anchor_id,
+                                                 context::to_number(anchor_offset)) < 0;
+            store_across(c, anchor_node, anchor_offset, node, offset, before, focus_at);
+            return value::undefined();
+        }
+        const value made = d.create_range(c);
         (void)call_on(c, made, "setStart", {anchor_node, anchor_offset});
         if (c.throw_pending()) { return value::undefined(); }
         (void)call_on(c, made, "setEnd", {anchor_node, anchor_offset});
@@ -452,8 +566,9 @@ void dom_bindings::install_selection(context & cx) {
         store(c, made, side < 0);
         return value::undefined();
     });
-    method("setBaseAndExtent", [rooted_here, store, range_at, node_of, same_tree, compare_composed,
-                                store_across](context & c, std::span<value> a) {
+    method("setBaseAndExtent", [home, rooted_here, store, range_at, node_of, same_tree,
+                                compare_composed, store_across](context & c, std::span<value> a) {
+        dom_bindings & d = home(c);
         // FOUR REQUIRED ARGUMENTS: fewer is WebIDL's TypeError, before any of
         // them is converted.
         if (a.size() < 4) {
@@ -472,11 +587,13 @@ void dom_bindings::install_selection(context & cx) {
         if (c.throw_pending()) { return value::undefined(); }
         const value focus_at = range_at(c, focus_node, focus_offset);
         if (c.throw_pending()) { return value::undefined(); }
-        if (!rooted_here(anchor_node) || !rooted_here(focus_node)) { return value::undefined(); }
-        if (const node_id anchor_id = node_of(anchor_node), focus_id = node_of(focus_node);
-            anchor_id && focus_id && !same_tree(anchor_id, focus_id)) {
+        if (!rooted_here(d, anchor_node) || !rooted_here(d, focus_node)) {
+            return value::undefined();
+        }
+        if (const node_id anchor_id = node_of(d, anchor_node), focus_id = node_of(d, focus_node);
+            anchor_id && focus_id && !same_tree(d, anchor_id, focus_id)) {
             const bool backwards =
-                compare_composed(focus_id, context::to_number(focus_offset), anchor_id,
+                compare_composed(d, focus_id, context::to_number(focus_offset), anchor_id,
                                  context::to_number(anchor_offset)) < 0;
             store_across(c, anchor_node, anchor_offset, focus_node, focus_offset, backwards,
                          backwards ? made : focus_at);
@@ -496,7 +613,8 @@ void dom_bindings::install_selection(context & cx) {
     // one selects its text; selectAllChildren counts children and selects
     // nothing. selectAllChildren.html asserts `focusOffset ===
     // node.childNodes.length` for every node it has, text nodes included.
-    method("selectAllChildren", [this, rooted_here, store](context & c, std::span<value> a) {
+    method("selectAllChildren", [home, rooted_here, store](context & c, std::span<value> a) {
+        dom_bindings & d = home(c);
         const value node = arg(a, 0);
         // `is_object_like`: a Document is a PROXY, and `is_object()` is false
         // for one - selectAllChildren(document) is a call on a Node.
@@ -505,15 +623,15 @@ void dom_bindings::install_selection(context & cx) {
                                        "parameter 1 is not of type 'Node'.");
             return value::undefined();
         }
-        const node_id id = is_the_document(node) ? doc_->document_node() : handle_of(node);
-        const auto children = id ? doc_->read().children(id).size() : 0u;
-        const value made = create_range(c);
+        const node_id id = d.is_the_document(node) ? d.doc_->document_node() : d.handle_of(node);
+        const auto children = id ? d.doc_->read().children(id).size() : 0u;
+        const value made = d.create_range(c);
         // A doctype is an InvalidNodeTypeError, and it comes from `setStart`
         // before anything is asked about where the node is.
         (void)call_on(c, made, "setStart", {node, value::number(0)});
         if (c.throw_pending()) { return value::undefined(); }
         (void)call_on(c, made, "setEnd", {node, value::number(static_cast<double>(children))});
-        if (c.throw_pending() || !rooted_here(node)) { return value::undefined(); }
+        if (c.throw_pending() || !rooted_here(d, node)) { return value::undefined(); }
         store(c, made, false);
         return value::undefined();
     });
@@ -526,37 +644,38 @@ void dom_bindings::install_selection(context & cx) {
     // `intersectsNode`; full containment is the node's own range inside this
     // one at BOTH ends - START_TO_START and END_TO_END, the two constants
     // compareBoundaryPoints numbers 0 and 2.
-    method("containsNode", [this](context & c, std::span<value> a) {
+    method("containsNode", [home](context & c, std::span<value> a) {
+        dom_bindings & d = home(c);
         const value range = range_of(c);
         const value node = arg(a, 0);
-        if (!range.is_object() || !node.is_object() || owner_of(node) != this) {
+        if (!range.is_object() || !node.is_object() || d.owner_of(node) != &d) {
             return value::boolean(false);
         }
         if (context::truthy(arg(a, 1))) {
             return value::boolean(context::truthy(call_on(c, range, "intersectsNode", {node})));
         }
-        const node_id id = handle_of(node);
-        if (!id || !dom_parent(doc_->read(), id)) { return value::boolean(false); }
+        const node_id id = d.handle_of(node);
+        if (!id || !dom_parent(d.doc_->read(), id)) { return value::boolean(false); }
         // NOT IN THE FLAT TREE, NOT IN THE SELECTION: a host's child no slot
         // took, or a slot's fallback content while something is assigned to
         // it, is not rendered - and so not selected, whatever the DOM range
         // spans (selection-at-nodes-not-part-of-flattened-tree.html).
         {
-            const auto txn = doc_->read();
+            const auto txn = d.doc_->read();
             for (node_id at = id; at;) {
                 const node_id parent = txn.parent(at);
                 if (!parent) { break; }
-                if (shadow_root_of(parent) && !assigned_slot_of(at)) {
+                if (d.shadow_root_of(parent) && !d.assigned_slot_of(at)) {
                     return value::boolean(false);
                 }
                 if (txn.tag(parent) && txn.element_ns(parent) == node_ns::html &&
-                    txn.local_name(parent) == "slot" && !assigned_nodes_of(parent).empty()) {
+                    txn.local_name(parent) == "slot" && !d.assigned_nodes_of(parent).empty()) {
                     return value::boolean(false);
                 }
                 at = parent;
             }
         }
-        const value about = create_range(c);
+        const value about = d.create_range(c);
         (void)call_on(c, about, "selectNode", {node});
         if (c.throw_pending()) { return value::boolean(false); }
         const double starts = context::to_number(
@@ -580,12 +699,13 @@ void dom_bindings::install_selection(context & cx) {
     // host, before it for the start and after it for the end - so a page is
     // told nothing about a tree it was not given. `shadowRoots` must hold
     // ShadowRoots; the older variadic spelling is taken as the same list.
-    method("getComposedRanges", [this, node_of](context & c, std::span<value> args) {
+    method("getComposedRanges", [home, node_of](context & c, std::span<value> args) {
+        dom_bindings & d = home(c);
         const value made = c.make_array();
         std::vector<node_id> allowed;
         const auto allow = [&](value one) {
-            const node_id id = handle_of(one);
-            if (!id || shadow_tree_of(id) == nullptr) {
+            const node_id id = d.handle_of(one);
+            if (!id || d.shadow_tree_of(id) == nullptr) {
                 c.throw_error("TypeError", "Failed to execute 'getComposedRanges' on "
                                            "'Selection': a member of shadowRoots is not a "
                                            "ShadowRoot.");
@@ -595,7 +715,7 @@ void dom_bindings::install_selection(context & cx) {
             return true;
         };
         const value first = arg(args, 0);
-        if (handle_of(first)) {
+        if (d.handle_of(first)) {
             for (const value & one : args) {
                 if (!allow(one)) { return value::undefined(); }
             }
@@ -626,11 +746,11 @@ void dom_bindings::install_selection(context & cx) {
         value end_node = point(false, false);
         double end_offset = context::to_number(point(false, true));
         const auto rescope = [&](value & node, double & offset, bool end) {
-            const auto txn = doc_->read();
-            node_id at = node_of(node);
+            const auto txn = d.doc_->read();
+            node_id at = node_of(d, node);
             for (int guard = 0; at && guard < 64; ++guard) {
-                const node_id root = root_of_tree(txn, at, false);
-                const shadow_tree * tree = shadow_tree_of(root);
+                const node_id root = d.root_of_tree(txn, at, false);
+                const shadow_tree * tree = d.shadow_tree_of(root);
                 if (tree == nullptr) { return; }
                 // Stop at a root that is a shadow-including inclusive ancestor
                 // of one the caller named.
@@ -638,7 +758,7 @@ void dom_bindings::install_selection(context & cx) {
                     for (node_id b = named; b;) {
                         if (b == root) { return; }
                         const node_id up = txn.parent(b);
-                        const shadow_tree * above = up ? nullptr : shadow_tree_of(b);
+                        const shadow_tree * above = up ? nullptr : d.shadow_tree_of(b);
                         b = up ? up : above == nullptr ? node_id{} : above->host;
                     }
                 }
@@ -647,7 +767,7 @@ void dom_bindings::install_selection(context & cx) {
                 offset = static_cast<double>(std::ranges::find(row, tree->host) - row.begin()) +
                          (end ? 1 : 0);
                 at = parent;
-                node = parent == doc_->document_node() ? document_ : wrap(c, parent);
+                node = parent == d.doc_->document_node() ? d.document_ : d.wrap(c, parent);
             }
         };
         rescope(start_node, start_offset, false);
@@ -674,24 +794,74 @@ void dom_bindings::install_selection(context & cx) {
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     cx.define_global("Selection", value::object(ctor));
 
-    // THE ONE SELECTION OF THIS WINDOW. Retained by the function that hands it
-    // out, which is a global and therefore a root.
+    // THE PAGE'S SELECTION, made now, of this document.
     auto * selection = cx.allocate<script::object_object>();
     selection->prototype = proto_value;
+    selection->set(std::string{document_slot}, document_);
     const value selection_value = value::object(selection);
+
+    // A FRAME'S, made the first time its window or its document is asked and
+    // kept on its window object from then on - so `getSelection() ===
+    // document.getSelection()` inside it, and neither is the page's. A
+    // document with no browsing context (createHTMLDocument, DOMParser) has
+    // none, and answers null.
+    const auto selection_of = [this, proto_value, selection_value](context & c,
+                                                                   dom_bindings & d) -> value {
+        if (&d == &primary()) { return selection_value; }
+        if (d.realm_ == nullptr) { return value::null(); }
+        script::object_object * window = d.window_object();
+        if (window == nullptr) { return value::null(); }
+        if (const value * held = window->find(window_selection_key)) { return *held; }
+        auto * made = c.allocate<script::object_object>();
+        made->prototype = proto_value;
+        made->set(std::string{document_slot}, d.document_);
+        window->define(std::string{window_selection_key}, value::object(made),
+                       script::attr_configurable);
+        return value::object(made);
+    };
+    // The bindings a receiver is the window or the document of: a frame's
+    // window view or document when it is one, else the page's.
+    const auto bindings_of = [this](context & c, value receiver) -> dom_bindings & {
+        dom_bindings & top = primary();
+        const auto names = [&](dom_bindings & d) {
+            if (!receiver.is_heap()) { return false; }
+            if (d.window_view_.is_heap() && d.window_view_.bits() == receiver.bits()) {
+                return true;
+            }
+            if (d.document_.is_heap() && d.document_.bits() == receiver.bits()) { return true; }
+            return d.document_object() != nullptr && receiver.is_object() &&
+                   receiver.as_heap() == d.document_object();
+        };
+        for (const auto & made : top.secondary_documents_) {
+            if (names(*made)) { return *made; }
+        }
+        if (names(top)) { return top; }
+        // A bare `getSelection()` from a frame's own script: the frame whose
+        // realm is running.
+        script::realm_record & running = c.current_realm();
+        for (const auto & made : top.secondary_documents_) {
+            if (made->realm_ == &running) { return *made; }
+        }
+        return top;
+    };
+
+    // `window.getSelection()`. Retained by the function that hands it out,
+    // which is a global and therefore a root.
     auto * getter = cx.allocate<script::native_object>(
-        "getSelection", [selection_value](context &, std::span<value>) { return selection_value; });
+        "getSelection", [bindings_of, selection_of](context & c, std::span<value>) {
+            return selection_of(c, bindings_of(c, c.current_this()));
+        });
     getter->retained.push_back(selection_value);
     cx.define_global("getSelection", value::object(getter));
 
     // `document.getSelection()` - THE SAME OBJECT, and null for a document with
-    // no browsing context, which is what a null `defaultView` says.
+    // no browsing context.
     //
     // ON THE PAGE'S OWN DOCUMENT IT IS AN OWN PROPERTY, and that is not
     // belt and braces: `document` is a PROXY, and a method reached through it
     // does not arrive with the document as its receiver - the prototype method
-    // below therefore read `defaultView` off the wrong thing and answered null,
-    // so `getSelection() === document.getSelection()` was false. This one
+    // below could not tell the page's document from another, so
+    // `getSelection() === document.getSelection()` was false. This one
     // answers with the selection and asks nothing.
     if (auto * doc = document_object()) {
         auto * own = cx.allocate<script::native_object>(
@@ -701,18 +871,25 @@ void dom_bindings::install_selection(context & cx) {
         doc->set("getSelection", value::object(own));
         doc->set_attrs("getSelection", script::attr_builtin);
     }
-    // AND ON Document.prototype for every OTHER document of the realm - one
-    // from createHTMLDocument or DOMParser - which have no browsing context
-    // and answer null.
+    // AND ON Document.prototype for every OTHER document of the realm: a
+    // frame's answers with the frame's selection, and one from
+    // createHTMLDocument or DOMParser, which has no browsing context, null.
     if (const value document_proto = interface_prototype("Document"); document_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(document_proto.as_heap());
         // RETAINED HERE TOO. A captured `value` is invisible to the collector,
         // and a page may delete the `getSelection` global - which would
         // otherwise leave this method holding a swept object.
         auto * method = cx.allocate<script::native_object>(
-            "getSelection", [selection_value](context & c, std::span<value>) {
-                const value view = c.lookup_property(c.current_this(), "defaultView");
-                return view.is_object() ? selection_value : value::null();
+            "getSelection", [this, selection_of](context & c, std::span<value>) {
+                const value self = c.current_this();
+                dom_bindings & top = primary();
+                for (const auto & made : top.secondary_documents_) {
+                    if (made->is_the_document(self) ||
+                        (self.is_object() && self.as_heap() == made->document_object())) {
+                        return selection_of(c, *made);
+                    }
+                }
+                return value::null();
             });
         method->retained.push_back(selection_value);
         on->set("getSelection", value::object(method));

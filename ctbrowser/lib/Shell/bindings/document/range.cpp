@@ -859,6 +859,8 @@ void dom_bindings::install_range(context & cx) {
         // HTML `<html>`, `<head>` and `<body>` a page wraps its markup
         // in are unwrapped - their children stand in their place
         // (createContextualFragment-xhtml.xhtml, what every browser does).
+        // THE HTML ONES: a selector matches `html` in any namespace, and an
+        // <html> in another vocabulary is an ordinary element that stays.
         if (start.owner->doc_->xml()) {
             const value query = c.lookup_property(fragment, "querySelectorAll");
             const value selector = c.string("html, head, body");
@@ -871,7 +873,10 @@ void dom_bindings::install_range(context & cx) {
             for (double i = count; i-- > 0;) {
                 const value wrapper =
                     c.lookup_property(wrappers, std::to_string(static_cast<std::size_t>(i)));
-                if (!wrapper.is_object_like()) { continue; }
+                if (!wrapper.is_object_like() ||
+                    c.to_string(c.lookup_property(wrapper, "namespaceURI")) != xhtml_namespace) {
+                    continue;
+                }
                 const value parent = c.lookup_property(wrapper, "parentNode");
                 const value insert = c.lookup_property(parent, "insertBefore");
                 if (!insert.is_callable()) { continue; }
