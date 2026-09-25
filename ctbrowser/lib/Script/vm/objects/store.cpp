@@ -501,7 +501,7 @@ void context::store_property(value target, const std::string & name, value v) {
              // (lookup_property's closure arm), as every browser's own
              // non-writable pair does - and refuse a write the same way.
              (!closure->proto->is_strict && !closure->proto->is_arrow &&
-              (name == "caller" || name == "arguments")))) {
+              !closure->proto->is_generator && (name == "caller" || name == "arguments")))) {
             // The SYNTHESISED `length` and `name` (own_property answers them
             // off the compiled function, { false, false, true }) are not
             // writable: the write is refused, not shadowed by a new own

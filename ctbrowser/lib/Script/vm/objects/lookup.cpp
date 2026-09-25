@@ -512,7 +512,7 @@ value context::lookup_property(value target, const std::string & name) {
             // implementation-defined answer, and every browser's); a strict
             // one reaches Function.prototype's %ThrowTypeError% accessor.
             if (!closure->proto->is_strict && !closure->proto->is_arrow &&
-                (name == "caller" || name == "arguments")) {
+                !closure->proto->is_generator && (name == "caller" || name == "arguments")) {
                 return value::null();
             }
         }
