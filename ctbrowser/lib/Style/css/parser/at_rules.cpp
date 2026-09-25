@@ -152,8 +152,10 @@ void parser::at_rule_block_of(std::string_view name, std::span<const component_v
     case at_kind::property:
     case at_kind::function: {
         // Collected like @font-face, prelude included, and only at the top
-        // level: one inside a conditional group is discarded as before.
-        if (nesting_ != 1) { return; }
+        // level: one inside a conditional group is discarded as before -
+        // except an `@container`, whose condition is per element and which
+        // defines what it holds regardless of it (container-inner-at-rules).
+        if (nesting_ != 1 && (container_ == 0 || condition_ != 0 || scope_ != 0)) { return; }
         at_rule_block r;
         r.prelude_first = static_cast<std::uint32_t>(sheet_.values.size());
         r.prelude_count = static_cast<std::uint32_t>(prelude.size());
