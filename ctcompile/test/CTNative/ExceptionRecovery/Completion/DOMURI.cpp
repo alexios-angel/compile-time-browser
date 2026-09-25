@@ -932,7 +932,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::CompareKind::Eq, 2, 0, false},       // quiet NaN == +0
         {ctjs::CompareKind::StrictEq, 8, 0, false}, // minimum subnormal === +0
     }};
-    for (unsigned control = 0; control != 226; ++control) {
+    for (unsigned control = 0; control != 232; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
@@ -1048,6 +1048,15 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 auto rhs = ctjs::ConstantOp::create(at, where, rhsValue);
                 auto operation = ctjs::CompareOp::create(at, where, payload.getType(),
                                                          comparison.kind, lhs, rhs);
+                if (control == 226) { operation->eraseOperand(1); }
+                if (control == 227) { operation->removeAttr("kind"); }
+                if (control == 228) { lhs.getDefiningOp()->removeAttr("value"); }
+                if (control == 229) { rhs->removeAttr("value"); }
+                if (control >= 230) {
+                    mlir::OpBuilder invalid(operation);
+                    auto flag = mlir::arith::ConstantIntOp::create(invalid, where, 0, 1);
+                    operation->setOperand(control - 230, flag);
+                }
                 selected = comparison.value;
                 evaluatedPredicates.emplace_back(operation.getOperation(), selected);
                 input = operation;
@@ -1527,7 +1536,9 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 }
             }
         }
-        if (!check(mlir::succeeded(mlir::verify(*candidate)), "raw helper control verifies")) {
+        const bool malformedComparison = control >= 226;
+        if (!check(mlir::succeeded(mlir::verify(*candidate)) != malformedComparison,
+                   "only intentionally malformed helper comparisons fail verification")) {
             continue;
         }
         auto proof = contract;

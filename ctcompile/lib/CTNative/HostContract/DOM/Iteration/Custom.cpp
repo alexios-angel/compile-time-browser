@@ -187,10 +187,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return std::nullopt;
     };
     const auto exactNumberComparison = [](ctjs::CompareOp comparison) -> std::optional<bool> {
-        auto lhs = comparison.getLhs().getDefiningOp<ctjs::ConstantOp>();
-        auto rhs = comparison.getRhs().getDefiningOp<ctjs::ConstantOp>();
-        auto left = lhs ? llvm::dyn_cast<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
-        auto right = rhs ? llvm::dyn_cast<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
+        if (comparison->getNumOperands() != 2 || !comparison.getKindAttr()) { return std::nullopt; }
+        auto lhs = comparison->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
+        auto rhs = comparison->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+        auto left =
+            lhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(lhs.getValue()) : ctjs::NumberAttr{};
+        auto right =
+            rhs ? llvm::dyn_cast_if_present<ctjs::NumberAttr>(rhs.getValue()) : ctjs::NumberAttr{};
         if (!left || !right) { return std::nullopt; }
         // Original Numbers need no conversion or hooks. Binary64 comparisons
         // preserve unordered NaNs and signed-zero equality.
