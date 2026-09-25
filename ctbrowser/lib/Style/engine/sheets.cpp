@@ -748,6 +748,21 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             conditions.functions = [this](std::string_view name) {
                 return function_of(atoms_->intern(name));
             };
+            // A registered <color> compares as a computed colour, under the
+            // container's used scheme: `light-dark(white, black)` is black
+            // in a dark container (registered-color-style-queries).
+            conditions.canonical_color = [&](std::string_view v) {
+                bool light = false, dark = false;
+                for (const std::string_view word :
+                     split_top_level(style->get(atoms_->intern_lower("color-scheme")), " ")) {
+                    light = light || word == "light";
+                    dark = dark || word == "dark";
+                }
+                css::color_context colors;
+                colors.dark = dark && !light;
+                const std::string computed = css::computed_color(v, colors);
+                return computed.empty() ? std::string{v} : computed;
+            };
             // `inherit` in a query names the container's PARENT's value.
             conditions.inherited = [&](std::string_view name) -> std::optional<std::string> {
                 if (d == 0 || d - 1 >= chain_styles_.size() || !chain_styles_[d - 1]) {
