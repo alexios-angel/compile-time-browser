@@ -672,6 +672,23 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                              measure_ ? zero_advance_of(get("font-family"), get("font-weight"),
                                                         get("font-style"), font_size)
                                       : 0.0f);
+            // ...and its `cq*` units measure the containers of the
+            // container, as they would on the container itself
+            // (container-units-in-at-container).
+            box.lengths.container_width = box.lengths.container_height = -1.0f;
+            if (d > 0 && d - 1 < cq_chain_.size()) {
+                const auto [inline_container, block_container] = cq_chain_[d - 1];
+                if (inline_container) {
+                    if (const auto up = container_size_of(inline_container)) {
+                        box.lengths.container_width = up->width;
+                    }
+                }
+                if (block_container) {
+                    if (const auto up = container_size_of(block_container)) {
+                        box.lengths.container_height = up->height;
+                    }
+                }
+            }
         }
         // `style(...)` IS THE if() CONDITION OF THE SAME NAME, asked of the
         // container rather than of the element (CSS Conditional 5 §3.3): its
