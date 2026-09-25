@@ -22,6 +22,37 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Single-iteration allocation confinement, 2026-09-25 UTC
+
+Resumed **d324b5c4** and the conditional-helper/loop-instance boundary. The
+parallel escape change landed as **aab7de9e**: the existing counted-loop proof
+now permits object and array allocations only in a body proved to execute once.
+Initialized inputs, current contents, every return and the all-write acyclic
+graph remain required. Headers, zero/multiple iterations, negative induction,
+overflow, publication and retained aliases keep their refusals. This proves
+frame confinement; it grants no region destruction or native ownership.
+
+The devbox built `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed:
+`ctcompile_escape_analysis_completion` **1/1, 0.09 s** and
+`ctcompile_escape_analysis_arrays` **1/1, 4.97 s**, including 20 new controls and
+every incomplete budget. Formatting passed **1126 C++, 159 Python, 114 web files**;
+diff checks passed. Full CTest/compiler lit, broad matrices/corpora, raw escape
+oracle, WPT/test262, sanitizers and cross-platform/performance runs were skipped.
+
+**Native continuation at this checkpoint:** the three-file conditional-helper
+candidate remains uncommitted. Its first build needed an explicit `mlir::Value`
+conversion in a test; then eight positive controls exposed a missing rewriter
+insertion point. That fix is present. Rebuild and run exact exception recovery,
+host contract and the four-source selector in `/tmp/ctcompile-iteration20/`
+before landing it. The earlier host test passed **1/1, 2.86 s**, but production
+changed afterward; native source execution has not run. Escape checks need no
+replay. The shared devbox queue caused long waits; no browser files changed.
+
+Repeated allocation instances/lifetimes, dynamic helper branches with differing
+payloads/effects, mutable exceptional state, escaping owners, Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
 ## Native helper deduplication, 2026-09-25 UTC
 
 Implemented the six requested Ponytail audit suggestions from **00263397**.
