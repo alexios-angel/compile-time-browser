@@ -22,6 +22,80 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Charged String conversion and dominating predicates, 2026-09-25 UTC
+
+Resumed clean **75ec7daa** from HANDOFF/part 00; iteration 35 was fully
+committed and the old WIP branch was already an ancestor. Native regression
+and parser-review agents hit service limits. The parent finished the regression
+candidate, while the escape agent completed its implementation and an independent
+native/parser/source review. A later interruption killed only queued validation;
+completed reviews and source checks were retained.
+
+**b4bfa2db** admits longer exact String numeric comparisons in private
+iterator helpers. Input bytes consume the existing proof budget before parsing;
+Core supplies conversion. Full grammar, exact special tokens, safe signed exponent
+arithmetic and refusal of Core radix overflow remain required. The uncharged
+escape caller retains its original 32-byte limit. Native tests add **48 controls,
+1096 total**: 32 admissions and 16 valid refusals. Twelve admitted comparison rows
+agree with Node. Two 100,002-byte inputs explicitly refuse the default 100,000-step
+budget; transported/shared inputs, live effects and public zero/late-budget
+module/contract rollback remain covered. Earlier source bodies are unchanged.
+
+**66ac3a66** correlates repeated strict equality through dominating
+prefixes of enclosing `scf.if` blocks. It uses exact SSA operands in either order,
+selects the first outermost representative and charges every scan. It crosses no
+loop/CFG boundary and borrows no sibling or following producer. Fourteen new
+retention rows bring the total to **396**; 20 new live states bring that total to
+**105**. One original cross-block refusal body is admitted unchanged. Independent
+finite Number bounds, guard dependencies, current operands, every exit, aliases,
+cycles, stale solvers, forged markers and incomplete-budget rollback remain
+required. No ownership or shorter native lifetime authority was added.
+
+**e187d962** adds two complete iterator/DOM sources using long decimal,
+Unicode-whitespace Infinity and transported binary Strings. All 32 earlier helper
+and two outer complete sources, and ten C++ raw sources, are unchanged.
+
+Seven explicit devbox targets built: `ctcompile-test-exception-recovery`,
+`ctcompile-test-host-contract`, `ctjs-opt`, `ctjs-translate`,
+`ctcompile-test-native-reference`, `ctcompile-test-escape-analysis-arrays` and
+`ctcompile-test-escape-analysis-completion`. Exact CTests passed (total elapsed):
+`ctcompile_exception_recovery` **1/1, 15.77 s**,
+`ctcompile_host_contract` **1/1, 2.75 s**,
+`ctcompile_escape_analysis_arrays` **1/1, 5.07 s** and
+`ctcompile_escape_analysis_completion` **1/1, 0.02 s**.
+
+Both complete sources pass with the default **100,000-step** raw and structured
+preparation budgets. Each raw import retains one Eq and two Ge producers.
+Node/VM traces agree; **20 generated C++ files and 40 GCC/Clang binaries**, both
+printers/providers/optimization modes, ten zero-budget refusals, ordered DOM
+writes, two documents and 16 lifetimes pass. Source and linked-symbol checks
+find no Script/AOT dependency. Inspected output uses typed native values, borrowed
+element handles and ordinary document ownership through the existing public DOM seam.
+
+Repository formatting passes **1127 C++, 159 Python and 114 web files**;
+diff checks pass. All seven final local/devbox source hashes match, and all 20
+generated files were retrieved. No build, CTest or source check failed or required
+replay. The interrupted queued gate and incomplete formatter were restarted;
+completed checks were retained. The parent also reviewed the two oversized-input
+controls added after the independent native review.
+
+**Next:** exact String unary `+`/`-`/`~` inside iterator helpers still stops at the
+Number-only matcher. Broader coercions remain separate from the newly charged
+comparison proof. Unicode ordering disagreements await UTF-16 alignment in the
+runtime oracle. Escape work still needs general CFG predicate correspondence,
+differing receivers and repeated allocation identities. Protected numeric
+`setAttribute`, mutable exceptional state, escaping owners, unguarded Bootstrap
+defaults, the native application driver and full native Bootstrap remain unfinished.
+No full-Bootstrap admission or raw escape-oracle improvement is claimed.
+
+Full CTest/compiler lit, whole browser fixtures, broad corpus/matrices, raw escape
+oracle, full Bootstrap, WPT/test262, sanitizers, Windows/macOS and performance were
+skipped. Linux inspection identified actual Claude loop PID 2333739; Windows
+identity inspection succeeded (365 processes, no matches). Concurrent rules
+applied and the native gate waited for browser jobs. No browser/runtime/shared
+implementation edit, local build, push or history rewrite. Evidence:
+`/tmp/ctcompile-iteration36/`.
+
 ## Exact String ordering and reversed predicates, 2026-09-25 UTC
 
 Resumed clean **741f34ec** from HANDOFF/part 00. Iteration 34 was fully
