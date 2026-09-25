@@ -120,6 +120,19 @@ void test_iterator_follows_a_removal() {
        " out.push(it.referenceNode.localName, it.pointerBeforeReferenceNode);"
        " root.remove(); return out.join(); })()",
        "a,false,c,true");
+    // ...and the position a traversal is AT while its filter runs: a filter
+    // that removes the candidate still has it returned, but the reference is
+    // where the pre-removing steps moved the position, and the next step goes
+    // on from there (NodeIterator-removal-during-filtering.html).
+    is("(function () { var root = document.createElement('div');"
+       " root.innerHTML = '<a-el></a-el><b-el></b-el><c-el></c-el>';"
+       " var a = root.children[0], b = root.children[1], c = root.children[2];"
+       " var it = document.createNodeIterator(root, NodeFilter.SHOW_ELEMENT, {acceptNode:"
+       " function (n) { if (n === b) { b.remove(); } return NodeFilter.FILTER_ACCEPT; }});"
+       " it.nextNode(); it.nextNode(); var got = it.nextNode();"
+       " return [got === b, it.referenceNode === a, it.pointerBeforeReferenceNode,"
+       " it.nextNode() === c].join(); })()",
+       "true,true,false,true");
 }
 
 } // namespace

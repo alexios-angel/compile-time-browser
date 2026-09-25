@@ -88,38 +88,45 @@ void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & 
                 return is_the_document(v) ? doc_->document_node() : handle_of(v);
             };
             const node_id root = node_of(slot(iterator, iterator_root_slot));
-            const node_id reference = node_of(slot(iterator, iterator_reference_slot));
             const auto removed_holds = [&](node_id node) {
                 for (node_id up = node; up && txn.contains(up); up = dom_parent(txn, up)) {
                     if (up == note.child) { return true; }
                 }
                 return false;
             };
-            // Step 1 - and a root inside the removed subtree went with it.
-            if (!root || !reference || !removed_holds(reference) || removed_holds(root)) {
-                continue;
+            if (!root || removed_holds(root)) { continue; }
+            // THE REFERENCE, and - while a traversal's filter runs - the
+            // position the traversal is at, which a filter that removes the
+            // candidate (or an ancestor of it) moves the same way
+            // (NodeIterator-removal-during-filtering.html).
+            for (const auto & [node_slot, before_slot] :
+                 {std::pair{iterator_reference_slot, iterator_before_slot},
+                  std::pair{iterator_inflight_slot, iterator_inflight_before_slot}}) {
+                const node_id reference = node_of(slot(iterator, node_slot));
+                // Step 1 - and a root inside the removed subtree went with it.
+                if (!reference || !removed_holds(reference)) { continue; }
+                const std::span<const node_id> kids = txn.children(note.node);
+                bool before = context::truthy(slot(iterator, before_slot));
+                node_id to;
+                // Step 2: the first node after the removed subtree, within root.
+                if (before && note.index < kids.size()) { to = kids[note.index]; }
+                for (node_id at = note.node; before && !to && at && at != root;
+                     at = dom_parent(txn, at)) {
+                    const std::span<const node_id> row = txn.children(dom_parent(txn, at));
+                    const auto here = std::ranges::find(row, at);
+                    if (here != row.end() && here + 1 != row.end()) { to = *(here + 1); }
+                }
+                before = before && to;
+                // Step 3: the node preceding it.
+                if (!to && note.index > 0 && note.index <= kids.size()) {
+                    to = kids[note.index - 1];
+                    while (!txn.children(to).empty()) { to = txn.children(to).back(); }
+                }
+                if (!to) { to = note.node; }
+                iterator->set(std::string{node_slot},
+                              to == doc_->document_node() ? document_ : wrap(*cx_, to));
+                iterator->set(std::string{before_slot}, value::boolean(before));
             }
-            const std::span<const node_id> kids = txn.children(note.node);
-            bool before = context::truthy(slot(iterator, iterator_before_slot));
-            node_id to;
-            // Step 2: the first node after the removed subtree, within root.
-            if (before && note.index < kids.size()) { to = kids[note.index]; }
-            for (node_id at = note.node; before && !to && at && at != root;
-                 at = dom_parent(txn, at)) {
-                const std::span<const node_id> row = txn.children(dom_parent(txn, at));
-                const auto here = std::ranges::find(row, at);
-                if (here != row.end() && here + 1 != row.end()) { to = *(here + 1); }
-            }
-            before = before && to;
-            // Step 3: the node preceding it.
-            if (!to && note.index > 0 && note.index <= kids.size()) {
-                to = kids[note.index - 1];
-                while (!txn.children(to).empty()) { to = txn.children(to).back(); }
-            }
-            if (!to) { to = note.node; }
-            iterator->set(std::string{iterator_reference_slot},
-                          to == doc_->document_node() ? document_ : wrap(*cx_, to));
-            iterator->set(std::string{iterator_before_slot}, value::boolean(before));
         }
     };
     for (const document::write_note & note : writes) {

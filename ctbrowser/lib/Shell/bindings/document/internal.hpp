@@ -148,5 +148,9 @@ inline constexpr std::string_view doctype_name_breaks = "\t\n\f\r >";
 inline constexpr std::string_view iterator_root_slot = "__root";
 inline constexpr std::string_view iterator_reference_slot = "__referenceNode";
 inline constexpr std::string_view iterator_before_slot = "__pointerBeforeReferenceNode";
+// ...and the position a traversal is AT while its filter runs - the candidate
+// and the pointer - which the pre-removing steps move too.
+inline constexpr std::string_view iterator_inflight_slot = "__inflightNode";
+inline constexpr std::string_view iterator_inflight_before_slot = "__inflightBefore";
 
 } // namespace ctbrowser::shell::detail
