@@ -134,10 +134,18 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             // §4.5.1: a keyframe's composite operation - its own, or the
             // effect's when `auto` - applies to its value against the
             // underlying value BEFORE the interpolation.
+            // A registered custom property composites as its type does: a
+            // transform list appends, and one transform function ADDED to
+            // another combines their arguments, as accumulation does.
+            bool single_function = false;
+            const std::string_view as =
+                interpolates_as(selector_engine_, *atoms_, property, &single_function);
             const auto composited_once = [&](const point & pt) {
                 const std::string & op = pt.composite == "auto" ? e.composite : pt.composite;
-                return style::composite_text(property, base, pt.text,
-                                             op == "add"          ? style::composite_op::add
+                return style::composite_text(as, base, pt.text,
+                                             op == "add" ? (single_function
+                                                                ? style::composite_op::accumulate
+                                                                : style::composite_op::add)
                                              : op == "accumulate" ? style::composite_op::accumulate
                                                                   : style::composite_op::replace,
                                              ctx);
@@ -213,9 +221,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 const double distance = (progress - points[start].offset) / span;
                 const style::easing keyframe_easing =
                     style::parse_easing(points[start].easing).value_or(style::easing{});
-                text =
-                    interpolate_value(property, composited(points[start]), composited(points[stop]),
-                                      keyframe_easing(distance, false), ctx);
+                text = interpolate_value(as, composited(points[start]), composited(points[stop]),
+                                         keyframe_easing(distance, false), ctx);
             }
             if (seen == out.end()) {
                 out.emplace_back(property, std::move(text));

@@ -38,6 +38,8 @@
 #include <ctbrowser/style/easing.hpp>
 #include <ctbrowser/style/engine.hpp>
 
+#include "helpers.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -481,6 +483,9 @@ void dom_bindings::update_css_transitions(
         const bool discrete_ok =
             ascii_iequals(item_at(behaviors, match, "normal"), "allow-discrete");
         const double combined = duration + delay;
+        // A registered custom property transitions as its syntax's type.
+        const std::string_view as =
+            animation_detail::interpolates_as(selector_engine_, *atoms_, property);
 
         // Each side's `currentcolor` is that side's `color` (CSS Color 4
         // §7.1), for every property but `color` itself.
@@ -533,7 +538,7 @@ void dom_bindings::update_css_transitions(
 
         if (existing == no_record) {
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(property, before_value, after_value))) {
+                (discrete_ok || transitionable(as, before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -547,7 +552,7 @@ void dom_bindings::update_css_transitions(
             if (running.end_value == after_value) { continue; }
             cancel_record(existing);
             if (before_value != after_value && combined > 0 &&
-                (discrete_ok || transitionable(property, before_value, after_value))) {
+                (discrete_ok || transitionable(as, before_value, after_value))) {
                 start(before_value, after_value, delay, duration, 1, before_value);
             }
             continue;
@@ -556,7 +561,7 @@ void dom_bindings::update_css_transitions(
         // The running transition's end moved. Its current value is what the
         // before-change style carries.
         if (before_value == after_value || combined <= 0 ||
-            !(discrete_ok || transitionable(property, before_value, after_value))) {
+            !(discrete_ok || transitionable(as, before_value, after_value))) {
             cancel_record(existing);
             continue;
         }

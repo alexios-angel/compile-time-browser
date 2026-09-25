@@ -4,6 +4,7 @@
 #include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/easing.hpp>
+#include <ctbrowser/style/engine.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -42,6 +43,28 @@ constexpr double infinity = std::numeric_limits<double>::infinity();
     if (idl == "cssFloat") { return "float"; }
     if (idl == "cssOffset") { return "offset"; }
     return style::css::css_name_of(idl);
+}
+
+// WHAT A REGISTERED CUSTOM PROPERTY INTERPOLATES AS (CSS Properties and
+// Values API 1 §3.3: by its syntax's computed value type). A
+// `<transform-list>` is a transform list; a lone `<transform-function>` is
+// one too, except that adding two of them combines their arguments rather
+// than appending (`single_function`). Anything else - and every other
+// property - interpolates as itself.
+[[nodiscard]] inline std::string_view interpolates_as(style::engine * engine, atom_table & atoms,
+                                                      std::string_view property,
+                                                      bool * single_function = nullptr) {
+    if (single_function != nullptr) { *single_function = false; }
+    if (engine == nullptr || !property.starts_with("--")) { return property; }
+    const style::css::property_registration * registered =
+        engine->registration_of(atoms.intern(property));
+    if (registered == nullptr) { return property; }
+    if (registered->syntax == "<transform-function>") {
+        if (single_function != nullptr) { *single_function = true; }
+        return "transform";
+    }
+    if (registered->syntax == "<transform-list>") { return "transform"; }
+    return property;
 }
 
 } // namespace ctbrowser::shell::animation_detail

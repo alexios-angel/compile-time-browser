@@ -205,7 +205,12 @@ struct gap_shape {
             return *f;
         }
     }
-    if (const auto a = css::resolve_color(from, {}), b = css::resolve_color(to, {}); a && b) {
+    // A COLOUR, which a comma LIST of colours is not - `rgb(1, 2, 3), red` is
+    // two items, each paired below, and not the first of them alone.
+    const bool single = comma_items(from).size() == 1 && comma_items(to).size() == 1;
+    if (const auto a = single ? css::resolve_color(from, {}) : std::nullopt,
+        b = single ? css::resolve_color(to, {}) : std::nullopt;
+        a && b) {
         return legacy_color(from) && legacy_color(to) ? lerp_color(*a, *b, p)
                                                       : lerp_oklab(*a, *b, p);
     }
@@ -289,7 +294,9 @@ struct gap_shape {
         return css::blend_basic_shapes(property, underlying, value, 1, 1)
             .value_or(std::string{value});
     }
-    if (const auto a = css::resolve_color(underlying, {}), b = css::resolve_color(value, {});
+    const bool single = comma_items(underlying).size() == 1 && comma_items(value).size() == 1;
+    if (const auto a = single ? css::resolve_color(underlying, {}) : std::nullopt,
+        b = single ? css::resolve_color(value, {}) : std::nullopt;
         a && b) {
         return add_color(*a, *b);
     }
