@@ -86,19 +86,28 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     auto compare = input.getDefiningOp<ctjs::CompareOp>();
     if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
         // Strict equality is total and noncoercing, including opaque objects.
-        // The first same-block producer owns the choice snapshot; later
-        // comparisons must use the exact same SSA operands in either order.
-        // ponytail: linear block scan; cache keys only if profiling warrants it.
-        for (mlir::Operation & operation : *compare->getBlock()) {
-            if (!spend(1)) { return {}; }
-            if (&operation == compare.getOperation()) { break; }
-            auto previous = llvm::dyn_cast<ctjs::CompareOp>(operation);
-            if (previous && previous.getKind() == ctjs::CompareKind::StrictEq &&
-                ((previous.getLhs() == compare.getLhs() && previous.getRhs() == compare.getRhs()) ||
-                 (previous.getLhs() == compare.getRhs() &&
-                  previous.getRhs() == compare.getLhs()))) {
-                return {previous.getResult(), negated};
+        // Prefixes before enclosing Ifs dominate this producer. Choose the
+        // outermost first match, so local duplicates share its replay snapshot.
+        // Never cross a loop or borrow a sibling/following producer's choice.
+        // ponytail: linear prefix scans; cache keys only if profiling warrants it.
+        mlir::Operation * boundary = compare;
+        while (true) {
+            for (mlir::Operation & operation : *boundary->getBlock()) {
+                if (!spend(1)) { return {}; }
+                if (&operation == boundary) { break; }
+                auto previous = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                if (previous && previous.getKind() == ctjs::CompareKind::StrictEq &&
+                    ((previous.getLhs() == compare.getLhs() &&
+                      previous.getRhs() == compare.getRhs()) ||
+                     (previous.getLhs() == compare.getRhs() &&
+                      previous.getRhs() == compare.getLhs()))) {
+                    input = previous.getResult();
+                    break;
+                }
             }
+            auto enclosing = llvm::dyn_cast<mlir::scf::IfOp>(boundary->getParentOp());
+            if (!enclosing) { break; }
+            boundary = enclosing;
         }
     }
     return {input, negated};

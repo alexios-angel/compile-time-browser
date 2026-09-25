@@ -682,6 +682,16 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     auto crossBlockComparisons = comparedInput();
     crossBlockComparisons.insert(crossBlockComparisons.find("    %secondCompare"),
                                  "    scf.if %flag {\n");
+    const auto crossBlockStore = [&](std::string input, const std::string & after = "") {
+        input.insert(input.find("    %secondCompare"), "    scf.if %flag {\n");
+        return selectedStore(input) + after + "    }\n";
+    };
+    const std::string crossBlockKeys = crossBlockStore(comparedInput());
+    const std::string crossBlockGap = crossBlockStore(
+        "    %read = ctjs.get_property %guard[%one]\n" + comparedInput("%read", "%two"));
+    const std::string outerRepresentative =
+        "    %outerCompare = ctjs.compare strict_eq %zero, %p\n" +
+        nestedSiblingStore(crossBlockComparisons) + "    }\n";
     const auto comparedReads = [&](const std::string & between = "", bool reversed = false) {
         auto input = comparedInput("%zero", "%one",
                                    reversed ? "strict_eq %zero, %secondRead"
@@ -691,6 +701,9 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                       "strict_eq %firstRead, %zero");
         return selectedStore("    %firstRead = ctjs.get_property %guard[%zero]\n" + input);
     };
+    auto crossBlockReads = comparedReads("    ctjs.set_property %guard[%zero], %one\n", true);
+    crossBlockReads.insert(crossBlockReads.find("    %secondRead"), "    scf.if %flag {\n");
+    crossBlockReads += "    }\n";
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -2348,10 +2361,10 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  allocationLoop(comparedReads("    ctjs.set_property %guard[%zero], %one\n")) +
                  done,
          .complete = false},
-        {.what = "cross-block strict comparison producers retain independent choices",
+        {.what = "dominating cross-block strict comparisons share exact SSA choices",
          .body =
              loopValues + allocationLoop(selectedStore(crossBlockComparisons) + "    }\n") + done,
-         .complete = false},
+         .confinedNested = "fresh"},
         {.what = "strict comparison choices still need independent finite Number operands",
          .body = loopValues + allocationLoop(selectedStore(comparedInput("%zero", "%p"))) + done,
          .complete = false},
@@ -2482,6 +2495,70 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .complete = false},
         {.what = "reversed strict comparisons still require current initialized solver inputs",
          .body = loopValues + allocationLoop(reversedKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "nested comparison duplicates retain the outermost dominating representative",
+         .body = loopValues + allocationLoop(outerRepresentative) + done,
+         .confinedNested = "fresh"},
+        {.what = "cross-block reversed comparisons compose with logical Not parity",
+         .body =
+             loopValues + allocationLoop(crossBlockStore(reversedInput("%zero", "%one", 3))) + done,
+         .confinedNested = "fresh"},
+        {.what = "cross-block correspondence preserves independent guard read gaps",
+         .body = loopValues + allocationLoop(crossBlockGap, "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "cross-block correspondence cannot overwrite its guard dependency",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                                comparedInput("%read", "%one"))) +
+                 done,
+         .complete = false},
+        {.what = "cross-block correspondence still needs independently finite Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(crossBlockStore(comparedInput("%zero", "%nan"))) + done,
+         .complete = false},
+        {.what = "cross-block comparison reads preserve distinct snapshots after mutation",
+         .body = loopValues + allocationLoop(crossBlockReads) + done,
+         .complete = false},
+        {.what = "comparison correspondence stops at the counted loop boundary",
+         .body = loopValues +
+                 allocationLoop(selectedStore(comparedInput().substr(firstComparison.size())),
+                                "%zero", "%one", "%zero", "", firstComparison) +
+                 done,
+         .complete = false},
+        {.what = "a returned cross-block holder retains its child on every structural path",
+         .body = loopValues + allocationLoop(crossBlockKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a cross-block holder releases its stored child",
+         .body =
+             loopValues + allocationLoop(crossBlockKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved cross-block alias survives clearing its holder",
+         .body = loopValues + allocationLoop(crossBlockKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "cross-block correlation preserves no-result transient cycle checks",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore(comparedInput(),
+                                                "    scf.if %secondFlag {\n"
+                                                "      ctjs.set_property %fresh[%zero], %guard\n"
+                                                "      ctjs.set_property %fresh[%zero], %zero\n"
+                                                "    }\n")) +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "a dominating comparison cannot hide a nested producer effect",
+         .body = loopValues +
+                 allocationLoop(crossBlockStore(comparedInput(
+                     "%zero", "%one", "strict_eq %p, %zero", "    %called = ctjs.call %p(%q)\n"))) +
+                 done,
+         .complete = false},
+        {.what = "cross-block comparisons cannot authorize repeated allocation identities",
+         .body =
+             loopValues + allocationLoop(crossBlockKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "cross-block comparisons cannot supply missing solver inputs",
+         .body = loopValues + allocationLoop(crossBlockKeys) + done,
          .complete = false,
          .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
@@ -3281,80 +3358,86 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
              "the Not-chain mutation fixture did not parse");
     }
-    retention_row comparisonMutation{
-        .what = "strict comparison correspondence reproves both operations, operands and guards",
-        .body =
-            loopValues + allocationLoop(comparedGap, "%two", "%one", "%zero, %zero, %zero") + done,
-        .confinedNested = "fresh"};
-    auto comparisonModule = mlir::parseSourceString<mlir::ModuleOp>(
-        std::string{kPrologue} + comparisonMutation.body + "}\n", &context);
-    if (comparisonModule) {
-        ctjs::FuncOp function = *comparisonModule->getOps<ctjs::FuncOp>().begin();
-        ctjs::SetPropertyOp store;
-        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
-        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
-        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
-        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
-        auto firstCompare = first.getCondition()
-                                .getDefiningOp<ctjs::TruthyOp>()
-                                .getValue()
-                                .getDefiningOp<ctjs::CompareOp>();
-        auto secondCompare = second.getCondition()
-                                 .getDefiningOp<ctjs::TruthyOp>()
-                                 .getValue()
-                                 .getDefiningOp<ctjs::CompareOp>();
-        auto * firstYield = first.getThenRegion().front().getTerminator();
-        auto * secondYield = second.getThenRegion().front().getTerminator();
-        auto load = firstYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
-        const mlir::Value originalLeft = firstCompare.getLhs();
-        const mlir::Value originalRight = firstCompare.getRhs();
-        const mlir::Value originalYield = secondYield->getOperand(0);
-        const mlir::Value originalPosition = load->getOperand(1);
-        const mlir::Value independent = function.getBody().front().getArgument(4);
-        mlir::DataFlowSolver stale;
-        stale.load<mlir::dataflow::DeadCodeAnalysis>();
-        stale.load<mlir::dataflow::SparseConstantPropagation>();
-        stale.load<EscapeAnalysis>();
-        if (failed(stale.initializeAndRun(*comparisonModule))) {
-            fail(row{.what = comparisonMutation.what,
-                     .body = comparisonMutation.body,
-                     .expected = ""},
-                 "the strict comparison stale solver did not converge");
-        }
-        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
-        for (unsigned state = 0; state < 20; ++state) {
-            const bool reversed = state >= 10;
-            const unsigned mutation = state % 10;
-            secondCompare->setOperand(0, mutation == 1 ? independent
-                                         : reversed    ? originalRight
-                                                       : originalLeft);
-            secondCompare->setOperand(1, mutation == 2 ? originalPosition
-                                         : reversed    ? originalLeft
-                                                       : originalRight);
-            secondCompare.setKindAttr(ctjs::CompareKindAttr::get(
-                &context, mutation == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
-            firstCompare.setKindAttr(ctjs::CompareKindAttr::get(
-                &context, mutation == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
-            firstCompare->setOperand(0, mutation == 5 ? independent : originalLeft);
-            firstCompare->setOperand(1, mutation == 6 ? originalPosition : originalRight);
-            secondYield->setOperand(0, mutation == 7 ? originalPosition : originalYield);
-            load->setOperand(1, mutation == 8 ? originalRight : originalPosition);
-            comparisonMutation.complete = mutation == 0 || mutation == 9;
-            comparisonMutation.confinedNested = comparisonMutation.complete ? "fresh" : "";
-            budgets += checkArrayRetention(*comparisonModule, comparisonMutation);
-            if (computeVerdicts(stale, function).arrayRetentionComplete !=
-                comparisonMutation.complete) {
+    for (const std::string & comparisons : {comparedGap, crossBlockGap}) {
+        retention_row comparisonMutation{
+            .what =
+                "strict comparison correspondence reproves both operations, operands and guards",
+            .body = loopValues +
+                    allocationLoop(comparisons, "%two", "%one", "%zero, %zero, %zero") + done,
+            .confinedNested = "fresh"};
+        auto comparisonModule = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + comparisonMutation.body + "}\n", &context);
+        if (comparisonModule) {
+            ctjs::FuncOp function = *comparisonModule->getOps<ctjs::FuncOp>().begin();
+            ctjs::SetPropertyOp store;
+            function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+            auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+            auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+            auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+            auto firstCompare = first.getCondition()
+                                    .getDefiningOp<ctjs::TruthyOp>()
+                                    .getValue()
+                                    .getDefiningOp<ctjs::CompareOp>();
+            auto secondCompare = second.getCondition()
+                                     .getDefiningOp<ctjs::TruthyOp>()
+                                     .getValue()
+                                     .getDefiningOp<ctjs::CompareOp>();
+            auto * firstYield = first.getThenRegion().front().getTerminator();
+            auto * secondYield = second.getThenRegion().front().getTerminator();
+            auto load = firstYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+            const mlir::Value originalLeft = firstCompare.getLhs();
+            const mlir::Value originalRight = firstCompare.getRhs();
+            const mlir::Value originalYield = secondYield->getOperand(0);
+            const mlir::Value originalPosition = load->getOperand(1);
+            const mlir::Value independent = function.getBody().front().getArgument(4);
+            mlir::DataFlowSolver stale;
+            stale.load<mlir::dataflow::DeadCodeAnalysis>();
+            stale.load<mlir::dataflow::SparseConstantPropagation>();
+            stale.load<EscapeAnalysis>();
+            if (failed(stale.initializeAndRun(*comparisonModule))) {
                 fail(row{.what = comparisonMutation.what,
                          .body = comparisonMutation.body,
                          .expected = ""},
-                     "a stale solver or forged marker supplied strict comparison correspondence");
+                     "the strict comparison stale solver did not converge");
             }
+            function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+            for (unsigned state = 0; state < 20; ++state) {
+                const bool reversed = state >= 10;
+                const unsigned mutation = state % 10;
+                secondCompare->setOperand(0, mutation == 1 ? independent
+                                             : reversed    ? originalRight
+                                                           : originalLeft);
+                secondCompare->setOperand(1, mutation == 2 ? originalPosition
+                                             : reversed    ? originalLeft
+                                                           : originalRight);
+                secondCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                    &context, mutation == 3 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+                firstCompare.setKindAttr(ctjs::CompareKindAttr::get(
+                    &context, mutation == 4 ? ctjs::CompareKind::Eq : ctjs::CompareKind::StrictEq));
+                firstCompare->setOperand(0, mutation == 5 ? independent : originalLeft);
+                firstCompare->setOperand(1, mutation == 6 ? originalPosition : originalRight);
+                secondYield->setOperand(0, mutation == 7 ? originalPosition : originalYield);
+                load->setOperand(1, mutation == 8 ? originalRight : originalPosition);
+                comparisonMutation.complete = mutation == 0 || mutation == 9;
+                comparisonMutation.confinedNested = comparisonMutation.complete ? "fresh" : "";
+                budgets += checkArrayRetention(*comparisonModule, comparisonMutation);
+                if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                    comparisonMutation.complete) {
+                    fail(row{.what = comparisonMutation.what,
+                             .body = comparisonMutation.body,
+                             .expected = ""},
+                         "a stale solver or forged marker supplied strict comparison "
+                         "correspondence");
+                }
+            }
+        } else {
+            fail(row{.what = comparisonMutation.what,
+                     .body = comparisonMutation.body,
+                     .expected = ""},
+                 "the strict comparison mutation fixture did not parse");
         }
-    } else {
-        fail(row{.what = comparisonMutation.what, .body = comparisonMutation.body, .expected = ""},
-             "the strict comparison mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, eighty-five live states, %zu budget cutoffs\n",
+    std::printf("array retention: %zu rows, one hundred five live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 
