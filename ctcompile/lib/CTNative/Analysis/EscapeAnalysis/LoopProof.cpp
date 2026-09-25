@@ -47,6 +47,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const mlir::Value base = array ? origin(array) : mlir::Value{};
     auto loadedArray =
         savedLength && array ? array.getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+    auto selectedArray =
+        savedLength && array ? array.getDefiningOp<mlir::scf::IfOp>() : mlir::scf::IfOp{};
     auto allocation = base ? base.getDefiningOp<ctjs::CreateArrayOp>() : ctjs::CreateArrayOp{};
     // A same-block allocation cannot repeat in this proof. Its own loaded
     // identity and length are therefore snapshots of one preheader execution,
@@ -54,7 +56,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     bool savedArray = directArray || (loadedArray && allocation &&
                                       loadedArray->getBlock() == allocation->getBlock() &&
                                       length->getBlock() == loadedArray->getBlock());
-    auto * savedArrayBlock = loadedArray ? loadedArray->getBlock()
+    auto * savedArrayBlock = loadedArray     ? loadedArray->getBlock()
+                             : selectedArray ? selectedArray->getBlock()
                              : savedLength && carriedArray && carriedArray.getOwner() != header
                                  ? carriedArray.getOwner()
                                  : nullptr;
@@ -62,7 +65,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // Each immutable path records its actual incoming edges, including
         // shortcut joins whose other syntactic predecessors were also visited.
         // Every path is replayed separately, and repeated CFG blocks are refused.
-        // ponytail: structured origins still need their own region correspondence.
+        // If results already carry each arm's exact held identity. Nested
+        // allocations/reads still need their own nonrepetition correspondence.
         mlir::Block * allocated = allocation->getBlock();
         if (allocated->getParent() != &function.getBody() || allocated == header ||
             allocated == body) {

@@ -86,6 +86,115 @@ void InductionCases::validation() {
          .reads = "box[0]=a; a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
          .exit = "x -> {x}"},
         "a");
+    // Exact source d1302d9a after import and ctjs-lift-to-scf. Only diagnostic
+    // labels are added below; the frozen function and its saved receiver stay intact.
+    const std::string projected = R"mlir(module {
+  ctjs.func @cachedShortcutLengthCleared$1(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value, %arg3: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %0 = ctjs.frame_enter 11
+    %1 = ctjs.create_object
+    %2 = ctjs.create_array[]
+    ctjs.append %1 to %2
+    %3 = ctjs.constant #ctjs.number<0>
+    ctjs.append %3 to %2
+    ctjs.append %1 to %2
+    %4 = ctjs.create_array[]
+    ctjs.append %2 to %4
+    %5 = ctjs.constant #ctjs.number<0>
+    %6 = ctjs.get_property %4[%5]
+    %7 = ctjs.truthy %arg3
+    %8 = scf.if %7 -> (!ctjs.value) {
+      scf.yield %2 : !ctjs.value
+    } else {
+      scf.yield %6 : !ctjs.value
+    }
+    %9 = ctjs.constant #ctjs.string<"length">
+    %10 = ctjs.get_property %8[%9]
+    %11 = ctjs.constant #ctjs.number<0>
+    %12 = scf.while (%arg4 = %11) : (!ctjs.value) -> !ctjs.value {
+      %13 = ctjs.compare lt %arg4, %10
+      %14 = ctjs.truthy %13
+      scf.condition(%14) %arg4 : !ctjs.value
+    } do {
+    ^bb0(%arg4: !ctjs.value):
+      %13 = ctjs.constant #ctjs.number<0>
+      ctjs.set_property %8[%arg4], %13
+      %14 = ctjs.constant #ctjs.number<4607182418800017408>
+      %15 = ctjs.constant #ctjs.number<0>
+      %16 = ctjs.binary_static add %arg4, %15
+      %17 = ctjs.binary_static add %arg4, %14
+      scf.yield %17 : !ctjs.value
+    }
+    ctjs.frame_exit %0
+    ctjs.return %2
+  }
+}
+)mlir";
+    const auto checkProjected = [&](const contents_row & expected) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(expected.body, &context);
+        if (!module) {
+            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
+                 "the structured cached-length fixture did not parse");
+            return;
+        }
+        unsigned arrays = 0;
+        module->walk([&](mlir::Operation * operation) {
+            const char * label = nullptr;
+            if (llvm::isa<ctjs::CreateObjectOp>(operation)) {
+                label = "x";
+            } else if (llvm::isa<ctjs::CreateArrayOp>(operation)) {
+                label = arrays++ == 0 ? "a" : "box";
+            } else if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation);
+                       constant && constant.getValue() == ctjs::NumberAttr::get(&context, 0)) {
+                label = "zero";
+            }
+            if (label) {
+                operation->setAttr("storage_test_id", mlir::StringAttr::get(&context, label));
+            }
+        });
+        checkArrayContents(*module, expected);
+        // The legacy storage census still refuses regions. Contents evidence
+        // alone cannot authorize its retention consumer or change any verdict.
+        budgets += checkArrayRetention(
+            *module, {.what = expected.what, .body = expected.body, .complete = false});
+        ++rows;
+    };
+    checkProjected({.what = "the original structured shortcut preserves its yielded receiver",
+                    .body = projected,
+                    .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
+                    .reads = "box[0]=a",
+                    .exit = "a -> {a}; a -> {a}"});
+    checkProjected({.what = "a structured cached receiver cannot discharge a returned child",
+                    .body = replace(projected, "ctjs.return %2", "ctjs.return %1"),
+                    .arrays = "a:[zero,zero,zero]; box:[a] | a:[zero,zero,zero]; box:[a]",
+                    .reads = "box[0]=a",
+                    .exit = "x -> {x}; x -> {x}"});
+    checkProjected({.what = "each selected array keeps its own contents and retained children",
+                    .body = replace(projected, "scf.yield %6 :", "scf.yield %4 :"),
+                    .arrays = "a:[zero,zero,zero]; box:[a] | a:[x,zero,x]; box:[zero]",
+                    .reads = "box[0]=a",
+                    .exit = "a -> {a}; a -> {a,x}"});
+    checkProjected({.what = "an opaque selected receiver cannot borrow its sibling's origin",
+                    .body = replace(projected, "scf.yield %6 :", "scf.yield %arg3 :"),
+                    .failure = ArrayContentsFailure::UnknownArray});
+    checkProjected({.what = "a selected receiver keeps its cached read-time extent",
+                    .body = replace(projected, "    %11 =", "    ctjs.append %3 to %8\n    %11 ="),
+                    .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    checkProjected({.what = "a selected receiver cannot supply an unrelated loop bound",
+                    .body = replace(projected, "compare lt %arg4, %10", "compare lt %arg4, %arg3"),
+                    .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    checkProjected({.what = "selected receiver clearing retains the mutation census",
+                    .body = replace(projected, "      ctjs.set_property",
+                                    "      ctjs.append %3 to %8\n      ctjs.set_property"),
+                    .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    checkProjected(
+        {.what = "a selected guard cannot clear a different array",
+         .body = replace(projected, "ctjs.set_property %8[%arg4]", "ctjs.set_property %4[%arg4]"),
+         .failure = ArrayContentsFailure::UnsupportedControlFlow});
+    checkProjected({.what = "a selected nested allocation still lacks nonrepetition proof",
+                    .body = replace(
+                        projected, "      scf.yield %6 :",
+                        "      %nested = ctjs.create_array[%3, %3, %3]\n      scf.yield %nested :"),
+                    .failure = ArrayContentsFailure::UnsupportedControlFlow});
     reject("loaded cached guards cannot change the saved bound",
            replace(loaded, "%added, %savedBound :", "%added, %zero :"));
     reject("loaded cached guards retain the current extent check",
