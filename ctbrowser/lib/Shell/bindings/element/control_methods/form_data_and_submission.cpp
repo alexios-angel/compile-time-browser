@@ -371,9 +371,9 @@ void dom_bindings::install_control_form_data(context & cx) {
                                     (helpers.is(txn, submitter, "input") &&
                                      (helpers.input_type(txn, b, submitter) == "submit" ||
                                       helpers.input_type(txn, b, submitter) == "image"));
-                        for (node_id up = txn.parent(submitter); up; up = txn.parent(up)) {
-                            if (up == form) { owned = true; }
-                        }
+                        // "Its form owner is not form": the owner, `form=` and
+                        // all, not the nearest form ancestor.
+                        owned = helpers.form_owner(txn, b, submitter) == form;
                     }
                     if (!is_button) {
                         c.throw_error("TypeError", "Failed to construct 'FormData': the submitter "
@@ -461,15 +461,9 @@ void dom_bindings::install_control_form_data(context & cx) {
                                     (helpers.is(txn, submitter, "input") &&
                                      (helpers.input_type(txn, this, submitter) == "submit" ||
                                       helpers.input_type(txn, this, submitter) == "image"));
-                        for (node_id up = txn.parent(submitter); up; up = txn.parent(up)) {
-                            if (up == form) { owned = true; }
-                        }
-                        if (!owned && submitter) {
-                            const std::string_view named =
-                                txn.attribute_value(submitter, atoms_->intern("form"));
-                            owned = !named.empty() &&
-                                    txn.attribute_value(form, atoms_->intern("id")) == named;
-                        }
+                        // The submitter's FORM OWNER must be this form - so
+                        // one inside it with `form=""` (no owner) is refused.
+                        owned = helpers.form_owner(txn, this, submitter) == form;
                     }
                 }
                 if (!is_button) {
