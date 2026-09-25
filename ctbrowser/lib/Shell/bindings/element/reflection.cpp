@@ -632,9 +632,10 @@ void dom_bindings::install_double_reflection(context & cx) {
             value::object(cx.allocate<script::native_object>(
                 name,
                 [this, &row](context & c, std::span<value>) {
-                    const node_id id = receiver(c);
+                    dom_bindings & self = target_owner(c.current_this());
+                    const node_id id = self.receiver(c);
                     if (!id) { return value::number(row.fallback); }
-                    const auto txn = doc_->read();
+                    const auto txn = self.doc_->read();
                     const atom attribute = atoms_->intern(row.idl);
                     double parsed = 0;
                     if (!txn.has_attribute(id, attribute) ||
@@ -646,7 +647,8 @@ void dom_bindings::install_double_reflection(context & cx) {
                 })),
             value::object(cx.allocate<script::native_object>(
                 name, [this, &row](context & c, std::span<value> a) {
-                    const node_id id = receiver(c);
+                    dom_bindings & self = target_owner(c.current_this());
+                    const node_id id = self.receiver(c);
                     if (!id) { return value::undefined(); }
                     const double given = arg_number(a, 0);
                     // WebIDL's `double` is a finite number or a TypeError.
@@ -656,9 +658,9 @@ void dom_bindings::install_double_reflection(context & cx) {
                         return value::undefined();
                     }
                     if (row.positive && given <= 0) { return value::undefined(); }
-                    (void)doc_->set_attribute(id, atoms_->intern(row.idl),
-                                              c.to_string(value::number(given)));
-                    mutated();
+                    (void)self.doc_->set_attribute(id, atoms_->intern(row.idl),
+                                                   c.to_string(value::number(given)));
+                    self.mutated();
                     return value::undefined();
                 })));
     }
@@ -676,11 +678,11 @@ void dom_bindings::install_double_reflection(context & cx) {
         return txn.has_attribute(id, attribute) &&
                parse_html_float(txn.attribute_value(id, attribute), out);
     };
-    const auto meter_values = [this, number_attribute](node_id id) {
+    const auto meter_values = [number_attribute](dom_bindings & self, node_id id) {
         struct meter {
             double min = 0, max = 1, value = 0, low = 0, high = 1, optimum = 0.5;
         } m;
-        const auto txn = doc_->read();
+        const auto txn = self.doc_->read();
         double parsed = 0;
         if (number_attribute(txn, id, "min", parsed)) { m.min = parsed; }
         m.max = number_attribute(txn, id, "max", parsed) ? parsed : 1;
@@ -707,32 +709,39 @@ void dom_bindings::install_double_reflection(context & cx) {
     };
     replace_getter("HTMLMeterElement", "value",
                    [this, meter_values](context & c, std::span<value>) {
-                       const node_id id = receiver(c);
-                       return value::number(id ? meter_values(id).value : 0);
+                       dom_bindings & self = target_owner(c.current_this());
+                       const node_id id = self.receiver(c);
+                       return value::number(id ? meter_values(self, id).value : 0);
                    });
     replace_getter("HTMLMeterElement", "min", [this, meter_values](context & c, std::span<value>) {
-        const node_id id = receiver(c);
-        return value::number(id ? meter_values(id).min : 0);
+        dom_bindings & self = target_owner(c.current_this());
+        const node_id id = self.receiver(c);
+        return value::number(id ? meter_values(self, id).min : 0);
     });
     replace_getter("HTMLMeterElement", "max", [this, meter_values](context & c, std::span<value>) {
-        const node_id id = receiver(c);
-        return value::number(id ? meter_values(id).max : 1);
+        dom_bindings & self = target_owner(c.current_this());
+        const node_id id = self.receiver(c);
+        return value::number(id ? meter_values(self, id).max : 1);
     });
     replace_getter("HTMLMeterElement", "low", [this, meter_values](context & c, std::span<value>) {
-        const node_id id = receiver(c);
-        return value::number(id ? meter_values(id).low : 0);
+        dom_bindings & self = target_owner(c.current_this());
+        const node_id id = self.receiver(c);
+        return value::number(id ? meter_values(self, id).low : 0);
     });
     replace_getter("HTMLMeterElement", "high", [this, meter_values](context & c, std::span<value>) {
-        const node_id id = receiver(c);
-        return value::number(id ? meter_values(id).high : 1);
+        dom_bindings & self = target_owner(c.current_this());
+        const node_id id = self.receiver(c);
+        return value::number(id ? meter_values(self, id).high : 1);
     });
     replace_getter("HTMLMeterElement", "optimum",
                    [this, meter_values](context & c, std::span<value>) {
-                       const node_id id = receiver(c);
-                       return value::number(id ? meter_values(id).optimum : 0.5);
+                       dom_bindings & self = target_owner(c.current_this());
+                       const node_id id = self.receiver(c);
+                       return value::number(id ? meter_values(self, id).optimum : 0.5);
                    });
-    const auto progress_values = [this, number_attribute](node_id id, bool & determinate) {
-        const auto txn = doc_->read();
+    const auto progress_values = [number_attribute](dom_bindings & self, node_id id,
+                                                    bool & determinate) {
+        const auto txn = self.doc_->read();
         double parsed = 0;
         const double max = number_attribute(txn, id, "max", parsed) && parsed > 0 ? parsed : 1;
         determinate = number_attribute(txn, id, "value", parsed);
@@ -746,14 +755,16 @@ void dom_bindings::install_double_reflection(context & cx) {
             value::object(cx.allocate<script::native_object>(
                 "value",
                 [this, progress_values](context & c, std::span<value>) {
-                    const node_id id = receiver(c);
+                    dom_bindings & self = target_owner(c.current_this());
+                    const node_id id = self.receiver(c);
                     if (!id) { return value::number(0); }
                     bool determinate = false;
-                    return value::number(progress_values(id, determinate).first);
+                    return value::number(progress_values(self, id, determinate).first);
                 })),
             value::object(cx.allocate<script::native_object>(
                 "value", [this](context & c, std::span<value> a) {
-                    const node_id id = receiver(c);
+                    dom_bindings & self = target_owner(c.current_this());
+                    const node_id id = self.receiver(c);
                     if (!id) { return value::undefined(); }
                     const double given = arg_number(a, 0);
                     if (!std::isfinite(given)) {
@@ -761,19 +772,21 @@ void dom_bindings::install_double_reflection(context & cx) {
                                       "Failed to set 'value': the value is not a finite number.");
                         return value::undefined();
                     }
-                    (void)doc_->set_attribute(id, atoms_->intern("value"),
-                                              c.to_string(value::number(given)));
-                    mutated();
+                    (void)self.doc_->set_attribute(id, atoms_->intern("value"),
+                                                   c.to_string(value::number(given)));
+                    self.mutated();
                     return value::undefined();
                 })));
         proto->define_accessor("position",
                                value::object(cx.allocate<script::native_object>(
                                    "position",
                                    [this, progress_values](context & c, std::span<value>) {
-                                       const node_id id = receiver(c);
+                                       dom_bindings & self = target_owner(c.current_this());
+                                       const node_id id = self.receiver(c);
                                        if (!id) { return value::number(-1); }
                                        bool determinate = false;
-                                       const auto [current, max] = progress_values(id, determinate);
+                                       const auto [current, max] =
+                                           progress_values(self, id, determinate);
                                        return value::number(determinate ? current / max : -1);
                                    })),
                                value::undefined());
@@ -800,11 +813,12 @@ void dom_bindings::install_form_owner(context & cx) {
             value::object(cx.allocate<script::native_object>(
                 "form",
                 [this, legend](context & c, std::span<value>) {
-                    node_id id = receiver(c);
+                    dom_bindings & self = target_owner(c.current_this());
+                    node_id id = self.receiver(c);
                     if (!id) { return value::null(); }
                     node_id owner;
                     {
-                        const auto txn = doc_->read();
+                        const auto txn = self.doc_->read();
                         // HTML 4.10.16: a <legend> is not listed - its `form`
                         // is its PARENT fieldset's, and null under anything
                         // else.
@@ -835,7 +849,7 @@ void dom_bindings::install_form_owner(context & cx) {
                                 }
                                 for (const node_id child : txn.children(at)) { self(self, child); }
                             };
-                            walk(walk, root_of_tree(txn, id, false));
+                            walk(walk, self.root_of_tree(txn, id, false));
                             if (first && txn.element_ns(first) == node_ns::html &&
                                 txn.local_name(first) == "form") {
                                 owner = first;
@@ -850,7 +864,7 @@ void dom_bindings::install_form_owner(context & cx) {
                             }
                         }
                     }
-                    return owner ? wrap(c, owner) : value::null();
+                    return owner ? self.wrap(c, owner) : value::null();
                 })),
             value::undefined());
     }
@@ -871,19 +885,20 @@ void dom_bindings::install_option_reflection(context & cx) {
             value::object(cx.allocate<script::native_object>(
                 name,
                 [this, name](context & c, std::span<value>) {
-                    const node_id id = receiver(c);
+                    dom_bindings & self = target_owner(c.current_this());
+                    const node_id id = self.receiver(c);
                     if (!id) { return c.string(""); }
                     {
                         // The content attribute IN NO NAMESPACE: one a page
                         // set with setAttributeNS is not the option's.
-                        const auto txn = doc_->read();
+                        const auto txn = self.doc_->read();
                         if (const attribute * held = txn.find_attribute_ns(id, "", name)) {
                             return c.string(held->value);
                         }
                     }
                     // "Strip and collapse ASCII whitespace" over the text.
                     std::string collapsed;
-                    for (const char each : text_of(id)) {
+                    for (const char each : self.text_of(id)) {
                         const bool space = html_whitespace.find(each) != std::string_view::npos;
                         if (space && (collapsed.empty() || collapsed.back() == ' ')) { continue; }
                         collapsed += space ? ' ' : each;
@@ -893,9 +908,11 @@ void dom_bindings::install_option_reflection(context & cx) {
                 })),
             value::object(cx.allocate<script::native_object>(
                 name, [this, name](context & c, std::span<value> a) {
-                    if (const node_id id = receiver(c)) {
-                        (void)doc_->set_attribute(id, atoms_->intern(name), arg_string(c, a, 0));
-                        mutated();
+                    dom_bindings & self = target_owner(c.current_this());
+                    if (const node_id id = self.receiver(c)) {
+                        (void)self.doc_->set_attribute(id, atoms_->intern(name),
+                                                       arg_string(c, a, 0));
+                        self.mutated();
                     }
                     return value::undefined();
                 })));
