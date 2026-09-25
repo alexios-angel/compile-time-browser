@@ -116,11 +116,11 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     // The census adds conditional arms only after proving one body visit.
     // Their producers then reuse the same invariant and index proofs below.
     llvm::SmallPtrSet<mlir::Block *, 4> bodyBlocks{body};
-    const auto equalYield = [&](mlir::Value operand) -> mlir::Value {
+    const auto yieldedInputs = [&](mlir::Value operand) -> llvm::SmallVector<mlir::Value, 2> {
         auto branch = operand.getDefiningOp<mlir::scf::IfOp>();
         if (!branch || !bodyBlocks.contains(branch->getBlock())) { return {}; }
         const auto position = llvm::cast<mlir::OpResult>(operand).getResultNumber();
-        mlir::Value common;
+        llvm::SmallVector<mlir::Value, 2> inputs;
         for (mlir::Region & region : branch->getRegions()) {
             if (!spend()) {
                 invariantFailure = ArrayContentsFailure::WorkLimit;
@@ -132,7 +132,13 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             }
             auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
             if (!yield || yield.getNumOperands() != branch.getNumResults()) { return {}; }
-            const mlir::Value value = yield.getOperand(position);
+            inputs.push_back(yield.getOperand(position));
+        }
+        return inputs;
+    };
+    const auto equalYield = [&](mlir::Value operand) -> mlir::Value {
+        mlir::Value common;
+        for (mlir::Value value : yieldedInputs(operand)) {
             if (common && common != value) {
                 auto first = common.getDefiningOp<ctjs::ConstantOp>();
                 auto second = value.getDefiningOp<ctjs::ConstantOp>();
@@ -1176,41 +1182,59 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // body arm. Check their writes against the same guard footprint;
                 // exact path replay still records each selected value and alias.
                 if (block == header) { return unsupported; }
-                refinableEnclosure = false;
-                if (auto range = indexRange(indexRange, store.getKey(), 0, IndexUse::PropertyKey);
-                    range || (refinableEnclosure && *start < size)) {
-                    if (*start < size) {
-                        const auto ownBounds = [&](const IndexRange & candidate) {
-                            return candidate.first.integerNumber && candidate.last.integerNumber &&
-                                   *candidate.first.integerNumber < size &&
-                                   *candidate.last.integerNumber < size;
-                        };
-                        if (!range || !ownBounds(*range)) {
-                            if ((range && !range->mixedShift) ||
-                                !refineIndexRange(store.getKey(), ownBounds)) {
-                                return invariantFailure;
-                            }
-                            // Every visit is now proved own. Keep a conservative
-                            // footprint; reload gaps still need their own reproof.
-                            range = IndexRange{{store.getKey(), ContentsKind::NonBigInt, 0},
-                                               {store.getKey(), ContentsKind::NonBigInt, size - 1},
-                                               1,
-                                               true};
+                const auto storeKey = [&](auto && self, mlir::Value key,
+                                          unsigned depth) -> ArrayContentsFailure {
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    if (depth == 64) { return unsupported; }
+                    if (const auto inputs = yieldedInputs(key); !inputs.empty()) {
+                        // Keep each arm's footprint independently. This proves
+                        // possible positions, never value or receiver identity.
+                        for (mlir::Value input : inputs) {
+                            const auto failure = self(self, input, depth + 1);
+                            if (failure != ArrayContentsFailure::None) { return failure; }
                         }
-                        guardStoreRanges.push_back(
-                            {*range->first.integerNumber, *range->last.integerNumber, range->stride,
-                             range->mixedShift ? store.getKey() : mlir::Value{}});
+                        return ArrayContentsFailure::None;
                     }
-                } else {
-                    if (invariantFailure == ArrayContentsFailure::WorkLimit) {
-                        return invariantFailure;
+                    refinableEnclosure = false;
+                    if (auto range = indexRange(indexRange, key, 0, IndexUse::PropertyKey);
+                        range || (refinableEnclosure && *start < size)) {
+                        if (*start < size) {
+                            const auto ownBounds = [&](const IndexRange & candidate) {
+                                return candidate.first.integerNumber &&
+                                       candidate.last.integerNumber &&
+                                       *candidate.first.integerNumber < size &&
+                                       *candidate.last.integerNumber < size;
+                            };
+                            if (!range || !ownBounds(*range)) {
+                                if ((range && !range->mixedShift) ||
+                                    !refineIndexRange(key, ownBounds)) {
+                                    return invariantFailure;
+                                }
+                                // Every visit is now proved own. Keep a conservative
+                                // footprint; reload gaps still need their own reproof.
+                                range = IndexRange{{key, ContentsKind::NonBigInt, 0},
+                                                   {key, ContentsKind::NonBigInt, size - 1},
+                                                   1,
+                                                   true};
+                            }
+                            guardStoreRanges.push_back({*range->first.integerNumber,
+                                                        *range->last.integerNumber, range->stride,
+                                                        range->mixedShift ? key : mlir::Value{}});
+                        }
+                    } else {
+                        if (invariantFailure == ArrayContentsFailure::WorkLimit) {
+                            return invariantFailure;
+                        }
+                        const auto value = invariant(invariant, key, 0);
+                        if (!value) { return invariantFailure; }
+                        const auto position = ownArrayIndex(*value);
+                        if (!position || *position >= size) { return unsupported; }
+                        guardStores.insert(*position);
                     }
-                    const auto key = invariant(invariant, store.getKey(), 0);
-                    if (!key) { return invariantFailure; }
-                    const auto position = ownArrayIndex(*key);
-                    if (!position || *position >= size) { return unsupported; }
-                    guardStores.insert(*position);
-                }
+                    return ArrayContentsFailure::None;
+                };
+                const auto failure = storeKey(storeKey, store.getKey(), 0);
+                if (failure != ArrayContentsFailure::None) { return failure; }
                 // A saved or reloaded receiver must keep the same allocation
                 // across transport, without reading an overwritten element.
                 const auto receiver = invariant(invariant, store.getObject(), 0);
