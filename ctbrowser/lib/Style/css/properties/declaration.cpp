@@ -782,6 +782,14 @@ bool supports_declaration(std::string_view property, std::string_view value) {
 }
 
 bool supports_condition(std::string_view text) {
+    // EOF CLOSES AN OPEN BLOCK (CSS Syntax 3 §5.4.9): `selector(a:hover` is
+    // `selector(a:hover)`.
+    const token_stream probe = tokenize(text);
+    if (const scan found = scan_tokens(probe); found.unclosed > 0) {
+        std::string closed{text};
+        closed.append(static_cast<std::size_t>(found.unclosed), ')');
+        return condition(closed, 0);
+    }
     return condition(text, 0);
 }
 

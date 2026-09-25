@@ -460,14 +460,19 @@ private:
         bool after_pe = false;
         bool view_transition_pe = false;
         // ...BUT A ::part() takes any pseudo-class that is not about the tree
-        // (CSS Shadow Parts 1 §4.2): `::part(x):state(y)`, `::part(x):disabled`.
+        // (CSS Shadow Parts 1 §4.2): `::part(x):state(y)`, `::part(x):disabled`
+        // - and so does the other ELEMENT-BACKED one, ::details-content.
         bool part_pe = false;
+        // ...and a ::scroll-button() is a button: `:enabled` and `:disabled`
+        // follow it as well as the user actions (CSS Overflow 5 §3.1).
+        bool button_pe = false;
 
         const auto start_compound = [&] {
             if (!compounds.empty() && after_pe) { dead = invalid_ = true; }
             after_pe = false;
             view_transition_pe = false;
             part_pe = false;
+            button_pe = false;
             if (!compounds.empty()) { links.push_back(pending); }
             compounds.push_back(building{});
             pending = combinator::descendant;
@@ -586,10 +591,11 @@ private:
                 if (after_pe &&
                     (view_transition_pe ||
                      !ascii_iequals_any(
-                         name, part_pe ? std::initializer_list<std::string_view>{"not", "is",
-                                                                                 "where", "state"}
-                                       : std::initializer_list<std::string_view>{"not", "is",
-                                                                                 "where"}))) {
+                         name,
+                         part_pe
+                             ? std::initializer_list<std::string_view>{"not", "is", "where",
+                                                                       "state", "lang", "dir"}
+                             : std::initializer_list<std::string_view>{"not", "is", "where"}))) {
                     dead = invalid_ = true;
                     continue;
                 }
@@ -772,6 +778,13 @@ private:
                         // real, and nothing here holds the argument, so the
                         // author's bytes are the only record.
                         std::string argument;
+                        // A PART OF A PSEUDO-ELEMENT is no part at all:
+                        // `::details-content::part(a)` is invalid.
+                        if (after_pe && ascii_iequals(name, "part")) {
+                            dead = invalid_ = true;
+                            continue;
+                        }
+                        button_pe = ascii_iequals(name, "scroll-button");
                         if (ascii_iequals_any(name, functional_pseudo_elements_named) &&
                             single_ident_argument(next, argument)) {
                             b.part.pseudo_element =
@@ -816,7 +829,8 @@ private:
                     ++b.tags; // a pseudo-element is type-level for specificity
                     after_pe = true;
                     view_transition_pe = ascii_istarts_with(name, "view-transition");
-                    part_pe = false;
+                    part_pe = ascii_iequals(name, "details-content");
+                    button_pe = false;
                     if (in_argument_) { dead = invalid_ = true; }
                     // A PSEUDO-ELEMENT HAS A CASCADE - engine::resolve_pseudo runs
                     // it for getComputedStyle(el, "::before") - and the matcher
@@ -827,9 +841,11 @@ private:
                 }
                 if (after_pe &&
                     !(view_transition_pe ? ascii_iequals(name, "only-child")
-                      : part_pe ? structural_bit_of(name) == 0
-                                : ascii_iequals_any(name, {"hover", "active", "focus",
-                                                           "focus-visible", "focus-within"}))) {
+                      : part_pe
+                          ? structural_bit_of(name) == 0
+                          : ascii_iequals_any(name, {"hover", "active", "focus", "focus-visible",
+                                                     "focus-within"}) ||
+                                (button_pe && ascii_iequals_any(name, {"enabled", "disabled"})))) {
                     dead = invalid_ = true;
                     continue;
                 }
