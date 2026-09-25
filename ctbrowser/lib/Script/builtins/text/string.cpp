@@ -383,8 +383,9 @@ void install_string(context & cx) {
         const double raw = integer_arg(c, a, 0);
         if (!(raw >= 0 && raw < static_cast<double>(str.size()))) { return value::undefined(); }
         const auto i = static_cast<std::size_t>(raw);
-        // Still a byte index; charCodeAt has a UTF-16 view, but this method
-        // remains part of the string representation gap (docs/script.md).
+        // BYTES, not code points - strings are bytes in this engine
+        // (docs/script.md), so this agrees with charCodeAt rather than
+        // pretending to a UTF-16 view that nothing else here has.
         return value::number(static_cast<double>(static_cast<unsigned char>(str[i])));
     });
     // `normalize` is the IDENTITY here, and says so: strings are bytes, so
@@ -468,21 +469,15 @@ void install_string(context & cx) {
         const double i = integer_arg(c, a, 0);
         if (detail::threw_since(c, before)) { return value::undefined(); }
         if (!(i >= 0 && i < static_cast<double>(s.size()))) { return value::number(std::nan("")); }
-        auto remaining = static_cast<std::size_t>(i);
-        // ponytail: O(index) over WTF-8; cache code-unit offsets if repeated scans become hot.
-        for (std::size_t at = 0; at < s.size();) {
-            char32_t cp = decode_utf8(s, at);
-            if (cp >= 0x10000) {
-                if (remaining == 0) {
-                    return value::number(static_cast<double>(0xD800 + ((cp - 0x10000) >> 10)));
-                }
-                --remaining;
-                cp = 0xDC00 + ((cp - 0x10000) & 0x3FF);
-            }
-            if (remaining == 0) { return value::number(static_cast<double>(cp)); }
-            --remaining;
-        }
-        return value::number(std::nan(""));
+        // A BYTE, like `length` and charAt and every other index here: a
+        // UTF-16 answer from this one method alone made `s.charAt(i)` and
+        // `s.charCodeAt(i)` describe different characters, and code that walks
+        // a string with both - testharnessreport.js's quote(), which is how
+        // every WPT result leaves the page - wrote half a character and an
+        // invalid byte after it. UTF-16 comes for every index at once, or not
+        // at all (docs/script.md, "The UTF-16 gap").
+        return value::number(
+            static_cast<double>(static_cast<unsigned char>(s[static_cast<std::size_t>(i)])));
     });
     // ALL FIVE OF THESE TAKE A POSITION, and all five used to ignore it - so
     // `"abc".indexOf("a", 1)` answered 0 where the specification says -1, and
