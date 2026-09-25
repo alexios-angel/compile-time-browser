@@ -183,9 +183,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         if (found && found.getBody().empty()) { return ctjs::FuncOp{}; }
         if (found && found != entry && !found.getBody().hasOneBlock()) {
-            // Raw import retains dead return tails and straight-line CFG edges.
-            // Normalize this private candidate before proving every live effect
-            // and payload; branching helpers still need their own proof.
+            // Normalize only exact continuations on this private candidate.
+            // Every surviving condition producer, effect and payload still
+            // needs the complete helper proof below.
             uint64_t size = 0;
             const auto counted = found.walk([&](mlir::Operation * operation) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -211,9 +211,44 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             mlir::PatternRewriter rewriter(candidate.getContext());
             (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
             auto & root = found.getBody().front();
-            while (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(root.getTerminator())) {
+            while (true) {
                 if (!spend()) { return ctjs::FuncOp{}; }
-                if (branch.getDest() == &root ||
+                if (auto conditional =
+                        llvm::dyn_cast<mlir::cf::CondBranchOp>(root.getTerminator())) {
+                    std::optional<bool> selected;
+                    auto * predicate = conditional.getCondition().getDefiningOp();
+                    if (auto constant =
+                            llvm::dyn_cast_if_present<mlir::arith::ConstantOp>(predicate)) {
+                        if (auto value = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())) {
+                            selected = !value.getValue().isZero();
+                        }
+                    } else if (auto truthy = llvm::dyn_cast_if_present<ctjs::TruthyOp>(predicate)) {
+                        auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
+                        auto value = constant
+                                         ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
+                                         : ctjs::BooleanAttr{};
+                        if (value) { selected = value.getValue(); }
+                    }
+                    if (!selected && conditional.getTrueDest() == conditional.getFalseDest() &&
+                        conditional.getTrueDestOperands() == conditional.getFalseDestOperands()) {
+                        selected = true;
+                    }
+                    if (!selected) { break; }
+                    rewriter.setInsertionPoint(conditional);
+                    rewriter.replaceOpWithNewOp<mlir::cf::BranchOp>(
+                        conditional,
+                        *selected ? conditional.getTrueDest() : conditional.getFalseDest(),
+                        *selected ? conditional.getTrueDestOperands()
+                                  : conditional.getFalseDestOperands());
+                    // Truthiness is pure; its input evaluation stays in place.
+                    if (predicate && predicate->use_empty() &&
+                        llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
+                        rewriter.eraseOp(predicate);
+                    }
+                    (void)mlir::eraseUnreachableBlocks(rewriter, found.getBody());
+                }
+                auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(root.getTerminator());
+                if (!branch || branch.getDest() == &root ||
                     branch.getDest()->getSinglePredecessor() != &root ||
                     mlir::failed(mlir::cf::BranchOp::canonicalize(branch, rewriter))) {
                     break;

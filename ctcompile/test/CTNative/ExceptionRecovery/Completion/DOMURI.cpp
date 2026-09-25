@@ -880,7 +880,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         return;
     }
     const auto expected = printed(*reference);
-    for (unsigned control = 0; control != 23; ++control) {
+    for (unsigned control = 0; control != 37; ++control) {
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
         auto identity = candidate->lookupSymbol<ctjs::FuncOp>("fn$2");
         auto next = candidate->lookupSymbol<ctjs::FuncOp>("fn$3");
@@ -937,6 +937,68 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             }
             mlir::cf::SwitchOp::create(at, identity.getLoc(), flag, continuation,
                                        mlir::ValueRange{}, cases, destinations, operands);
+        } else if (control >= 23) {
+            auto helper = control == 28                                     ? close
+                          : control == 27 || control == 33 || control >= 35 ? next
+                                                                            : identity;
+            auto & first = helper.getBody().front();
+            auto * terminal = first.getTerminator();
+            ctjs::CallOp call;
+            if (helper != identity) { call = *first.getOps<ctjs::CallOp>().begin(); }
+            auto * split = control == 36 ? call->getNextNode()
+                           : call        ? call.getOperation()
+                                         : terminal;
+            auto * continuation = first.splitBlock(split);
+            at.setInsertionPointToEnd(&first);
+            auto receiver = first.getArgument(ctjs::arg_receiver);
+            llvm::SmallVector<mlir::Value> payload;
+            if (helper == identity) {
+                payload.push_back(control == 34 ? first.getArgument(ctjs::arg_callee)
+                                                : terminal->getOperand(0));
+                terminal->setOperand(
+                    0, continuation->addArgument(payload.front().getType(), helper.getLoc()));
+            }
+            if (control == 35) {
+                ctjs::StoreGlobalOp::create(at, helper.getLoc(), "live-prefix-effect", receiver);
+            }
+            const bool dynamic = (control >= 29 && control <= 32) || control == 36;
+            const bool selected = control != 24 && control != 26 && control != 28 && control != 34;
+            mlir::Value flag;
+            if (dynamic || control == 25 || control == 26) {
+                mlir::Value input = control == 36 ? mlir::Value(call.getResult()) : receiver;
+                if (control == 32) {
+                    input = ctjs::LoadGlobalOp::create(at, helper.getLoc(), "condition-effect");
+                } else if (!dynamic) {
+                    input = ctjs::ConstantOp::create(
+                        at, helper.getLoc(),
+                        ctjs::BooleanAttr::get(original.getContext(), selected));
+                }
+                flag = ctjs::TruthyOp::create(at, helper.getLoc(), at.getI1Type(), input);
+            } else {
+                flag = mlir::arith::ConstantIntOp::create(at, helper.getLoc(), selected, 1);
+            }
+            if (dynamic && control != 31) {
+                auto alternative = payload;
+                if (control == 30) { alternative.front() = first.getArgument(ctjs::arg_callee); }
+                mlir::cf::CondBranchOp::create(at, helper.getLoc(), flag, continuation, payload,
+                                               continuation, alternative);
+            } else {
+                auto * alternative = &helper.getBody().emplaceBlock();
+                mlir::cf::CondBranchOp::create(
+                    at, helper.getLoc(), flag, selected ? continuation : alternative,
+                    selected ? mlir::ValueRange(payload) : mlir::ValueRange{},
+                    selected ? alternative : continuation,
+                    selected ? mlir::ValueRange{} : mlir::ValueRange(payload));
+                at.setInsertionPointToEnd(alternative);
+                if (control != 31) {
+                    ctjs::StoreGlobalOp::create(at, helper.getLoc(), "dead-arm-effect", receiver);
+                }
+                ctjs::ReturnOp::create(at, helper.getLoc(), receiver);
+            }
+            if (control == 33) {
+                at.setInsertionPointToStart(continuation);
+                ctjs::StoreGlobalOp::create(at, helper.getLoc(), "live-arm-effect", receiver);
+            }
         } else if (control >= 20) {
             auto helper = control == 20 ? identity : control == 21 ? next : close;
             helper.eraseBody();
@@ -991,7 +1053,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         const auto fingerprint = proof.moduleSha256;
         const auto before = printed(*candidate);
         const bool succeeds = control == 0 || (control >= 2 && control <= 4) ||
-                              (control >= 10 && control <= 12) || control == 18 || control == 19;
+                              (control >= 10 && control <= 12) || control == 18 || control == 19 ||
+                              (control >= 23 && control <= 29) || control == 36;
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
