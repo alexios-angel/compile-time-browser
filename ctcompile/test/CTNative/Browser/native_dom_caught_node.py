@@ -623,6 +623,23 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-string-add": source.replace(
+        "return this;", "return ('prefix:' + 1e21) === 'prefix:1e+21' ? this : null;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return (true + '') === 'true' ? {done: done, value: anchor} : null;",
+    )
+    .replace(
+        "throw anchor;",
+        "throw ((true ? '\\uD800' : '') + '\\uDC00') === '\\uD800\\uDC00' ? anchor : null;",
+    )
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 # Retain the complete source-global witnesses; the initialized provider and
 # absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
@@ -726,6 +743,7 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     "-helper-transported-not",
                     "-helper-number-bitwise",
                     "-helper-number-power",
+                    "-helper-string-add",
                 )
             )
             else None
