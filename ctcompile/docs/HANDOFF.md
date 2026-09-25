@@ -22,6 +22,42 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Protected completion proof and conditional array receivers, 2026-09-25 UTC
+
+Resumed clean **26424e84** and its recorded inactive-completion boundary.
+**60ffb6ea** normalizes the original rewritten getter/method entries through
+Try and Invoke on independent clones. Exact continuations select live payloads;
+saved poison remains poison during proof, and only unobserved slots receive
+padding. Both guarded close arms remain present. The normalized bodies have
+zero poison, three Invokes with **15 saved slots each**, one Try and the original
+caught-anchor CellGet identity. Nine variants per source check live observations,
+unknown exit flags, preserved normal effects and transactional budget refusal.
+
+**f313a0b0** applies the existing array retention proof to exact Get/Set receivers
+first captured inside a conditional. Thirteen new rows retain publication,
+returned aliases, missing/dynamic indices, cycles, other captures and nested
+allocation refusals. The legacy census is unchanged; no raw-oracle gain was
+measured in this iteration.
+
+Focused recovery **1/1, 5.64 s**, host contract **1/1, 2.72 s**, arrays
+**1/1, 4.68 s**, and the selected three-source differential check pass.
+All 24 generated C++ files retain the namespace invariant; six final source
+hashes match the devbox. Formatting passes **1126 C++, 159 Python, 114 web files**.
+The host gate found overbroad Boolean folding missed by static review; it is now
+limited to protected terminals, and both affected CTests pass after correction.
+Final independent bounded static review is clean. Full suites were skipped.
+
+**Next:** integrate the separately proved normalization with Custom.cpp's final
+protected next/done census. Its explicit completion-normalization refusal remains;
+**no new native JavaScript source admission** is claimed. The census must follow
+next's normal block argument and preserve the original Try scope, saved returns,
+caught identity and close guards. Invoke loop-condition transport, mutable
+exceptional state, nested allocation origins, raw helper CFGs, escaping owners,
+unguarded Bootstrap defaults, the application driver and full native Bootstrap
+remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-25-protected-completion-normalization.md).
+
 ## Observed iterator state transport and captured storage, 2026-09-25 UTC
 
 Resumed clean **b0e40459** and its recorded Try/Invoke state boundary.
