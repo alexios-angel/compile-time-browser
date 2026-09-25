@@ -22,6 +22,48 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Native helper deduplication, 2026-09-25 UTC
+
+Implemented the six requested Ponytail audit suggestions from **00263397**.
+**598645cb** shares closure-environment edges and the three identical publication
+symbol scans, preserving recognized reads, traversal order, unknown-use refusal
+and budget exhaustion. It also removes the private PrimitiveAlternatives
+forwarding header. **efff91f0** shares argument setup across 18 native drivers.
+**d19e6d38** shares twelve sanitizer runners and six Map allocation observers.
+The implementation/test changes remove **517 net lines and one header**.
+Native admission and browser/runtime semantics are unchanged.
+
+Focused validation passed:
+
+- Devbox targets `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference`
+  and `ctcompile-test-host-contract`; `ctcompile_host_contract` **1/1, 2.78 s**.
+- Five exact lit cases **5/5, 157.45 s**: `Lowering/Maps/map-flow.mlir`,
+  `Lowering/Objects/object-values.mlir`, `Lowering/Objects/class-terminal-publication.test`,
+  `Browser/native-dom-query.test` and `Browser/native-dom-symbols.test`, all under
+  `CTNative/`. The other 359 discovered cases were excluded.
+- Four existing ownership sources: `ordinary`, `nullable_payload_saved`,
+  `leaf_object_lifetime`, `local_field_readback_lifetime_checked`; Node/VM,
+  GCC/Clang and ASan/UBSan pass in both printer modes.
+- Three publication-key sources (dynamic key, captured literal, escaped key):
+  16 native executions, six unprepared and eleven preparation refusals pass;
+  the dynamic-key first complete budget remains 812. The driver's fixed method
+  controls also pass (16 executions/20 refusals), as do r guards (8/4).
+- 564 CLI equivalence scenarios, 18 actual help imports, unchanged downstream
+  AST/7,390 existing strings; twelve sanitizer command/error-path comparisons;
+  identical Map and leaf observer C++. All 32 source/deletion hashes match the
+  devbox. Formatting passes **1126 C++, 159 Python, 114 web files**; diff checks pass.
+
+Full CTest/compiler lit, full ownership matrices, broad corpora, WPT/test262,
+Windows/macOS and performance measurements were skipped. Claude was running;
+all edits stayed in ctcompile and its external plan. An additional reviewer
+hit its rate limit; the parent completed review and validation.
+
+**Next:** the native boundary remains reachable conditional helper CFGs:
+prove branch, payload and effect correspondence before extending the existing
+one-block getter/identity/capture proofs. Repeated allocation instances and
+lifetimes, mutable exceptional state, escaping owners, Bootstrap defaults,
+the application driver and full native Bootstrap remain unfinished.
+
 ## Iterator helper continuations and acyclic conditional confinement, 2026-09-25 UTC
 
 Resumed **a97678f2** and its reachable-helper CFG boundary, then completed the
