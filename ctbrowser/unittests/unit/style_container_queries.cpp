@@ -43,7 +43,7 @@ void test_prelude() {
     CHECK_EQ(conditions_of("scroll-state (scrollable: right)"),
              std::string{"scroll-state (scrollable: right)"});
     for (const std::string_view bad :
-         {"", "(width),", ",(width)", "(width),,(height)", "screen", "name foo (width: 100px)",
+         {"", "(width),", ",(width)", "(width),,(height)", "name screen", "name foo (width: 100px)",
           "none (width)", "inherit", "1px not (width)", "foo foo not (width)"}) {
         CHECK_EQ(conditions_of(bad), std::string{"<invalid>"});
     }
@@ -144,6 +144,35 @@ void test_font_variant() {
     CHECK_EQ(declaration_value(block, "font-variant"), std::string{"none"});
 }
 
+// line-clamp-valid/-invalid, webkit-line-clamp-*, shorthand-values.
+void test_line_clamp() {
+    using css::declaration_block;
+    using css::declaration_value;
+    using css::parse_declaration_block;
+    using css::serialize_declaration_block;
+    using css::set_declaration;
+    const auto read = [](std::string_view property, std::string_view value) {
+        declaration_block block;
+        (void)set_declaration(block, property, value, false);
+        return declaration_value(block, property);
+    };
+    CHECK_EQ(read("line-clamp", "none"), std::string{"none"});
+    CHECK_EQ(read("line-clamp", "ellipsis"), std::string{"auto"});
+    CHECK_EQ(read("line-clamp", "no-ellipsis 10"), std::string{"10 no-ellipsis"});
+    CHECK_EQ(read("line-clamp", "auto 11"), std::string{"11 auto"});
+    CHECK_EQ(read("line-clamp", "no-ellipsis -webkit-legacy"),
+             std::string{"auto no-ellipsis -webkit-legacy"});
+    for (const std::string_view bad :
+         {"0", "none 2", "3 none", "3 ellipsis auto", "-webkit-legacy", "0 -webkit-legacy"}) {
+        CHECK_EQ(read("line-clamp", bad), std::string{});
+    }
+    CHECK_EQ(read("-webkit-line-clamp", "6"), std::string{"6"});
+    CHECK_EQ(read("-webkit-line-clamp", "auto"), std::string{});
+    declaration_block block;
+    parse_declaration_block(block, "-webkit-line-clamp: none;");
+    CHECK_EQ(serialize_declaration_block(block), std::string{"line-clamp: none;"});
+}
+
 } // namespace
 
 int main() {
@@ -152,5 +181,6 @@ int main() {
     test_scroll_state();
     test_units();
     test_font_variant();
+    test_line_clamp();
     REPORT("style_container_queries");
 }

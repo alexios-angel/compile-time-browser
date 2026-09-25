@@ -200,6 +200,65 @@ split split_font_variant(const expansion & e, std::span<const std::string_view> 
     return split::ok;
 }
 
+// `line-clamp`: `none` - every longhand initial - or a maximum
+// (`<integer [1,∞]> || auto`, written together) and a block ellipsis in
+// either order, one at least, then `-webkit-legacy` for the legacy
+// continuation (CSS Overflow 4 §5.1). The maximum defaults to `auto`, the
+// ellipsis to `ellipsis`, and the continuation is `collapse`.
+// `-webkit-line-clamp` is `none` or an integer alone, which continues the
+// legacy way with the default ellipsis.
+split split_line_clamp(const expansion & e, std::span<const std::string_view> parts,
+                       std::vector<std::string> & out) {
+    if (parts.size() == 1 && ascii_iequals(parts[0], "none")) {
+        out = {"auto", "no-ellipsis", "normal"};
+        return split::ok;
+    }
+    const auto integer = [](std::string_view part, std::string & text) {
+        if (ascii_iequals_any(part, {"none", "auto"}) || is_wide_keyword(part)) { return false; }
+        bool valid = false;
+        text = canonical("max-lines", part, valid);
+        return valid;
+    };
+    std::string number;
+    if (e.syntax->name == "-webkit-line-clamp") {
+        if (parts.size() != 1 || !integer(parts[0], number)) { return split::invalid; }
+        out = {number, "ellipsis", "-webkit-legacy"};
+        return split::ok;
+    }
+    std::span<const std::string_view> rest = parts;
+    const bool legacy = !rest.empty() && ascii_iequals(rest.back(), "-webkit-legacy");
+    if (legacy) { rest = rest.first(rest.size() - 1); }
+    bool automatic = false;
+    std::string ellipsis;
+    int run = 0; // 0 before the maximum's words, 1 among them, 2 past them
+    for (const std::string_view part : rest) {
+        const bool is_auto = ascii_iequals(part, "auto");
+        std::string text;
+        if (is_auto || integer(part, text)) {
+            if (run == 2 || (is_auto ? automatic : !number.empty())) { return split::invalid; }
+            run = 1;
+            if (is_auto) {
+                automatic = true;
+            } else {
+                number = text;
+            }
+            continue;
+        }
+        if (run == 1) { run = 2; }
+        bool valid = false;
+        if (!ellipsis.empty() || is_wide_keyword(part)) { return split::invalid; }
+        ellipsis = canonical("block-ellipsis", part, valid);
+        if (!valid) { return split::invalid; }
+    }
+    if (number.empty() && !automatic && ellipsis.empty()) { return split::invalid; }
+    out = {number.empty() ? std::string{"auto"}
+           : automatic    ? number + " auto"
+                          : number,
+           ellipsis.empty() ? std::string{"ellipsis"} : ellipsis,
+           legacy ? "-webkit-legacy" : "collapse"};
+    return split::ok;
+}
+
 // `border`: width || style || color, then every side, then border-image reset.
 split split_border(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     const expansion * top = expansion_of("border-top");
@@ -728,6 +787,7 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
     case shape::animation: return split_animation(value, out);
     case shape::font: return split_font(parts, out);
     case shape::font_variant: return split_font_variant(e, parts, out);
+    case shape::line_clamp: return split_line_clamp(e, parts, out);
     case shape::all:
     case shape::whole: break;
     }

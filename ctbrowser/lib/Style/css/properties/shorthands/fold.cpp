@@ -147,6 +147,28 @@ namespace ctbrowser::style::css::shorthand_detail {
     return join(parts);
 }
 
+// `line-clamp`, folded: `none` for the initial three, else the maximum, the
+// ellipsis when it is not `ellipsis`, and `-webkit-legacy` for that
+// continuation - nothing for any other. `-webkit-line-clamp` spells only
+// `none` and a bare integer continued the legacy way.
+[[nodiscard]] std::string fold_line_clamp(const expansion & e, std::span<const std::string> v) {
+    if (ascii_iequals(v[0], "auto") && ascii_iequals(v[1], "no-ellipsis") &&
+        ascii_iequals(v[2], "normal")) {
+        return "none";
+    }
+    const bool legacy = ascii_iequals(v[2], "-webkit-legacy");
+    if (e.syntax->name == "-webkit-line-clamp") {
+        const bool integer =
+            !ascii_iequals_any(v[0], {"auto", "none"}) && v[0].find(' ') == std::string::npos;
+        return integer && legacy && ascii_iequals(v[1], "ellipsis") ? v[0] : std::string{};
+    }
+    if (!legacy && !ascii_iequals(v[2], "collapse")) { return {}; }
+    std::string out = v[0];
+    if (!ascii_iequals(v[1], "ellipsis")) { out += " " + v[1]; }
+    if (legacy) { out += " -webkit-legacy"; }
+    return out;
+}
+
 // `white-space`, folded: the keyword the longhands spell, else the parts that
 // are not initial (`preserve-breaks nowrap`), else `normal`.
 [[nodiscard]] std::string fold_white_space(std::span<const std::string> v) {
@@ -256,6 +278,7 @@ namespace ctbrowser::style::css::shorthand_detail {
     case shape::flex: return join(v);
     case shape::font: return fold_font(v);
     case shape::font_variant: return fold_font_variant(v);
+    case shape::line_clamp: return fold_line_clamp(e, v);
     case shape::white_space: return fold_white_space(v);
     case shape::animation: return fold_animation(v);
     case shape::border: {

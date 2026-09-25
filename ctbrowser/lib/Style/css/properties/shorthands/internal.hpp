@@ -39,6 +39,8 @@ enum class shape : std::uint8_t {
                      // the six other font-variant-* longhands reset
     font_variant,    // CSS Fonts 4 §6.11: `normal`, `none`, or each keyword to the
                      // font-variant-* longhand that takes it
+    line_clamp,      // CSS Overflow 4 §5.1: `none`, or `<max-lines> || <block-ellipsis>`
+                     // and `-webkit-legacy?`; the `-webkit-` one `none | <integer>`
     border,          // `bar` over width/style/color, applied to four sides, plus
                      // border-image reset to its initial values
     border_axis,     // `border-block` / `border-inline`: `bar` over width/style/
@@ -230,6 +232,8 @@ inline constexpr shorthand_syntax table[] = {
      "font-variant-ligatures font-variant-alternates font-variant-numeric "
      "font-variant-east-asian font-variant-position font-variant-emoji",
      ""},
+    {"line-clamp", shape::line_clamp, "max-lines block-ellipsis continue", ""},
+    {"-webkit-line-clamp", shape::line_clamp, "max-lines block-ellipsis continue", ""},
     {"font-variant", shape::font_variant,
      "font-variant-ligatures font-variant-caps font-variant-alternates font-variant-numeric "
      "font-variant-east-asian font-variant-position font-variant-emoji",
@@ -313,6 +317,11 @@ split split_font(std::span<const std::string_view> parts, std::vector<std::strin
 
 split split_font_variant(const expansion & e, std::span<const std::string_view> parts,
                          std::vector<std::string> & out);
+
+split split_line_clamp(const expansion & e, std::span<const std::string_view> parts,
+                       std::vector<std::string> & out);
+
+[[nodiscard]] std::string fold_line_clamp(const expansion & e, std::span<const std::string> v);
 
 split split_border(std::span<const std::string_view> parts, std::vector<std::string> & out);
 
