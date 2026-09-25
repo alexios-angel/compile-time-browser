@@ -410,9 +410,17 @@ void dom_bindings::install_selection(context & cx) {
         if (shared == 0) { return 0; }
         return index_of(a_up[shared]) < index_of(b_up[shared]) ? -1 : 1;
     };
+    // THE DOCUMENT IS IN ITS OWN TREE: root_of_tree stops at the document
+    // element, which has no parent pointer, so a point at (document, n) and
+    // one inside the element are told apart unless the two roots are read as
+    // the one Document (extend-00.html's `[document, 0]` points).
     const auto same_tree = [](dom_bindings & d, node_id a, node_id b) {
         const auto txn = d.doc_->read();
-        return d.root_of_tree(txn, a, false) == d.root_of_tree(txn, b, false);
+        const auto top = [&](node_id n) {
+            const node_id root = d.root_of_tree(txn, n, false);
+            return root == txn.root() ? txn.document_node() : root;
+        };
+        return top(a) == top(b);
     };
     // A selection whose anchor and focus are in DIFFERENT trees: the live
     // range collapses where DOM's "set the start" then "set the end" leave it
