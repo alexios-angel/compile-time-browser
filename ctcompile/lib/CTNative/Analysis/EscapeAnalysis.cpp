@@ -344,8 +344,20 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
 
 void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver & solver,
                           ctjs::FuncOp function, std::size_t workLimit) {
-    const auto candidate = [](mlir::Operation * site, const Verdict & verdict) {
-        return verdict.reason == EscapeReason::Stored ||
+    const auto stored = [&](const Verdict & verdict) {
+        if (verdict.reason == EscapeReason::Stored) { return true; }
+        if (verdict.reason != EscapeReason::UnknownOp || verdict.by == nullptr ||
+            verdict.by->getParentRegion() == &function.getBody()) {
+            return false;
+        }
+        // The legacy region census marks implicit captures UnknownOp even
+        // when their actual operand stores a child. Only that exact role is
+        // eligible; yields, receivers and other captures retain their refusal.
+        const RoleOf role = operandRole(verdict.by, verdict.position);
+        return role.role == OperandRole::Sink && role.reason == EscapeReason::Stored;
+    };
+    const auto candidate = [&](mlir::Operation * site, const Verdict & verdict) {
+        return stored(verdict) ||
                (llvm::isa<ctjs::CreateArrayOp>(site) && verdict.reason == EscapeReason::Passed &&
                 verdict.position == 0 &&
                 llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(verdict.by));
@@ -441,12 +453,12 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
         }
     }
     // Transactional commit: not even the first candidate changes before the
-    // final graph/verdict visit. Reachable children keep their Stored witnesses,
+    // final graph/verdict visit. Reachable children keep their original witnesses,
     // because returning a container does not give each child a unique owner.
     // Array receivers lose Passed only after the complete current query proved
     // every access own and excluded all other exposure, including later effects.
     for (mlir::Operation * site : confined) {
-        if (verdicts.sites[site].reason == EscapeReason::Stored) { ++verdicts.confinedStoredSites; }
+        if (stored(verdicts.sites[site])) { ++verdicts.confinedStoredSites; }
         verdicts.sites[site] = Verdict{};
     }
     verdicts.arrayRetentionComplete = true;

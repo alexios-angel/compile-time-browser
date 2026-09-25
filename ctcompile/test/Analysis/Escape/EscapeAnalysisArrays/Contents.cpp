@@ -394,6 +394,14 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string array = values + "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
     const std::string read = "  %read = ctjs.get_property %a[%zero]\n";
     const std::string done = "  ctjs.return %zero\n";
+    const std::string captureStart = values +
+                                     "  %a = ctjs.create_array [%zero] {storage_test_id = \"a\"}\n"
+                                     "  %flag = ctjs.truthy %p\n"
+                                     "  scf.if %flag {\n";
+    const std::string captureWrite = "    ctjs.set_property %a[%zero], %x\n";
+    const std::string captureEnd = "  }\n  ctjs.set_property %a[%zero], %zero\n";
+    const std::string capturedStore = captureStart + captureWrite + "  }\n";
+    const std::string clearedCapture = captureStart + captureWrite + captureEnd;
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -480,6 +488,42 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = array + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "an overwritten implicit Stored capture becomes confined",
+         .body = clearedCapture + "  ctjs.return %a\n",
+         .discharged = "x"},
+        {.what = "an uncleared structured arm keeps the child's original capture witness",
+         .body = capturedStore + "  ctjs.return %a\n"},
+        {.what = "a separately returned captured child keeps its original witness",
+         .body = clearedCapture + "  ctjs.return %x\n"},
+        {.what = "a later yielded capture keeps the child on every retaining return path",
+         .body = clearedCapture + "  %saved = scf.if %flag -> (!ctjs.value) {\n"
+                                  "    scf.yield %x : !ctjs.value\n"
+                                  "  } else {\n"
+                                  "    scf.yield %zero : !ctjs.value\n"
+                                  "  }\n"
+                                  "  ctjs.return %saved\n"},
+        {.what = "late publication prevents refinement of an earlier Stored capture",
+         .body = clearedCapture + "  ctjs.store_global \"held\", %x\n" + done,
+         .complete = false},
+        {.what = "later implicit publication cannot hide behind the first Stored capture",
+         .body = captureStart + captureWrite + "    ctjs.store_global \"held\", %x\n" + captureEnd +
+                 done,
+         .complete = false},
+        {.what = "a transient structured cycle keeps even an overwritten child refused",
+         .body = captureStart + "    ctjs.set_property %a[%zero], %a\n" + captureWrite +
+                 captureEnd + done,
+         .complete = false},
+        {.what = "an earlier non-storage capture cannot borrow a later Stored role",
+         .body = captureStart + "    %used = ctjs.truthy %x\n" + captureWrite + captureEnd + done,
+         .complete = false},
+        {.what = "an earlier global capture cannot borrow a later Stored role",
+         .body = captureStart + "    ctjs.store_global \"held\", %x\n" + captureWrite + captureEnd +
+                 done,
+         .complete = false},
+        {.what = "captured storage still refuses nested allocation origins",
+         .body = captureStart + "    %fresh = ctjs.create_array []\n" + captureWrite + captureEnd +
+                 done,
+         .complete = false},
     };
     std::size_t budgets = 0;
     for (const retention_row & r : rows) {

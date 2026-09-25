@@ -263,7 +263,8 @@ struct EscapeVerdicts {
     /// R4 `suspended` or R1's guard `arguments_late`: every site escapes with
     /// this reason.
     std::optional<EscapeReason> wholeFunction;
-    /// A separate complete local-container proof discharged these Stored sites.
+    /// A separate complete local-container proof discharged these stored sites,
+    /// including implicit region captures whose exact operand role is Stored.
     /// Its all-write graph must be acyclic, every operation must be supported,
     /// and none of these sites may be reachable through the returned value.
     /// This does not discharge native type, identity or lifetime obligations.
@@ -587,9 +588,10 @@ struct ArrayContentsEvidence {
 /// inside those regions still trigger the whole-function refusals.
 ///
 /// With initialized solver evidence, a complete current computeArrayContents
-/// proof may discharge Stored sites absent from every return path. A bounded
+/// proof may discharge Stored sites absent from every return path, including
+/// UnknownOp region captures whose exact operand role is Stored. A bounded
 /// acyclicity check over ALL array/object writes excludes transient cycles. Retained
-/// children keep their original Stored witness; no unique owner is inferred.
+/// children keep their original witness; no unique owner is inferred.
 /// For scf.if/scf.while, a charged census checks current operand/result lattices
 /// and direct Stored targets before the independent contents proof. The legacy
 /// top-level census remains incomplete, and nested allocation sites still refuse.
