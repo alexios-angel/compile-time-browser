@@ -306,8 +306,18 @@ private:
         const std::uint32_t first_selector = static_cast<std::uint32_t>(sheet_.selectors.size());
         const nesting_context nesting{context_.parent, context_.in_scope};
         const bool nested = !context_.parent.empty() || context_.in_scope;
+        bool invalid = false;
         const std::uint32_t count =
-            parse_selector_list(sheet_, prelude, *atoms_, nullptr, nested ? &nesting : nullptr);
+            parse_selector_list(sheet_, prelude, *atoms_, &invalid, nested ? &nesting : nullptr);
+        // A SELECTOR LIST WITH ONE INVALID SELECTOR IS INVALID WHOLE (Selectors
+        // 4 §3.1), and a style rule whose prelude is not a <selector-list> is
+        // dropped with its block (CSS Syntax 3 §9) - `#a::before.x, #a {}`
+        // styles nothing. An alternative this engine cannot MATCH is not
+        // invalid and stays, dead; only a syntax error drops the rule.
+        if (invalid) {
+            sheet_.selectors.resize(first_selector);
+            return;
+        }
         // The children see this rule's list, dead alternatives included: a
         // rule nested under a selector that cannot match compiles to one that
         // cannot match either, rather than to a top-level rule.
