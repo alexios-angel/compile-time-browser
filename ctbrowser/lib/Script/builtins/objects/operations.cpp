@@ -103,18 +103,29 @@ namespace {
         return out;
     }
     if (of.is_object()) {
-        // A String wrapper's indices and `length` come first (10.4.3.3), as
-        // they do for the primitive below.
-        if (value * slot = primitive_slot(of); slot != nullptr && slot->is_string()) {
-            if (which != key_filter::symbols) {
-                const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
-                for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
-                out.emplace_back("length");
-            }
+        // A String wrapper's indices come first (10.4.3.3), as they do for the
+        // primitive below, then its own integer keys past them, and then
+        // `length` - the first string key it was made with - before the rest.
+        const value * slot = primitive_slot(of);
+        const bool string_wrapper =
+            slot != nullptr && slot->is_string() && which != key_filter::symbols;
+        if (string_wrapper) {
+            const std::size_t n = static_cast<string_object *>(slot->as_heap())->text.size();
+            for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
         }
+        const std::size_t own_from = out.size();
         static_cast<object_object *>(of.as_heap())->each_own_key([&](const std::string & k) {
             if (wanted_key(which, k)) { out.push_back(k); }
         });
+        if (string_wrapper) {
+            const auto first_string =
+                std::find_if(out.begin() + static_cast<std::ptrdiff_t>(own_from), out.end(),
+                             [](const std::string & k) {
+                                 std::uint32_t at = 0;
+                                 return !object_object::array_index_key(k, at);
+                             });
+            out.insert(first_string, "length");
+        }
         // 10.1.11.1 OrdinaryOwnPropertyKeys: integer keys ascending (the walk's
         // own order), then strings, then SYMBOLS, each in creation order.
         if (which == key_filter::all) {
