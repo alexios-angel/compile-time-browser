@@ -184,6 +184,24 @@ void test_set_html_unsafe_options() {
              "2,3;0,B");
 }
 
+// THE TEMPLATE'S DECLARATIVE ATTRIBUTES, reflected: the mode as an
+// enumerated attribute limited to known values, the slot assignment with
+// "named" for missing and invalid, and the booleans.
+void test_template_reflects_its_declarative_attributes() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var t = document.createElement('template');"
+                  "t.setAttribute('shadowrootmode', 'OpEn');"
+                  "var before = t.shadowRootMode; t.shadowRootMode = 'blah';"
+                  "alert(before + ',' + JSON.stringify(t.shadowRootMode) + ','"
+                  " + t.getAttribute('shadowrootmode'));"
+                  "t.shadowRootClonable = true; t.shadowRootSlotAssignment = 'invalid';"
+                  "alert(t.hasAttribute('shadowrootclonable') + ',' + t.shadowRootSlotAssignment"
+                  " + ',' + t.shadowRootDelegatesFocus + ','"
+                  " + HTMLTemplateElement.prototype.hasOwnProperty('shadowRootMode'));"
+                  "</script></body></html>"),
+             "open,\"\",blah;true,named,false,true");
+}
+
 } // namespace
 
 // slotchange-event.html: not synchronous, once per change however many
@@ -229,6 +247,7 @@ int main() {
     test_set_html_unsafe_attaches_a_declarative_root();
     test_the_page_parser_attaches_declarative_roots();
     test_set_html_unsafe_options();
+    test_template_reflects_its_declarative_attributes();
     test_slotchange_events();
     REPORT("shadow_slots");
 }

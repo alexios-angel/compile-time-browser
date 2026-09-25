@@ -609,6 +609,88 @@ void dom_bindings::install_shadow_dom(context & cx) {
                       });
     }
 
+    // --- HTMLTemplateElement's declarative shadow root attributes -------------
+    //
+    // HTML 4.12.3: `shadowRootMode` reflects `shadowrootmode` as an enumerated
+    // attribute LIMITED TO KNOWN VALUES (open, closed; missing and invalid are
+    // ""), `shadowRootSlotAssignment` likewise with named/manual and "named"
+    // for missing and invalid, and the other three are boolean attributes.
+    // What the tree builder READS when it meets the template - these only
+    // write the markup, as a reflected attribute does.
+    if (const value template_proto = interface_prototype("HTMLTemplateElement");
+        template_proto.is_object()) {
+        auto * on = static_cast<script::object_object *>(template_proto.as_heap());
+        const auto element_of = [this](context & c) -> std::pair<dom_bindings *, node_id> {
+            dom_bindings * owner = owner_of(c.current_this());
+            return {owner, owner == nullptr ? node_id{} : owner->handle_of(c.current_this())};
+        };
+        const auto enumerated = [&](const char * idl, const char * content,
+                                    std::initializer_list<std::string_view> keywords,
+                                    std::string_view fallback) {
+            const std::vector<std::string_view> known{keywords};
+            const std::string attribute_name{content};
+            on->define_accessor(
+                idl,
+                native(cx, idl,
+                       [this, element_of, known, fallback, attribute_name](context & c,
+                                                                           std::span<value>) {
+                           const auto [owner, id] = element_of(c);
+                           if (!id) { return c.string(std::string{fallback}); }
+                           const std::string_view held = owner->doc_->read().attribute_value(
+                               id, atoms_->intern(attribute_name));
+                           for (const std::string_view keyword : known) {
+                               if (ascii_iequals(held, keyword)) {
+                                   return c.string(std::string{keyword});
+                               }
+                           }
+                           return c.string(std::string{fallback});
+                       }),
+                native(cx, idl,
+                       [this, element_of, attribute_name](context & c, std::span<value> a) {
+                           const auto [owner, id] = element_of(c);
+                           if (!id) { return value::undefined(); }
+                           const std::string text = arg_string(c, a, 0);
+                           (void)owner->doc_->set_attribute(id, atoms_->intern(attribute_name),
+                                                            text);
+                           owner->mutated();
+                           return value::undefined();
+                       }),
+                script::attr_enumerable | script::attr_configurable);
+        };
+        enumerated("shadowRootMode", "shadowrootmode", {"open", "closed"}, "");
+        enumerated("shadowRootSlotAssignment", "shadowrootslotassignment", {"named", "manual"},
+                   "named");
+        for (const auto & [idl, content] :
+             std::initializer_list<std::pair<const char *, const char *>>{
+                 {"shadowRootDelegatesFocus", "shadowrootdelegatesfocus"},
+                 {"shadowRootClonable", "shadowrootclonable"},
+                 {"shadowRootSerializable", "shadowrootserializable"}}) {
+            const std::string attribute_name{content};
+            on->define_accessor(
+                idl,
+                native(cx, idl,
+                       [this, element_of, attribute_name](context & c, std::span<value>) {
+                           const auto [owner, id] = element_of(c);
+                           return value::boolean(id && owner->doc_->read().has_attribute(
+                                                           id, atoms_->intern(attribute_name)));
+                       }),
+                native(cx, idl,
+                       [this, element_of, attribute_name](context & c, std::span<value> a) {
+                           const auto [owner, id] = element_of(c);
+                           if (!id) { return value::undefined(); }
+                           const atom name = atoms_->intern(attribute_name);
+                           if (context::truthy(arg(a, 0))) {
+                               (void)owner->doc_->set_attribute(id, name, "");
+                           } else {
+                               (void)owner->doc_->remove_attribute(id, name);
+                           }
+                           owner->mutated();
+                           return value::undefined();
+                       }),
+                script::attr_enumerable | script::attr_configurable);
+        }
+    }
+
     // --- ShadowRoot.activeElement, DocumentOrShadowRoot (HTML 6.6.3) -----------
     //
     // The focused element RETARGETED AGAINST THIS ROOT - so a focus inside a
