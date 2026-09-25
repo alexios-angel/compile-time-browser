@@ -19,6 +19,80 @@ namespace ctbrowser::script {
 // ArraySetLength's shrink, defined beside [[DefineOwnProperty]] in descriptors.cpp.
 bool array_set_length(array_object & arr, double n);
 
+namespace {
+
+// OrdinarySet(O, P, V, Receiver), 10.1.9.2, for a Receiver that is NOT O: a
+// proxy with no `set` trap hands its target the write with ITSELF as the
+// receiver (10.5.9 step 6). So a setter found on the target's chain runs with
+// the proxy as `this` - `proxy.__proto__ = p` reaches the proxy's
+// setPrototypeOf trap - and a data property lands through the receiver's own
+// [[GetOwnProperty]] and [[DefineOwnProperty]], which for a proxy are its
+// traps. store_property's own walk carries no receiver; this one does, and
+// only a proxy takes it. False is a refusal, for strict code to throw; a throw
+// answers true, so that it is not a second one.
+bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver) {
+    const std::size_t before = cx.unwinds();
+    const auto threw = [&] { return cx.throw_pending() || cx.unwinds() != before; };
+    context::property_descriptor own;
+    bool found = false;
+    value walk = o;
+    for (int hops = 0; hops < 4096 && walk.is_object_like() && !found; ++hops) {
+        if (walk.is_kind(heap_kind::proxy)) {
+            // A proxy on the way is asked with the same receiver.
+            auto * p = static_cast<proxy_object *>(walk.as_heap());
+            bool failed = false;
+            const value trap = cx.proxy_trap(walk, "set", &failed);
+            if (failed || threw()) { return true; }
+            if (trap.is_callable()) {
+                const value args[4] = {p->target, cx.key_value(name), v, receiver};
+                const bool answered = context::truthy(cx.call(trap, args, p->handler));
+                return answered || threw();
+            }
+            walk = p->target;
+            continue;
+        }
+        found = cx.own_property(walk, name, own);
+        if (threw()) { return true; }
+        if (found) { break; }
+        const value up = cx.get_prototype(walk);
+        if (up.is_null()) {
+            // The implicit chain - Object.prototype and the like - which no
+            // explicit link names.
+            for (object_object * table : cx.implicit_prototypes(walk)) {
+                if (table != nullptr && cx.own_property(value::object(table), name, own)) {
+                    found = true;
+                    break;
+                }
+            }
+            break;
+        }
+        walk = up;
+    }
+    if (found && own.is_accessor()) {
+        if (!own.setter.is_callable()) { return false; }
+        const value args[1] = {v};
+        (void)cx.call(own.setter, args, receiver);
+        return true;
+    }
+    if (found && !own.writable) { return false; }
+    if (!receiver.is_object_like()) { return false; }
+    context::property_descriptor existing;
+    const bool exists = cx.own_property(receiver, name, existing);
+    if (threw()) { return true; }
+    context::property_descriptor wanted;
+    wanted.has_value = true;
+    wanted.held = v;
+    if (exists) {
+        if (existing.is_accessor() || !existing.writable) { return false; }
+    } else {
+        wanted.has_writable = wanted.has_enumerable = wanted.has_configurable = true;
+        wanted.writable = wanted.enumerable = wanted.configurable = true;
+    }
+    return cx.define_own_property(receiver, name, wanted);
+}
+
+} // namespace
+
 // op::set_index's body, extracted verbatim so the interpreter and a compiled
 // body run one implementation rather than two - ct_aot_set_index is the other
 // caller.
@@ -235,7 +309,7 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             return;
         }
-        store_property(p->target, name, v);
+        if (!set_for_receiver(*this, p->target, name, v, target)) { store_rejected_ = true; }
         return;
     }
     if (target.is_object()) {
@@ -562,6 +636,15 @@ bool context::assign_through_accessor(value target, const std::string & name, va
             return true;
         }
         if (obj->prototype.is_undefined()) { return false; } // an explicit null [[Prototype]]
+        // A PROXY on the chain decides the write (10.1.9.2 step 2.b,
+        // parent.[[Set]](P, V, Receiver)): its `set` trap sees `target` as the
+        // receiver, or its target's chain carries on with it.
+        if (obj->prototype.is_kind(heap_kind::proxy)) {
+            if (!set_for_receiver(*this, obj->prototype, name, v, target)) {
+                store_rejected_ = true;
+            }
+            return true;
+        }
         obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())
                                          : nullptr;
     }

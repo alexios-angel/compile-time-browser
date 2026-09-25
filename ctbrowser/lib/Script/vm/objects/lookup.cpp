@@ -345,10 +345,16 @@ value context::lookup_property(value target, const std::string & name) {
                 obj = static_cast<object_object *>(obj->prototype.as_heap());
                 continue;
             }
+            // A PROXY on the chain is asked with `target` as the receiver
+            // (10.1.8.1 step 3): its `get` trap, or its target's getter, sees
+            // the object the read began on.
+            if (obj->prototype.is_kind(heap_kind::proxy)) {
+                return get_with_receiver(obj->prototype, name, target);
+            }
             // A PROTOTYPE THAT IS NOT A PLAIN OBJECT - an Array
-            // (`foo.prototype = [1]`), a function, a proxy - carries on the
-            // walk in its own arm below. Its getters see it as the receiver
-            // rather than `target`, which nothing in the corpus observes.
+            // (`foo.prototype = [1]`), a function - carries on the walk in its
+            // own arm below. Its getters see it as the receiver rather than
+            // `target`, which nothing in the corpus observes.
             if (obj->prototype.is_heap() && !obj->prototype.is_string()) {
                 return lookup_property(obj->prototype, name);
             }
