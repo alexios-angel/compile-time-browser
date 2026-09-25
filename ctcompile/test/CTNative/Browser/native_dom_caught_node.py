@@ -520,7 +520,8 @@ RAW_HELPER_SOURCES |= {
 }
 
 
-# `undefined` is a source global read, not a proved literal operand.
+# Retain the complete source-global witnesses; the initialized provider and
+# absence of source writes must prove the binding before helper projection.
 RAW_HELPER_SOURCES |= {
     name.replace("-primitive-equality", "-global-undefined"): source.replace(
         "null === false", "null === undefined"
@@ -614,13 +615,6 @@ var outcome0 = observe(false), outcome1 = observe(true);
             initial_intrinsics=INTRINSICS,
         )
         raw_label = f"{name}-raw-helpers"
-        if name.endswith("-helper-global-undefined"):
-            refused = dom.lower(
-                args, raw, raw_manifest, raw_label, success=False, max_steps=1_000_000
-            )
-            if "DOM Symbol.iterator must be a closed identity method" not in refused:
-                raise RuntimeError(f"{name}: unproved global read lost its helper refusal")
-            continue
         raw_steps = (
             1_000_000
             if name.endswith(
