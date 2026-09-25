@@ -247,9 +247,15 @@ void dom_bindings::install_control_select_options(context & cx) {
             // flags are next computed - which a read of ONE option's
             // selectedness must do too, or `slt.value = "2"` left
             // `slt.options[1].selected` false (reset-form.html).
+            // AND THE FLAGS ARE THE ANSWER: an untouched display-size-1
+            // select selects its first enabled option without a slot saying
+            // so (select-validity.html reads the placeholder's `selected`).
             if (const node_id select = select_of(txn, id)) {
                 std::vector<node_id> options;
-                (void)helpers.selected_flags(c, txn, b, select, options);
+                const std::vector<bool> flags = helpers.selected_flags(c, txn, b, select, options);
+                for (std::size_t i = 0; i < options.size(); ++i) {
+                    if (options[i] == id) { return value::boolean(flags[i]); }
+                }
             }
             return value::boolean(helpers.option_selected(c, txn, b, id));
         },
@@ -516,9 +522,7 @@ void dom_bindings::install_control_select_options(context & cx) {
                 const value select =
                     c.lookup_property(c.current_this(), "@@sym:ctbrowser:options-owner");
                 dom_bindings * b = owner_of(select);
-                if (b == nullptr) {
-                    return {nullptr, node_id{}};
-                }
+                if (b == nullptr) { return {nullptr, node_id{}}; }
                 return {b, b->handle_of(select)};
             };
             on->define_accessor(

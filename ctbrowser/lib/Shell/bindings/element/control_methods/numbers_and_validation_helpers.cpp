@@ -140,21 +140,14 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
                 }
             }
             bool missing = first == options.size();
-            // The placeholder label option: a display-size-1 single
-            // select's first option child with an empty value.
+            // The placeholder label option (4.10.7): in a display-size-1
+            // single select, the FIRST OPTION IN THE LIST OF OPTIONS -
+            // an optgroup's included - when its value is empty and its
+            // parent is the select itself.
             if (!missing && helpers.display_size(txn, b, id) == 1 &&
-                !helpers.has_attribute(txn, b, id, "multiple")) {
-                node_id first_child;
-                for (const node_id child : txn.children(id)) {
-                    if (helpers.is(txn, child, "option")) {
-                        first_child = child;
-                        break;
-                    }
-                }
-                if (first_child && options[first] == first_child &&
-                    helpers.option_value(txn, b, first_child).empty()) {
-                    missing = true;
-                }
+                !helpers.has_attribute(txn, b, id, "multiple") && first == 0 &&
+                txn.parent(options[0]) == id && helpers.option_value(txn, b, options[0]).empty()) {
+                missing = true;
             }
             if (missing) { flags |= value_missing; }
         }
