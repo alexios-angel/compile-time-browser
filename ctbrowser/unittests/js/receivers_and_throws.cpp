@@ -84,5 +84,14 @@ int main() {
               "var o = {ro: 12}; var r = o.ro + ',' + o.hasOwnProperty('ro');"
               "delete Object.prototype.ro; return r; })()",
               "12,true");
+    // Spreading a proxy asks its traps: ownKeys, then each key's descriptor,
+    // then a [[Get]] of the enumerable ones.
+    js_expect("(function(){var log = []; var p = new Proxy({a: 1, b: 2}, {"
+              " ownKeys: function (t) { log.push('keys'); return ['b', 'a']; },"
+              " getOwnPropertyDescriptor: function (t, k) { log.push('d' + k);"
+              "   return Reflect.getOwnPropertyDescriptor(t, k); },"
+              " get: function (t, k) { log.push('g' + k); return t[k]; }});"
+              "var o = {...p}; return log.join() + '|' + Object.keys(o).join() + o.a + o.b; })()",
+              "keys,db,gb,da,ga|b,a12");
     REPORT("receivers_and_throws");
 }

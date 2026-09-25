@@ -195,6 +195,51 @@ void context::copy_own_properties(value target, value source) {
             into->set(std::to_string(i), items[i]);
         }
         if (arr->named) { copy_own_properties(target, value::object(arr->named.get())); }
+    } else if (source.is_kind(heap_kind::proxy)) {
+        // A PROXY IS ASKED, trap by trap, as CopyDataProperties (7.3.25) has
+        // it: OwnPropertyKeys through `ownKeys`, then for each key
+        // [[GetOwnProperty]] and - an enumerable one only - [[Get]]. It
+        // copied nothing at all. With no `ownKeys` trap its target's keys
+        // are the list, read off the target itself.
+        auto * p = static_cast<proxy_object *>(source.as_heap());
+        const std::size_t before = unwinds();
+        const auto threw = [&] { return throw_pending() || unwinds() != before; };
+        bool failed = false;
+        const value trap = proxy_trap(source, "ownKeys", &failed);
+        if (failed || threw()) { return; }
+        if (!trap.is_callable()) {
+            copy_own_properties(target, p->target);
+            return;
+        }
+        const value args[1] = {p->target};
+        const value list = call(trap, args, p->handler);
+        if (threw()) { return; }
+        if (!list.is_array()) {
+            throw_error("TypeError", "'ownKeys' on proxy: trap result is not an array");
+            return;
+        }
+        const rooted keep_list{*this, list};
+        std::vector<std::string> keys;
+        for (const value & key : static_cast<array_object *>(list.as_heap())->items) {
+            if (key.is_string()) {
+                keys.push_back(static_cast<string_object *>(key.as_heap())->text);
+            } else if (key.is_kind(heap_kind::symbol)) {
+                keys.push_back(static_cast<symbol_object *>(key.as_heap())->key);
+            } else {
+                throw_error("TypeError", "'ownKeys' on proxy: a key is neither a string nor "
+                                         "a symbol");
+                return;
+            }
+        }
+        for (const std::string & key : keys) {
+            property_descriptor found;
+            const bool present = own_property(source, key, found);
+            if (threw()) { return; }
+            if (!present || !found.enumerable) { continue; }
+            const value item = lookup_property(source, key);
+            if (threw()) { return; }
+            into->set(key, item);
+        }
     }
 }
 
