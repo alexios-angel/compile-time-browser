@@ -15,6 +15,70 @@ namespace ctcompile::test::exception_recovery {
 
 using ctcompile::ctnative::host_detail::projectInvocationContinuation;
 
+static void testStructuredSourceOrdering(mlir::ModuleOp original) {
+    auto module = mlir::OwningOpRef<mlir::ModuleOp>(original.clone());
+    auto entry = module->lookupSymbol<ctjs::FuncOp>("entry$0");
+    auto & body = entry.getBody().front();
+    auto closure = *body.getOps<ctjs::CreateClosureOp>().begin();
+    auto store = *body.getOps<ctjs::SetPropertyOp>().begin();
+    auto attempt = *body.getOps<ctjs::TryOp>().begin();
+    auto invocation = *attempt.getBody().front().getOps<ctjs::InvokeOp>().begin();
+    auto & normal = invocation.getNormalBody().front();
+    auto & unwind = invocation.getUnwindBody().front();
+    auto normalRead = *normal.getOps<ctjs::GetPropertyOp>().begin();
+    auto normalCall = *normal.getOps<ctjs::CallOp>().begin();
+    auto unwindCall = *unwind.getOps<ctjs::CallOp>().begin();
+    auto caughtCall = *attempt.getCatchBody().front().getOps<ctjs::CallOp>().begin();
+    mlir::OpBuilder at(normalCall);
+    auto yes = mlir::arith::ConstantIntOp::create(at, closure.getLoc(), 1, 1);
+    auto branch = mlir::scf::IfOp::create(at, closure.getLoc(), yes, false);
+    at.setInsertionPoint(branch.getThenRegion().front().getTerminator());
+    auto * nestedCall = at.clone(*normalCall);
+    at.setInsertionPointToStart(&unwind);
+    auto scope = mlir::scf::ExecuteRegionOp::create(at, closure.getLoc(), mlir::TypeRange{});
+    auto & unknown = scope.getRegion().emplaceBlock();
+    at.setInsertionPointToEnd(&unknown);
+    auto * unknownRead = at.clone(*normalRead);
+    mlir::scf::YieldOp::create(at, closure.getLoc());
+    at.setInsertionPointAfter(attempt);
+    auto * lateStore = at.clone(*store);
+    if (!check(mlir::succeeded(mlir::verify(*module)), "source ordering fixture verifies")) {
+        return;
+    }
+    const auto before = printed(*module);
+    const auto ordered = [&](mlir::Operation * definition, mlir::Operation * use, bool expected,
+                             llvm::StringRef message) {
+        ctcompile::ctnative::dom_source_detail::DOMSource proof(100000);
+        check(proof.precedesInStructuredBody(definition, use) == expected, message);
+        const unsigned used = 100000 - proof.remaining;
+        if (expected && used) {
+            for (unsigned budget : {used, used - 1, 0u}) {
+                ctcompile::ctnative::dom_source_detail::DOMSource limited(budget);
+                check(limited.precedesInStructuredBody(definition, use) == (budget == used),
+                      "source ordering charges each ancestor and refuses incomplete proofs");
+            }
+        }
+        check(printed(*module) == before, "source ordering and budget refusal preserve all IR");
+    };
+    ordered(closure, &invocation.getBody().front().front(), true,
+            "closure precedes exact protected call");
+    ordered(closure, normalCall, true, "closure precedes normal continuation call");
+    ordered(closure, unwindCall, true, "closure precedes unwind continuation call");
+    ordered(closure, caughtCall, true, "closure precedes caught continuation call");
+    ordered(store, nestedCall, true, "assignment precedes whole nested continuation");
+    ordered(normalRead, nestedCall, true, "local definition precedes its nested selection");
+    ordered(lateStore, normalCall, false, "late assignment cannot reach normal continuation");
+    ordered(lateStore, unwindCall, false, "late assignment cannot reach unwind continuation");
+    ordered(lateStore, caughtCall, false, "late assignment cannot reach caught continuation");
+    ordered(normalRead, unwindCall, false, "normal definition cannot reach sibling unwind");
+    ordered(&attempt.getBody().front().front(), caughtCall, false,
+            "try-body definition cannot reach sibling catch");
+    ordered(closure, unknownRead, false, "unknown region ancestry remains refused");
+    ordered(closure, &invocation.getBody().front().back(), false,
+            "protected body admits only the exact call, not state transport");
+    ordered(store, store, false, "an assignment cannot precede itself");
+}
+
 static void testInvocationCallableReads(mlir::MLIRContext & context) {
     const std::string source = R"MLIR(module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -60,6 +124,7 @@ static void testInvocationCallableReads(mlir::MLIRContext & context) {
         if (!check(static_cast<bool>(module), "immutable invocation callable fixture parses")) {
             return;
         }
+        if (control == 0) { testStructuredSourceOrdering(*module); }
         auto entry = module->lookupSymbol<ctjs::FuncOp>("entry$0");
         auto & body = entry.getBody().front();
         auto holder = *body.getOps<ctjs::CreateObjectOp>().begin();
@@ -853,14 +918,22 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                   contract.moduleSha256 == ctcompile::ctnative::hostContractFingerprint(*module),
               "original observing iterator defers suppression without changing any source state");
         if (!close) { llvm::consumeError(close.takeError()); }
-        const auto boundary = structured ? "DOM helper call has unsupported arity or source order"
-                              : method   ? "DOM Symbol.iterator must be a closed identity method"
-                                         : "DOM iterator getter requires a terminal throw";
+        const auto boundary = method ? "DOM Symbol.iterator must be a closed identity method"
+                                     : "DOM iterator getter requires a terminal throw";
         for (unsigned budget : {0u, 100000u}) {
             mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
             auto proof = contract;
             auto error = ctcompile::ctnative::prepareDOMEntry(*candidate, proof, budget);
             const auto reason = error ? llvm::toString(std::move(error)) : std::string{};
+            if (structured && budget) {
+                check(reason.empty() && mlir::succeeded(mlir::verify(*candidate)) &&
+                          proof.moduleSha256 ==
+                              ctcompile::ctnative::hostContractFingerprint(*candidate) &&
+                          ctcompile::ctnative::DOMEntryAnalysis(*candidate, proof).proved(),
+                      "original structured iterator prepares and passes fresh complete DOM proof");
+                if (!reason.empty()) { llvm::errs() << reason << '\n'; }
+                continue;
+            }
             check(reason.find(budget ? boundary : "budget") != std::string::npos &&
                       printed(*candidate) == originalModule &&
                       proof.moduleSha256 == contract.moduleSha256,

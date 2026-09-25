@@ -30,17 +30,20 @@ bool DOMSource::undefined(mlir::Value value) {
 }
 
 bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use) {
-    // The selected arm, loop or protected call follows the definition.
-    // Invoke continuations still require their own exception/state proof.
+    // Every selected arm follows the definition, including exception outcomes.
+    // Only ordering is proved here; capture, lifetime and effect checks remain
+    // with the callers. A capture assignment must precede the whole enclosure.
     while (use->getBlock() != definition->getBlock()) {
         if (!step()) { return false; }
         auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(use->getParentOp());
         const bool protectedCall = invocation && use->getParentRegion() == &invocation.getBody() &&
                                    llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(use);
-        auto attempt = llvm::dyn_cast_or_null<ctjs::TryOp>(use->getParentOp());
-        const bool protectedBody = attempt && use->getParentRegion() == &attempt.getBody();
-        if (!protectedCall && !protectedBody &&
-            !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp>(use->getParentOp())) {
+        const bool continuation =
+            invocation && (use->getParentRegion() == &invocation.getNormalBody() ||
+                           use->getParentRegion() == &invocation.getUnwindBody());
+        if (!protectedCall && !continuation &&
+            !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
+                use->getParentOp())) {
             return false;
         }
         use = use->getParentOp();

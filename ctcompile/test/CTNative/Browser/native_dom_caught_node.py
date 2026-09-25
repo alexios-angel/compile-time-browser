@@ -397,6 +397,40 @@ OUTER_SOURCES = {
 
 
 def check_outer_catches(args):
+    compilers = find_compilers()
+    compilers[1] = args.clang
+    includes, libraries = dom.link_options(args)
+    checks = r"""
+        const auto exercise = [&](ctbrowser::document & target, node_id id, auto && call) {
+            const auto next = target.atoms().intern("data-next");
+            const auto yielded = target.atoms().intern("data-yielded");
+            const auto closed = target.atoms().intern("data-closed");
+            const auto visited = target.atoms().intern("data-visited");
+            target.log_writes(true);
+            for (bool exhausted : {false, true}) {
+                for (bool seen : {false, true}) {
+                    assert(target.remove_attribute(id, yielded));
+                    assert(target.remove_attribute(id, closed));
+                    assert(target.remove_attribute(id, visited));
+                    if (exhausted) { assert(target.set_attribute(id, yielded, "yes")); }
+                    if (seen) { assert(target.set_attribute(id, visited, "yes")); }
+                    (void)target.take_writes();
+                    assert(static_cast<bool>(call()) == (!exhausted || seen));
+                    const auto writes = target.take_writes();
+                    assert(writes.size() == (exhausted ? 2u : 3u));
+                    assert(writes[0].name == next && writes[1].name == yielded);
+                    if (!exhausted) { assert(writes[2].name == closed); }
+                    for (const auto & write : writes) { assert(write.node == id && !write.text); }
+                    assert(target.read().attribute_value(id, next) == (exhausted ? "true" : "false"));
+                    assert(target.read().attribute_value(id, yielded) == "yes");
+                    assert(target.read().has_attribute(id, closed) == !exhausted);
+                }
+            }
+        };
+        exercise(doc, button, [&] { return @ENTRY@(alias); });
+        exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
+        (void)pressed;
+    """
     for name, source in OUTER_SOURCES.items():
         script = source + """
 function observe(exhausted) {
@@ -441,16 +475,31 @@ var outcome0 = observe(false), outcome1 = observe(true);
         ir, contract = dom.prepare(args, name, source, 1, entry_name="customElements")
         for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
             for optimize in (False, True):
-                result = dom.lower(
+                label = f"{name}-{provider}-{optimize}"
+                manifest = dict(contract, provider=provider, initial_intrinsics=INTRINSICS)
+                native = dom.lower(
                     args,
                     ir,
-                    dict(contract, provider=provider, initial_intrinsics=INTRINSICS),
-                    f"{name}-{provider}-{optimize}",
+                    manifest,
+                    label,
+                    optimize=optimize,
+                )
+                cpp = run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+                source_cpp = cpp.replace(
+                    'throw std::invalid_argument("DOM element belongs to another session");', ""
+                )
+                if "throw " in source_cpp or "catch (" in source_cpp:
+                    raise RuntimeError("iterator catch escaped into a native exception")
+                dom.standalone(args, native, label, checks, compilers, includes, libraries)
+                dom.lower(
+                    args,
+                    ir,
+                    manifest,
+                    label + "-zero-budget",
                     optimize=optimize,
                     success=False,
+                    max_steps=0,
                 )
-                if "DOM helper call has unsupported arity or source order" not in result:
-                    raise RuntimeError(f"{name}: lost recovered protocol diagnostic: {result}")
 
 
 if __name__ == "__main__":
