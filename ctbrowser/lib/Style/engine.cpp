@@ -151,11 +151,24 @@ void engine::note_chain(std::size_t depth, node_id node, const computed_style_pt
     if (cq_chain_.size() <= depth) { cq_chain_.resize(depth + 1); }
     std::pair<node_id, node_id> containers =
         depth > 0 ? cq_chain_[depth - 1] : std::pair<node_id, node_id>{};
+    // Only an ELIGIBLE one: a container with no box to contain - a table,
+    // an inline, display: none or contents - is passed over for the next
+    // one out (container-units-ineligible-container). A vertical
+    // inline-size container contains its height.
     if (resolved) {
+        const std::string_view mode = resolved->get(atoms_->intern_lower("writing-mode"));
+        const bool vertical = mode.starts_with("vertical") || mode.starts_with("sideways");
         for (const std::string_view word :
              split_top_level(resolved->get(atoms_->intern_lower("container-type")), " \t\n")) {
-            if (word == "size") { containers = {node, node}; }
-            if (word == "inline-size") { containers.first = node; }
+            if (word != "size" && word != "inline-size") { continue; }
+            if (!container_size_of(node)) { break; }
+            if (word == "size") {
+                containers = {node, node};
+            } else if (vertical) {
+                containers.second = node;
+            } else {
+                containers.first = node;
+            }
         }
     }
     cq_chain_[depth] = containers;
