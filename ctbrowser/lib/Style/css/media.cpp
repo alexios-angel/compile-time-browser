@@ -166,6 +166,13 @@ constexpr feature_entry container_features[] = {
 // `<general-enclosed>` the caller folds as unknown.
 [[nodiscard]] std::optional<float> math_in_px(std::string_view text, const media_environment & env,
                                               const container_box * box = nullptr) {
+    // NO random() IN A QUERY (CSS Values 5 §random, csswg-drafts#10982): a
+    // condition that could answer differently each time it is asked is
+    // unknown, which is what a value that is not one makes it.
+    if (text.find("random(") != std::string_view::npos ||
+        text.find("random-item(") != std::string_view::npos) {
+        return std::nullopt;
+    }
     length_context ctx = box != nullptr ? box->lengths : length_context{};
     ctx.viewport_width = env.viewport_width;
     ctx.viewport_height = env.viewport_height;

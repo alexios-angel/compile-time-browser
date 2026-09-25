@@ -113,6 +113,9 @@ intrinsic_sizes measure_box(const box_node & b, const constraints & c,
         // at all, so measuring them answers zero for a 300px canvas.
         return intrinsic_sizes{b.intrinsic_width, b.intrinsic_width};
     }
+    // An inline-size-contained box contributes no content width (CSS
+    // Containment 2 §3.2), so a container's size never waits on its content.
+    if (b.contain_inline_size) { return intrinsic_sizes{}; }
     if (b.kind == box_kind::flex) { return flex_flow{}.measure(b, c, measure); }
     if (b.kind == box_kind::table) { return table_flow{}.measure(b, c, measure); }
     if (b.establishes_inline_context()) { return inline_flow{}.measure(b, c, measure); }

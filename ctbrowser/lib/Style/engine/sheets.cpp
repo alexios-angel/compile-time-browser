@@ -608,13 +608,13 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             (needs.scroll_state && !scroll_state)) {
             continue;
         }
-        // THE CONTENT BOX as last laid out; an element with no box - not
-        // laid out yet, or `display: none` - is no size container, and
-        // the search goes on past it.
+        // THE CONTENT BOX as last laid out. The container is chosen by its
+        // style alone: one with no box to contain - not laid out yet,
+        // `display: none`, an inline box - is still the one asked, and its
+        // sizes are unknown (never-match-container).
         css::container_box box;
         if (size || inline_size || scroll_state) {
             const std::optional<container_size> laid = container_size_of(levels_[d][path_[d]].node);
-            if (!laid && (needs.inline_axis || needs.block_axis)) { continue; }
             if (laid && (size || inline_size)) {
                 box.width = laid->width;
                 if (size) { box.height = laid->height; }
@@ -643,10 +643,18 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
         // `and`/`or`/`not` - and a third branch keeps unknown apart from
         // false, since `not` of unknown is still unknown.
         const node_id at = levels_[d][path_[d]].node;
+        // NO random() IN A QUERY (csswg-drafts#10982), written in it or
+        // reached through a custom property: the feature is unknown.
+        const auto random = [](std::string_view v) {
+            return v.find("random(") != std::string_view::npos ||
+                   v.find("random-item(") != std::string_view::npos;
+        };
         const css::style_query query = [&](std::string_view text) {
-            const css::custom_lookup lookup = [&style](atom n) -> std::optional<std::string_view> {
+            if (random(text)) { return css::truth::unknown; }
+            const css::custom_lookup lookup = [&style,
+                                               &random](atom n) -> std::optional<std::string_view> {
                 const std::string_view v = style->get(n);
-                if (v.empty() || v == guaranteed_invalid) { return std::nullopt; }
+                if (v.empty() || v == guaranteed_invalid || random(v)) { return std::nullopt; }
                 return v;
             };
             const css::attribute_lookup attributes =

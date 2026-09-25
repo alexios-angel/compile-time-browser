@@ -64,7 +64,13 @@ void browser::load_author_styles() {
     styles_->set_container_size(
         [this](node_id id) -> std::optional<ctbrowser::style::engine::container_size> {
             const ctbrowser::layout::fragment * f = fragments_.find(id);
-            if (f == nullptr || f->box == nullptr) { return std::nullopt; }
+            // Size containment does not apply to an inline box, so it has no
+            // size to answer with (CSS Containment 2 §3.2).
+            if (f == nullptr || f->box == nullptr ||
+                f->box->kind == ctbrowser::layout::box_kind::inline_ ||
+                f->box->kind == ctbrowser::layout::box_kind::text) {
+                return std::nullopt;
+            }
             const ctbrowser::layout::resolved_edges e = ctbrowser::layout::edges_of(*f);
             ctbrowser::style::engine::container_size size{
                 std::max(0.0f, f->bounds.width - e.horizontal_inner()),
