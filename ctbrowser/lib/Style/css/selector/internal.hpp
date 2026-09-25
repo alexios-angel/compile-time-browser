@@ -240,7 +240,13 @@ private:
         // anything the compound already knows about this element.
         if (ascii_iequals(name, "lang") || ascii_iequals(name, "dir")) {
             const bool want_dir = ascii_iequals(name, "dir");
-            if (!parse_text_arguments(inner, want_dir, ref.ranges)) { return false; }
+            if (!parse_text_arguments(inner, want_dir, ref.ranges)) {
+                // `:dir(<ident>)` has exactly one grammar, and `:dir()`,
+                // `:dir(ltr, rtl)` and `:dir('ltr')` are outside it: a syntax
+                // error (Selectors 4 §7.1), not an unmatchable compound.
+                if (want_dir) { invalid = true; }
+                return false;
+            }
             ref.kind = want_dir ? pseudo_kind::dir : pseudo_kind::lang;
             ++into.classes; // a pseudo-class is class-level
             into.part.pseudos.push_back(std::move(ref));
@@ -302,22 +308,51 @@ private:
         // the real one's `selectors` vector is the rule's own list and a nested
         // selector is not an alternative of it.
         const std::size_t before = sheet_->selectors.size();
-        // The nested list's own syntax errors are this selector's: `:not(>)` is not a
-        // selector, and the flag has to come back out of the recursion to say so.
-        selector_parser nested{*sheet_, *atoms_};
-        nested.relative_ = is_has;
-        nested.nesting_ = nesting_;
-        const std::uint32_t count = nested.run(inner);
-        invalid = invalid || nested.invalid();
-        // `:is(&.a)` contains the nesting selector, and `:not(:scope)` names
-        // the scoping root, as surely as the outer compound would.
-        saw_nesting_ = saw_nesting_ || nested.saw_nesting_;
-        saw_scope_ = saw_scope_ || nested.saw_scope_;
-        for (std::size_t i = 0; i < count; ++i) {
-            ref.args.push_back(std::move(sheet_->selectors[before + i]));
+        if (is_is || is_where) {
+            // A FORGIVING selector list (Selectors 4 §4.2): each alternative is
+            // parsed on its own and one that does not parse is DROPPED rather than
+            // sinking the rule - `:is(:total-nonsense, #a)` is `:is(#a)`, and
+            // `:is()` is valid and matches nothing. selectorText keeps the
+            // author's bytes for a list that lost something.
+            std::size_t at = 0;
+            bool dropped = false;
+            for (;;) {
+                std::size_t end = at;
+                while (end < inner.size() && !is_comma(inner[end])) { ++end; }
+                selector_parser one{*sheet_, *atoms_};
+                one.nesting_ = nesting_;
+                const std::uint32_t n = one.run(inner.subspan(at, end - at));
+                if (!one.invalid() && n == 1) {
+                    ref.args.push_back(std::move(sheet_->selectors[before]));
+                    saw_nesting_ = saw_nesting_ || one.saw_nesting_;
+                    saw_scope_ = saw_scope_ || one.saw_scope_;
+                } else {
+                    dropped = true;
+                }
+                sheet_->selectors.resize(before);
+                if (end >= inner.size()) { break; }
+                at = end + 1;
+            }
+            if (dropped) { into.part.dropped = true; }
+            if (ref.args.empty()) { return false; }
+        } else {
+            // The nested list's own syntax errors are this selector's: `:not(>)` is not
+            // a selector, and the flag has to come back out of the recursion to say so.
+            selector_parser nested{*sheet_, *atoms_};
+            nested.relative_ = is_has;
+            nested.nesting_ = nesting_;
+            const std::uint32_t count = nested.run(inner);
+            invalid = invalid || nested.invalid();
+            // `:is(&.a)` contains the nesting selector, and `:not(:scope)` names
+            // the scoping root, as surely as the outer compound would.
+            saw_nesting_ = saw_nesting_ || nested.saw_nesting_;
+            saw_scope_ = saw_scope_ || nested.saw_scope_;
+            for (std::size_t i = 0; i < count; ++i) {
+                ref.args.push_back(std::move(sheet_->selectors[before + i]));
+            }
+            sheet_->selectors.resize(before);
+            if (ref.args.empty()) { return false; }
         }
-        sheet_->selectors.resize(before);
-        if (ref.args.empty()) { return false; }
         // The CSSOM has no field for `:has()`, so `selectorText` gives back the
         // author's bytes for a compound holding one - see pseudo_ref::relative.
         if (is_has) { into.part.dropped = true; }
