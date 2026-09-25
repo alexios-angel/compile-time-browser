@@ -476,7 +476,56 @@ void test_files_and_data_transfer() {
        "application/octet-stream,0");
 }
 
+void test_color_events_options_and_entries() {
+    // the-input-element/color.window.js: the colour space and alpha shape
+    // the value, a clean control re-reading its attribute.
+    is("(function () { var i = document.createElement('input'); i.type = 'color';"
+       " i.setAttribute('value', ' #FFFFFF '); var o = [i.value]; i.value = 'blue';"
+       " i.setAttribute('alpha', ''); o.push(i.value); i.value = 'white';"
+       " i.colorSpace = 'display-p3'; o.push(i.value); return o.join('|'); })()",
+       "#ffffff|color(srgb 0 0 1)|color(display-p3 1 1 1)");
+    // SubmitEvent.window.js, FormDataEvent.window.js.
+    is("(function () { var b = document.getElementById('btn');"
+       " var e = new SubmitEvent('submit', {submitter: b, bubbles: true});"
+       " var o = [e instanceof Event, e.submitter === b, e.bubbles,"
+       " new SubmitEvent('x').submitter];"
+       " try { new SubmitEvent('x', {submitter: 1}); o.push('no'); } catch (x) { o.push(x.name); }"
+       " try { SubmitEvent('x'); o.push('no'); } catch (x) { o.push(x.name); }"
+       " var fd = new FormData();"
+       " o.push(new FormDataEvent('formdata', {formData: fd}).formData === fd);"
+       " try { new FormDataEvent('x'); o.push('no'); } catch (x) { o.push(x.name); }"
+       " return o.join(); })()",
+       "true,true,true,,TypeError,TypeError,true,TypeError");
+    // option-element-constructor.html;
+    // the HTMLOptionsCollection indexed setter; button.value is no
+    // [LegacyNullToEmptyString]; accessKeyLabel.
+    is("(function () { var a = new Option('t', 'v', true); var b = new Option('t', 'v', false, "
+       "true);"
+       " var o = [a.selected, a.defaultSelected, b.selected, b.defaultSelected];"
+       " var t = document.createElement('select'); var n = new Option('a', 'a');"
+       " t.options[2] = n; o.push(t.options.length, t.options[2] === n);"
+       " t.options[0] = null; o.push(t.options.length);"
+       " var btn = document.createElement('button'); btn.value = null;"
+       " o.push(btn.getAttribute('value'));"
+       " var k = document.createElement('b'); k.accessKey = 's 0'; o.push(k.accessKeyLabel === '');"
+       " k.accessKey = 'k'; o.push(k.accessKeyLabel);"
+       " return o.join(); })()",
+       "false,true,true,false,3,true,2,null,true,Alt+K");
+    // DataTransfer.files is [SameObject] and live; a FormData entry's name
+    // and string value are scalar value strings; a submission's pairs are
+    // CR LF-normalised only on the way out.
+    is("(function () { var dt = new DataTransfer(); var f = dt.files;"
+       " dt.items.add(new File(['x'], 'n.txt'));"
+       " var o = [dt.files === f, f.length, f[0].name];"
+       " var fd = new FormData(); fd.append('a\\uDC01', 'b\\uD800');"
+       " o.push(fd.has('a\\uFFFD'), fd.get('a\\uDC01') === 'b\\uFFFD');"
+       " fd.append('c\\nd', 'e'); o.push(fd.has('c\\nd'));"
+       " return o.join(); })()",
+       "true,1,n.txt,true,true,true");
+}
+
 int main() {
+    test_color_events_options_and_entries();
     test_barred_validity_groups_and_selection();
     test_files_and_data_transfer();
     test_select_options_and_selectedness();

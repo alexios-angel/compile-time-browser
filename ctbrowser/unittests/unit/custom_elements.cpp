@@ -276,6 +276,46 @@ void test_upgrade_failure_is_reported_and_final() {
              "reported:boom;true;true;TypeError");
 }
 
+// A reaction is enqueued for a CUSTOM element, and only for a callback its
+// class has (HTML 4.13.6). What an upgrading constructor does to its own
+// element enqueues nothing - the upgrade's attributeChanged and connected are
+// read when the upgrade RUNS; an element one upgrade connects is upgraded
+// inside that call; and a removal with no disconnectedCallback leaves the
+// child's pending connectedCallback where it was.
+void test_reactions_wait_for_custom_and_a_callback() {
+    CHECK_EQ(
+        said("<html><body><x-up id=a title=t></x-up><x-in id=p></x-in><x-in id=q></x-in><script>"
+             "var log = [];"
+             "class Up extends HTMLElement {"
+             "  static get observedAttributes() { return ['title', 'id']; }"
+             "  constructor() { super(); this.setAttribute('title', 'u'); this.remove();"
+             "    log.push('ctor'); }"
+             "  attributeChangedCallback(n, o, v) { log.push('attr:' + n + '=' + v); }"
+             "  connectedCallback() { log.push('connected'); }"
+             "  disconnectedCallback() { log.push('disconnected'); }"
+             "}"
+             "customElements.define('x-up', Up);"
+             "alert(log.join(','));"
+             "var order = [];"
+             "customElements.define('x-in', class extends HTMLElement {"
+             "  constructor() { super(); order.push(this.id + ':begin');"
+             "    if (this.id == 'p') { var q = document.getElementById('q');"
+             "      q.remove(); document.body.appendChild(q); }"
+             "    order.push(this.id + ':end'); } });"
+             "alert(order.join(','));"
+             "var seen = [];"
+             "class Parent extends HTMLElement { connectedCallback() {"
+             "  seen.push('begin'); this.firstChild.remove(); seen.push('end'); } }"
+             "class Child extends HTMLElement { connectedCallback() { seen.push('connected'); } }"
+             "customElements.define('x-parent', Parent);"
+             "customElements.define('x-child', Child);"
+             "var parent = new Parent(); parent.appendChild(new Child());"
+             "document.body.appendChild(parent);"
+             "alert(seen.join(','));"
+             "</script></body></html>"),
+        "ctor,attr:id=a,attr:title=t,connected;p:begin,q:begin,q:end,p:end;begin,end,connected");
+}
+
 } // namespace
 
 int main() {
@@ -290,5 +330,6 @@ int main() {
     test_create_element_with_is_and_clone_node();
     test_define_reads_the_constructor_in_spec_order();
     test_upgrade_failure_is_reported_and_final();
+    test_reactions_wait_for_custom_and_a_callback();
     REPORT("custom_elements");
 }
