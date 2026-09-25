@@ -135,7 +135,11 @@ void dom_bindings::install_control_collections_labels(context & cx) {
                     const auto txn = b->doc_->read();
                     if (!helpers.is_labelable(txn, b, id)) { return value::null(); }
                 }
-                return b->make_live_collection(
+                // [SameObject]: the one live NodeList, kept on the element -
+                // an input that turned hidden and back hands out the same one.
+                const value held = helpers.slot_of(c, b, id, "__labels");
+                if (held.is_object_like()) { return held; }
+                const value made = b->make_live_collection(
                     c,
                     [b, id, labeled_control, helpers] {
                         std::vector<node_id> out;
@@ -150,6 +154,8 @@ void dom_bindings::install_control_collections_labels(context & cx) {
                         return out;
                     },
                     "NodeList");
+                helpers.set_slot(c, b, id, "__labels", made);
+                return made;
             });
     }
 

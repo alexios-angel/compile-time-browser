@@ -600,8 +600,9 @@ std::string autocomplete_idl_value(std::string_view attribute, bool has_attribut
     std::string out = field;
     if (kind == category::credential) {
         // `webauthn` names a credential type after a field of the other two
-        // categories, which then sets the remaining shape.
-        if (index == 0) { return {}; }
+        // categories, which then sets the remaining shape - or stands alone
+        // (step 15.2: the first token is "done", and the value is itself).
+        if (index == 0) { return out; }
         --index;
         const auto inner = category_of(tokens[index]);
         if (inner.first != category::normal && inner.first != category::contact) { return {}; }
