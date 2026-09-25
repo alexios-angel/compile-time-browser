@@ -241,6 +241,7 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
     };
     std::vector<std::string> discharged;
     std::vector<std::string> receivers;
+    std::vector<std::string> nested;
     for (const auto & [site, verdict] : original.sites) {
         auto found = refined.sites.find(site);
         if (found == refined.sites.end()) {
@@ -248,6 +249,9 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
             continue;
         }
         const Verdict & after = found->second;
+        const bool nestedOrigin = verdict.reason == EscapeReason::UnknownOp &&
+                                  verdict.by == nullptr &&
+                                  site->getParentRegion() != &function.getBody();
         const bool storedCapture =
             verdict.reason == EscapeReason::UnknownOp && verdict.by != nullptr &&
             verdict.by->getParentRegion() != &function.getBody() &&
@@ -260,17 +264,19 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
             if (after.by != verdict.by || after.position != verdict.position) {
                 fail(r, "an unchanged retained site lost its original witness");
             }
-        } else if ((verdict.reason != EscapeReason::Stored && !storedCapture &&
+        } else if ((!nestedOrigin && verdict.reason != EscapeReason::Stored && !storedCapture &&
                     !((verdict.reason == EscapeReason::Passed || receiverCapture) &&
                       llvm::isa<ctjs::CreateArrayOp>(site) && verdict.position == 0 &&
                       llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(
                           verdict.by))) ||
                    after.reason != EscapeReason::Confined || after.by != nullptr ||
                    after.position != 0 || !refined.arrayRetentionComplete) {
-            fail(r, "the consumer changed a verdict outside complete storage/receiver retention");
+            fail(r, "the consumer changed a verdict outside complete retention");
         } else if (verdict.reason == EscapeReason::Stored || storedCapture) {
             // This counter remains about retained contents, not private receivers.
             discharged.push_back(contentsLabel(site));
+        } else if (nestedOrigin) {
+            nested.push_back(contentsLabel(site));
         } else {
             receivers.push_back(contentsLabel(site));
         }
@@ -284,6 +290,10 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
         llvm::join(receivers, ",") != expected.confinedReceivers) {
         fail(r, "expected confined receivers " + std::string{expected.confinedReceivers} +
                     ", got " + llvm::join(receivers, ","));
+    }
+    if (llvm::join(nested, ",") != expected.confinedNested) {
+        fail(r, "expected confined nested sites " + std::string{expected.confinedNested} +
+                    ", got " + llvm::join(nested, ","));
     }
     if (refined.directStorage.writes.size() != original.directStorage.writes.size() ||
         refined.directLoads.reads.size() != original.directLoads.reads.size() ||

@@ -314,18 +314,29 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
         const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
         return lattice != nullptr && !lattice->getValue().isUninitialized();
     };
+    const auto singleInstance = [&](mlir::Operation * site) {
+        // ponytail: one root block and only conditional ancestors; repeated
+        // CFG/loop sites need distinct instance identities before refinement.
+        if (!llvm::hasSingleElement(function.getBody())) { return false; }
+        for (mlir::Operation * parent = site->getParentOp(); parent != function.getOperation();
+             parent = parent->getParentOp()) {
+            if (!spend() || !llvm::isa<mlir::scf::IfOp>(parent)) { return false; }
+        }
+        return true;
+    };
     // The legacy census deliberately models only top-level CFG operations.
     // Check every nested operand/result against the current solver instead of
     // presenting that partial census as complete. SCF supplies the region
     // branch alias transport; this walk supplies no new alias or contents fact.
-    // Nested sites still lack instance/nonrepetition correspondence and refuse.
+    // A nested site additionally needs the bounded nonrepetition proof above.
     return !function.getBody()
                 .walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
                     if (!spend() ||
                         (operation->getNumRegions() != 0 &&
                          !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) ||
                         (isTrackedSite(operation) &&
-                         operation->getParentRegion() != &function.getBody()) ||
+                         operation->getParentRegion() != &function.getBody() &&
+                         !singleInstance(operation)) ||
                         !llvm::all_of(operation->getOperands(), initialized) ||
                         !llvm::all_of(operation->getResults(), initialized)) {
                         return mlir::WalkResult::interrupt();
@@ -357,7 +368,9 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
     };
     const auto candidate = [&](mlir::Operation * site, const Verdict & verdict) {
         const EscapeReason reason = retentionReason(verdict);
-        return reason == EscapeReason::Stored ||
+        return (reason == EscapeReason::UnknownOp && verdict.by == nullptr &&
+                site->getParentRegion() != &function.getBody()) ||
+               reason == EscapeReason::Stored ||
                (llvm::isa<ctjs::CreateArrayOp>(site) && reason == EscapeReason::Passed &&
                 verdict.position == 0 &&
                 llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(verdict.by));
@@ -457,6 +470,8 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
     // because returning a container does not give each child a unique owner.
     // Array receivers lose their witness only after the complete current query proved
     // every access own and excluded all other exposure, including later effects.
+    // Single-instance nested origins are confined to the FRAME, not their region:
+    // yielded aliases may still be observed after that region has ended.
     for (mlir::Operation * site : confined) {
         if (retentionReason(verdicts.sites[site]) == EscapeReason::Stored) {
             ++verdicts.confinedStoredSites;

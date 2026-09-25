@@ -27,6 +27,7 @@ struct retention_row {
     bool complete = true;
     bool withAnalysis = true;
     const char * confinedReceivers = nullptr;
+    const char * confinedNested = "";
 };
 
 void checkArrayContents(mlir::ModuleOp module, const contents_row & expected);

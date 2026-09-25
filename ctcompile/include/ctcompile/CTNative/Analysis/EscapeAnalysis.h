@@ -587,8 +587,8 @@ struct ArrayContentsEvidence {
 /// sink their implicit captures as unknown_op; no region-control-flow proof
 /// is inferred. Allocations inside nested regions are inventoried with an
 /// UnknownOp verdict and no operand witness, after whole-function refusals.
-/// They must never be treated as confined by a consumer. Frame-retaining operations
-/// inside those regions still trigger the whole-function refusals.
+/// Only the independent refinement below may discharge that inventory verdict.
+/// Frame-retaining operations inside those regions still trigger whole-function refusals.
 ///
 /// With initialized solver evidence, a complete current computeArrayContents
 /// proof may discharge Stored sites absent from every return path, including
@@ -597,7 +597,10 @@ struct ArrayContentsEvidence {
 /// children keep their original witness; no unique owner is inferred.
 /// For scf.if/scf.while, a charged census checks current operand/result lattices
 /// and direct Stored targets before the independent contents proof. The legacy
-/// top-level census remains incomplete, and nested allocation sites still refuse.
+/// top-level census remains incomplete. Nested allocations may refine only in a
+/// single root block with exclusively scf.if ancestors, proving at most one
+/// instance per call, and only when absent from every return's reachable sites.
+/// This proves frame confinement, never region lifetime or native ownership.
 /// Unsupported operations, cycles, missing lattices or budget exhaustion leave
 /// every original verdict intact. No native admission consumes this refinement.
 [[nodiscard]] EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function,
