@@ -704,6 +704,26 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     auto crossBlockReads = comparedReads("    ctjs.set_property %guard[%zero], %one\n", true);
     crossBlockReads.insert(crossBlockReads.find("    %secondRead"), "    scf.if %flag {\n");
     crossBlockReads += "    }\n";
+    const std::string booleanFlag = "    %boolean = ctjs.convert to_boolean %p\n"
+                                    "    %secondFlag = ctjs.truthy %boolean\n";
+    const std::string booleanKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", booleanFlag));
+    const std::string booleanGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", booleanFlag));
+    const std::string booleanNot = "    %boolean = ctjs.convert to_boolean %p\n"
+                                   "    %negated = ctjs.unary not %boolean\n"
+                                   "    %boxed = ctjs.convert to_boolean %negated\n"
+                                   "    %secondFlag = ctjs.truthy %boxed\n";
+    auto booleanComparison = comparedInput();
+    booleanComparison.replace(booleanComparison.find("    %secondFlag ="),
+                              std::string{"    %secondFlag = ctjs.truthy %secondCompare\n"}.size(),
+                              "    %boolean = ctjs.convert to_boolean %secondCompare\n"
+                              "    %secondFlag = ctjs.truthy %boolean\n");
+    auto unrelatedBoolean = booleanFlag;
+    unrelatedBoolean.replace(unrelatedBoolean.find("%p"), 2, "%q");
+    auto numericCondition = booleanFlag;
+    numericCondition.replace(numericCondition.find("to_boolean"), 10, "to_number");
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -2561,6 +2581,65 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .body = loopValues + allocationLoop(crossBlockKeys) + done,
          .complete = false,
          .withAnalysis = false},
+        {.what = "ToBoolean preserves the exact input truthiness choice",
+         .body = loopValues + allocationLoop(booleanKeys) + done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean before and after Not preserves opposite branch choices",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", booleanNot, true))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean composes with dominating strict comparison correspondence",
+         .body = loopValues + allocationLoop(crossBlockStore(booleanComparison)) + done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean correspondence preserves the independent guard read gap",
+         .body =
+             loopValues + allocationLoop(booleanGap, "%two", "%one", "%zero, %zero, %zero") + done,
+         .confinedNested = "fresh"},
+        {.what = "ToBoolean on another input cannot reuse a truthiness choice",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", unrelatedBoolean))) +
+                 done,
+         .complete = false},
+        {.what = "numeric conversion cannot borrow ToBoolean correspondence",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag", numericCondition))) +
+                 done,
+         .complete = false},
+        {.what = "ToBoolean correspondence cannot cancel nonfinite selected Numbers",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", booleanFlag))) +
+                 done,
+         .complete = false},
+        {.what = "every retaining exit preserves the child selected through ToBoolean",
+         .body = loopValues + allocationLoop(booleanKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a ToBoolean-selected holder releases its stored child",
+         .body = loopValues + allocationLoop(booleanKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a ToBoolean-selected saved alias survives clearing its holder",
+         .body = loopValues + allocationLoop(booleanKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "ToBoolean correspondence preserves transient no-result cycle checks",
+         .body = loopValues +
+                 allocationLoop(booleanKeys + "    scf.if %secondFlag {\n"
+                                              "      ctjs.set_property %fresh[%zero], %guard\n"
+                                              "      ctjs.set_property %fresh[%zero], %zero\n"
+                                              "    }\n") +
+                 clearGuard + done,
+         .complete = false},
+        {.what = "ToBoolean correspondence cannot authorize repeated allocation identities",
+         .body = loopValues + allocationLoop(booleanKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "ToBoolean correspondence still requires current initialized solver inputs",
+         .body = loopValues + allocationLoop(booleanKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
          .body = loopValues +
                  allocationLoop(
@@ -3358,6 +3437,64 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         fail(row{.what = chainMutation.what, .body = chainMutation.body, .expected = ""},
              "the Not-chain mutation fixture did not parse");
     }
+    retention_row booleanMutation{
+        .what =
+            "ToBoolean correspondence reproves live conversion inputs, kinds, yields and guards",
+        .body =
+            loopValues + allocationLoop(booleanGap, "%two", "%one", "%zero, %zero, %zero") + done,
+        .confinedNested = "fresh"};
+    auto booleanModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + booleanMutation.body + "}\n", &context);
+    if (booleanModule) {
+        ctjs::FuncOp function = *booleanModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        ctjs::ConvertOp conversion;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        function.walk([&](ctjs::ConvertOp op) { conversion = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto * secondYield = second.getThenRegion().front().getTerminator();
+        auto load = first.getThenRegion()
+                        .front()
+                        .getTerminator()
+                        ->getOperand(0)
+                        .getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = conversion.getOperand();
+        const mlir::Value originalYield = secondYield->getOperand(0);
+        const mlir::Value originalPosition = load.getKey();
+        const mlir::Value zero =
+            store.getObject().getDefiningOp<ctjs::CreateArrayOp>().getElements().front();
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*booleanModule))) {
+            fail(row{.what = booleanMutation.what, .body = booleanMutation.body, .expected = ""},
+                 "the ToBoolean stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 6; ++state) {
+            conversion->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                                 : originalInput);
+            conversion.setKindAttr(ctjs::ConvertKindAttr::get(
+                &context, state == 2 ? ctjs::ConvertKind::ToNumber : ctjs::ConvertKind::ToBoolean));
+            secondYield->setOperand(0, state == 3 ? originalPosition : originalYield);
+            load->setOperand(1, state == 4 ? zero : originalPosition);
+            booleanMutation.complete = state == 0 || state == 5;
+            booleanMutation.confinedNested = booleanMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*booleanModule, booleanMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                booleanMutation.complete) {
+                fail(
+                    row{.what = booleanMutation.what, .body = booleanMutation.body, .expected = ""},
+                    "a stale solver or forged marker supplied ToBoolean correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = booleanMutation.what, .body = booleanMutation.body, .expected = ""},
+             "the ToBoolean mutation fixture did not parse");
+    }
     for (const std::string & comparisons : {comparedGap, crossBlockGap}) {
         retention_row comparisonMutation{
             .what =
@@ -3437,7 +3574,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  "the strict comparison mutation fixture did not parse");
         }
     }
-    std::printf("array retention: %zu rows, one hundred five live states, %zu budget cutoffs\n",
+    std::printf("array retention: %zu rows, one hundred eleven live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 

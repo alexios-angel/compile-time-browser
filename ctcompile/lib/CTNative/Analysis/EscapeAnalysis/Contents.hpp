@@ -69,7 +69,7 @@ struct ContentsValue {
 
 inline std::pair<mlir::Value, bool> conditionChoiceKey(
     mlir::Value condition, llvm::function_ref<bool(std::size_t)> spend) {
-    // Truthy and logical Not are total, without object conversion. The flag
+    // Truthy, ToBoolean and logical Not are total, without object conversion. The flag
     // records whether the branch reverses the exact input's truthiness.
     auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
     if (!truthy) { return {condition, false}; }
@@ -78,6 +78,11 @@ inline std::pair<mlir::Value, bool> conditionChoiceKey(
     while (true) {
         // The shared budget bounds traversal; exhaustion supplies no partial key.
         if (!spend(1)) { return {}; }
+        if (auto convert = input.getDefiningOp<ctjs::ConvertOp>();
+            convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
+            input = convert.getOperand();
+            continue;
+        }
         auto unary = input.getDefiningOp<ctjs::UnaryOp>();
         if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { break; }
         input = unary.getOperand();
