@@ -352,13 +352,13 @@ namespace {
     if (of.is_kind(heap_kind::proxy)) {
         // 10.5.2 [[SetPrototypeOf]] of a proxy: the `setPrototypeOf` trap's
         // boolean, and a true over a non-extensible target must be the truth.
-        // THE CONTRACT IS THE CALLER'S THROW: Object.setPrototypeOf and the
-        // __proto__ setter turn false into their TypeError, so the two
-        // refusals 10.5.2 spells as TypeErrors (a revoked proxy, a trap
-        // lying about a non-extensible target) answer false rather than
-        // throwing here and again there - a throw this native raises has
-        // landed by the time the caller raises its own, which is then
-        // uncaught. Reflect.setPrototypeOf checks the revoked case itself.
+        // THE CONTRACT IS ONE THROW: Object.setPrototypeOf and the
+        // __proto__ setter turn false into their TypeError, so a revoked
+        // proxy answers false rather than throwing here and again there - a
+        // throw this native raises has landed by the time the caller raises
+        // its own, which is then uncaught (Reflect.setPrototypeOf checks the
+        // revoked case itself). A trap lying about a non-extensible target
+        // throws HERE, where Reflect needs it too, and answers true.
         auto * p = static_cast<proxy_object *>(of.as_heap());
         if (!p->handler.is_object_like()) { return false; }
         const value trap = cx.lookup_property(p->handler, "setPrototypeOf");
@@ -375,7 +375,16 @@ namespace {
         if (cx.is_extensible(p->target)) { return true; }
         const value real = prototype_of(cx, p->target);
         if (cx.throw_pending()) { return false; }
-        return real.strict_equals(proto);
+        // Steps 12-13: a `true` over a non-extensible target whose prototype
+        // is NOT the one asked for is the TypeError itself - Reflect's too,
+        // which has no false of its own to turn into one - and a throw
+        // answers true, so the callers above do not throw a second time.
+        if (!real.strict_equals(proto)) {
+            cx.throw_error("TypeError", "'setPrototypeOf' on proxy: trap returned truish for "
+                                        "setting a new prototype on the non-extensible proxy "
+                                        "target");
+        }
+        return true;
     }
     if (prototype_of(cx, of) == proto) { return true; } // step 4: the same one is always fine
     if (of.is_object() && of.as_heap() == cx.prototype(context::proto_kind::object)) {

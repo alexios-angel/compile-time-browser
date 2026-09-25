@@ -426,7 +426,45 @@ bool context::instance_of(value target, value ctor) {
     // proxy of a proxy is legal and a cycle must not be.
     value subject = target;
     for (int hops = 0; hops < 8 && subject.is_kind(heap_kind::proxy); ++hops) {
-        subject = static_cast<proxy_object *>(subject.as_heap())->target;
+        auto * p = static_cast<proxy_object *>(subject.as_heap());
+        // ...UNLESS IT ANSWERS ITSELF: a `getPrototypeOf` trap is
+        // [[GetPrototypeOf]] (10.5.1), and its answer is where the walk goes
+        // on - held to the target when the target is not extensible (steps
+        // 8-11), which is a TypeError otherwise.
+        bool failed = false;
+        const value trap = proxy_trap(subject, "getPrototypeOf", &failed);
+        if (failed || throw_pending() || unwinds() != before) { return false; }
+        if (!trap.is_callable()) {
+            subject = p->target;
+            continue;
+        }
+        const value args[1] = {p->target};
+        const value answered = call(trap, args, p->handler);
+        if (throw_pending() || unwinds() != before) { return false; }
+        if (!answered.is_object_like() && !answered.is_null()) {
+            throw_error("TypeError", "'getPrototypeOf' on proxy: trap returned neither object "
+                                     "nor null");
+            return false;
+        }
+        const bool extensible = is_extensible(p->target);
+        if (throw_pending() || unwinds() != before) { return false; }
+        if (!extensible) {
+            value actual = get_prototype(p->target);
+            if (actual.is_null()) {
+                object_object * table = implicit_prototypes(p->target)[0];
+                actual = table != nullptr ? value::object(table) : value::null();
+            }
+            if (actual.is_undefined()) { actual = value::null(); } // an explicit null
+            if (!actual.same_value(answered)) {
+                throw_error("TypeError", "'getPrototypeOf' on proxy: proxy target is "
+                                         "non-extensible but the trap did not return its "
+                                         "actual prototype");
+                return false;
+            }
+        }
+        if (!answered.is_object_like()) { return false; }
+        if (answered.as_heap() == wanted.as_heap()) { return true; }
+        return instance_of(answered, ctor); // the walk goes on from `answered`
     }
     // The EXPLICIT chain first - a page's own classes, and every builtin whose
     // instances carry a prototype (Error, Map, Blob).
