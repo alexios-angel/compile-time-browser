@@ -54,7 +54,8 @@ struct ContentsValue {
     // Independent binary64 arithmetic result, never reconstructed from converted bits.
     std::optional<double> arithmeticNumber = std::nullopt;
     unsigned arithmeticDepth = 0;
-    // A selected i1 edge in a certified loop, cleared when its producer replays.
+    // A selected truthiness edge in a certified loop. The input's producer or
+    // transport replaces this snapshot; recomputing Truthy itself does not.
     std::optional<bool> conditionChoice = std::nullopt;
 
     mlir::Value origin() const { return kind == ContentsKind::Opaque ? mlir::Value{} : original; }
@@ -64,6 +65,13 @@ struct ContentsValue {
     bool bigInt() const { return kind == ContentsKind::BigInt; }
     bool string() const { return kind == ContentsKind::String; }
 };
+
+inline mlir::Value conditionChoiceKey(mlir::Value condition) {
+    // Truthy is total and pure. Only its exact SSA input shares a choice;
+    // distinct reads and other recomputed expressions keep separate identities.
+    auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
+    return truthy ? truthy.getValue() : condition;
+}
 
 using HeldProperties = llvm::MapVector<mlir::StringAttr, ContentsValue>;
 struct CountedLoop {

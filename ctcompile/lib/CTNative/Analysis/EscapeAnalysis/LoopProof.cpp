@@ -156,9 +156,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         if (left == right) { return true; }
         auto branch = left.getDefiningOp<mlir::scf::IfOp>();
         auto other = right.getDefiningOp<mlir::scf::IfOp>();
-        // Replay retains the choice of this exact immutable i1 value. Equal
-        // ranges or separately recomputed predicates establish no correspondence.
-        if (!branch || !other || branch.getCondition() != other.getCondition()) { return false; }
+        // Replay shares a choice only for the same i1 or Truthy's exact input.
+        // Equal ranges and other recomputed predicates prove no correspondence.
+        if (!branch || !other ||
+            conditionChoiceKey(branch.getCondition()) != conditionChoiceKey(other.getCondition())) {
+            return false;
+        }
         // yieldedInputs accepts only producers reached by the single-visit
         // census, including nested arms. Replay retains their exact i1 choice.
         const auto first = yieldedInputs(left);

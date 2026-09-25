@@ -584,6 +584,21 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string nestedSiblingKeys = nestedSiblingStore(siblingInput());
     const std::string nestedSiblingGap = nestedSiblingStore(
         "      %read = ctjs.get_property %guard[%one]\n" + siblingInput("%read", "%two"));
+    const std::string recomputedFlag = "    %secondFlag = ctjs.truthy %p\n";
+    const std::string recomputedKeys =
+        selectedStore(siblingInput("%zero", "%one", "%secondFlag", recomputedFlag));
+    const std::string recomputedGap =
+        nestedSiblingStore("      %read = ctjs.get_property %guard[%one]\n" +
+                           siblingInput("%read", "%two", "%secondFlag", recomputedFlag));
+    const auto reloadedConditions = [&](const std::string & between) {
+        auto input = siblingInput("%zero", "%one", "%secondFlag",
+                                  between + "    %secondRead = ctjs.get_property %guard[%zero]\n"
+                                            "    %secondFlag = ctjs.truthy %secondRead\n");
+        input.replace(input.find("%flag"), 5, "%firstFlag");
+        return selectedStore("    %firstRead = ctjs.get_property %guard[%zero]\n"
+                             "    %firstFlag = ctjs.truthy %firstRead\n" +
+                             input);
+    };
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -1730,12 +1745,12 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                                                            "    %secondFlag = ctjs.truthy %q\n"))) +
                  done,
          .complete = false},
-        {.what = "recomputing truthiness does not reuse another predicate choice",
+        {.what = "recomputed truthiness retains the exact input's predicate choice",
          .body = loopValues +
                  allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag",
                                                            "    %secondFlag = ctjs.truthy %p\n"))) +
                  done,
-         .complete = false},
+         .confinedNested = "fresh"},
         {.what = "sibling unknown values still require finite Number proof",
          .body = loopValues + allocationLoop(selectedStore(siblingInput("%zero", "%p"))) + done,
          .complete = false},
@@ -1822,12 +1837,12 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                      "%zero", "%one", "%secondFlag", "      %secondFlag = ctjs.truthy %q\n"))) +
                  done,
          .complete = false},
-        {.what = "recomputed nested truthiness has no predicate correspondence",
+        {.what = "recomputed nested truthiness preserves the exact input's correspondence",
          .body = loopValues +
                  allocationLoop(nestedSiblingStore(siblingInput(
                      "%zero", "%one", "%secondFlag", "      %secondFlag = ctjs.truthy %p\n"))) +
                  done,
-         .complete = false},
+         .confinedNested = "fresh"},
         {.what = "nested unknown values still require both independent Number proofs",
          .body =
              loopValues + allocationLoop(nestedSiblingStore(siblingInput("%zero", "%p"))) + done,
@@ -1869,6 +1884,86 @@ void checkArrayRetention(mlir::MLIRContext & context) {
          .complete = false},
         {.what = "nested result correlation requires current initialized solver inputs",
          .body = loopValues + allocationLoop(nestedSiblingKeys) + done,
+         .complete = false,
+         .withAnalysis = false},
+        {.what = "truthiness producers evaluated before either branch share their input choice",
+         .body = loopValues + recomputedFlag +
+                 allocationLoop(selectedStore(siblingInput("%zero", "%one", "%secondFlag"))) + done,
+         .confinedNested = "fresh"},
+        {.what = "recomputed truthiness preserves signed finite Number cancellation",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%negative", "%one", "%secondFlag", recomputedFlag))) +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "recomputed nested truthiness preserves the independent guard read gap",
+         .body = loopValues + allocationLoop(recomputedGap, "%two", "%one", "%zero, %zero, %zero") +
+                 done,
+         .confinedNested = "fresh"},
+        {.what = "recomputed truthiness cannot overwrite a guard dependency",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore("    %read = ctjs.get_property %guard[%zero]\n" +
+                                   siblingInput("%read", "%one", "%secondFlag", recomputedFlag))) +
+                 done,
+         .complete = false},
+        {.what = "separate truthiness input reads do not acquire SSA correspondence",
+         .body = loopValues +
+                 allocationLoop(reloadedConditions(""), "%one", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "mutation between truthiness input reads cannot reuse a predicate choice",
+         .body = loopValues +
+                 allocationLoop(reloadedConditions("    ctjs.set_property %guard[%zero], %fresh\n"),
+                                "%one", "%one", "%zero, %zero") +
+                 done,
+         .complete = false},
+        {.what = "recomputed truthiness still needs independent finite Number operands",
+         .body = loopValues +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%p", "%secondFlag", recomputedFlag))) +
+                 done,
+         .complete = false},
+        {.what = "recomputed truthiness cannot make a nonfinite cancellation an own key",
+         .body = loopValues + "  %nan = ctjs.constant #ctjs.number<9221120237041090560>\n" +
+                 allocationLoop(
+                     selectedStore(siblingInput("%zero", "%nan", "%secondFlag", recomputedFlag))) +
+                 done,
+         .complete = false},
+        {.what = "a retaining exit preserves a child stored through recomputed truthiness",
+         .body = loopValues + allocationLoop(recomputedKeys) +
+                 "  cf.cond_br %flag, ^keep, ^drop\n^keep:\n  ctjs.return %guard\n^drop:\n" + done},
+        {.what = "clearing a recomputed zero key releases the stored child",
+         .body =
+             loopValues + allocationLoop(recomputedKeys) + clearGuard + "  ctjs.return %guard\n",
+         .confinedNested = "fresh"},
+        {.what = "a saved recomputed-key alias survives clearing its holder",
+         .body = loopValues + allocationLoop(recomputedKeys) +
+                 "  %read = ctjs.get_property %guard[%zero]\n" + clearGuard +
+                 "  ctjs.return %read\n"},
+        {.what = "recomputed predicates preserve no-result structural cycle checks",
+         .body = loopValues +
+                 allocationLoop(recomputedKeys +
+                                "    scf.if %secondFlag {\n    } else {\n"
+                                "      ctjs.set_property %fresh[%zero], %guard\n"
+                                "      ctjs.set_property %fresh[%zero], %zero\n    }\n") +
+                 done,
+         .complete = false},
+        {.what = "recomputed predicates cannot hide an unsupported producer effect",
+         .body = loopValues +
+                 allocationLoop(selectedStore(
+                     siblingInput("%zero", "%one", "%secondFlag",
+                                  recomputedFlag + "    %called = ctjs.call %p(%q)\n"))) +
+                 done,
+         .complete = false},
+        {.what = "recomputed predicates cannot authorize repeated allocation identities",
+         .body =
+             loopValues + allocationLoop(recomputedKeys, "%zero", "%one", "%zero, %zero") + done,
+         .complete = false},
+        {.what = "zero visits cannot authorize recomputed-predicate allocation identities",
+         .body = loopValues + allocationLoop(recomputedKeys, "%one") + done,
+         .complete = false},
+        {.what = "recomputed predicates still require current initialized solver inputs",
+         .body = loopValues + allocationLoop(recomputedKeys) + done,
          .complete = false,
          .withAnalysis = false},
         {.what = "calls in an arithmetic key arm still refuse the complete census",
@@ -2388,7 +2483,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         const mlir::Value originalPosition = load->getOperand(1);
         mlir::OpBuilder at(second);
         auto independent = ctjs::TruthyOp::create(at, second.getLoc(), at.getI1Type(),
-                                                  function.getBody().front().getArgument(3));
+                                                  function.getBody().front().getArgument(4));
         mlir::Value zero;
         for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
             if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
@@ -2445,7 +2540,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         const mlir::Value originalPosition = load->getOperand(1);
         mlir::OpBuilder at(second);
         auto independent = ctjs::TruthyOp::create(at, second.getLoc(), at.getI1Type(),
-                                                  function.getBody().front().getArgument(3));
+                                                  function.getBody().front().getArgument(4));
         mlir::Value zero;
         for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
             if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
@@ -2485,7 +2580,67 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  .expected = ""},
              "the nested sibling mutation fixture did not parse");
     }
-    std::printf("array retention: %zu rows, forty-seven live states, %zu budget cutoffs\n",
+    retention_row recomputedMutation{
+        .what = "recomputed correspondence reproves live truthiness inputs, yields and guard reads",
+        .body = loopValues + allocationLoop(recomputedGap, "%two", "%one", "%zero, %zero, %zero") +
+                done,
+        .confinedNested = "fresh"};
+    auto recomputedModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + recomputedMutation.body + "}\n", &context);
+    if (recomputedModule) {
+        ctjs::FuncOp function = *recomputedModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        function.walk([&](ctjs::SetPropertyOp op) { store = op; });
+        auto key = store.getKey().getDefiningOp<ctjs::BinaryOp>();
+        auto first = key.getLhs().getDefiningOp<mlir::scf::IfOp>();
+        auto second = key.getRhs().getDefiningOp<mlir::scf::IfOp>();
+        auto truthy = second.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        auto * thenYield = first.getThenRegion().front().getTerminator();
+        auto * elseYield = second.getElseRegion().front().getTerminator();
+        auto load = thenYield->getOperand(0).getDefiningOp<ctjs::GetPropertyOp>();
+        const mlir::Value originalInput = truthy.getValue();
+        const mlir::Value originalElse = elseYield->getOperand(0);
+        const mlir::Value originalPosition = load->getOperand(1);
+        mlir::Value zero;
+        for (auto literal : function.getBody().front().getOps<ctjs::ConstantOp>()) {
+            if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue());
+                number && number.getBits() == 0) {
+                zero = literal;
+            }
+        }
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*recomputedModule))) {
+            fail(row{.what = recomputedMutation.what,
+                     .body = recomputedMutation.body,
+                     .expected = ""},
+                 "the recomputed truthiness stale solver did not converge");
+        }
+        function->setAttr("ctnative.array_retention_complete", mlir::UnitAttr::get(&context));
+        for (unsigned state = 0; state < 5; ++state) {
+            truthy->setOperand(0, state == 1 ? function.getBody().front().getArgument(4)
+                                             : originalInput);
+            elseYield->setOperand(0, state == 2 ? originalPosition : originalElse);
+            load->setOperand(1, state == 3 ? zero : originalPosition);
+            recomputedMutation.complete = state == 0 || state == 4;
+            recomputedMutation.confinedNested = recomputedMutation.complete ? "fresh" : "";
+            budgets += checkArrayRetention(*recomputedModule, recomputedMutation);
+            if (computeVerdicts(stale, function).arrayRetentionComplete !=
+                recomputedMutation.complete) {
+                fail(row{.what = recomputedMutation.what,
+                         .body = recomputedMutation.body,
+                         .expected = ""},
+                     "a stale solver or forged marker supplied recomputed truthiness "
+                     "correspondence");
+            }
+        }
+    } else {
+        fail(row{.what = recomputedMutation.what, .body = recomputedMutation.body, .expected = ""},
+             "the recomputed truthiness mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, fifty-two live states, %zu budget cutoffs\n",
                 rows.size(), budgets);
 }
 
