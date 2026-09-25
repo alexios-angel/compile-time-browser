@@ -299,6 +299,13 @@ private:
         // `:host()`, `:state()` are real CSS this engine cannot answer, and come
         // back unmatchable; a name CSS has never defined is a syntax error, and the
         // colon branch of `emit` refused it before the function was reached.
+        if (ascii_iequals(name, "state")) {
+            // `:state(<ident>)`, CSS Custom State: one identifier, or a syntax
+            // error - `:state()`, `:state(0)`, `:state(foo(1))`.
+            std::string argument;
+            if (!single_ident_argument(fn, argument)) { invalid = true; }
+            return false;
+        }
         if (!is_not && !is_is && !is_where && !is_has) { return false; }
         ref.kind = is_not ? pseudo_kind::not_ : is_where ? pseudo_kind::where_ : pseudo_kind::is_;
         ref.relative = is_has;
@@ -452,11 +459,15 @@ private:
         // `::view-transition:hover` are syntax errors.
         bool after_pe = false;
         bool view_transition_pe = false;
+        // ...BUT A ::part() takes any pseudo-class that is not about the tree
+        // (CSS Shadow Parts 1 §4.2): `::part(x):state(y)`, `::part(x):disabled`.
+        bool part_pe = false;
 
         const auto start_compound = [&] {
             if (!compounds.empty() && after_pe) { dead = invalid_ = true; }
             after_pe = false;
             view_transition_pe = false;
+            part_pe = false;
             if (!compounds.empty()) { links.push_back(pending); }
             compounds.push_back(building{});
             pending = combinator::descendant;
@@ -573,7 +584,12 @@ private:
                 std::string_view name = text(v);
                 if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
                 if (after_pe &&
-                    (view_transition_pe || !ascii_iequals_any(name, {"not", "is", "where"}))) {
+                    (view_transition_pe ||
+                     !ascii_iequals_any(
+                         name, part_pe ? std::initializer_list<std::string_view>{"not", "is",
+                                                                                 "where", "state"}
+                                       : std::initializer_list<std::string_view>{"not", "is",
+                                                                                 "where"}))) {
                     dead = invalid_ = true;
                     continue;
                 }
@@ -763,11 +779,13 @@ private:
                             ++b.tags;
                             after_pe = true;
                             view_transition_pe = ascii_istarts_with(name, "view-transition");
+                            part_pe = false;
                             if (in_argument_) { dead = invalid_ = true; }
                             continue;
                         }
                         after_pe = true;
                         view_transition_pe = ascii_istarts_with(name, "view-transition");
+                        part_pe = ascii_iequals(name, "part");
                         if (in_argument_) { invalid_ = true; }
                         dead = lossy = true;
                         continue;
@@ -798,6 +816,7 @@ private:
                     ++b.tags; // a pseudo-element is type-level for specificity
                     after_pe = true;
                     view_transition_pe = ascii_istarts_with(name, "view-transition");
+                    part_pe = false;
                     if (in_argument_) { dead = invalid_ = true; }
                     // A PSEUDO-ELEMENT HAS A CASCADE - engine::resolve_pseudo runs
                     // it for getComputedStyle(el, "::before") - and the matcher
@@ -807,10 +826,10 @@ private:
                     continue;
                 }
                 if (after_pe &&
-                    !(view_transition_pe
-                          ? ascii_iequals(name, "only-child")
-                          : ascii_iequals_any(name, {"hover", "active", "focus", "focus-visible",
-                                                     "focus-within"}))) {
+                    !(view_transition_pe ? ascii_iequals(name, "only-child")
+                      : part_pe ? structural_bit_of(name) == 0
+                                : ascii_iequals_any(name, {"hover", "active", "focus",
+                                                           "focus-visible", "focus-within"}))) {
                     dead = invalid_ = true;
                     continue;
                 }

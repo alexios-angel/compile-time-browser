@@ -385,6 +385,8 @@ constexpr ident_grammar ident_grammars[] = {
     {"page", "auto", "", false, false},
     {"view-transition-group", "normal contain nearest none", "", false, false},
     {"view-transition-class", "none", "", true, false},
+    // `none | match-element | <custom-ident>`, CSS View Transitions 2 §3.1.
+    {"view-transition-name", "none match-element auto", "", false, false},
     {"transition-property", "none", "all", true, true},
 };
 
