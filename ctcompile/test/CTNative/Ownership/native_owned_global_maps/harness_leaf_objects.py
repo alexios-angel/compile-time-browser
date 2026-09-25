@@ -1,3 +1,4 @@
+from .harness_map_results import instrument_maps, run_sanitized_lifetime
 from .harness_scalar_maps import (
     LEAF_COMPARISON_CASES,
     inline_runtime,
@@ -53,24 +54,16 @@ def leaf_object_observer_source(source, name):
 
 
 def instrument_leaf_objects(cpp, allocations=1):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
-    if count != 1:
-        raise RuntimeError("leaf object observer needs exactly one entry")
-    changed = (
-        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
-        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n"
-        "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
-        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {\n"
-        "    auto made = std::make_shared<T>();\n"
-        "    ctn_test_objects.emplace_back(made); return made;\n}\n" + changed
+    changed = instrument_maps(
+        cpp,
+        declarations=(
+            "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
+            "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {\n"
+            "    auto made = std::make_shared<T>();\n"
+            "    ctn_test_objects.emplace_back(made); return made;\n}\n"
+        ),
     )
-    changed, count = re.subn(
-        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
-        changed,
-    )
-    if count != 2 or changed.count("std::make_shared<ctnative::identity_object>()") != allocations:
+    if changed.count("std::make_shared<ctnative::identity_object>()") != allocations:
         raise RuntimeError("leaf object observer lost its Map and setter-local allocation sites")
     return changed.replace(
         "std::make_shared<ctnative::identity_object>()",
@@ -370,31 +363,7 @@ def comparison_identity_lifetime(args, cpp, name, mode, compiler):
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(comparison_identity_cpp(cpp, name))
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     expected = f"trace={leaf_readback_sources()[name][2]}\n" * 2
     if result.returncode or result.stdout != expected:
         raise RuntimeError(
@@ -471,31 +440,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != "trace=2\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: saved leaf readback lifetime failure (exit {result.returncode})\n"
@@ -580,31 +525,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != "trace=1\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: leaf Map/callable/object lifetime failure "

@@ -77,6 +77,53 @@ from .sources import (
 )
 
 
+def instrument_maps(cpp, *, declarations=""):
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
+    if count != 1:
+        raise RuntimeError("Map lifetime observer needs exactly one entry")
+    changed = (
+        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
+        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + declarations + changed
+    )
+    changed, count = re.subn(
+        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
+        "ctn_test_maps.emplace_back(made); return made;",
+        changed,
+    )
+    if count != 2:
+        raise RuntimeError("Map lifetime observer lost its allocation helpers")
+    return changed
+
+
+def run_sanitized_lifetime(source, binary, compiler):
+    host.run(
+        [
+            compiler,
+            *owned.FLAGS,
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-fsanitize=address,undefined",
+            "-fsanitize-address-use-after-scope",
+            str(source),
+            "-o",
+            str(binary),
+        ]
+    )
+    return subprocess.run(
+        [str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(
+            os.environ,
+            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        ),
+    )
+
+
 def check_result_calls(cpp, name, mode):
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
@@ -495,31 +542,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != f"trace={value}\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: captured Map lifetime failure\n{result.stdout}{result.stderr}"
@@ -527,21 +550,7 @@ int main() {
 
 
 def shared_lifetime(args, cpp, name, mode, compiler):
-    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
-    if count != 1:
-        raise RuntimeError("shared lifetime harness needs exactly one entry")
-    changed = (
-        "#include <memory>\n#include <type_traits>\n#include <vector>\n"
-        "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
-    )
-    changed, count = re.subn(
-        r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
-        changed,
-    )
-    if count != 2:
-        raise RuntimeError("shared Map lifetime observer lost its allocation helpers")
+    changed = instrument_maps(cpp)
     changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
@@ -627,31 +636,7 @@ int main() {
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-O1",
-            "-g",
-            "-fno-omit-frame-pointer",
-            "-fsanitize=address,undefined",
-            "-fsanitize-address-use-after-scope",
-            str(source),
-            "-o",
-            str(binary),
-        ]
-    )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=dict(
-            os.environ,
-            ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-        ),
-    )
+    result = run_sanitized_lifetime(source, binary, compiler)
     if result.returncode or result.stdout != "trace=1\n" * 2:
         raise RuntimeError(
             f"{name}/{mode}: shared Map lifetime failure\n" f"{result.stdout}{result.stderr}"
