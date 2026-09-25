@@ -783,10 +783,13 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                               "important")) {
                 asked.resize(bang);
             }
-            const std::optional<std::string> answer = css::substitute_var(
-                "if(style(" + asked + "): y; not style(" + asked + "): n; else: u)", lookup,
-                *atoms_, attributes, &conditions);
-            const std::string_view word = trim(answer.value_or("u"), html_whitespace);
+            // Held by name: `word` views it.
+            const std::string answer =
+                css::substitute_var("if(style(" + asked + "): y; not style(" + asked +
+                                        "): n; else: u)",
+                                    lookup, *atoms_, attributes, &conditions)
+                    .value_or("u");
+            const std::string_view word = trim(answer, html_whitespace);
             // A MALFORMED RANGE is unknown whatever the if() made of it.
             const std::optional<bool> range = range_shape(text);
             if (range == false) { return css::truth::unknown; }
