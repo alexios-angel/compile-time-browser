@@ -158,6 +158,25 @@ void install_proxy(context & cx) {
                 c.clear_store_rejected();
                 return value::boolean(!refused);
             }
+            // 10.4.5.5: a TYPED ARRAY answers a numeric key's [[Set]] itself.
+            // As the receiver it coerces the value and writes a valid index;
+            // under another receiver an index it does not have is a quiet
+            // success - no coercion, no property on the receiver - and one it
+            // has is the writable data property OrdinarySet goes on with.
+            if (walk.is_array() &&
+                static_cast<array_object *>(walk.as_heap())->elements != element_kind::none &&
+                canonical_numeric_key(key)) {
+                auto * arr = static_cast<array_object *>(walk.as_heap());
+                std::uint32_t at = 0;
+                const bool valid = object_object::array_index_key(key, at) && at < arr->length();
+                if (walk.same_value(receiver)) {
+                    if (!typed_element_set(c, *arr, valid ? at : static_cast<std::size_t>(-1), v)) {
+                        return value::undefined();
+                    }
+                    return value::boolean(true);
+                }
+                if (!valid) { return value::boolean(true); }
+            }
             found = c.own_property(walk, key, own);
             if (c.throw_pending()) { return value::undefined(); }
             if (found) { break; }

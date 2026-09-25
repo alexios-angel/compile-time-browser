@@ -251,7 +251,21 @@ void context::store_property(value target, const std::string & name, value v) {
             obj->props[it->second].second = v;
             return;
         }
-        for (value up = obj->prototype; up.is_object();) {
+        for (value up = obj->prototype; up.is_heap();) {
+            // A TYPED ARRAY up the chain answers a numeric key's [[Set]] for
+            // this receiver (10.4.5.5 step 1.b.ii): an index it does not have
+            // is a quiet success that creates nothing; one it has is a
+            // writable element, so the receiver gets its own property below.
+            if (up.is_array()) {
+                auto * arr = static_cast<array_object *>(up.as_heap());
+                std::uint32_t at = 0;
+                if (arr->elements != element_kind::none && canonical_numeric_key(name) &&
+                    !(object_object::array_index_key(name, at) && at < arr->length())) {
+                    return;
+                }
+                break;
+            }
+            if (!up.is_object()) { break; }
             auto * parent = static_cast<object_object *>(up.as_heap());
             if (parent->find(name) != nullptr) {
                 if ((parent->attrs_of(name) & attr_writable) == 0) {
