@@ -409,6 +409,12 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                                       "  scf.if %flag {\n";
     const std::string receiverWrite = "    ctjs.set_property %a[%zero], %one\n";
     const std::string receiverRead = "    %read = ctjs.get_property %a[%zero]\n";
+    const retention_row nestedOrigins{
+        .what = "nested allocation origins remain outside receiver refinement",
+        .body =
+            receiverStart + "    %fresh = ctjs.create_array []\n" + receiverWrite + "  }\n" + done,
+        .complete = false,
+        .confinedReceivers = ""};
     const std::vector<retention_row> rows = {
         {.what = "retention discharges a local array's unreturned object element",
          .body = array + done,
@@ -579,11 +585,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                  done,
          .complete = false,
          .confinedReceivers = ""},
-        {.what = "nested allocation origins remain outside receiver refinement",
-         .body =
-             receiverStart + "    %fresh = ctjs.create_array []\n" + receiverWrite + "  }\n" + done,
-         .complete = false,
-         .confinedReceivers = ""},
+        nestedOrigins,
         {.what = "a nested receiver without solver lattices retains its gap refusal",
          .body = receiverStart + receiverWrite + "  }\n" + done,
          .complete = false,
@@ -600,6 +602,32 @@ void checkArrayRetention(mlir::MLIRContext & context) {
             continue;
         }
         budgets += checkArrayRetention(*module, r);
+        if (r.body == nestedOrigins.body) {
+            ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+            mlir::Operation * nested = nullptr;
+            function.walk([&](ctjs::CreateArrayOp site) {
+                if (site->getParentRegion() != &function.getBody()) { nested = site; }
+            });
+            const row inventory{.what = r.what, .body = r.body, .expected = ""};
+            const ArrayContentsEvidence contents = computeArrayContents(function);
+            if (!contents.complete || contents.arrays.size() != 2 ||
+                !llvm::is_contained(contents.arrays, nested)) {
+                fail(inventory, "complete contents lost the nested allocation origin");
+            }
+            mlir::DataFlowSolver solver;
+            solver.load<mlir::dataflow::DeadCodeAnalysis>();
+            solver.load<mlir::dataflow::SparseConstantPropagation>();
+            solver.load<EscapeAnalysis>();
+            if (failed(solver.initializeAndRun(*module))) {
+                fail(inventory, "the nested inventory solver did not converge");
+                continue;
+            }
+            const EscapeVerdicts original = computeVerdicts(solver, function, 0);
+            if (original.sites.size() != 1 || original.sites.find(nested) != original.sites.end()) {
+                fail(inventory,
+                     "the legacy root-only inventory unexpectedly includes nested sites");
+            }
+        }
     }
 
     retention_row mutation{
