@@ -413,6 +413,25 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
     } else {
         out.failure = "network access is off and " + url + " was not baked in";
     }
+    // A data: URL's type is its OWN (Fetch's data: URL processor): the text
+    // before the comma, less a trailing `;base64`, with `text/plain` in front
+    // of a bare parameter list - and text/plain;charset=US-ASCII when there
+    // is nothing there. A path's extension says nothing about one.
+    if (out.type.empty() && ascii_istarts_with(url, "data:") &&
+        url.find(',') != std::string::npos) {
+        std::string_view head =
+            trim(std::string_view{url}.substr(5, url.find(',') - 5), " \t\n\r\f");
+        if (const std::size_t semicolon = head.rfind(';');
+            semicolon != std::string_view::npos &&
+            ascii_iequals(trim(head.substr(semicolon + 1), " "), "base64")) {
+            head = trim(head.substr(0, semicolon), " \t\n\r\f");
+        }
+        std::string type{head};
+        if (type.starts_with(';')) { type = "text/plain" + type; }
+        out.type = type.empty() || type.find('/') == std::string::npos
+                       ? std::string{"text/plain;charset=US-ASCII"}
+                       : type;
+    }
     if (out.type.empty()) { out.type = mime_for_path(url); }
     return out;
 }
