@@ -274,6 +274,131 @@ void entries_cleared(const array_object & entries) {
     }
 }
 
+// --- %MapIteratorPrototype% / %SetIteratorPrototype%, LIVE --------------------
+//
+// CreateMapIterator / CreateSetIterator (24.1.5.1, 24.2.5.1) are closures over
+// the collection and an index into [[MapData]]: an entry added during the
+// walk is visited, one deleted before its turn is not, and a finished
+// iterator stays finished. An iterator OUTLIVES the call that made it, so it
+// cannot be a live_walk; it registers on its collection instead, and delete
+// and clear move its index as they move the entries.
+//
+// ponytail: at most max_live_iterators registrations per collection, oldest
+// dropped - an iterator abandoned half-way (`m.keys().next().value`) is
+// otherwise held for the collection's life. One dropped past the cap walks on
+// unadjusted; a weak list is the upgrade if a page ever holds 32 at once.
+inline constexpr std::string_view live_iterators_key = "@#LiveIterators";
+inline constexpr std::string_view iter_index_key = "@#CollectionNextIndex";
+inline constexpr std::string_view iter_kind_key = "@#CollectionIterationKind";
+inline constexpr std::size_t max_live_iterators = 32;
+constexpr std::string_view iterated_slot(bool map) {
+    return map ? "@#IteratedMap" : "@#IteratedSet";
+}
+
+[[nodiscard]] array_object * live_iterators(value collection) {
+    if (!collection.is_object()) { return nullptr; }
+    value * list = static_cast<object_object *>(collection.as_heap())->find(live_iterators_key);
+    return list != nullptr && list->is_array() ? static_cast<array_object *>(list->as_heap())
+                                               : nullptr;
+}
+// Each registered iterator's index, moved as `move` says.
+template <typename Fn> void move_iterators(value collection, Fn && move) {
+    array_object * list = live_iterators(collection);
+    if (list == nullptr) { return; }
+    for (const value & it : list->items) {
+        value * index = static_cast<object_object *>(it.as_heap())->find(iter_index_key);
+        if (index != nullptr && index->is_number()) {
+            *index = value::number(move(index->as_number()));
+        }
+    }
+}
+void iterators_removed(value collection, std::size_t at) {
+    move_iterators(collection, [at](double index) {
+        return static_cast<double>(at) < index ? index - 1 : index;
+    });
+}
+void iterators_cleared(value collection) {
+    move_iterators(collection, [](double) { return 0.0; });
+}
+
+value collection_iterator_next(context & c, bool map) {
+    const value self = c.current_this();
+    auto * it = self.is_object() ? static_cast<object_object *>(self.as_heap()) : nullptr;
+    const value * slot = it == nullptr ? nullptr : it->find(iterated_slot(map));
+    const value * index = it == nullptr ? nullptr : it->find(iter_index_key);
+    const value * kind = it == nullptr ? nullptr : it->find(iter_kind_key);
+    if (slot == nullptr || index == nullptr || kind == nullptr) {
+        c.throw_error("TypeError", std::string{map ? "Map" : "Set"} +
+                                       " Iterator next called on an incompatible receiver");
+        return value::undefined();
+    }
+    const value collection = *slot;
+    const double at = index->is_number() ? index->as_number() : 0;
+    const double which = kind->is_number() ? kind->as_number() : 0;
+    if (collection.is_undefined()) { return c.iter_result(value::undefined(), true); }
+    const value * held = collection.is_object()
+                             ? static_cast<object_object *>(collection.as_heap())->find("__entries")
+                             : nullptr;
+    auto * entries = held != nullptr && held->is_array()
+                         ? static_cast<array_object *>(held->as_heap())
+                         : nullptr;
+    if (entries == nullptr || at >= static_cast<double>(entries->items.size())) {
+        // Finished for good: unregistered, and the collection let go.
+        if (array_object * list = live_iterators(collection)) {
+            std::erase_if(list->items, [&](value v) { return v.bits() == self.bits(); });
+        }
+        if (value * mine = it->find(iterated_slot(map))) { *mine = value::undefined(); }
+        return c.iter_result(value::undefined(), true);
+    }
+    const value item = entries->items[static_cast<std::size_t>(at)];
+    if (value * next = it->find(iter_index_key)) { *next = value::number(at + 1); }
+    value key = item;
+    value held_value = item;
+    if (map) {
+        const auto & pair = static_cast<array_object *>(item.as_heap())->items;
+        key = pair[0];
+        held_value = pair[1];
+    }
+    if (which == 0) { return c.iter_result(key, false); }
+    if (which == 1) { return c.iter_result(held_value, false); }
+    // A FRESH [key, value] each time (CreateArrayFromList) - never the pair
+    // the map keeps, which a page could otherwise write through.
+    const context::rooted keep_key{c, key};
+    const context::rooted keep_value{c, held_value};
+    const value pair = c.make_array();
+    const context::rooted keep_pair{c, pair};
+    auto * both = static_cast<array_object *>(pair.as_heap());
+    both->items.push_back(key);
+    both->items.push_back(held_value);
+    return c.iter_result(pair, false);
+}
+
+// `which`: 0 keys, 1 values, 2 entries.
+[[nodiscard]] value collection_iterator(context & c, value collection, bool map, int which) {
+    const context::rooted keep{c, collection};
+    const value proto = detail::iterator_kind_prototype(
+        c, map ? "Map Iterator" : "Set Iterator",
+        [map](context & cc, std::span<value>) { return collection_iterator_next(cc, map); });
+    const context::rooted keep_proto{c, proto};
+    const value out = c.make_object();
+    const context::rooted keep_out{c, out};
+    auto * it = static_cast<object_object *>(out.as_heap());
+    it->prototype = proto;
+    it->define(iterated_slot(map), collection, attr_none);
+    it->define(iter_index_key, value::number(0), attr_none);
+    it->define(iter_kind_key, value::number(which), attr_none);
+    array_object * list = live_iterators(collection);
+    if (list == nullptr) {
+        const value made = c.make_array();
+        static_cast<object_object *>(collection.as_heap())
+            ->define(live_iterators_key, made, attr_none);
+        list = static_cast<array_object *>(made.as_heap());
+    }
+    list->items.push_back(out);
+    if (list->items.size() > max_live_iterators) { list->items.erase(list->items.begin()); }
+    return out;
+}
+
 } // namespace
 
 void install_collections(context & cx) {
@@ -442,6 +567,7 @@ void install_collections(context & cx) {
                 if (!pair->items.empty() && pair->items[0].same_value_zero(arg_at(a, 0))) {
                     entries->items.erase(entries->items.begin() + static_cast<std::ptrdiff_t>(i));
                     entry_removed(*entries, i);
+                    iterators_removed(c.current_this(), i);
                     return value::boolean(true);
                 }
             }
@@ -492,6 +618,7 @@ void install_collections(context & cx) {
             if (entries == nullptr) { return value::undefined(); }
             entries->items.clear();
             entries_cleared(*entries);
+            iterators_cleared(c.current_this());
             return value::undefined();
         });
         m("forEach", 1, [k](context & c, std::span<value> a) -> value {
@@ -519,21 +646,15 @@ void install_collections(context & cx) {
             }
             return value::undefined();
         });
+        // LIVE ITERATORS (collection_iterator). They were arrays once, with a
+        // comment saying `map.keys().next()` does not work - and Babylon
+        // drives exactly that, by hand, for the Map of shadow generators a
+        // light owns - and then snapshots, which a map changed mid-walk
+        // could see through.
         const auto column = [k](context & c, int which, const char * name) -> value {
-            array_object * entries = self_entries(c, k, name);
-            if (entries == nullptr) { return value::undefined(); }
-            value out = c.make_array();
-            auto * result = static_cast<array_object *>(out.as_heap());
-            for (const value & entry : entries->items) {
-                const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
-                result->items.push_back(which == 2 ? entry : pair[static_cast<std::size_t>(which)]);
-            }
-            return list_iterator(c, out, "Map Iterator");
+            if (self_entries(c, k, name) == nullptr) { return value::undefined(); }
+            return collection_iterator(c, c.current_this(), true, which);
         };
-        // REAL ITERATORS. They were arrays, with a comment saying
-        // `map.keys().next()` does not work - and Babylon drives exactly that,
-        // by hand, for the Map of shadow generators a light owns. See
-        // list_iterator. (A snapshot, not a live view - said out loud.)
         m("keys", 0,
           [column](context & c, std::span<value>) { return column(c, 0, "Map.prototype.keys"); });
         m("values", 0,
@@ -631,6 +752,7 @@ void install_collections(context & cx) {
             if (at < 0) { return value::boolean(false); }
             entries->items.erase(entries->items.begin() + at);
             entry_removed(*entries, static_cast<std::size_t>(at));
+            iterators_removed(c.current_this(), static_cast<std::size_t>(at));
             return value::boolean(true);
         });
         if (weak(k)) { continue; }
@@ -639,6 +761,7 @@ void install_collections(context & cx) {
             if (entries == nullptr) { return value::undefined(); }
             entries->items.clear();
             entries_cleared(*entries);
+            iterators_cleared(c.current_this());
             return value::undefined();
         });
         m("forEach", 1, [k](context & c, std::span<value> a) -> value {
@@ -660,16 +783,12 @@ void install_collections(context & cx) {
             }
             return value::undefined();
         });
-        const auto members = [k](context & c, const char * name) -> value {
-            array_object * entries = self_entries(c, k, name);
-            if (entries == nullptr) { return value::undefined(); }
-            value out = c.make_array();
-            static_cast<array_object *>(out.as_heap())->items = entries->items;
-            return out;
-        };
-        m("values", 0, [members](context & c, std::span<value>) -> value {
-            const value all = members(c, "Set.prototype.values");
-            return all.is_undefined() ? all : list_iterator(c, all, "Set Iterator");
+        // Live, as a Map's are (collection_iterator).
+        m("values", 0, [k](context & c, std::span<value>) -> value {
+            if (self_entries(c, k, "Set.prototype.values") == nullptr) {
+                return value::undefined();
+            }
+            return collection_iterator(c, c.current_this(), false, 1);
         });
         // 24.2.3.10/11: `keys` and @@iterator are both the `values` function.
         if (value * values = proto->find("values")) {
@@ -680,21 +799,11 @@ void install_collections(context & cx) {
         }
         // A Set's `entries` pairs each member WITH ITSELF, which looks odd and
         // is the spec: it exists so a Set and a Map can be walked by one code.
-        m("entries", 0, [members](context & c, std::span<value>) -> value {
-            const value all = members(c, "Set.prototype.entries");
-            if (all.is_undefined()) { return all; }
-            const context::rooted keep{c, all};
-            value out = c.make_array();
-            const context::rooted keep_out{c, out};
-            auto * pairs = static_cast<array_object *>(out.as_heap());
-            for (const value & member : static_cast<array_object *>(all.as_heap())->items) {
-                const value pair = c.make_array();
-                auto * both = static_cast<array_object *>(pair.as_heap());
-                both->items.push_back(member);
-                both->items.push_back(member);
-                pairs->items.push_back(pair);
+        m("entries", 0, [k](context & c, std::span<value>) -> value {
+            if (self_entries(c, k, "Set.prototype.entries") == nullptr) {
+                return value::undefined();
             }
-            return list_iterator(c, out, "Set Iterator");
+            return collection_iterator(c, c.current_this(), false, 2);
         });
         {
             auto * getter =

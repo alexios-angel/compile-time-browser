@@ -24,7 +24,9 @@ namespace {
 // global it was an enumerable object on `window`, and the one global of
 // a kind ctcompile's native convention has no form for. Each iterator
 // used to carry its own two natives and a null prototype.
-[[nodiscard]] value kind_prototype(context & cx, const char * tag, native_fn next) {
+} // namespace
+
+value iterator_kind_prototype(context & cx, const char * tag, native_fn next) {
     const std::string key = std::string{"@#IteratorPrototype:"} + tag;
     object_object * home = nullptr; // null only once a page has deleted `Array`
     if (const value array = cx.global("Array"); array.is_object_like()) {
@@ -43,6 +45,12 @@ namespace {
     detail::method(cx, made, "next", 0, std::move(next));
     if (home != nullptr) { home->define(key, value::object(made), attr_none); }
     return value::object(made);
+}
+
+namespace {
+
+[[nodiscard]] value kind_prototype(context & cx, const char * tag, native_fn next) {
+    return iterator_kind_prototype(cx, tag, std::move(next));
 }
 
 // CreateArrayIterator's state (23.1.5.1), as private slots on the iterator.

@@ -250,6 +250,9 @@ inline void adopt_subclass_prototype(context & cx, value made, const object_obje
 // typed array - `kind` 0 keys, 1 values, 2 entries - sharing the one
 // %ArrayIteratorPrototype%. Also in collections/array_iteration.cpp.
 [[nodiscard]] value array_iterator(context & cx, value target, double kind);
+// The one prototype of an iterator kind - %MapIteratorPrototype% and the rest
+// - made on first use with `next` and the tag (array_iteration.cpp).
+[[nodiscard]] value iterator_kind_prototype(context & cx, const char * tag, native_fn next);
 
 // --- AN Array.prototype METHOD'S RECEIVER, WHICH NEED NOT BE AN ARRAY ------
 //
