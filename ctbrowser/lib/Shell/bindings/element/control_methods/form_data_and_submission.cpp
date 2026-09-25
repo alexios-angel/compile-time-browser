@@ -549,11 +549,22 @@ void dom_bindings::install_control_form_data(context & cx) {
                     }
                     // The store forgets the control and reseeds it
                     // from its attributes - which is the reset -
-                    // but indeterminate is not the reset's to clear.
+                    // but indeterminate is not the reset's to clear, and
+                    // the selection stays where it was, clamped to the
+                    // default value (a changed value moves no cursor).
                     const control_state * held = forms_->find(one);
-                    const bool indeterminate = held != nullptr && held->indeterminate;
-                    forms_->reset_form(txn, one);
-                    if (indeterminate) { forms_->state_of(txn, *atoms_, one).indeterminate = true; }
+                    if (held == nullptr) {
+                        forms_->reset_form(txn, one);
+                    } else {
+                        const bool indeterminate = held->indeterminate;
+                        const std::size_t caret = held->caret;
+                        const std::size_t anchor = held->selection;
+                        forms_->reset_form(txn, one);
+                        control_state & fresh = forms_->state_of(txn, *atoms_, one);
+                        fresh.indeterminate = indeterminate;
+                        fresh.caret = std::min(caret, fresh.value.size());
+                        fresh.selection = std::min(anchor, fresh.value.size());
+                    }
                     if (helpers.is(txn, one, "select")) {
                         helpers.erase_slot(c, this, one, "__syncedValue");
                         helpers.walk_tree(txn, one, [&](node_id at2) {
