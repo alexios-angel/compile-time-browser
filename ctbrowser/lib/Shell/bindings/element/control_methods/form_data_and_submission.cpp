@@ -409,6 +409,75 @@ void dom_bindings::install_control_form_data(context & cx) {
         form_data_ctor->define("length", value::number(0), script::attr_configurable);
         form_data_proto->define("constructor", value::object(form_data_ctor), script::attr_builtin);
         cx.define_global("FormData", value::object(form_data_ctor));
+
+        // --- SubmitEvent and FormDataEvent, HTML 4.10.21.2 and 4.10.21.3 -------------
+        //
+        // Events, so `Event` does the EventInit half - the type, bubbles,
+        // cancelable, composed, in that order - and each adds its own member
+        // after: `submitter` an HTMLElement or null, `formData` a FormData
+        // and required. The events the forms fire take these prototypes
+        // (requestSubmit's `submit`, the entry list's `formdata`).
+        const auto form_event = [&cx](const char * name, auto member) {
+            auto * proto = cx.allocate<script::object_object>();
+            const value event_ctor = cx.global("Event");
+            if (event_ctor.is_object_like()) {
+                proto->prototype = cx.lookup_property(event_ctor, "prototype");
+            }
+            const value proto_value = value::object(proto);
+            auto * ctor = cx.allocate<script::native_object>(
+                name, [name, proto_value, member](context & c, std::span<value> a) -> value {
+                    const value self = c.current_this();
+                    if (!self.is_object()) {
+                        c.throw_error("TypeError", std::string{"Failed to construct '"} + name +
+                                                       "': please use the 'new' operator.");
+                        return value::undefined();
+                    }
+                    const value init = arg(a, 1);
+                    if (!init.is_nullish() && !init.is_object_like()) {
+                        c.throw_error("TypeError", std::string{"Failed to construct '"} + name +
+                                                       "': parameter 2 is not an object.");
+                        return value::undefined();
+                    }
+                    auto * event = static_cast<script::object_object *>(self.as_heap());
+                    if (!event->prototype.is_object()) { event->prototype = proto_value; }
+                    (void)c.call(c.global("Event"), a, self);
+                    if (c.throw_pending()) { return value::undefined(); }
+                    if (!member(c, *event, init)) { return value::undefined(); }
+                    return self;
+                });
+            ctor->retained.push_back(proto_value);
+            ctor->define("prototype", proto_value, script::attr_none);
+            ctor->define("length", value::number(1), script::attr_configurable);
+            proto->define("@@toStringTag", cx.string(name), script::attr_configurable);
+            proto->define("constructor", value::object(ctor), script::attr_builtin);
+            cx.define_global(name, value::object(ctor));
+        };
+        form_event("SubmitEvent", [this](context & c, script::object_object & event, value init) {
+            value submitter = dict_object(c, init, "submitter");
+            if (!submitter.is_null()) {
+                dom_bindings * b = owner_of(submitter);
+                const node_id id = b == nullptr ? node_id{} : b->handle_of(submitter);
+                if (!id || b->doc_->read().element_ns(id) != node_ns::html) {
+                    c.throw_error("TypeError", "Failed to construct 'SubmitEvent': member "
+                                               "submitter is not of type 'HTMLElement'.");
+                    return false;
+                }
+            }
+            event.set("submitter", submitter);
+            return true;
+        });
+        form_event("FormDataEvent", [](context & c, script::object_object & event, value init) {
+            const value form_data = dict_member(c, init, "formData");
+            if (!form_data.is_object() ||
+                static_cast<script::object_object *>(form_data.as_heap())->find(entries_slot) ==
+                    nullptr) {
+                c.throw_error("TypeError", "Failed to construct 'FormDataEvent': member "
+                                           "formData is not of type 'FormData'.");
+                return false;
+            }
+            event.set("formData", form_data);
+            return true;
+        });
     }
     // A fresh FormData for a submission, made through the constructor so the
     // page's `FormData.prototype` is the one on it.
