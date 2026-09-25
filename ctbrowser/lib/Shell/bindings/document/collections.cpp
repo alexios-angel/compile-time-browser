@@ -595,6 +595,13 @@ value dom_bindings::make_live_collection(context & cx,
     // indices.
     refresh(cx);
 
+    // A SUPPORTED NAME THAT IS VISIBLE (WebIDL 3.9 "named property visibility"):
+    // one refresh() gave its accessor - an expando of the same name shadows
+    // it, and then the name is the expando's.
+    const auto visible_name = [held, target, named](const std::string & key) {
+        return named && std::ranges::find(held->names, key) != held->names.end() &&
+               target->find_accessor(key) != nullptr;
+    };
     handler->set("get",
                  native(cx, "get", [held, refresh, member](context & c, std::span<value> args) {
                      if (args.size() < 2) { return value::undefined(); }
@@ -612,32 +619,63 @@ value dom_bindings::make_live_collection(context & cx,
     // HTMLCollection's indexed properties have no setter, so a non-strict
     // assignment is silently ignored. Anything else is an expando on the
     // target, which is how `list.item = "pass"` shadows the prototype's.
-    handler->set("set", native(cx, "set", [](context & c, std::span<value> args) {
-                     if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
-                     const std::string key = c.to_string(args[1]);
-                     // ...UNLESS AN INTERFACE UP THE CHAIN HAS A SETTER FOR IT:
-                     // HTMLOptionsCollection's `length` is writable (HTML
-                     // 4.10.10, `select.options.length = 2` truncates), and it
-                     // lives on that prototype, which this trap would otherwise
-                     // never consult.
-                     if (key == "length") {
-                         for (value at = c.get_prototype(args[0]); at.is_object();
-                              at = c.get_prototype(at)) {
-                             script::context::property_descriptor found;
-                             if (c.own_property(at, key, found) && found.setter.is_callable()) {
-                                 const value v = args[2];
-                                 (void)c.call(found.setter, {&v, 1},
-                                              args.size() > 3 ? args[3] : args[0]);
-                                 return value::boolean(true);
-                             }
-                         }
-                     }
-                     if (key == "length" || whole_index(key).has_value()) {
-                         return value::boolean(false);
-                     }
-                     c.store_property(args[0], key, args[2]);
-                     return value::boolean(true);
-                 }));
+    handler->set(
+        "set", native(cx, "set", [refresh, visible_name](context & c, std::span<value> args) {
+            if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
+            refresh(c);
+            const std::string key = c.to_string(args[1]);
+            // ...UNLESS AN INTERFACE UP THE CHAIN HAS A SETTER FOR IT:
+            // HTMLOptionsCollection's `length` is writable (HTML
+            // 4.10.10, `select.options.length = 2` truncates), and it
+            // lives on that prototype, which this trap would otherwise
+            // never consult.
+            if (key == "length") {
+                for (value at = c.get_prototype(args[0]); at.is_object();
+                     at = c.get_prototype(at)) {
+                    script::context::property_descriptor found;
+                    if (c.own_property(at, key, found) && found.setter.is_callable()) {
+                        const value v = args[2];
+                        (void)c.call(found.setter, {&v, 1}, args.size() > 3 ? args[3] : args[0]);
+                        return value::boolean(true);
+                    }
+                }
+            }
+            // A supported name has no setter either: the write is
+            // refused rather than landing as an expando that would
+            // shadow it (WebIDL 3.9.2 [[Set]] via [[DefineOwnProperty]]).
+            if (key == "length" || whole_index(key).has_value() || visible_name(key)) {
+                return value::boolean(false);
+            }
+            c.store_property(args[0], key, args[2]);
+            return value::boolean(true);
+        }));
+    // WebIDL 3.9.3 [[DefineOwnProperty]] and 3.9.4 [[Delete]] of a legacy
+    // platform object with no indexed or named setter or deleter: an array
+    // index can never be defined, a supported index or visible name never
+    // deleted - `Object.defineProperty(list, 0, ...)` throws and `delete
+    // list[0]` is false - and any other key is an ordinary own property.
+    handler->set(
+        "defineProperty",
+        native(cx, "defineProperty", [refresh, visible_name](context & c, std::span<value> args) {
+            if (args.size() < 3) { return value::boolean(false); }
+            refresh(c);
+            const std::string key = c.to_string(args[1]);
+            if (whole_index(key).has_value() || visible_name(key)) { return value::boolean(false); }
+            return value::boolean(
+                c.define_own_property(args[0], key, c.to_property_descriptor(args[2])));
+        }));
+    handler->set("deleteProperty",
+                 native(cx, "deleteProperty",
+                        [held, refresh, visible_name](context & c, std::span<value> args) {
+                            if (args.size() < 2) { return value::boolean(true); }
+                            refresh(c);
+                            const std::string key = c.to_string(args[1]);
+                            if (const std::optional<std::size_t> at = whole_index(key)) {
+                                return value::boolean(*at >= held->members.size());
+                            }
+                            if (visible_name(key)) { return value::boolean(false); }
+                            return value::boolean(c.delete_own_property(args[0], key));
+                        }));
     // `in` AND hasOwnProperty both come here (builtins/objects/object.cpp): an
     // own key of the refreshed target, or something the prototype answers.
     handler->set("has", native(cx, "has", [refresh](context & c, std::span<value> args) {
@@ -645,17 +683,31 @@ value dom_bindings::make_live_collection(context & cx,
                      refresh(c);
                      return value::boolean(c.has_property(args[0], args[1]));
                  }));
-    handler->set(
-        "getOwnPropertyDescriptor",
-        native(cx, "getOwnPropertyDescriptor", [refresh](context & c, std::span<value> args) {
-            if (args.size() < 2) { return value::undefined(); }
-            refresh(c);
-            script::context::property_descriptor found;
-            if (!c.own_property(args[0], c.to_string(args[1]), found)) {
-                return value::undefined();
-            }
-            return c.from_property_descriptor(found);
-        }));
+    // WebIDL 3.9.1 [[GetOwnProperty]]: a supported index, or a visible name, is
+    // a DATA property holding the member - read-only and configurable, and
+    // enumerable for an index only - whatever accessor the target keeps it in.
+    handler->set("getOwnPropertyDescriptor",
+                 native(cx, "getOwnPropertyDescriptor",
+                        [held, refresh, member, visible_name, named_value](context & c,
+                                                                           std::span<value> args) {
+                            if (args.size() < 2) { return value::undefined(); }
+                            refresh(c);
+                            const std::string key = c.to_string(args[1]);
+                            using descriptor = script::context::property_descriptor;
+                            if (const std::optional<std::size_t> at = whole_index(key);
+                                at && *at < held->members.size()) {
+                                return c.from_property_descriptor(descriptor::data(
+                                    member(c, held->members[*at]),
+                                    script::attr_enumerable | script::attr_configurable));
+                            }
+                            if (visible_name(key)) {
+                                return c.from_property_descriptor(descriptor::data(
+                                    named_value(c, held->members, key), script::attr_configurable));
+                            }
+                            descriptor found;
+                            if (!c.own_property(args[0], key, found)) { return value::undefined(); }
+                            return c.from_property_descriptor(found);
+                        }));
     // `Object.getOwnPropertyNames(list)` AFTER A MUTATION nothing else has read
     // through: the keys are the refreshed target's, in its order - the indices
     // first, as WebIDL's [[OwnPropertyKeys]] has them, then the names and any
