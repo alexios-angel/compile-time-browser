@@ -345,7 +345,30 @@ void test_a_second_documents_node_is_observable() {
 
 } // namespace
 
+namespace {
+
+// A ROUND IS THE OBSERVERS PENDING WHEN IT STARTS (DOM 4.3 "notify mutation
+// observers" steps 2-3): a record one callback queues for an observer that had
+// none is delivered in a LATER microtask - after one the callback queued
+// before making it - not in the same round.
+void test_a_record_queued_by_a_callback_waits_for_the_next_round() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var log = [];"
+                  "var a = document.createElement('div'), b = document.createElement('div');"
+                  "new MutationObserver(function () { log.push('A');"
+                  " queueMicrotask(function () { log.push('micro'); });"
+                  " b.setAttribute('x', '1'); }).observe(a, {attributes: true});"
+                  "new MutationObserver(function () { log.push('B'); alert(log.join()); })"
+                  ".observe(b, {attributes: true});"
+                  "a.setAttribute('y', '1');"
+                  "</script></body></html>"),
+             "A,micro,B");
+}
+
+} // namespace
+
 int main() {
+    test_a_record_queued_by_a_callback_waits_for_the_next_round();
     test_observe_validates_its_options();
     test_a_second_documents_node_is_observable();
     test_one_child_list_record();
