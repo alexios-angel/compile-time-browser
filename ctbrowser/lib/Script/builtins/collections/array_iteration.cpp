@@ -230,7 +230,7 @@ value array_find(context & c, std::span<value> a, const char * name, bool backwa
         if (watch.threw()) { return miss; }
         const value call_args[3] = {item, value::number(k), self};
         const bool hit = context::truthy(c.call(callback, call_args, this_arg));
-        if (watch.threw()) { return miss; }
+        if (c.throw_pending()) { return miss; } // parked, as in `each` below
         if (hit) { return want_index ? value::number(k) : item; }
     }
     return miss;
@@ -279,8 +279,11 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             const value call_args[3] = {item, value::number(k), self};
             const value verdict = c.call(callback, call_args, this_arg);
             // A THROW ENDS THE WALK: the rest of an array-like of 2^53 - 1
-            // is not walked to find each read and call a no-op.
-            if (watch.threw() || !body(k, item, verdict)) { return false; }
+            // is not walked to find each read and call a no-op. A callback's
+            // throw is PARKED (context::call), which throw_pending sees; the
+            // unwind count is no signal after a call, since a callback that
+            // throws and catches inside itself moves it too.
+            if (c.throw_pending() || !body(k, item, verdict)) { return false; }
         }
         return true;
     };
@@ -325,7 +328,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             if (watch.threw()) { return out; }
             const value call_args[3] = {item, value::number(k), self};
             const value mapped = c.call(callback, call_args, this_arg);
-            if (watch.threw()) { return out; }
+            if (c.throw_pending()) { return out; }
             if (!detail::create_element(c, out, k, mapped)) { return out; }
         }
         return out;
@@ -355,7 +358,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             const context::rooted keep_item(c, item);
             const value call_args[3] = {item, value::number(k), self};
             const bool kept = context::truthy(c.call(callback, call_args, this_arg));
-            if (watch.threw()) { return out; }
+            if (c.throw_pending()) { return out; }
             if (!kept) { continue; }
             if (!detail::create_element(c, out, to, item)) { return out; }
             to += 1.0;
@@ -446,7 +449,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             total = c.call(callback, call_args);
             // A THROW ENDS THE FOLD, rather than walking the rest of an
             // array-like of 2^53 - 1 to call a callback that cannot run.
-            if (watch.threw()) { return value::undefined(); }
+            if (c.throw_pending()) { return value::undefined(); }
         }
         return total;
     };
@@ -574,7 +577,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             // what it likes to the array meanwhile.
             std::vector<value> work = dense->items;
             sort_values(c, work, comparator);
-            if (watch.threw()) { return self; }
+            if (c.throw_pending()) { return self; } // the comparator's throw is parked
             // ASSIGNED, not written slot by slot, so both arms agree about what
             // the array holds afterwards. Where nothing mutated during the sort
             // the two spellings are identical; where something did, this is
@@ -604,7 +607,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             if (watch.threw()) { return self; }
         }
         sort_values(c, work, comparator);
-        if (watch.threw()) { return self; }
+        if (c.throw_pending()) { return self; }
         const auto kept = static_cast<double>(work.size());
         for (double k = 0; k < kept; k += 1.0) {
             if (!detail::put_element(c, self, k, work[static_cast<std::size_t>(k)])) {

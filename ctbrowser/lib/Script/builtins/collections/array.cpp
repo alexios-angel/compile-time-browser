@@ -59,7 +59,9 @@ namespace {
             const context::rooted keep_element(c, element);
             const value args[3] = {element, value::number(k), from};
             element = c.call(mapper, args, this_arg);
-            if (walk.threw()) { return false; }
+            // Parked if it threw (context::call); the unwind count would also
+            // move for a mapper that throws and catches inside itself.
+            if (c.throw_pending()) { return false; }
         }
         const context::rooted keep_element(c, element);
         bool flatten = false;

@@ -84,17 +84,16 @@ void quote_json(std::string_view text, std::string & out) {
 // The specification makes that a TypeError, and a TypeError is a page's own bug
 // reported to it rather than a dead process.
 struct json_writer {
-    explicit json_writer(context & c) : cx(c), unwinds_before(c.unwinds()) {}
+    explicit json_writer(context & c) : cx(c) {}
 
     context & cx;
-    // A THROW THAT HAS LANDED is not pending: a revoked proxy's trap lookup,
-    // a getter or a toJSON that threw has unwound to the page's handler by the
-    // time the native sees it again (context::unwinds), and carrying on would
-    // throw a second time over the handler the first one consumed.
-    std::size_t unwinds_before;
-    [[nodiscard]] bool threw() const {
-        return cx.throw_pending() || cx.unwinds() != unwinds_before;
-    }
+    // A THROW from a getter, a toJSON or a replacer is PARKED (context::call)
+    // and throw_pending sees it. The unwind count is NOT asked: a toJSON that
+    // throws and catches inside itself moves it as well, and serialising
+    // would stop at a value it had every right to finish. The one engine
+    // throw that LANDS instead - a revoked proxy's - is caught up front in
+    // serialize before anything reads it.
+    [[nodiscard]] bool threw() const { return cx.throw_pending(); }
     std::string indent;                     // 25.5.2 state.[[Indent]]
     std::string gap;                        // 25.5.2 state.[[Gap]]
     value replacer = value::undefined();    // state.[[ReplacerFunction]]
@@ -124,6 +123,15 @@ struct json_writer {
         // The [[Get]] that produced `v` (the caller's) may have thrown.
         if (failed || threw()) {
             failed = true;
+            return false;
+        }
+        // A REVOKED PROXY throws at its first operation, which is step 2's
+        // GetV of `toJSON` - one TypeError, here, rather than one there and a
+        // second from IsArray over the handler the first consumed.
+        if (v.is_kind(heap_kind::proxy) &&
+            !static_cast<proxy_object *>(v.as_heap())->handler.is_object_like()) {
+            failed = true;
+            cx.throw_error("TypeError", "Cannot perform 'get' on a proxy that has been revoked");
             return false;
         }
         // Steps 2-3: an Object or a BigInt is asked for `toJSON` FIRST, before
@@ -584,18 +592,21 @@ value materialize_recorded(context & cx, const json_value & node, std::string_vi
 // is how one filters, and is why this cannot be a plain map. Undefined with a
 // throw pending is an abrupt completion.
 value internalize_json(context & cx, value holder, const std::string & key, value reviver,
-                       std::uint32_t depth, const parse_record * record) {
+                       std::uint32_t depth, const parse_record * record, bool & failed) {
     // The recursion follows the parsed document's shape, so it is bounded by
     // nesting - but a reviver may graft an object onto itself and this walk
     // would then never end. The ceiling is the VM's own for the same reason the
     // VM has one.
     if (depth > context::reentry_ceiling) { return value::undefined(); }
-    // A throw that has LANDED is not pending (context::unwinds): a revoked
-    // proxy the reviver grafted in throws from IsArray, and the walk must
-    // stop there rather than delete the child and call the reviver again.
-    const unwind_watch watch{cx};
+    // A THROW STOPS THE WALK. A getter's, a trap's or the reviver's is
+    // PARKED (context::call) and throw_pending sees it; the engine's own -
+    // IsArray of a revoked proxy the reviver grafted in - LANDS instead, and
+    // `failed` carries it up, so the walk stops there rather than deleting
+    // the child and calling the reviver again. (The unwind count is no
+    // signal: a reviver that throws and catches inside itself moves it.)
+    const auto threw = [&] { return failed || cx.throw_pending(); };
     const value held = cx.lookup_property(holder, key); // step 1: Get(holder, name)
-    if (watch.threw()) { return value::undefined(); }
+    if (threw()) { return value::undefined(); }
     const context::rooted keep_held{cx, held};
     // The parse record still describes this value only while the value is
     // the one parsed (SameValue): a reviver that replaced it forward
@@ -607,8 +618,8 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
         // trap's) propagates but a REFUSAL is ignored: a reviver that made
         // the property non-configurable first simply leaves it in place.
         const auto revive_child = [&](const std::string & k, const parse_record * child) {
-            const value revived = internalize_json(cx, held, k, reviver, depth + 1, child);
-            if (watch.threw()) { return false; }
+            const value revived = internalize_json(cx, held, k, reviver, depth + 1, child, failed);
+            if (threw()) { return false; }
             if (revived.is_undefined()) {
                 (void)cx.delete_own_property(held, k);
             } else {
@@ -620,13 +631,16 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
                 wanted.writable = wanted.enumerable = wanted.configurable = true;
                 (void)cx.define_own_property(held, k, wanted);
             }
-            return !watch.threw();
+            return !threw();
         };
         bool is_array = false;
-        if (!is_array_value(cx, held, is_array)) { return value::undefined(); }
+        if (!is_array_value(cx, held, is_array)) {
+            failed = true;
+            return value::undefined();
+        }
         if (is_array) {
             const double len = array_like_length(cx, held);
-            if (watch.threw() || !generic_walk_ok(cx, len)) { return value::undefined(); }
+            if (threw() || !generic_walk_ok(cx, len)) { return value::undefined(); }
             for (double i = 0; i < len; i += 1.0) {
                 const auto at = static_cast<std::size_t>(i);
                 const parse_record * child =
@@ -644,10 +658,10 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
             for (std::string & each : own_property_names(cx, held, key_filter::strings)) {
                 context::property_descriptor found;
                 const bool present = cx.own_property(held, each, found);
-                if (watch.threw()) { return value::undefined(); }
+                if (threw()) { return value::undefined(); }
                 if (present && found.enumerable) { keys.push_back(std::move(each)); }
             }
-            if (watch.threw()) { return value::undefined(); }
+            if (threw()) { return value::undefined(); }
             for (const std::string & each : keys) {
                 const parse_record * child = nullptr;
                 if (recorded) {
@@ -739,7 +753,8 @@ void install_json(context & cx) {
         const value wrapper = c.make_object();
         const context::rooted keep_wrapper{c, wrapper};
         static_cast<object_object *>(wrapper.as_heap())->set("", out);
-        return detail::internalize_json(c, wrapper, "", reviver, 0, &root);
+        bool failed = false;
+        return detail::internalize_json(c, wrapper, "", reviver, 0, &root, failed);
     });
     // 25.5.3 JSON.rawJSON / 25.5.2 JSON.isRawJSON (ES2025): a frozen,
     // null-prototype object whose `rawJSON` is the text, serialised verbatim

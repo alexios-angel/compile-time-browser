@@ -58,12 +58,30 @@ int main() {
     js_expect("1 / [true].indexOf(true, -0)", "Infinity");
     // AND A WRITE to an index the array does not have asks the prototypes
     // first (OrdinarySet step 2): a setter on Array.prototype[0] takes a push
-    // and a write into a hole alike.
-    js_expect("(function () { var got = []; Object.defineProperty(Array.prototype, '0',"
-              " {set: function (v) { got.push(v); }, configurable: true});"
+    // and a write into a hole alike. (A string collects them: pushing onto an
+    // array in that setter would call it again, in every engine.)
+    js_expect("(function () { var got = ''; Object.defineProperty(Array.prototype, '0',"
+              " {set: function (v) { got += v; }, configurable: true});"
               " var a = []; a.push(5); var b = new Array(2); b[0] = 6; var c = [1]; c[0] = 7;"
               " delete Array.prototype[0];"
-              " return got.join() + '|' + a.length + (0 in a) + (0 in b) + c[0]; })()",
-              "5,6|1falsefalse7");
+              " return got + '|' + a.length + (0 in a) + (0 in b) + c[0]; })()",
+              "56|1falsefalse7");
+    // A CALLBACK THAT THROWS AND CATCHES INSIDE ITSELF has not thrown: the
+    // walks that stop at a callback's throw ask for a PARKED one, which this
+    // is not.
+    js_expect("[1, 2, 3].map(function (x) { try { throw x; } catch (e) {} return x * 2; }).join()",
+              "2,4,6");
+    js_expect("(function () { var n = 0; [1, 2, 3].forEach(function () {"
+              " try { null.x; } catch (e) {} n++; }); return n; })()",
+              "3");
+    js_expect("[3, 1, 2].sort(function (a, b) { try { throw 0; } catch (e) {} return a - b; })"
+              ".join()",
+              "1,2,3");
+    js_expect(
+        "JSON.stringify([{toJSON: function () { try { throw 1; } catch (e) {} return 7; }}, 8])",
+        "[7,8]");
+    js_expect("JSON.stringify(JSON.parse('[1,2]', function (k, v) {"
+              " try { throw 0; } catch (e) {} return v; }))",
+              "[1,2]");
     REPORT("array_holes");
 }
