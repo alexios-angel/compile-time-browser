@@ -487,28 +487,38 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool
 }
 
 void dom_bindings::install_shadow_dom(context & cx) {
-    // `Document.parseHTMLUnsafe(html)`, HTML 8.6.1: a new document, parsed
-    // with scripting off and "allow declarative shadow roots" on - the static
-    // twin of setHTMLUnsafe, on the Document interface object - whose URL is
-    // about:blank. (The interface object is a NATIVE, not a plain object -
-    // `is_object()` is heap_kind::object exactly.)
+    // `Document.parseHTMLUnsafe(html)` and `Document.parseHTML(html,
+    // options)`, HTML 8.6.1: a new document, parsed with scripting off and
+    // "allow declarative shadow roots" on - the static twins of setHTMLUnsafe
+    // and the safe spelling, on the Document interface object - whose URL is
+    // about:blank. parseHTML sanitises the result as the safe partial
+    // updates do (`sanitize`). (The interface object is a NATIVE, not a plain
+    // object - `is_object()` is heap_kind::object exactly.)
     if (const value ctor = cx.global("Document"); ctor.is_kind(script::heap_kind::native)) {
-        set_method(cx, *static_cast<script::native_object *>(ctor.as_heap()), "parseHTMLUnsafe",
-                   [this](context & c, std::span<value> a) {
-                       const std::string markup = arg_string(c, a, 0);
-                       dom_bindings & top = primary_ == nullptr ? *this : *primary_;
-                       document & fresh =
-                           *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
-                       fresh.set_scripting(false);
-                       fresh.set_allow_declarative_shadow_roots(true);
-                       html::tree_builder builder{fresh, *atoms_};
-                       builder.set_scripting(false);
-                       (void)builder.parse(markup);
-                       dom_bindings & made = adopt_second_document(c, fresh);
-                       made.install_document(c);
-                       made.observe_location("about:blank", "");
-                       return made.document_;
-                   });
+        for (const bool safe : {false, true}) {
+            set_method(
+                cx, *static_cast<script::native_object *>(ctor.as_heap()),
+                safe ? "parseHTML" : "parseHTMLUnsafe",
+                [this, safe](context & c, std::span<value> a) {
+                    const std::string markup = arg_string(c, a, 0);
+                    dom_bindings & top = primary_ == nullptr ? *this : *primary_;
+                    document & fresh =
+                        *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+                    fresh.set_scripting(false);
+                    fresh.set_allow_declarative_shadow_roots(true);
+                    html::tree_builder builder{fresh, *atoms_};
+                    builder.set_scripting(false);
+                    (void)builder.parse(markup);
+                    if (safe) {
+                        sanitize(fresh, *atoms_, fresh.document_node(),
+                                 sanitizer_names(c, dict_member(c, arg(a, 1), "sanitizer")), true);
+                    }
+                    dom_bindings & made = adopt_second_document(c, fresh);
+                    made.install_document(c);
+                    made.observe_location("about:blank", "");
+                    return made.document_;
+                });
+        }
     }
     // --- HTMLSlotElement ------------------------------------------------------
     if (const value slot_proto = interface_prototype("HTMLSlotElement"); slot_proto.is_object()) {

@@ -102,6 +102,33 @@ void test_noscript_follows_the_documents_scripting_flag() {
              "2,t1,p;1,3");
 }
 
+// XMLSerializer-serializeToString.html's four: ONE prefix index for the whole
+// serialisation (a sibling's generated prefix continues the count), an
+// attribute's own prefix kept when nothing in scope has it, a null-namespace
+// `xmlns` attribute read as the default namespace declaration it spells, and
+// an Attr serialised as the empty string.
+void test_serialize_prefixes_and_declarations() {
+    CHECK_EQ(said("<html><body><script>"
+                  "var s = new XMLSerializer();"
+                  "var r = new DOMParser().parseFromString('<root><c1/><c2/></root>',"
+                  " 'application/xml').documentElement;"
+                  "r.firstChild.setAttributeNS('u1', 'a', '1');"
+                  "r.lastChild.setAttributeNS('u2', 'b', '2');"
+                  "var x = (new Document()).createElement('x');"
+                  "x.setAttributeNS('http://www.w3.org/1999/xlink', 'xl:type', 'v');"
+                  "var p = new DOMParser().parseFromString('<package/>', 'application/xml')"
+                  ".documentElement;"
+                  "p.setAttribute('xmlns', 'urn:o');"
+                  "alert(s.serializeToString(r));"
+                  "alert(s.serializeToString(x));"
+                  "alert(s.serializeToString(p) + '|' + s.serializeToString("
+                  "document.createAttribute('a')) + '|');"
+                  "</script></body></html>"),
+             "<root><c1 xmlns:ns1=\"u1\" ns1:a=\"1\"/><c2 xmlns:ns2=\"u2\" ns2:b=\"2\"/></root>;"
+             "<x xmlns:xl=\"http://www.w3.org/1999/xlink\" xl:type=\"v\"/>;"
+             "<package/>||");
+}
+
 // THE HTML PARTIAL UPDATES: each position lands where its name says, the safe
 // spelling drops the script and an event handler the Unsafe one keeps (and
 // runs only with runScripts), a sanitizer's removeElements takes the element
@@ -137,6 +164,7 @@ void test_positional_html_methods() {
 
 int main() {
     test_positional_html_methods();
+    test_serialize_prefixes_and_declarations();
     test_serialize_to_string();
     test_serialize_namespaces();
     test_noscript_follows_the_documents_scripting_flag();
