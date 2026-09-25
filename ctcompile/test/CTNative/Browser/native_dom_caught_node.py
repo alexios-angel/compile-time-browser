@@ -506,6 +506,30 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-primitive-equality": source.replace(
+        "return this;", "return null === false ? null : this;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return 'next' == 'next' ? {done: done, value: anchor} : null;",
+    )
+    .replace("throw anchor;", "throw (true ? false : 0) !== 0 ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
+# `undefined` is a source global read, not a proved literal operand.
+RAW_HELPER_SOURCES |= {
+    name.replace("-primitive-equality", "-global-undefined"): source.replace(
+        "null === false", "null === undefined"
+    )
+    for name, source in RAW_HELPER_SOURCES.items()
+    if name.endswith("-helper-primitive-equality")
+}
+
+
 def check_outer_catches(args):
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -590,6 +614,13 @@ var outcome0 = observe(false), outcome1 = observe(true);
             initial_intrinsics=INTRINSICS,
         )
         raw_label = f"{name}-raw-helpers"
+        if name.endswith("-helper-global-undefined"):
+            refused = dom.lower(
+                args, raw, raw_manifest, raw_label, success=False, max_steps=1_000_000
+            )
+            if "DOM Symbol.iterator must be a closed identity method" not in refused:
+                raise RuntimeError(f"{name}: unproved global read lost its helper refusal")
+            continue
         raw_steps = (
             1_000_000
             if name.endswith(
