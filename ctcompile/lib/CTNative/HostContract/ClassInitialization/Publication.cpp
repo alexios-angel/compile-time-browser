@@ -1,7 +1,31 @@
 #include "Proof.hpp"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <optional>
+
 namespace ctcompile::ctnative::class_detail {
+
+namespace {
+
+// A value stops normalization: retain the body on an observer/unknown census,
+// or propagate budget failure. No value means the census found no observer.
+std::optional<bool> publicationSymbolObserver(classInitialization & proof, ctjs::FuncOp function) {
+    auto module = proof.module;
+    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+        if (!uses) { return true; }
+        for (const auto & use : *uses) {
+            if (!proof.step()) { return false; }
+            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                    use.getUser(), use.getSymbolRef()) == function) {
+                return true;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
 
 bool classInitialization::publicationSuffix(ctjs::CallOp publication,
                                             llvm::ArrayRef<ctjs::ConstructOp> instances,
@@ -224,17 +248,7 @@ bool classInitialization::sinkCapturedPublication(
             if (!cellOperations.contains(user)) { return true; }
         }
     }
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return true; }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef()) == function) {
-                return true;
-            }
-        }
-    }
+    if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     if (isBase) {
         ctjs::CreateClosureOp leaf;
         ctjs::CallOp leafSetup;
@@ -513,17 +527,7 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
     }
     if (keys.empty() || mapReads.empty()) { return true; }
     // No symbolic caller may retain the old environment layout.
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return true; }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef()) == function) {
-                return true;
-            }
-        }
-    }
+    if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     // Charge substitutions/cleanup before mutation; the enclosing pass rolls
     // back this private candidate if any later source or ownership proof fails.
     for (mlir::Value old : {key, mlir::Value(body.getArgument(ctjs::arg_callee))}) {
@@ -956,17 +960,7 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     }
     // Numeric closure uses were completely enumerated by examine. A symbol
     // call would bypass that census and must keep the original constructor.
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return true; }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef()) == function) {
-                return true;
-            }
-        }
-    }
+    if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     if (!proveMaps()) { return false; }
     if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
         return refuse(problem);

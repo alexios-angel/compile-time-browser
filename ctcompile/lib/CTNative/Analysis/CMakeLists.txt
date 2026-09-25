@@ -55,7 +55,6 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   ClosedValueFlow.h
   OwnedGlobalRoots.h
   OwnedMethodTableSlots.h
-  PrimitiveAlternatives.h
   PrimitiveMapKey.h
 )
 

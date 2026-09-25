@@ -2,9 +2,9 @@
 #include "Presence.h"
 
 #include "../OwnedGlobalRoots.h"
-#include "../PrimitiveAlternatives.h"
 #include "../PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
