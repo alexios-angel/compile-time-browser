@@ -224,12 +224,14 @@ value array_find(context & c, std::span<value> a, const char * name, bool backwa
     if (!detail::callable_arg(c, callback, "callback")) { return miss; }
     const value this_arg = arg_at(a, 1);
     const double step = backwards ? -1.0 : 1.0;
+    const detail::unwind_watch watch{c};
     for (double k = backwards ? len - 1 : 0; backwards ? k >= 0 : k < len; k += step) {
         const value item = detail::element_at(c, self, k);
+        if (watch.threw()) { return miss; }
         const value call_args[3] = {item, value::number(k), self};
-        if (context::truthy(c.call(callback, call_args, this_arg))) {
-            return want_index ? value::number(k) : item;
-        }
+        const bool hit = context::truthy(c.call(callback, call_args, this_arg));
+        if (watch.threw()) { return miss; }
+        if (hit) { return want_index ? value::number(k) : item; }
     }
     return miss;
 }
@@ -259,8 +261,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
-        if (c.throw_pending()) { return false; }
+        if (watch.threw()) { return false; }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return false; }
         const value this_arg = arg_at(a, 1);
@@ -268,10 +271,16 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             // A HOLE IS SKIPPED, not visited with undefined. That is the whole
             // difference between `[, 1].forEach(f)` calling back once and
             // twice, and it is what the array-like tests are written around.
-            if (!detail::has_element(c, self, k)) { continue; }
+            const bool present = detail::has_element(c, self, k);
+            if (watch.threw()) { return false; }
+            if (!present) { continue; }
             const value item = detail::element_at(c, self, k);
+            if (watch.threw()) { return false; }
             const value call_args[3] = {item, value::number(k), self};
-            if (!body(k, item, c.call(callback, call_args, this_arg))) { return false; }
+            const value verdict = c.call(callback, call_args, this_arg);
+            // A THROW ENDS THE WALK: the rest of an array-like of 2^53 - 1
+            // is not walked to find each read and call a no-op.
+            if (watch.threw() || !body(k, item, verdict)) { return false; }
         }
         return true;
     };
@@ -309,11 +318,15 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // context::rooted is the primitive for exactly this.
         const context::rooted keep(c, out);
         for (double k = 0; k < len; k += 1.0) {
-            if (!detail::has_element(c, self, k)) { continue; }
-            const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
-            if (!detail::create_element(c, out, k, c.call(callback, call_args, this_arg))) {
-                return out;
-            }
+            const bool present = detail::has_element(c, self, k);
+            if (watch.threw()) { return out; }
+            if (!present) { continue; }
+            const value item = detail::element_at(c, self, k);
+            if (watch.threw()) { return out; }
+            const value call_args[3] = {item, value::number(k), self};
+            const value mapped = c.call(callback, call_args, this_arg);
+            if (watch.threw()) { return out; }
+            if (!detail::create_element(c, out, k, mapped)) { return out; }
         }
         return out;
     });
@@ -334,10 +347,16 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const context::rooted keep(c, out); // as `map` - see the note there
         double to = 0;
         for (double k = 0; k < len; k += 1.0) {
-            if (!detail::has_element(c, self, k)) { continue; }
+            const bool present = detail::has_element(c, self, k);
+            if (watch.threw()) { return out; }
+            if (!present) { continue; }
             const value item = detail::element_at(c, self, k);
+            if (watch.threw()) { return out; }
+            const context::rooted keep_item(c, item);
             const value call_args[3] = {item, value::number(k), self};
-            if (!context::truthy(c.call(callback, call_args, this_arg))) { continue; }
+            const bool kept = context::truthy(c.call(callback, call_args, this_arg));
+            if (watch.threw()) { return out; }
+            if (!kept) { continue; }
             if (!detail::create_element(c, out, to, item)) { return out; }
             to += 1.0;
         }
@@ -379,8 +398,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
+        const detail::unwind_watch watch{c};
         const double len = detail::array_like_length(c, self);
-        if (c.throw_pending()) { return value::undefined(); }
+        if (watch.threw()) { return value::undefined(); }
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
         double k = backwards ? len - 1 : 0;
@@ -392,8 +412,11 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         } else {
             bool found = false;
             for (; !found && in_range(); k += step) {
-                if (detail::has_element(c, self, k)) {
+                const bool present = detail::has_element(c, self, k);
+                if (watch.threw()) { return value::undefined(); }
+                if (present) {
                     total = detail::element_at(c, self, k);
+                    if (watch.threw()) { return value::undefined(); }
                     found = true;
                 }
             }
@@ -414,10 +437,16 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             // element read and the call; between the destructor here and the
             // constructor on the next turn nothing allocates.
             const context::rooted keep_total(c, total);
-            if (!detail::has_element(c, self, k)) { continue; }
-            const value call_args[4] = {total, detail::element_at(c, self, k), value::number(k),
-                                        self};
+            const bool present = detail::has_element(c, self, k);
+            if (watch.threw()) { return value::undefined(); }
+            if (!present) { continue; }
+            const value item = detail::element_at(c, self, k);
+            if (watch.threw()) { return value::undefined(); }
+            const value call_args[4] = {total, item, value::number(k), self};
             total = c.call(callback, call_args);
+            // A THROW ENDS THE FOLD, rather than walking the rest of an
+            // array-like of 2^53 - 1 to call a callback that cannot run.
+            if (watch.threw()) { return value::undefined(); }
         }
         return total;
     };
