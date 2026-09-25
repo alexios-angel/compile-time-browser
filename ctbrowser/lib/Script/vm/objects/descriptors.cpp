@@ -86,6 +86,31 @@ namespace {
     return true;
 }
 
+// IsCompatiblePropertyDescriptor (10.1.6.2): ValidateAndApplyPropertyDescriptor
+// with no object to apply to - may a property described by `current` (null
+// when absent) become `wanted`? [[DefineOwnProperty]] asks it of every
+// ordinary object, and a proxy's getOwnPropertyDescriptor and defineProperty
+// traps are held to the same answer about their target.
+[[nodiscard]] bool compatible_descriptor(bool extensible,
+                                         const context::property_descriptor & wanted,
+                                         const context::property_descriptor * current) {
+    if (current == nullptr) { return extensible; }
+    if (current->configurable) { return true; }
+    if (wanted.has_configurable && wanted.configurable) { return false; }
+    if (wanted.has_enumerable && wanted.enumerable != current->enumerable) { return false; }
+    // A non-configurable property cannot change between data and accessor.
+    if (wanted.is_accessor() && !current->is_accessor()) { return false; }
+    if (wanted.is_data() && current->is_accessor()) { return false; }
+    if (current->is_accessor()) {
+        if (wanted.has_get && !wanted.getter.same_value(current->getter)) { return false; }
+        if (wanted.has_set && !wanted.setter.same_value(current->setter)) { return false; }
+    } else if (!current->writable) {
+        if (wanted.has_writable && wanted.writable) { return false; }
+        if (wanted.has_value && !wanted.held.same_value(current->held)) { return false; }
+    }
+    return true;
+}
+
 } // namespace
 
 value context::from_property_descriptor(const property_descriptor & from) {
@@ -117,12 +142,13 @@ context::property_descriptor context::to_property_descriptor(value from) {
             into = truthy(held);
         }
     };
-    field("value", out.has_value, out.held);
-    field("get", out.has_get, out.getter);
-    field("set", out.has_set, out.setter);
-    flag("writable", out.has_writable, out.writable);
+    // 6.2.6.5's ORDER, which a getter or a proxy on the descriptor observes.
     flag("enumerable", out.has_enumerable, out.enumerable);
     flag("configurable", out.has_configurable, out.configurable);
+    field("value", out.has_value, out.held);
+    flag("writable", out.has_writable, out.writable);
+    field("get", out.has_get, out.getter);
+    field("set", out.has_set, out.setter);
     return out;
 }
 
@@ -150,10 +176,13 @@ bool context::own_property(value target, const std::string & name, property_desc
 
     // 10.5.5 [[GetOwnProperty]] of a proxy: the `getOwnPropertyDescriptor`
     // trap, or the target when there is none. The answer is ToPropertyDescriptor
-    // then CompletePropertyDescriptor (steps 13-14), so a trap that says
+    // then CompletePropertyDescriptor (steps 12-13), so a trap that says
     // `{value: v}` describes a non-writable, non-enumerable, non-configurable
-    // property exactly as Object.defineProperty would read it. The invariant
-    // checks against the target (steps 15-22) are not made.
+    // property exactly as Object.defineProperty would read it - and then it is
+    // held to the TARGET (steps 9-11, 14-16): a trap may not hide a
+    // non-configurable property or any property of a non-extensible target,
+    // report one the target could not have, or call a property
+    // non-configurable (or non-writable and non-configurable) that is not so.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         bool failed = false;
@@ -161,22 +190,64 @@ bool context::own_property(value target, const std::string & name, property_desc
         if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return own_property(p->target, name, out); }
         const value args[2] = {p->target, key_value(name)};
+        const std::size_t before = unwinds();
         const value answer = call(trap, args, p->handler);
-        if (answer.is_undefined()) { return false; }
-        if (!answer.is_object_like()) {
-            throw_error("TypeError", "getOwnPropertyDescriptor trap returned neither object nor "
-                                     "undefined for property '" +
-                                         name + "'");
+        if (throw_pending() || unwinds() != before) { return false; }
+        const auto refuse = [&](const char * why) {
+            throw_error("TypeError", "'getOwnPropertyDescriptor' on proxy: trap " +
+                                         std::string{why} + " for property '" + name + "'");
+            out = property_descriptor{};
             return false;
+        };
+        if (!answer.is_undefined() && !answer.is_object_like()) {
+            return refuse("returned neither object nor undefined");
         }
         const rooted keep{*this, answer};
+        property_descriptor held;
+        const bool target_has = own_property(p->target, name, held);
+        if (throw_pending() || unwinds() != before) { return false; }
+        if (answer.is_undefined()) {
+            if (!target_has) { return false; }
+            if (!held.configurable) {
+                return refuse("reported non-existent a property that is non-configurable on "
+                              "the proxy target");
+            }
+            const bool extensible = is_extensible(p->target);
+            if (throw_pending() || unwinds() != before) { return false; }
+            if (!extensible) {
+                return refuse("reported non-existent a property of a non-extensible target");
+            }
+            return false;
+        }
+        const bool extensible = is_extensible(p->target);
+        if (throw_pending() || unwinds() != before) { return false; }
         out = to_property_descriptor(answer);
+        if (throw_pending() || unwinds() != before) { return false; }
+        // ToPropertyDescriptor's own refusals (6.2.6.5 steps 7.b, 8.b, 10).
+        if ((out.has_get && !out.getter.is_undefined() && !out.getter.is_callable()) ||
+            (out.has_set && !out.setter.is_undefined() && !out.setter.is_callable()) ||
+            (out.is_accessor() && out.is_data())) {
+            return refuse("returned an invalid property descriptor");
+        }
         if (out.is_accessor()) {
             out.has_get = out.has_set = true;
         } else {
             out.has_value = out.has_writable = true;
         }
         out.has_enumerable = out.has_configurable = true;
+        if (!compatible_descriptor(extensible, out, target_has ? &held : nullptr)) {
+            return refuse("returned a descriptor incompatible with the proxy target's");
+        }
+        if (!out.configurable) {
+            if (!target_has || held.configurable) {
+                return refuse("reported non-configurability for a property that is "
+                              "configurable or absent on the proxy target");
+            }
+            if (out.has_writable && !out.writable && held.writable) {
+                return refuse("reported a non-configurable, non-writable property that is "
+                              "writable on the proxy target");
+            }
+        }
         return true;
     }
 
@@ -366,8 +437,27 @@ bool context::is_extensible(value target) {
     if (target.is_kind(heap_kind::function)) {
         return static_cast<closure_object *>(target.as_heap())->extensible;
     }
+    // 10.5.3 [[IsExtensible]] of a proxy: the `isExtensible` trap, whose
+    // answer must be the target's own (step 9) - a proxy cannot lie about
+    // extensibility, because every other invariant is judged against it.
     if (target.is_kind(heap_kind::proxy)) {
-        return is_extensible(static_cast<proxy_object *>(target.as_heap())->target);
+        auto * p = static_cast<proxy_object *>(target.as_heap());
+        bool failed = false;
+        const value trap = proxy_trap(target, "isExtensible", &failed);
+        if (failed || throw_pending()) { return false; }
+        if (!trap.is_callable()) { return is_extensible(p->target); }
+        const value args[1] = {p->target};
+        const std::size_t before = unwinds();
+        const bool answered = truthy(call(trap, args, p->handler));
+        if (throw_pending() || unwinds() != before) { return false; }
+        const bool actual = is_extensible(p->target);
+        if (throw_pending() || unwinds() != before) { return false; }
+        if (answered != actual) {
+            throw_error("TypeError", "'isExtensible' on proxy: trap result does not reflect "
+                                     "extensibility of proxy target");
+            return false;
+        }
+        return answered;
     }
     // A primitive is not extensible, and Object.isExtensible(1) is false rather
     // than an error (19.1.2.13 returns false for a non-object).
@@ -400,7 +490,25 @@ bool context::delete_own_property(value target, const std::string & name) {
         if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return delete_own_property(p->target, name); }
         const value args[2] = {p->target, key_value(name)};
-        return truthy(call(trap, args, p->handler));
+        const std::size_t before = unwinds();
+        if (!truthy(call(trap, args, p->handler))) { return false; }
+        if (throw_pending() || unwinds() != before) { return false; }
+        // Steps 9-13: `true` may not claim a non-configurable property went,
+        // nor that any property of a non-extensible target did.
+        property_descriptor held;
+        if (!own_property(p->target, name, held)) { return true; }
+        if (throw_pending() || unwinds() != before) { return false; }
+        const bool extensible = held.configurable && is_extensible(p->target);
+        if (throw_pending() || unwinds() != before) { return false; }
+        if (!extensible) {
+            throw_error("TypeError", "'deleteProperty' on proxy: trap returned truish for "
+                                     "property '" +
+                                         name +
+                                         "' which is non-configurable in the proxy target, "
+                                         "or the target is non-extensible");
+            return false;
+        }
+        return true;
     }
     if (target.is_object()) {
         auto * obj = static_cast<object_object *>(target.as_heap());
@@ -497,7 +605,41 @@ bool context::define_own_property(value target, const std::string & name,
         if (failed || throw_pending()) { return false; }
         if (!trap.is_callable()) { return define_own_property(p->target, name, wanted); }
         const value args[3] = {p->target, key_value(name), from_property_descriptor(wanted)};
-        return truthy(call(trap, args, p->handler));
+        const std::size_t before = unwinds();
+        const bool answered = truthy(call(trap, args, p->handler));
+        // A throw answers TRUE: the caller turns false into a TypeError of its
+        // own, and one throw must not become two (see ArraySetLength below).
+        if (throw_pending() || unwinds() != before) { return true; }
+        if (!answered) { return false; }
+        // Steps 10-16: `true` must describe something the target could hold.
+        property_descriptor held;
+        const bool target_has = own_property(p->target, name, held);
+        if (throw_pending() || unwinds() != before) { return true; }
+        const bool extensible = is_extensible(p->target);
+        if (throw_pending() || unwinds() != before) { return true; }
+        const bool setting_non_configurable = wanted.has_configurable && !wanted.configurable;
+        const char * why = nullptr;
+        if (!target_has) {
+            if (!extensible) {
+                why = "which cannot be added to the non-extensible proxy target";
+            } else if (setting_non_configurable) {
+                why = "which is either non-existent or configurable in the proxy target";
+            }
+        } else if (!compatible_descriptor(extensible, wanted, &held)) {
+            why = "whose descriptor is incompatible with the proxy target's";
+        } else if (setting_non_configurable && held.configurable) {
+            why = "which is either non-existent or configurable in the proxy target";
+        } else if (held.is_data() && !held.configurable && held.writable && wanted.has_writable &&
+                   !wanted.writable) {
+            why = "which cannot be non-writable, unless there exists a corresponding "
+                  "non-configurable, non-writable own property of the target object";
+        }
+        if (why != nullptr) {
+            throw_error("TypeError", "'defineProperty' on proxy: trap returned truish for "
+                                     "defining property '" +
+                                         name + "' " + why);
+        }
+        return true;
     }
 
     // 10.4.5.3: A TYPED ARRAY'S INTEGER INDEX is its own algorithm, before
@@ -524,21 +666,9 @@ bool context::define_own_property(value target, const std::string & name,
     property_descriptor current;
     const bool exists = own_property(target, name, current);
 
-    if (!exists && !is_extensible(target)) { return false; }
-
-    if (exists && !current.configurable) {
-        if (wanted.has_configurable && wanted.configurable) { return false; }
-        if (wanted.has_enumerable && wanted.enumerable != current.enumerable) { return false; }
-        // A non-configurable property cannot change between data and accessor.
-        if (wanted.is_accessor() && !current.is_accessor()) { return false; }
-        if (wanted.is_data() && current.is_accessor()) { return false; }
-        if (current.is_accessor()) {
-            if (wanted.has_get && !wanted.getter.same_value(current.getter)) { return false; }
-            if (wanted.has_set && !wanted.setter.same_value(current.setter)) { return false; }
-        } else if (!current.writable) {
-            if (wanted.has_writable && wanted.writable) { return false; }
-            if (wanted.has_value && !wanted.held.same_value(current.held)) { return false; }
-        }
+    if (!compatible_descriptor(exists || is_extensible(target), wanted,
+                               exists ? &current : nullptr)) {
+        return false;
     }
 
     // WHAT THE PROPERTY ENDS UP AS. An absent field means "unchanged" on an

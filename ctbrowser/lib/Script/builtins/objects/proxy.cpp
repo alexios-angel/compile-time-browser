@@ -301,35 +301,10 @@ void install_proxy(context & cx) {
         if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
         return value::boolean(c.delete_own_property(a[0], key));
     });
-    // 28.1.9, and 10.5.3 for a proxy: the `isExtensible` trap's boolean,
-    // which must agree with the target's.
+    // 28.1.9: [[IsExtensible]], which context::is_extensible answers for a
+    // proxy through its `isExtensible` trap and the 10.5.3 invariant.
     method(cx, reflect, "isExtensible", 1, [target_of](context & c, std::span<value> a) {
         if (!target_of(c, a, "isExtensible")) { return value::undefined(); }
-        if (a[0].is_kind(heap_kind::proxy)) {
-            auto * p = static_cast<proxy_object *>(a[0].as_heap());
-            if (!p->handler.is_object_like()) {
-                c.throw_error("TypeError",
-                              "Cannot perform 'isExtensible' on a proxy that has been revoked");
-                return value::undefined();
-            }
-            const value trap = c.lookup_property(p->handler, "isExtensible");
-            if (c.throw_pending()) { return value::undefined(); }
-            if (trap.is_callable()) {
-                const value args[1] = {p->target};
-                const bool answered = context::truthy(c.call(trap, args, p->handler));
-                if (c.throw_pending()) { return value::undefined(); }
-                if (answered != c.is_extensible(p->target)) {
-                    c.throw_error("TypeError", "'isExtensible' on proxy: trap result does not "
-                                               "reflect extensibility of proxy target");
-                    return value::undefined();
-                }
-                return value::boolean(answered);
-            }
-            if (!trap.is_nullish()) {
-                c.throw_error("TypeError", "proxy trap 'isExtensible' is not a function");
-                return value::undefined();
-            }
-        }
         return value::boolean(c.is_extensible(a[0]));
     });
     // 28.1.10: a proxy's trap answers the boolean (10.5.4); an ordinary

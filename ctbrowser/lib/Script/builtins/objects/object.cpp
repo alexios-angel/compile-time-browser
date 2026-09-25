@@ -145,15 +145,27 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
         if (failed || cx.throw_pending()) { return false; }
         if (trap.is_callable()) {
             const value args[1] = {p->target};
+            const std::size_t before = cx.unwinds();
             const bool ok = context::truthy(cx.call(trap, args, p->handler));
-            if (cx.throw_pending()) { return false; }
+            if (cx.throw_pending() || cx.unwinds() != before) { return false; }
             if (!ok) {
                 cx.throw_error("TypeError", std::string{called} +
                                                 ": 'preventExtensions' on proxy returned false");
                 return false;
             }
+            // 10.5.4 step 8: `true` over a target that is still extensible.
+            const bool extensible = cx.is_extensible(p->target);
+            if (cx.throw_pending() || cx.unwinds() != before) { return false; }
+            if (extensible) {
+                cx.throw_error("TypeError", std::string{called} +
+                                                ": 'preventExtensions' on proxy returned truish "
+                                                "but the proxy target is extensible");
+                return false;
+            }
             return true;
         }
+        // No trap: the TARGET's [[PreventExtensions]], which may be a proxy's.
+        return prevent_extensions_or_throw(cx, p->target, called);
     }
     cx.prevent_extensions(target);
     return true;
@@ -162,6 +174,35 @@ template <typename Fn> void each_enumerable_own(context & cx, value of, Fn && vi
 // 7.3.15 SetIntegrityLevel. `frozen` false is "sealed": configurable off
 // everywhere, writable left alone.
 inline void set_integrity(context & cx, value target, bool frozen) {
+    // A PROXY IS WALKED AS 7.3.15 WRITES IT - OwnPropertyKeys, then per key
+    // [[GetOwnProperty]] (frozen only) and DefinePropertyOrThrow - because
+    // every one of those steps is a trap its handler can observe. Its
+    // [[PreventExtensions]] already ran, trap and all, in
+    // prevent_extensions_or_throw.
+    if (target.is_kind(heap_kind::proxy)) {
+        const std::size_t before = cx.unwinds();
+        const auto thrown = [&] { return cx.throw_pending() || cx.unwinds() != before; };
+        const std::vector<std::string> keys = own_property_names(cx, target, key_filter::all);
+        for (const std::string & key : keys) {
+            if (thrown()) { return; }
+            context::property_descriptor wanted;
+            wanted.has_configurable = true;
+            if (frozen) {
+                context::property_descriptor current;
+                const bool has = cx.own_property(target, key, current);
+                if (thrown()) { return; }
+                if (!has) { continue; }
+                wanted.has_writable = !current.is_accessor();
+            }
+            const bool defined = cx.define_own_property(target, key, wanted);
+            if (thrown()) { return; }
+            if (!defined) {
+                cx.throw_error("TypeError", "Cannot redefine property: " + key);
+                return;
+            }
+        }
+        return;
+    }
     cx.prevent_extensions(target);
     if (target.is_object()) {
         auto * obj = static_cast<object_object *>(target.as_heap());
@@ -185,6 +226,8 @@ inline void set_integrity(context & cx, value target, bool frozen) {
             arr->elements_writable = false;
             arr->length_writable = false;
         }
+        // An array's NAMED properties (`arr.foo`) live in their own table.
+        if (arr->named) { set_integrity(cx, value::object(arr->named.get()), frozen); }
         return;
     }
     if (target.is_kind(heap_kind::native)) {
@@ -226,8 +269,12 @@ inline void set_integrity(context & cx, value target, bool frozen) {
     // question about all of them.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        return !arr->elements_configurable && (!frozen || !arr->elements_writable) &&
-               (!frozen || !arr->length_writable);
+        if (arr->elements_configurable || (frozen && arr->elements_writable) ||
+            (frozen && arr->length_writable)) {
+            return false;
+        }
+        // ...and its named table, which set_integrity pins separately.
+        return arr->named == nullptr || test_integrity(cx, value::object(arr->named.get()), frozen);
     }
     // EVERY own key, symbols included: 7.3.16 walks OwnPropertyKeys, and a
     // symbol-keyed property that is still configurable makes the object neither

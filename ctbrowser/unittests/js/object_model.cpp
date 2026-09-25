@@ -167,5 +167,41 @@ int main() {
     js_expect("Object.prototype.isPrototypeOf.call(null, 1)", "false");
     js_expect("Object.prototype.isPrototypeOf.call(null, {})", "THREW");
 
+    // 10.5 proxy invariants: a trap is held to what its target can be.
+    js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
+              "var p=new Proxy(t,{getOwnPropertyDescriptor(){return undefined;}});"
+              "try{Object.getOwnPropertyDescriptor(p,'x');return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor(){"
+              "return {value:1,configurable:false};}});"
+              "try{Object.getOwnPropertyDescriptor(p,'x');return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{defineProperty(){return true;}});"
+              "try{Object.defineProperty(p,'x',{value:1,configurable:false});return 'no';}"
+              "catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
+              "var p=new Proxy(t,{deleteProperty(){return true;}});"
+              "try{Reflect.deleteProperty(p,'x');return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{isExtensible(){return false;}});"
+              "try{Object.isExtensible(p);return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var p=new Proxy({},{preventExtensions(){return true;}});"
+              "try{Object.preventExtensions(p);return 'no';}catch(e){return e.name;}})()",
+              "TypeError");
+    js_expect("(function(){var log=[];var p=new Proxy({a:1},{"
+              "ownKeys(t){log.push('keys');return Reflect.ownKeys(t);},"
+              "defineProperty(t,k,d){log.push(k+':'+d.configurable+d.writable);"
+              "return Reflect.defineProperty(t,k,d);}});"
+              "Object.freeze(p);return log.join()+','+Object.isFrozen(p);})()",
+              "keys,a:falsefalse,true");
+    js_expect("(function(){var a=[1];a.foo=2;Object.freeze(a);"
+              "var d=Object.getOwnPropertyDescriptor(a,'foo');"
+              "return d.writable+','+d.configurable+','+Object.isFrozen(a);})()",
+              "false,false,true");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
