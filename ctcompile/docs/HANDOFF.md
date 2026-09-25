@@ -22,6 +22,38 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Iterator helper continuations and acyclic conditional confinement, 2026-09-25 UTC
+
+Resumed **a97678f2** and its reachable-helper CFG boundary, then completed the
+interrupted build and candidates. **9ca2eeca** merges verified unconditional
+helper continuations using the existing MLIR branch canonicalizer. Receiver,
+capture, payload, lifetime and effect proofs remain required. Twenty-three raw
+controls check exact prepared output and conservative rollback; empty helper
+declarations refuse. Two new source variants execute natively with live helper
+edges while both original getter/method sources remain unchanged.
+
+**608b638a** reuses the complete contents query's acyclic path proof to confine
+conditional allocations across root CFG blocks. Thirteen new controls preserve
+selected and saved identities, every return, publication, cycles and backedges.
+This proves frame confinement only; repeated instances, region lifetime and
+native ownership remain unproved. No raw-oracle precision gain was measured.
+
+Final recovery **1/1, 5.62 s**, host contract **1/1, 2.74 s**, escape completion
+**1/1, 0.01 s** and arrays **1/1, 4.71 s** pass. The four-source native execution
+check and Node/VM comparisons pass, including **40** generated C++ files and
+**80** checked binaries. All six source hashes match the devbox. Formatting
+passes **1127 C++, 159 Python, 114 web files**. Review caught an empty-body guard;
+final recovery also verifies the corrected test fixture's safe body deletion.
+Full suites were skipped; no full native Bootstrap admission is claimed.
+
+**Next:** reachable conditional helper CFGs still refuse at the one-block
+getter/identity/capture checks. Prove their branch, payload and effect
+correspondence before extending normalization. Repeated nested allocations,
+mutable exceptional state, escaping owners, unguarded Bootstrap defaults, the
+application driver and full native Bootstrap remain unfinished.
+
+[Exact checks and next boundary](handoff/2026-09-25-helper-continuations.md).
+
 ## Raw iterator helper tails and conditional confinement, 2026-09-25 UTC
 
 Resumed clean **dcf9ce9d** and its raw-helper boundary, then completed the
