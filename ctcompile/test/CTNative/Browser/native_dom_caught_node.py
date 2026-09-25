@@ -442,6 +442,20 @@ RAW_HELPER_SOURCES |= {
 }
 
 
+RAW_HELPER_SOURCES |= {
+    name
+    + "-helper-transported-not": source.replace(
+        "return this;", "return !(true ? 0 : 1) ? this : null;"
+    )
+    .replace(
+        "return {done: done, value: anchor};",
+        "return !(false ? '' : 'next') ? null : {done: done, value: anchor};",
+    )
+    .replace("throw anchor;", "throw !!(true ? 'close' : '') ? anchor : null;")
+    for name, source in OUTER_SOURCES.items()
+}
+
+
 def check_outer_catches(args):
     compilers = find_compilers()
     compilers[1] = args.clang
@@ -526,7 +540,9 @@ var outcome0 = observe(false), outcome1 = observe(true);
             initial_intrinsics=INTRINSICS,
         )
         raw_label = f"{name}-raw-helpers"
-        raw_steps = 1_000_000 if name.endswith("-helper-primitives") else None
+        raw_steps = (
+            1_000_000 if name.endswith(("-helper-primitives", "-helper-transported-not")) else None
+        )
         if raw_steps is not None:
             refused = dom.lower(
                 args, raw, raw_manifest, raw_label + "-default-budget", success=False
