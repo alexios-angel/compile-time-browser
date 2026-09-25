@@ -679,7 +679,7 @@ int main() {
 
     // --- Annex B.2.1 escape/unescape and B.2.2 the String extras -------------
     js_expect("escape('a b+@\\u00e9\\u{10401}')", "a%20b+@%E9%uD801%uDC01");
-    js_expect("unescape('%u0041%41%%0041%uD801%uDC01%zz%u12')", "AA%A\U00010401%zz%u12");
+    js_expect("unescape('%u0041%41%%41%uD801%uDC01%zz%u12')", "AA%A\U00010401%zz%u12");
     js_expect("unescape(escape('\\u{1F600}x')) === '\\u{1F600}x'", "true");
     js_expect("'<'.anchor('\"a\"') + '_'.bold() + 'x'.link(1)",
               "<a name=\"&quot;a&quot;\"><</a><b>_</b><a href=\"1\">x</a>");
